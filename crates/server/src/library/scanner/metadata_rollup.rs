@@ -1260,6 +1260,11 @@ pub async fn rollup_series_metadata_best_effort<C: ConnectionTrait + sea_orm::Tr
             error = %e,
             "metadata_rollup: series rollup failed; will retry on next scan",
         );
+        // A failed rollup may have stopped before its `age_rating` step (an
+        // aborted transaction or a lost connection skips the rest), so the
+        // series rating is re-derived on its own here: an issue the caller
+        // just ingested or restored must never leave it rated too low.
+        crate::library::series_rating::recompute_best_effort(db, &[series_id]).await;
     }
 }
 

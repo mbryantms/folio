@@ -3858,7 +3858,8 @@ export interface paths {
          *     so if that was the only finished row the start moves to the re-read.
          *
          *     Excludes removed issues and series, issues outside the caller's
-         *     libraries or over their age cap (issue rating, series fallback), and
+         *     libraries or over their age cap (the issue's own rating and its series'
+         *     rating must both pass), and
          *     series the caller hid from the rails — with On deck's auto-restore: a
          *     series dismissal stops hiding once the caller reads in the series again.
          *

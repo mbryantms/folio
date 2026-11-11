@@ -843,7 +843,8 @@ pub async fn random_picks(State(app): State<AppState>, user: CurrentUser) -> Res
 /// so if that was the only finished row the start moves to the re-read.
 ///
 /// Excludes removed issues and series, issues outside the caller's
-/// libraries or over their age cap (issue rating, series fallback), and
+/// libraries or over their age cap (the issue's own rating and its series'
+/// rating must both pass), and
 /// series the caller hid from the rails — with On deck's auto-restore: a
 /// series dismissal stops hiding once the caller reads in the series again.
 ///
@@ -1299,7 +1300,8 @@ pub async fn recent_issues(State(app): State<AppState>, user: CurrentUser) -> Re
         let allowed: Vec<Uuid> = acl.allowed.iter().copied().collect();
         base_values.push(allowed.into());
     }
-    // WP-2.7: age-rating cap on the issue's own rating, series fallback.
+    // WP-2.7: age-rating cap on the issue's own rating AND its series'
+    // rating (`issue_cap_sql_joined`).
     let cap_clause = acl.issue_cap_sql_joined("i", "s", &mut base_values);
     const BATCH: usize = 128;
     let cap = RECENT_ISSUES_PER_SERIES_CAP as usize;

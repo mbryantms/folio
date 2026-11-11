@@ -43,7 +43,8 @@ pub(crate) struct IssueCardRow {
     pub special_type: Option<String>,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
-    /// WP-2.7 age-rating cap checks (issue rating, series fallback).
+    /// WP-2.7 age-rating cap checks: the issue's own rating (its series'
+    /// rating is checked as well).
     pub age_rating: Option<String>,
 }
 

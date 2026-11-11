@@ -1886,3 +1886,170 @@ async fn series_sub_routes_answer_hidden_and_removed_series_like_unknown() {
     .await;
     assert_eq!(status, StatusCode::OK);
 }
+
+// ───────── hide unrated ─────────
+
+/// For a reader whose grant hides unrated content (no cap), an unrated
+/// series and its issue with no rating of its own are hidden: bulk
+/// progress, marker restore, the series sub-routes and the reader prefs
+/// answer exactly like an unknown id.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hide_unrated_answers_an_unrated_series_like_unknown() {
+    let (app, f) = setup().await;
+    let db = app.state().db.clone();
+    let live_series = series::Entity::find_by_id(f.live.series_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let live_issue = entity::issue::Entity::find_by_id(f.live.issue_id.clone())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(live_series.age_rating, None);
+    assert_eq!(live_issue.age_rating, None);
+    // Before the option the reader sees the series.
+    let (status, _) = call(
+        &app,
+        &f.reader,
+        Method::GET,
+        &format!("/api/series/{}", f.live.series_slug),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    library_user_access::ActiveModel {
+        user_id: Unchanged(f.reader.user_id),
+        library_id: Unchanged(f.lib),
+        hide_unrated: Set(true),
+        ..Default::default()
+    }
+    .update(&db)
+    .await
+    .unwrap();
+    let (who, user, h) = ("hide unrated", &f.reader, &f.live);
+
+    let (status, body) = assert_alike(
+        &app,
+        user,
+        who,
+        Method::POST,
+        "/api/me/progress/bulk",
+        Some(json!({ "issue_ids": [h.issue_id], "finished": true })),
+        "/api/me/progress/bulk",
+        Some(json!({ "issue_ids": [unknown_issue_id()], "finished": true })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json_of(&body)["not_found"], 1, "{}", json_of(&body));
+    assert_eq!(json_of(&body)["updated"], 0);
+    let (_, body) = assert_alike(
+        &app,
+        user,
+        who,
+        Method::POST,
+        "/api/me/progress/series-bulk",
+        Some(json!({ "series_ids": [h.series_id], "finished": true })),
+        "/api/me/progress/series-bulk",
+        Some(json!({ "series_ids": [Uuid::now_v7()], "finished": true })),
+    )
+    .await;
+    assert_eq!(json_of(&body)["not_found_series"], 1);
+
+    let snap = |issue: &str| {
+        json!({ "markers": [{
+            "id": Uuid::now_v7(),
+            "issue_id": issue,
+            "page_index": 0,
+            "kind": "bookmark"
+        }] })
+    };
+    let hidden = call(
+        &app,
+        user,
+        Method::POST,
+        "/api/me/markers/restore",
+        Some(snap(&h.issue_id)),
+    )
+    .await;
+    let unknown = call(
+        &app,
+        user,
+        Method::POST,
+        "/api/me/markers/restore",
+        Some(snap(&unknown_issue_id())),
+    )
+    .await;
+    assert_eq!(hidden.0, StatusCode::OK);
+    assert_eq!(hidden.0, unknown.0);
+    assert_eq!(json_of(&hidden.1), json_of(&unknown.1));
+    assert_eq!(json_of(&hidden.1)["skipped"], 1);
+
+    let unknown = unknown_slug();
+    for suffix in [
+        "",
+        "/collection",
+        "/issues",
+        "/resume",
+        "/similar",
+        "/relationships",
+        "/appearances",
+        "/same-universe",
+        "/metadata/overview",
+    ] {
+        let (status, body) = assert_alike(
+            &app,
+            user,
+            who,
+            Method::GET,
+            &format!("/api/series/{}{suffix}", h.series_slug),
+            None,
+            &format!("/api/series/{unknown}{suffix}"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{suffix}");
+        assert_eq!(code(&body), "not_found", "{suffix}");
+    }
+    for suffix in ["", "/next", "/prev", "/appearances"] {
+        let (status, _) = assert_alike(
+            &app,
+            user,
+            who,
+            Method::GET,
+            &format!(
+                "/api/series/{}/issues/{}{suffix}",
+                h.series_slug, h.issue_slug
+            ),
+            None,
+            &format!(
+                "/api/series/{}/issues/{}{suffix}",
+                unknown_slug(),
+                unknown_slug()
+            ),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "issue {suffix}");
+    }
+
+    let other = Uuid::now_v7();
+    for (method, body) in [
+        (Method::PUT, Some(json!({ "cover_solo": true }))),
+        (Method::GET, None),
+    ] {
+        let (status, _) = assert_alike(
+            &app,
+            user,
+            who,
+            method,
+            &format!("/api/me/series/{}/reader-prefs", h.series_id),
+            body.clone(),
+            &format!("/api/me/series/{other}/reader-prefs"),
+            body,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+}

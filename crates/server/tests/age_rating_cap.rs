@@ -4109,6 +4109,11 @@ async fn hide_unrated_entity_and_rail_surfaces_skip_an_unrated_series() {
     let mut got = item_strings(&body, "slug");
     got.sort();
     assert_eq!(got, vec!["gap-run", "twin-run"], "{body}");
+    // The reader is part-way through Twin One: Continue reading shows it.
+    progress(&w.app, w.capped.user_id, &e.twin_one, false).await;
+    let (st, body) = get_json(&w.app, "/api/me/continue-reading", &w.capped).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert!(body.to_string().contains("Twin One"), "{body}");
 
     set_access(
         w,
@@ -4130,7 +4135,154 @@ async fn hide_unrated_entity_and_rail_surfaces_skip_an_unrated_series() {
     )
     .await;
     assert!(!String::from_utf8_lossy(&bytes).contains("Twin"));
-    let _ = &e.twin_one;
+    // The rails leave the unrated series out too.
+    for rail in [
+        "/api/me/continue-reading",
+        "/api/me/on-deck",
+        "/api/me/recent-issues",
+    ] {
+        let (st, body) = get_json(&w.app, rail, &w.capped).await;
+        assert_eq!(st, StatusCode::OK, "{rail}: {body}");
+        assert!(!body.to_string().contains("Twin"), "{rail}: {body}");
+    }
+}
+
+/// A reader whose grant hides unrated content but carries no cap: the
+/// issue predicate then has no own-rating part, only the series rule
+/// (`raw_issue_clause`'s hide-only arm). Every hand-written-SQL surface
+/// must leave out what only the unrated series carries.
+#[tokio::test]
+async fn hide_only_reader_leaves_out_an_unrated_series_on_sql_surfaces() {
+    let w = world().await;
+    let fx = &w.fx;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    tag_issue(
+        &db,
+        &fx.teen_1,
+        "Cap Writer",
+        None,
+        Some("Teen Hero"),
+        None,
+        None,
+        Some("Teen Genre"),
+        None,
+        None,
+    )
+    .await;
+    tag_issue(
+        &db,
+        &fx.unrated_1,
+        "Cap Writer, Unrated Scribe",
+        None,
+        Some("Unrated Hero"),
+        None,
+        None,
+        Some("Unrated Genre"),
+        None,
+        None,
+    )
+    .await;
+    // Entity rows for the new names; the seeded ratings are a person's,
+    // so the rollup keeps them (Unrated Stories stays unrated).
+    for series_id in [fx.teen_series, fx.unrated_series] {
+        pin_series_rating(&db, series_id, "user").await;
+        server::library::scanner::metadata_rollup::rollup_series_metadata(&db, series_id)
+            .await
+            .unwrap();
+    }
+    assert_eq!(series_rating(&db, fx.unrated_series).await, None);
+    // Part-way through one issue of each series; finished one of each of
+    // Mature Matters and Unrated Stories.
+    for id in [&fx.teen_1, &fx.unrated_1] {
+        progress(&w.app, w.uncapped.user_id, id, false).await;
+    }
+    for id in [&fx.mature_1, &fx.unrated_mature_2] {
+        progress(&w.app, w.uncapped.user_id, id, true).await;
+    }
+    let values = |body: &serde_json::Value| -> Vec<String> {
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect()
+    };
+
+    // Without the option the unrated series is there.
+    let (_, body) = get_json(&w.app, "/api/characters", &w.uncapped).await;
+    let mut got = item_strings(&body, "name");
+    got.sort();
+    assert_eq!(got, vec!["Teen Hero", "Unrated Hero"], "{body}");
+    assert_eq!(body["total"], 2, "{body}");
+
+    let lib = fx.lib_id.to_string();
+    set_access(
+        &w,
+        &w.uncapped,
+        serde_json::json!({}),
+        serde_json::json!({ lib: true }),
+    )
+    .await;
+    let u = &w.uncapped;
+
+    let (_, body) = get_json(&w.app, "/api/characters", u).await;
+    assert_eq!(item_strings(&body, "name"), vec!["Teen Hero"], "{body}");
+    assert_eq!(body["total"], 1, "{body}");
+
+    // Creators and people: the scribe is only on the unrated issue; the
+    // shared writer counts the four issues of the two rated series plus
+    // Teen Tales' series-level credit (its rollup ran above). Unrated
+    // Stories' two issues and its series-level credit are left out.
+    let (_, body) = get_json(&w.app, "/api/creators", u).await;
+    assert_eq!(item_strings(&body, "person"), vec!["Cap Writer"], "{body}");
+    assert_eq!(body["items"][0]["credit_count"], 5, "{body}");
+    assert_eq!(body["total"], 1, "{body}");
+    let (_, body) = get_json(&w.app, "/api/people?q=scribe", u).await;
+    assert!(item_strings(&body, "person").is_empty(), "{body}");
+    let (_, body) = get_json(&w.app, "/api/people?q=cap", u).await;
+    assert_eq!(body["items"][0]["credit_count"], 5, "{body}");
+
+    // Filter-option pickers.
+    let (_, body) = get_json(&w.app, "/api/filter-options/genres", u).await;
+    assert_eq!(values(&body), vec!["Teen Genre"], "{body}");
+    for path in [
+        "/api/filter-options/credits",
+        "/api/filter-options/credits/writer",
+    ] {
+        let (st, body) = get_json(&w.app, path, u).await;
+        assert_eq!(st, StatusCode::OK, "{path}: {body}");
+        let got = values(&body);
+        assert!(
+            got.contains(&"Cap Writer".to_owned()) && !got.contains(&"Unrated Scribe".to_owned()),
+            "{path}: {body}"
+        );
+    }
+
+    // Rails.
+    let (_, body) = get_json(&w.app, "/api/me/continue-reading", u).await;
+    let text = body.to_string();
+    assert!(
+        text.contains("Teen One") && !text.contains("Unrated"),
+        "{body}"
+    );
+    let (_, body) = get_json(&w.app, "/api/me/recent-issues", u).await;
+    let mut got = names(&body, "title");
+    got.sort();
+    assert_eq!(
+        got,
+        vec!["Mature One", "Mature Two", "Teen One", "Teen Two"],
+        "{body}"
+    );
+
+    // Reading log.
+    let (st, body) = get_json(&w.app, "/api/me/reading-log", u).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let text = body.to_string();
+    assert!(text.contains(&fx.mature_1), "{body}");
+    assert!(
+        !text.contains(&fx.unrated_mature_2) && !text.contains("Unrated"),
+        "{body}"
+    );
 }
 
 // ───── the series.json floor, the upgrade rule, Metron's words ─────

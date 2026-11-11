@@ -756,7 +756,8 @@ fn apply_issue_visibility(q: &mut SelectStatement, vis: &VisibleLibraries) {
     }
     let allowed: Vec<Uuid> = vis.allowed.iter().copied().collect();
     q.and_where(Expr::col((issue::Entity, issue::Column::LibraryId)).is_in(allowed));
-    // WP-2.7: age-rating cap on the issue's own rating, series fallback.
+    // WP-2.7: age-rating cap on the issue's own rating AND its series'
+    // rating (`issue_cap_condition`).
     if let Some(cap) = vis.issue_cap_condition() {
         q.cond_where(cap);
     }

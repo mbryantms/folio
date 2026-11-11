@@ -482,8 +482,8 @@ async fn fetch_distinct_issue_csv(
             placeholders.join(",")
         ));
     }
-    // WP-2.7: age-rating cap on the issue (series fallback) and on its
-    // series, so a value never comes from a series the caller can't open.
+    // WP-2.7: age-rating cap on the issue's own rating and on its series,
+    // so a value never comes from a series the caller can't open.
     sql.push_str(&visible.issue_cap_sql_joined("i", "s", &mut params));
 
     if let Some(prefix) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
@@ -733,7 +733,7 @@ async fn fetch_distinct(
     // WP-2.7: age-rating cap on the series rating.
     sql.push_str(&visible.raw_cap_clause("s.library_id", "s.age_rating", &mut params));
     if issue_twin.is_some() {
-        // ... and on the issue's own rating (series fallback).
+        // ... and on the issue's own rating and its series' rating.
         sql.push_str(&visible.issue_cap_sql_joined("i", "s", &mut params));
     }
 

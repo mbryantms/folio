@@ -2185,6 +2185,11 @@ async fn run_issue_phase(
             am.removal_confirmed_at = Set(None);
             am.update(&state.db).await?;
             stats.issues_restored += 1;
+            // The restored issue counts toward its series' rating again;
+            // re-derived here, not only by the rollup below, which skips its
+            // remaining steps after a lost connection or aborted transaction.
+            crate::library::series_rating::recompute_best_effort(&state.db, &[updated.series_id])
+                .await;
             crate::library::reconcile::restore_series_with_live_issues(
                 &state.db,
                 [updated.series_id],

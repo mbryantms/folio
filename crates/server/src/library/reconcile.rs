@@ -284,37 +284,45 @@ pub async fn reconcile_library(
         .await?;
 
     let mut rated_series: HashSet<Uuid> = HashSet::new();
-    for row in issues {
-        let path = Path::new(&row.file_path);
-        let exists = path.exists();
-        if row.removed_at.is_some() == exists {
-            rated_series.insert(row.series_id);
-        }
-        match (row.removed_at.is_some(), exists) {
-            // Soft-delete: present in DB, missing on disk.
-            (false, false) => {
-                let mut am: issue::ActiveModel = row.into();
-                am.removed_at = Set(Some(now));
-                am.removal_confirmed_at = Set(None);
-                am.update(db).await?;
-                stats.issues_removed += 1;
+    // A failed write stops the loop, but the rows already flipped keep
+    // their new state: their series are re-derived before the error is
+    // returned, so a restored issue never leaves its series rated too low.
+    let flipped: anyhow::Result<()> = async {
+        for row in issues {
+            let path = Path::new(&row.file_path);
+            let exists = path.exists();
+            if row.removed_at.is_some() == exists {
+                rated_series.insert(row.series_id);
             }
-            // Restore: was soft-deleted, file is back.
-            (true, true) => {
-                let mut am: issue::ActiveModel = row.into();
-                am.removed_at = Set(None);
-                am.removal_confirmed_at = Set(None);
-                am.update(db).await?;
-                stats.issues_restored += 1;
+            match (row.removed_at.is_some(), exists) {
+                // Soft-delete: present in DB, missing on disk.
+                (false, false) => {
+                    let mut am: issue::ActiveModel = row.into();
+                    am.removed_at = Set(Some(now));
+                    am.removal_confirmed_at = Set(None);
+                    am.update(db).await?;
+                    stats.issues_removed += 1;
+                }
+                // Restore: was soft-deleted, file is back.
+                (true, true) => {
+                    let mut am: issue::ActiveModel = row.into();
+                    am.removed_at = Set(None);
+                    am.removal_confirmed_at = Set(None);
+                    am.update(db).await?;
+                    stats.issues_restored += 1;
+                }
+                // Steady states: present + present, or removed + still missing.
+                _ => {}
             }
-            // Steady states: present + present, or removed + still missing.
-            _ => {}
         }
+        Ok(())
     }
+    .await;
     if !rated_series.is_empty() {
         let ids: Vec<Uuid> = rated_series.into_iter().collect();
         crate::library::series_rating::recompute_best_effort(db, &ids).await;
     }
+    flipped?;
     // Series with all issues removed → soft-delete the series itself.
     let series_rows = series::Entity::find()
         .filter(series::Column::LibraryId.eq(library_id))
@@ -550,63 +558,70 @@ async fn reconcile_library_seen_inner(
     // and in the table; the series handled so far are completed below.
     let mut missing_series: Vec<(Uuid, NewEvent)> = Vec::new();
     let mut stopped = false;
-    for srow in series_rows {
-        let Some(folder) = srow.folder_path.as_deref() else {
-            continue;
-        };
-        if present_folders.contains(folder) {
-            continue;
+    // A failed issue write stops the sweep; the series swept before it are
+    // re-derived below all the same, then the error is returned.
+    let swept: anyhow::Result<()> = async {
+        for srow in series_rows {
+            let Some(folder) = srow.folder_path.as_deref() else {
+                continue;
+            };
+            if present_folders.contains(folder) {
+                continue;
+            }
+            if let Some(scope) = missing_scope
+                && !scope.iter().any(|top| Path::new(folder).starts_with(top))
+            {
+                continue;
+            }
+            if path_under_any(folder, unreadable_folders) {
+                tracing::warn!(
+                    series_id = %srow.id,
+                    folder,
+                    "reconcile: series folder is under an unreadable path — not marking removed"
+                );
+                continue;
+            }
+            if stop_requested(stop) {
+                stopped = true;
+                break;
+            }
+            let series_label = srow.name.clone();
+            let series_id = srow.id;
+            let res = IssueEntity::update_many()
+                .col_expr(issue::Column::RemovedAt, Expr::value(now))
+                .col_expr(
+                    issue::Column::RemovalConfirmedAt,
+                    Expr::value(Option::<chrono::DateTime<chrono::FixedOffset>>::None),
+                )
+                .filter(issue::Column::SeriesId.eq(series_id))
+                .filter(issue::Column::RemovedAt.is_null())
+                .exec(db)
+                .await?;
+            stats.issues_removed += res.rows_affected;
+            // Whole folder gone: one series-scoped removed event carrying the
+            // issue count, rather than N per-issue rows (the issues went via a
+            // bulk `update_many`, so individual ids aren't materialized here).
+            let ev = events
+                .build(
+                    Category::Series,
+                    Action::Removed,
+                    Severity::Warning,
+                    format!("Removed series {series_label} (folder missing)"),
+                )
+                .entity("series", series_id.to_string(), Some(series_label))
+                .detail(serde_json::json!({ "issues_removed": res.rows_affected }));
+            missing_series.push((series_id, ev));
         }
-        if let Some(scope) = missing_scope
-            && !scope.iter().any(|top| Path::new(folder).starts_with(top))
-        {
-            continue;
-        }
-        if path_under_any(folder, unreadable_folders) {
-            tracing::warn!(
-                series_id = %srow.id,
-                folder,
-                "reconcile: series folder is under an unreadable path — not marking removed"
-            );
-            continue;
-        }
-        if stop_requested(stop) {
-            stopped = true;
-            break;
-        }
-        let series_label = srow.name.clone();
-        let series_id = srow.id;
-        let res = IssueEntity::update_many()
-            .col_expr(issue::Column::RemovedAt, Expr::value(now))
-            .col_expr(
-                issue::Column::RemovalConfirmedAt,
-                Expr::value(Option::<chrono::DateTime<chrono::FixedOffset>>::None),
-            )
-            .filter(issue::Column::SeriesId.eq(series_id))
-            .filter(issue::Column::RemovedAt.is_null())
-            .exec(db)
-            .await?;
-        stats.issues_removed += res.rows_affected;
-        // Whole folder gone: one series-scoped removed event carrying the
-        // issue count, rather than N per-issue rows (the issues went via a
-        // bulk `update_many`, so individual ids aren't materialized here).
-        let ev = events
-            .build(
-                Category::Series,
-                Action::Removed,
-                Severity::Warning,
-                format!("Removed series {series_label} (folder missing)"),
-            )
-            .entity("series", series_id.to_string(), Some(series_label))
-            .detail(serde_json::json!({ "issues_removed": res.rows_affected }));
-        missing_series.push((series_id, ev));
+        Ok(())
     }
+    .await;
     // The issues of every swept series were just removed: re-derive their
     // ratings (`library::series_rating`) before the series rows go.
     if !missing_series.is_empty() {
         let ids: Vec<Uuid> = missing_series.iter().map(|(id, _)| *id).collect();
         crate::library::series_rating::recompute_best_effort(db, &ids).await;
     }
+    swept?;
     // Each chunk's events are recorded once its series rows are written.
     let mut missing_series = missing_series.into_iter().peekable();
     while missing_series.peek().is_some() {
@@ -680,39 +695,46 @@ pub async fn reconcile_series(
         .await?;
 
     let (removed_before, restored_before) = (stats.issues_removed, stats.issues_restored);
-    for row in issues {
-        let path = Path::new(&row.file_path);
-        let exists = path.exists();
-        // Build a targeted ActiveModel from the id so only the two flipped
-        // columns are written (a projected row can't `.into()` a full model).
-        match (row.removed_at.is_some(), exists) {
-            (false, false) => {
-                let am = issue::ActiveModel {
-                    id: Set(row.id.clone()),
-                    removed_at: Set(Some(now)),
-                    removal_confirmed_at: Set(None),
-                    ..Default::default()
-                };
-                am.update(db).await?;
-                stats.issues_removed += 1;
+    // On a failed write the rows already flipped are re-derived before the
+    // error is returned.
+    let flipped: anyhow::Result<()> = async {
+        for row in issues {
+            let path = Path::new(&row.file_path);
+            let exists = path.exists();
+            // Build a targeted ActiveModel from the id so only the two flipped
+            // columns are written (a projected row can't `.into()` a full model).
+            match (row.removed_at.is_some(), exists) {
+                (false, false) => {
+                    let am = issue::ActiveModel {
+                        id: Set(row.id.clone()),
+                        removed_at: Set(Some(now)),
+                        removal_confirmed_at: Set(None),
+                        ..Default::default()
+                    };
+                    am.update(db).await?;
+                    stats.issues_removed += 1;
+                }
+                (true, true) => {
+                    let am = issue::ActiveModel {
+                        id: Set(row.id.clone()),
+                        removed_at: Set(None),
+                        removal_confirmed_at: Set(None),
+                        ..Default::default()
+                    };
+                    am.update(db).await?;
+                    stats.issues_restored += 1;
+                }
+                _ => {}
             }
-            (true, true) => {
-                let am = issue::ActiveModel {
-                    id: Set(row.id.clone()),
-                    removed_at: Set(None),
-                    removal_confirmed_at: Set(None),
-                    ..Default::default()
-                };
-                am.update(db).await?;
-                stats.issues_restored += 1;
-            }
-            _ => {}
         }
+        Ok(())
     }
+    .await;
 
     if stats.issues_removed > removed_before || stats.issues_restored > restored_before {
         crate::library::series_rating::recompute_best_effort(db, &[series_id]).await;
     }
+    flipped?;
 
     // Soft-delete the series itself if every issue is now removed.
     let srow = series::Entity::find_by_id(series_id)
@@ -871,51 +893,59 @@ async fn reconcile_issue_rows_seen(
         }
     }
 
-    let mut removals = remove_ids.into_iter().peekable();
-    while removals.peek().is_some() {
-        let batch: Vec<(String, NewEvent)> = removals.by_ref().take(500).collect();
-        let ids: Vec<String> = batch.iter().map(|(id, _)| id.clone()).collect();
-        let res = IssueEntity::update_many()
-            .col_expr(issue::Column::RemovedAt, Expr::value(now))
-            .col_expr(
-                issue::Column::RemovalConfirmedAt,
-                Expr::value(Option::<chrono::DateTime<chrono::FixedOffset>>::None),
-            )
-            .filter(issue::Column::Id.is_in(ids))
-            .exec(db)
-            .await?;
-        stats.issues_removed += res.rows_affected;
-        for (_, ev) in batch {
-            events.push(ev);
+    // A failed chunk stops the writes, but earlier chunks stay written:
+    // their series are re-derived below before the error is returned, so a
+    // restored issue never leaves its series rated too low.
+    let flipped: anyhow::Result<()> = async {
+        let mut removals = remove_ids.into_iter().peekable();
+        while removals.peek().is_some() {
+            let batch: Vec<(String, NewEvent)> = removals.by_ref().take(500).collect();
+            let ids: Vec<String> = batch.iter().map(|(id, _)| id.clone()).collect();
+            let res = IssueEntity::update_many()
+                .col_expr(issue::Column::RemovedAt, Expr::value(now))
+                .col_expr(
+                    issue::Column::RemovalConfirmedAt,
+                    Expr::value(Option::<chrono::DateTime<chrono::FixedOffset>>::None),
+                )
+                .filter(issue::Column::Id.is_in(ids))
+                .exec(db)
+                .await?;
+            stats.issues_removed += res.rows_affected;
+            for (_, ev) in batch {
+                events.push(ev);
+            }
         }
-    }
-    let mut restores = restore_ids.into_iter().peekable();
-    while restores.peek().is_some() {
-        let batch: Vec<(String, NewEvent)> = restores.by_ref().take(500).collect();
-        let ids: Vec<String> = batch.iter().map(|(id, _)| id.clone()).collect();
-        let res = IssueEntity::update_many()
-            .col_expr(
-                issue::Column::RemovedAt,
-                Expr::value(Option::<chrono::DateTime<chrono::FixedOffset>>::None),
-            )
-            .col_expr(
-                issue::Column::RemovalConfirmedAt,
-                Expr::value(Option::<chrono::DateTime<chrono::FixedOffset>>::None),
-            )
-            .filter(issue::Column::Id.is_in(ids))
-            .exec(db)
-            .await?;
-        stats.issues_restored += res.rows_affected;
-        for (_, ev) in batch {
-            events.push(ev);
+        let mut restores = restore_ids.into_iter().peekable();
+        while restores.peek().is_some() {
+            let batch: Vec<(String, NewEvent)> = restores.by_ref().take(500).collect();
+            let ids: Vec<String> = batch.iter().map(|(id, _)| id.clone()).collect();
+            let res = IssueEntity::update_many()
+                .col_expr(
+                    issue::Column::RemovedAt,
+                    Expr::value(Option::<chrono::DateTime<chrono::FixedOffset>>::None),
+                )
+                .col_expr(
+                    issue::Column::RemovalConfirmedAt,
+                    Expr::value(Option::<chrono::DateTime<chrono::FixedOffset>>::None),
+                )
+                .filter(issue::Column::Id.is_in(ids))
+                .exec(db)
+                .await?;
+            stats.issues_restored += res.rows_affected;
+            for (_, ev) in batch {
+                events.push(ev);
+            }
         }
+        Ok(())
     }
+    .await;
     // The series of restored issues come back in the caller's last step
     // (`restore_*series_with_live_issues`), after every removal sweep.
     if !rated_series.is_empty() {
         let ids: Vec<Uuid> = rated_series.into_iter().collect();
         crate::library::series_rating::recompute_best_effort(db, &ids).await;
     }
+    flipped?;
 
     Ok(())
 }

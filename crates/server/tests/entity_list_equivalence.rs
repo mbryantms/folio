@@ -1242,3 +1242,215 @@ async fn people_search_is_unchanged() {
     let _ = (f.s_empty, f.s_cee);
     settings().bind(|| insta::assert_json_snapshot!("people_api", Json::Object(out)));
 }
+
+// ───────── hide unrated ─────────
+//
+// Not a snapshot: the snapshots above pin equivalence with the old lists,
+// which had no `hide_unrated`. Two more readers of library A carry the
+// option, one without a cap (the hide-only path: the issue predicate has
+// no own-rating part, only the series rule) and one with a `Teen` cap.
+// Every entity kind gets one name that appears ONLY in the unrated series
+// Alpha (on an unrated issue, plus a series-level rollup row where the
+// kind has one) and one that appears in a `Teen` series. Neither reader may
+// see the first in the list, its `total`, the people search or the OPDS
+// navigation feeds; the reader without the option sees both.
+
+async fn grant_hiding_unrated(db: &DatabaseConnection, lib: Uuid, user: Uuid, cap: Option<&str>) {
+    let now = Utc::now().fixed_offset();
+    library_user_access::ActiveModel {
+        library_id: Set(lib),
+        user_id: Set(user),
+        age_rating_max: Set(cap.map(str::to_owned)),
+        hide_unrated: Set(true),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+}
+
+/// Every `name` of a walked list, and the first page's `total`.
+async fn listed(app: &TestApp, path: &str, user: &Authed, key: &str) -> (Vec<String>, Json) {
+    let pages = walk(app, &format!("/api/{path}?limit=2"), user).await;
+    let total = pages[0]["total"].clone();
+    let names = pages
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|p| p["items"].as_array().cloned().unwrap_or_default())
+        .filter_map(|i| i[key].as_str().map(str::to_owned))
+        .collect();
+    (names, total)
+}
+
+#[tokio::test]
+async fn entity_lists_leave_out_what_only_an_unrated_series_carries() {
+    let app = TestApp::spawn().await;
+    let f = fixture(&app).await;
+    let db = &f.db;
+    let hide_only = register(&app, "hide-only@example.com", "hide-only").await;
+    let capped_hide = register(&app, "capped-hide@example.com", "capped-hide").await;
+    for u in [&hide_only, &capped_hide] {
+        demote(db, u.user_id).await;
+    }
+    let lib_a: Uuid = entity::series::Entity::find_by_id(f.s_alpha)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap()
+        .library_id;
+    grant_hiding_unrated(db, lib_a, hide_only.user_id, None).await;
+    grant_hiding_unrated(db, lib_a, capped_hide.user_id, Some("Teen")).await;
+
+    // Alpha is unrated and so is its issue a[0]. "Rated Run" is `Teen`.
+    let alpha_rating: Option<String> = entity::series::Entity::find_by_id(f.s_alpha)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap()
+        .age_rating;
+    assert_eq!(alpha_rating, None);
+    let root = f._tmp.path().join("a");
+    let s_rated = SeriesSeed::new(lib_a, "Rated Run")
+        .with_publisher("Rated Press")
+        .insert(db)
+        .await;
+    exec(
+        db,
+        "UPDATE series SET age_rating = 'Teen' WHERE id = $1",
+        vec![s_rated.into()],
+    )
+    .await;
+    let rated = issue(db, &root, lib_a, s_rated, "rated-1", 1.0).await;
+    let unrated = &f.a[0];
+
+    use Hit::*;
+    for (k, n) in [(&CHARACTER, 1u128), (&TEAM, 1), (&LOCATION, 1)] {
+        let id = add_entity(
+            db,
+            k.table,
+            n,
+            "unrated-only",
+            "Unrated Only",
+            "unrated only",
+        )
+        .await;
+        add_hits(
+            db,
+            k,
+            id,
+            &[
+                IssueFk(unrated, "Unrated Only"),
+                SeriesFk(f.s_alpha, "Unrated Only"),
+            ],
+        )
+        .await;
+        let id = add_entity(db, k.table, n + 1, "rated-seen", "Rated Seen", "rated seen").await;
+        add_hits(db, k, id, &[IssueFk(&rated, "Rated Seen")]).await;
+    }
+    let arc = add_entity(
+        db,
+        "story_arc",
+        1,
+        "unrated-only",
+        "Unrated Only",
+        "unrated only",
+    )
+    .await;
+    exec(
+        db,
+        "INSERT INTO issue_arcs (issue_id, arc_id, position_in_arc) VALUES ($1, $2, NULL)",
+        vec![unrated.clone().into(), arc.into()],
+    )
+    .await;
+    exec(
+        db,
+        "INSERT INTO series_arcs (series_id, arc_id) VALUES ($1, $2)",
+        vec![f.s_alpha.into(), arc.into()],
+    )
+    .await;
+    let arc = add_entity(db, "story_arc", 2, "rated-seen", "Rated Seen", "rated seen").await;
+    exec(
+        db,
+        "INSERT INTO issue_arcs (issue_id, arc_id, position_in_arc) VALUES ($1, $2, NULL)",
+        vec![rated.clone().into(), arc.into()],
+    )
+    .await;
+    // Publishers: Alpha names "Acme Press", Rated Run "Rated Press".
+    add_entity(db, "publisher", 1, "acme-press", "Acme Press", "acme press").await;
+    add_entity(
+        db,
+        "publisher",
+        2,
+        "rated-press",
+        "Rated Press",
+        "rated press",
+    )
+    .await;
+    issue_credit(db, unrated, "writer", "Unrated Only").await;
+    series_credit(db, f.s_alpha, "writer", "Unrated Only").await;
+    issue_credit(db, &rated, "writer", "Rated Seen").await;
+
+    let kinds = [
+        ("characters", "name", "Unrated Only", "Rated Seen", true),
+        ("teams", "name", "Unrated Only", "Rated Seen", true),
+        ("locations", "name", "Unrated Only", "Rated Seen", false),
+        ("arcs", "name", "Unrated Only", "Rated Seen", true),
+        ("publishers", "name", "Acme Press", "Rated Press", true),
+        ("creators", "person", "Unrated Only", "Rated Seen", false),
+    ];
+    for (path, key, hidden, seen, has_opds) in kinds {
+        for user in [&hide_only, &capped_hide] {
+            let (names, total) = listed(&app, path, user, key).await;
+            assert_eq!(names, vec![seen.to_owned()], "{} {path}", user.label);
+            assert_eq!(total, json!(1), "{} {path}", user.label);
+            let (_, body) = get_json(
+                &app,
+                &format!("/api/{path}?starts_with={}", enc(&hidden[..1])),
+                user,
+            )
+            .await;
+            assert!(
+                !body.to_string().contains(hidden),
+                "{} {path}: {body}",
+                user.label
+            );
+            if has_opds {
+                for v in ["v1", "v2"] {
+                    let (st, bytes) = get(&app, &format!("/opds/{v}/{path}"), user).await;
+                    assert_eq!(st, StatusCode::OK, "{} {v} {path}", user.label);
+                    let text = String::from_utf8(bytes).unwrap();
+                    assert!(
+                        text.contains(seen) && !text.contains(hidden),
+                        "{} {v} {path}: {text}",
+                        user.label
+                    );
+                }
+            }
+        }
+        // Without the option the unrated series is visible: both names.
+        let (mut names, total) = listed(&app, path, &f.partial, key).await;
+        names.sort();
+        let mut want = vec![hidden.to_owned(), seen.to_owned()];
+        want.sort();
+        assert_eq!(names, want, "partial {path}");
+        assert_eq!(total, json!(2), "partial {path}");
+    }
+    for user in [&hide_only, &capped_hide] {
+        let (_, body) = get_json(&app, "/api/people?q=unrated", user).await;
+        assert!(
+            body["items"].as_array().is_some_and(Vec::is_empty),
+            "{} {body}",
+            user.label
+        );
+        let (_, body) = get_json(&app, "/api/people?q=rated%20seen", user).await;
+        assert_eq!(
+            body["items"][0]["person"], "Rated Seen",
+            "{} {body}",
+            user.label
+        );
+    }
+    let (_, body) = get_json(&app, "/api/people?q=unrated", &f.partial).await;
+    assert_eq!(body["items"][0]["person"], "Unrated Only", "{body}");
+}

@@ -46,7 +46,7 @@ pub(crate) struct CollectionSequence {
     /// Flat reading order (see the module docs). May be empty.
     pub items: Vec<IssueCardRow>,
     /// Parent series of every item, for the slug / name on the target
-    /// view and the series-rating fallback in the ACL check.
+    /// view and the series-rating half of the ACL check.
     pub series_by_id: HashMap<Uuid, series::Model>,
 }
 

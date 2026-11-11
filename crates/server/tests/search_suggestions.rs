@@ -475,6 +475,73 @@ async fn suggestions_respect_the_age_rating_cap() {
     );
 }
 
+/// A grant that hides unrated content hides an unrated series from the
+/// suggestions too, with or without a cap: the answer is the one a search
+/// with nothing similar gets. A rated series is still offered.
+#[tokio::test]
+async fn suggestions_respect_hide_unrated() {
+    let app = TestApp::spawn().await;
+    let _admin = register(&app, "admin@hide.test").await;
+    let hide_only = register(&app, "hide-only@hide.test").await;
+    demote_to_user(&app, hide_only.user_id).await;
+    let capped_hide = register(&app, "capped-hide@hide.test").await;
+    demote_to_user(&app, capped_hide.user_id).await;
+    let plain = register(&app, "plain@hide.test").await;
+    demote_to_user(&app, plain.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let lib = seed_library(&db, "hide").await;
+    let now = Utc::now().fixed_offset();
+    for (user, cap) in [(&hide_only, None), (&capped_hide, Some("Teen"))] {
+        library_user_access::ActiveModel {
+            user_id: Set(user.user_id),
+            library_id: Set(lib),
+            age_rating_max: Set(cap.map(str::to_owned)),
+            hide_unrated: Set(true),
+            created_at: Set(now),
+            updated_at: Set(now),
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+    }
+    grant(&db, plain.user_id, lib, None).await;
+    seed_series(
+        &db,
+        lib,
+        "Wolverine Origins Ultimate Collection",
+        None,
+        false,
+    )
+    .await;
+    seed_series(
+        &db,
+        lib,
+        "Teen Titans Go Big Collection",
+        Some("Teen"),
+        false,
+    )
+    .await;
+
+    let body = get_json(&app, &search_uri("wolverne"), &plain).await;
+    assert_eq!(body["total"], 0, "main search misses: {body}");
+    assert_eq!(
+        suggestion_names(&body),
+        vec!["Wolverine Origins Ultimate Collection"]
+    );
+
+    for user in [&hide_only, &capped_hide] {
+        let hidden = get_json(&app, &search_uri("wolverne"), user).await;
+        let nothing = get_json(&app, &search_uri("zzzzqq"), user).await;
+        assert_eq!(hidden, nothing, "indistinguishable from nothing similar");
+        assert!(hidden.get("suggestions").is_none(), "{hidden}");
+        let body = get_json(&app, &search_uri("titnas"), user).await;
+        assert_eq!(
+            suggestion_names(&body),
+            vec!["Teen Titans Go Big Collection"]
+        );
+    }
+}
+
 /// A soft-removed series is never suggested; restoring it brings it back.
 #[tokio::test]
 async fn removed_series_are_not_suggested() {
