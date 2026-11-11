@@ -40,7 +40,7 @@ pub mod rewrite_policy;
 pub mod source;
 
 pub use comic_archive::ComicArchive;
-pub use source::ArchiveFile;
+pub use source::{ArchiveFile, FileStamp};
 
 /// Open a comic archive of any supported format from an open file.
 ///
@@ -163,7 +163,7 @@ impl Default for ArchiveLimits {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum ArchiveError {
     #[error("archive entry rejected (zip-slip / invalid path): {0}")]
     UnsafeEntry(String),
@@ -175,6 +175,11 @@ pub enum ArchiveError {
     Io(String),
     #[error("malformed archive: {0}")]
     Malformed(String),
+    /// The archive may be fine, but the caller has no reader for its
+    /// format for this use (the server's page cache reads only CBZ and
+    /// CBT; a CBR or CB7 must be converted first).
+    #[error("no reader for this archive format: {0}")]
+    NoPageReader(String),
 }
 
 impl ArchiveError {
@@ -261,7 +266,7 @@ impl ArchiveError {
         match self {
             Self::UnsafeEntry(_) => Some(SafetyCheck::UnsafeEntryName),
             Self::CapExceeded(cap) => Some(cap.check),
-            Self::Encrypted | Self::Io(_) | Self::Malformed(_) => None,
+            Self::Encrypted | Self::Io(_) | Self::Malformed(_) | Self::NoPageReader(_) => None,
         }
     }
 }

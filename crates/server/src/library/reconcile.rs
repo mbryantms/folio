@@ -513,6 +513,9 @@ async fn reconcile_library_seen_inner(
     stop: Option<ReconcileStop<'_>>,
 ) -> anyhow::Result<u64> {
     let now = Utc::now().fixed_offset();
+    // Every row this pass soft-removes carries this one `removed_at`; the
+    // large-removal check counts them by it (`library::large_removal`).
+    stats.removal_stamp = Some(now);
     let chunk = chunk.max(1);
     check_stop(stop)?;
 

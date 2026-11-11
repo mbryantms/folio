@@ -10473,7 +10473,7 @@ export interface components {
          *     one of these.
          * @enum {string}
          */
-        HealthIssueKind: "FileAtRoot" | "EmptyFolder" | "UnreadableFile" | "UnreadableFolder" | "UnreadableArchive" | "MissingComicInfo" | "MalformedComicInfo" | "MalformedArchive" | "ArchiveSafetyRefusal" | "EncryptedArchive" | "FolderNameMismatch" | "MixedSeriesInFolder" | "DuplicateContent" | "OrphanedSeriesJson" | "UnsupportedArchiveFormat" | "RecoveredArchive" | "SkippedArchiveEntries" | "UnreadablePage" | "NoPages" | "AmbiguousFolder" | "DuplicateExternalId" | "SymlinkSkipped" | "MetadataDriftFromXml";
+        HealthIssueKind: "FileAtRoot" | "EmptyFolder" | "UnreadableFile" | "UnreadableFolder" | "UnreadableArchive" | "MissingComicInfo" | "MalformedComicInfo" | "MalformedArchive" | "ArchiveSafetyRefusal" | "EncryptedArchive" | "FolderNameMismatch" | "MixedSeriesInFolder" | "DuplicateContent" | "OrphanedSeriesJson" | "UnsupportedArchiveFormat" | "RecoveredArchive" | "SkippedArchiveEntries" | "UnreadablePage" | "NoPages" | "AmbiguousFolder" | "DuplicateExternalId" | "SymlinkSkipped" | "LargeRemoval" | "MetadataDriftFromXml";
         /**
          * @description One kind-facet tally within the current status+severity scope (drives the
          *     per-kind filter pills).
@@ -24046,8 +24046,22 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description issue not found */
+            /** @description issue or page not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the issue's file is a CBR / CB7 that must be converted to CBZ first (`archive_needs_conversion`) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the issue's file is missing (`archive_missing`) or not a readable archive (`archive_unreadable`) */
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -24055,6 +24069,13 @@ export interface operations {
             };
             /** @description ocr pipeline failure */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description OCR busy (`service_unavailable`), the library's folder is offline (`library_offline`), or the file could not be read; carries Retry-After */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -24091,6 +24112,20 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description the issue's file is a CBR / CB7 that must be converted to CBZ first (`archive_needs_conversion`) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the issue's file is missing (`archive_missing`) or not a readable archive (`archive_unreadable`) */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description page is not a decodable image */
             415: {
                 headers: {
@@ -24100,6 +24135,13 @@ export interface operations {
             };
             /** @description detector failure */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description OCR busy (`service_unavailable`), the library's folder is offline (`library_offline`), or the file could not be read; carries Retry-After */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

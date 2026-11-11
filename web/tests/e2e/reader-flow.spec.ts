@@ -21,7 +21,7 @@
  * with COMIC_LOCAL_REGISTRATION_OPEN=true; it skips otherwise so a plain
  * `pnpm test:e2e` against raw Next still exits clean.
  */
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import {
   ADMIN_EMAIL,
   csrfToken,
@@ -29,6 +29,27 @@ import {
   registrationOpen,
 } from "./support/admin";
 import { expectNoAxeViolations } from "./support/axe";
+
+/**
+ * Show the reader controls and click Exit.
+ *
+ * `t` toggles the controls, and a new issue re-initialises the reader with
+ * them hidden. After a move to the next issue that reset can land a moment
+ * after the URL has changed, so a single `t` may be undone (or, pressed
+ * while the controls are up, hide them) and the Exit button never appears.
+ * So: press `t` only while the controls are closed, and try again until the
+ * click goes through.
+ */
+async function exitReader(page: Page) {
+  const chrome = page.getByTestId("reader-chrome");
+  const exit = page.getByRole("button", { name: "Exit reader" });
+  await expect(async () => {
+    if ((await chrome.getAttribute("data-state")) !== "open") {
+      await page.keyboard.press("t");
+    }
+    await exit.click({ timeout: 2_000 });
+  }).toPass({ timeout: 20_000 });
+}
 
 test.describe("Reader flow", () => {
   test.beforeEach(async ({ context, request }) => {
@@ -410,8 +431,7 @@ test.describe("Reader flow", () => {
     await expect(page.getByTestId("reader-chrome")).toBeAttached({
       timeout: 15_000,
     });
-    await page.keyboard.press("t");
-    await page.getByRole("button", { name: "Exit reader" }).click();
+    await exitReader(page);
     await page.waitForURL(/\/series\/[^/]+\/issues\/[^/]+$/);
 
     await expect(
@@ -463,8 +483,7 @@ test.describe("Reader flow", () => {
       timeout: 15_000,
     });
 
-    await page.keyboard.press("t");
-    await page.getByRole("button", { name: "Exit reader" }).click();
+    await exitReader(page);
     await page.waitForURL((url) => url.pathname === seriesPath);
 
     // The reader is forward of the series page now, not behind it.

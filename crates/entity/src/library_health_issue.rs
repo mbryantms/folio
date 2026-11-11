@@ -109,6 +109,10 @@ pub enum HealthIssueKind {
     /// A symbolic link below the library root; links are never followed.
     #[sea_orm(string_value = "SymlinkSkipped")]
     SymlinkSkipped,
+    /// One scan soft-removed an unusually large share of the library (a
+    /// missing mount or share, a folder moved aside). One row per library.
+    #[sea_orm(string_value = "LargeRemoval")]
+    LargeRemoval,
     /// Never stored: the health list synthesizes this row per request
     /// for a writeback library with user pins not yet in its XML
     /// (`api::health_issues`).
@@ -142,6 +146,7 @@ impl HealthIssueKind {
             Self::AmbiguousFolder => "AmbiguousFolder",
             Self::DuplicateExternalId => "DuplicateExternalId",
             Self::SymlinkSkipped => "SymlinkSkipped",
+            Self::LargeRemoval => "LargeRemoval",
             Self::MetadataDriftFromXml => "MetadataDriftFromXml",
         }
     }
@@ -247,6 +252,7 @@ mod tests {
                 (HealthIssueKind::AmbiguousFolder, "AmbiguousFolder"),
                 (HealthIssueKind::DuplicateExternalId, "DuplicateExternalId"),
                 (HealthIssueKind::SymlinkSkipped, "SymlinkSkipped"),
+                (HealthIssueKind::LargeRemoval, "LargeRemoval"),
                 (
                     HealthIssueKind::MetadataDriftFromXml,
                     "MetadataDriftFromXml",

@@ -3,10 +3,18 @@
 //!
 //! A variant is a WebP re-encode of one archive page downscaled to a fixed
 //! width tier. Variants are rendered lazily on first request and cached at
-//! `data_path/cache/pages/{content_hash}/{page}-w{tier}.webp`. The cache is
-//! LRU-bounded by a byte budget (`COMIC_PAGE_VARIANT_CACHE_BYTES`); keys
-//! embed `content_hash`, so an archive edit orphans its old variants and
-//! the sweep ages them out.
+//! `data_path/cache/pages/{content_hash}/{page}-w{tier}-{version}.webp`,
+//! where `version` is a digest of the open file's stamp (device, inode,
+//! size, modification and status-change time; `api::page_source::
+//! version_tag`). The cache is LRU-bounded by a byte budget
+//! (`COMIC_PAGE_VARIANT_CACHE_BYTES`) over every file under
+//! `cache/pages`, whatever its name. `content_hash` changes with an archive
+//! edit after the rescan; `version` changes the moment the file does, so a
+//! render is never served for, or stored under, another version of the
+//! file (audit R-05). Both orphan the old variants and the sweep ages them
+//! out. The cost: anything that changes the stamp without changing the
+//! pages (a `chmod`, the writeback's backup hard link, a restore to a new
+//! device) re-renders that issue's variants once.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -38,13 +46,19 @@ pub fn clamp_to_tier(w: u32) -> u32 {
     *TIERS.last().expect("TIERS non-empty")
 }
 
-/// Cache file for a `(content_hash, page, tier)` triple.
-pub fn cache_path(data_path: &Path, content_hash: &str, page: usize, tier: u32) -> PathBuf {
+/// Cache file for a `(content_hash, file version, page, tier)` key.
+pub fn cache_path(
+    data_path: &Path,
+    content_hash: &str,
+    version: &str,
+    page: usize,
+    tier: u32,
+) -> PathBuf {
     data_path
         .join("cache")
         .join("pages")
         .join(content_hash)
-        .join(format!("{page}-w{tier}.webp"))
+        .join(format!("{page}-w{tier}-{version}.webp"))
 }
 
 /// Outcome of rendering a variant from original page bytes.
@@ -241,12 +255,13 @@ mod tests {
     fn eviction_respects_budget_and_lru_order() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("cache").join("pages");
-        let old = root.join("hash-a");
-        let new = root.join("hash-b");
+        // Real keys: the same page of one issue under two file versions
+        // (an in-place rewrite before the rescan), and another issue.
+        let old_f = cache_path(tmp.path(), "hash-a", "v1", 0, 480);
+        let new_f = cache_path(tmp.path(), "hash-b", "v1", 0, 480);
+        let old = old_f.parent().unwrap().to_path_buf();
         std::fs::create_dir_all(&old).unwrap();
-        std::fs::create_dir_all(&new).unwrap();
-        let old_f = old.join("0-w480.webp");
-        let new_f = new.join("0-w480.webp");
+        std::fs::create_dir_all(new_f.parent().unwrap()).unwrap();
         std::fs::write(&old_f, vec![0u8; 600]).unwrap();
         std::fs::write(&new_f, vec![0u8; 600]).unwrap();
         // Make `old_f` clearly older.
@@ -262,5 +277,27 @@ mod tests {
         assert!(!old_f.exists(), "oldest-mtime file evicted");
         assert!(new_f.exists(), "recent file kept");
         assert!(!old.exists(), "emptied hash dir pruned");
+    }
+
+    /// The file version is part of the key, and the sweep counts every
+    /// version's file toward the budget.
+    #[test]
+    fn variant_keys_carry_the_file_version_and_are_swept() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = cache_path(tmp.path(), "hash", "v1", 3, 720);
+        let b = cache_path(tmp.path(), "hash", "v2", 3, 720);
+        assert_ne!(a, b);
+        assert_eq!(a.parent(), b.parent(), "one folder per content hash");
+        std::fs::create_dir_all(a.parent().unwrap()).unwrap();
+        std::fs::write(&a, vec![0u8; 600]).unwrap();
+        std::fs::write(&b, vec![0u8; 600]).unwrap();
+        let past = SystemTime::now() - std::time::Duration::from_secs(3600);
+        let f = std::fs::File::options().append(true).open(&a).unwrap();
+        f.set_times(std::fs::FileTimes::new().set_modified(past))
+            .unwrap();
+        drop(f);
+        evict_to_budget(&tmp.path().join("cache").join("pages"), 1000).unwrap();
+        assert!(!a.exists(), "the stale version's render is swept first");
+        assert!(b.exists());
     }
 }

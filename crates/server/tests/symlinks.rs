@@ -813,17 +813,15 @@ async fn background_readers_refuse_an_archive_swapped_for_a_link() {
     );
     swap_for_link(&l);
 
-    // Page-hash capture (anchors) and the whole-archive page hash.
+    // Page-hash capture (anchors). The whole-archive page hash takes the
+    // handle the scanner's ingest opened through the no-follow walk (B10),
+    // and that open refuses the link.
     assert!(
         server::reading::page_hash::capture(&state, &row, 0)
             .await
             .is_none()
     );
-    assert!(
-        server::reading::page_hash::hash_all_pages(&state, &l.root, l.archive.clone())
-            .await
-            .is_none()
-    );
+    assert!(server::library::no_follow::open_library_file(&l.root, &l.archive).is_err());
 
     // Thumbnail generation.
     thumbnails::wipe_issue_thumbs(&state.cfg().data_path, &l.issue_id);

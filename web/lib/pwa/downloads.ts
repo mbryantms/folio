@@ -336,8 +336,15 @@ function classify(e: unknown): { kind: DownloadErrorKind; message: string } {
       message: "Device storage is full. Remove downloads to free space.",
     };
   if (e instanceof HttpStatusError) {
+    // Final answers: retrying them on reconnect cannot succeed.
     if (e.status === 404 || e.status === 410)
       return { kind: "gone", message: "This issue is no longer available." };
+    if (e.status === 409)
+      return {
+        kind: "needs_conversion",
+        message:
+          "This issue's file needs converting to CBZ before it can be downloaded.",
+      };
     if (e.status === 401 || e.status === 403)
       return {
         kind: "network",
@@ -1091,10 +1098,13 @@ export function createDownloadManager(
               status: "queued",
               error: null,
               errorMessage: null,
-              // A retry after "no longer available" re-reads the issue:
-              // its page map or page count may have changed under the
-              // stored record (stored pages are kept and skipped).
-              ...(r.error === "gone" ? { pages: [], pageCount: 0 } : {}),
+              // A retry after "no longer available" or a conversion
+              // re-reads the issue: its page map or page count may have
+              // changed under the stored record (stored pages are kept
+              // and skipped).
+              ...(r.error === "gone" || r.error === "needs_conversion"
+                ? { pages: [], pageCount: 0 }
+                : {}),
             },
       );
       void pump();

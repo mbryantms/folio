@@ -726,3 +726,48 @@ async fn first_page_writes_one_audit_row() {
     assert_eq!(rows.len(), 1, "page-0 access logs once");
     assert_eq!(rows[0].actor_id, auth.user_id);
 }
+
+/// Audit R-06a: once the issue's file is gone the page stream answers 410
+/// `archive_missing` (was 500), not cacheable.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn missing_file_returns_410() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "pse-gone@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("gone.cbz");
+    build_cbz(&cbz, &page_payload());
+    // Other content stays: an empty root reads as an unmounted library.
+    std::fs::write(dir.path().join("other.txt"), b"x").unwrap();
+    let (_lib, issue_id) = seed_issue(&app, &cbz).await;
+    use entity::series::Column as SCol;
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let series_id = entity::series::Entity::find()
+        .filter(SCol::Name.eq("Series"))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+    let (query, _) = fetch_pse_query(&app, &auth, series_id).await;
+    std::fs::remove_file(&cbz).unwrap();
+
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/opds/pse/{issue_id}/0?{query}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::GONE);
+    assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store");
+    let body: serde_json::Value =
+        serde_json::from_slice(&body_bytes(resp.into_body()).await).unwrap();
+    assert_eq!(body["error"]["code"], "archive_missing");
+}
