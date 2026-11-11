@@ -45,6 +45,7 @@ use entity::{
 use crate::api::respond;
 use crate::api::saved_views::KIND_COLLECTION;
 use crate::auth::CurrentUser;
+use crate::library::access::VisibleLibraries;
 use crate::middleware::rate_limit;
 use crate::state::AppState;
 use server_macros::handler;
@@ -370,7 +371,8 @@ pub struct ExportPreferences {
 )]
 #[handler]
 pub async fn export(State(app): State<AppState>, user: CurrentUser) -> Response {
-    match build_export(&app.db, user.id).await {
+    let acl = crate::library::access::for_user(&app, &user).await;
+    match build_export(&app.db, user.id, &acl).await {
         Ok(doc) => {
             let filename = format!("folio-export-{}.json", Utc::now().format("%Y-%m-%d"));
             (
@@ -402,6 +404,7 @@ pub async fn export(State(app): State<AppState>, user: CurrentUser) -> Response 
 async fn build_export(
     db: &DatabaseConnection,
     user_id: Uuid,
+    acl: &VisibleLibraries,
 ) -> Result<UserExport, sea_orm::DbErr> {
     let Some(user_row) = user::Entity::find_by_id(user_id).one(db).await? else {
         return Err(sea_orm::DbErr::RecordNotFound("user".into()));
@@ -539,7 +542,11 @@ async fn build_export(
         issue_ids.insert(n.issue_id.clone());
     }
 
-    let refs = Refs::load(db, issue_ids, series_ids).await?;
+    // Content the caller can no longer see is still the user's data, but
+    // the document names none of it (ids and content hashes stay, for a
+    // re-import). Soft-removed content keeps its names.
+    let mut refs = Refs::load(db, issue_ids, series_ids).await?;
+    refs.hide_inaccessible(db, acl).await?;
 
     // ── shape sections ──
     let progress = progress_rows
@@ -840,6 +847,11 @@ pub(crate) struct Refs {
     pub(crate) issues: HashMap<String, IssueRow>,
     pub(crate) series: HashMap<Uuid, SeriesRow>,
     libraries: HashMap<Uuid, String>,
+    /// Issues / series the caller can no longer see (library grant / age
+    /// cap; [`Refs::hide_inaccessible`]): their references keep ids and the
+    /// content hash but carry no names.
+    hidden_issues: HashSet<String>,
+    hidden_series: HashSet<Uuid>,
 }
 
 impl Refs {
@@ -925,7 +937,60 @@ impl Refs {
             issues,
             series,
             libraries,
+            hidden_issues: HashSet::new(),
+            hidden_series: HashSet::new(),
         })
+    }
+
+    /// Mark every loaded issue and series outside the caller's library
+    /// grant or above their age cap as hidden, so its references name
+    /// nothing. Soft-removed content is not hidden: it keeps its names.
+    pub(crate) async fn hide_inaccessible(
+        &mut self,
+        db: &DatabaseConnection,
+        acl: &VisibleLibraries,
+    ) -> Result<(), sea_orm::DbErr> {
+        let (Some(issue_cond), Some(series_cond)) = (acl.issue_filter(), acl.series_filter())
+        else {
+            return Ok(());
+        };
+        let issue_ids: Vec<String> = self.issues.keys().cloned().collect();
+        let mut seen: HashSet<String> = HashSet::with_capacity(issue_ids.len());
+        for chunk in issue_ids.chunks(HYDRATE_CHUNK) {
+            seen.extend(
+                issue::Entity::find()
+                    .select_only()
+                    .column(issue::Column::Id)
+                    .filter(issue::Column::Id.is_in(chunk.to_vec()))
+                    .filter(issue_cond.clone())
+                    .into_tuple::<String>()
+                    .all(db)
+                    .await?,
+            );
+        }
+        self.hidden_issues = issue_ids
+            .into_iter()
+            .filter(|id| !seen.contains(id))
+            .collect();
+        let series_ids: Vec<Uuid> = self.series.keys().copied().collect();
+        let mut seen: HashSet<Uuid> = HashSet::with_capacity(series_ids.len());
+        for chunk in series_ids.chunks(HYDRATE_CHUNK) {
+            seen.extend(
+                series::Entity::find()
+                    .select_only()
+                    .column(series::Column::Id)
+                    .filter(series::Column::Id.is_in(chunk.to_vec()))
+                    .filter(series_cond.clone())
+                    .into_tuple::<Uuid>()
+                    .all(db)
+                    .await?,
+            );
+        }
+        self.hidden_series = series_ids
+            .into_iter()
+            .filter(|id| !seen.contains(id))
+            .collect();
+        Ok(())
     }
 
     pub(crate) fn issue(&self, issue_id: &str) -> IssueRef {
@@ -940,6 +1005,17 @@ impl Refs {
                 library_slug: None,
             };
         };
+        if self.hidden_issues.contains(issue_id) {
+            return IssueRef {
+                issue_id: issue_id.to_owned(),
+                content_hash: Some(i.content_hash.clone()),
+                series_id: Some(i.series_id),
+                series_name: None,
+                series_year: None,
+                issue_number: None,
+                library_slug: None,
+            };
+        }
         let s = self.series.get(&i.series_id);
         IssueRef {
             issue_id: issue_id.to_owned(),
@@ -953,7 +1029,10 @@ impl Refs {
     }
 
     pub(crate) fn series(&self, series_id: Uuid) -> SeriesRef {
-        let s = self.series.get(&series_id);
+        let s = self
+            .series
+            .get(&series_id)
+            .filter(|_| !self.hidden_series.contains(&series_id));
         SeriesRef {
             series_id,
             series_name: s.map(|s| s.name.clone()),

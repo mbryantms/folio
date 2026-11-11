@@ -73,7 +73,7 @@ export function LibraryList() {
                       : "Never scanned"}
                   </span>
                   <span className="border-border rounded-full border px-2 py-0.5">
-                    {lib.default_reading_direction.toUpperCase()}
+                    {lib.default_reading_direction?.toUpperCase()}
                   </span>
                 </div>
               </CardContent>

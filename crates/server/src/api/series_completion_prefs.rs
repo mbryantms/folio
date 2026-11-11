@@ -161,8 +161,9 @@ pub struct SeriesCompletionPrefsReq {
 }
 
 /// Visible series row, or the 404 a hidden one gets (no existence leak).
-/// A soft-deleted series is gone for readers; admins can still open it
-/// (`series::get_one` ACL widening), so its ⋯ menu control works too.
+/// A soft-deleted series is gone for readers; admins can still read the
+/// setting (`series::get_one` ACL widening). Setting an override on it is
+/// refused for every role in `put`; clearing one stays possible.
 async fn visible_series(
     app: &AppState,
     user: &CurrentUser,
@@ -244,8 +245,14 @@ pub async fn put(
     AxPath(series_id): AxPath<Uuid>,
     Validated(req): Validated<SeriesCompletionPrefsReq>,
 ) -> Response {
-    if let Err(resp) = visible_series(&app, &user, series_id).await {
-        return resp;
+    let row = match visible_series(&app, &user, series_id).await {
+        Ok(row) => row,
+        Err(resp) => return resp,
+    };
+    // No new writes on removed content, whatever the role; `inherit` only
+    // deletes the caller's own row and stays allowed.
+    if row.removed_at.is_some() && req.count_specials.as_override().is_some() {
+        return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     let write = async {
         match req.count_specials.as_override() {

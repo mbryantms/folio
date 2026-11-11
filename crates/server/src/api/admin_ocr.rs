@@ -126,7 +126,7 @@ pub async fn list(_admin: RequireAdmin) -> impl IntoResponse {
             cache_dir: manga_dir.to_string_lossy().into_owned(),
             present: manga_bytes > 0,
             bytes_on_disk: manga_bytes,
-            expected_bytes_approx: 250 * 1024 * 1024,
+            expected_bytes_approx: 440 * 1024 * 1024,
             source: "huggingface.co/mayocream/manga-ocr-onnx",
         },
         OcrModelView {
@@ -205,7 +205,9 @@ fn dir_size(path: &Path) -> std::io::Result<u64> {
         .into_iter()
         .filter_map(Result::ok)
     {
+        // An unfinished model download is not a model on disk.
         if entry.file_type().is_file()
+            && !crate::ocr::models::is_partial_download(&entry.file_name().to_string_lossy())
             && let Ok(meta) = entry.metadata()
         {
             total = total.saturating_add(meta.len());
@@ -247,6 +249,15 @@ mod tests {
         std::fs::create_dir(dir.path().join("nested")).unwrap();
         std::fs::write(dir.path().join("nested/b"), vec![0u8; 250]).unwrap();
         assert_eq!(dir_size(dir.path()).unwrap(), 350);
+    }
+
+    #[test]
+    fn dir_size_leaves_out_unfinished_downloads() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".folio-part-x1Yz"), vec![0u8; 500]).unwrap();
+        assert_eq!(dir_size(dir.path()).unwrap(), 0, "a partial is not a model");
+        std::fs::write(dir.path().join("model.onnx"), vec![0u8; 40]).unwrap();
+        assert_eq!(dir_size(dir.path()).unwrap(), 40);
     }
 
     #[test]

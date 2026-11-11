@@ -81,6 +81,16 @@ COPY crates ./crates
 RUN cargo build --release --bin server --bin migration \
     && strip /work/target/release/server /work/target/release/migration
 
+# The tesseract-rs build script fetches tessdata_best from its `main`
+# branch with no checksum. Pin the content baked into the image: a
+# changed upstream file fails the build here. Digests taken 2026-11-11
+# (tessdata_best main = e12c65a9, 2024-03-09); to update, download both
+# files from github.com/tesseract-ocr/tessdata_best and `sha256sum` them.
+RUN printf '%s  %s\n' \
+      8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba /root/.tesseract-rs/tessdata/eng.traineddata \
+      e0c3338dc17503dc7d335a507c9ae01b2b46cfd07561171e1e1ac55d85e8e438 /root/.tesseract-rs/tessdata/tur.traineddata \
+    | sha256sum -c -
+
 # ───── Stage 2: tini + unrar from Debian apt ─────
 FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS apt-source
 RUN apt-get update && apt-get install -y --no-install-recommends \

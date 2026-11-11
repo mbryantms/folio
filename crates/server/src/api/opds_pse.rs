@@ -13,7 +13,8 @@
 //!   1. parse + verify the URL signature → 401 on tamper/expired/malformed
 //!   2. look up `users` by the signed user_id → 401 if gone
 //!   3. look up `issues` by id → 404
-//!   4. confirm the user still has access to the library → 403 on revoke
+//!   4. confirm the user still has access to the library → 404 on revoke
+//!      (a hidden issue answers like an unknown id)
 //!   5. serve the page bytes (sniffed allowlist, ETag, Range-able)
 //!
 //! An issue whose pages cannot be served answers by the shared mapping in
@@ -113,11 +114,12 @@ pub async fn stream(
     };
 
     // Library ACL — admins always pass, non-admins need an explicit grant
-    // and (WP-2.7) the issue must sit at or below the grant's age cap.
+    // and (WP-2.7) the issue must sit at or below the grant's age cap. A
+    // hidden issue answers exactly like an unknown id.
     if user_row.role != UserRole::Admin {
         let acl = crate::library::access::for_library_by_id(&app, u, issue_row.library_id).await;
         if !crate::library::access::issue_allowed(&app, &acl, &issue_row).await {
-            return error(StatusCode::FORBIDDEN, "library_access_denied");
+            return error(StatusCode::NOT_FOUND, "not_found");
         }
     }
     // A row the scanner could not open has no pages.
