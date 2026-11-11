@@ -106,14 +106,16 @@ fn append(builder: &mut Builder<File>, name: &str, bytes: &[u8]) -> Result<(), A
 
 fn enforce(summary: &RebuildSummary, limits: ArchiveLimits) -> Result<(), ArchiveError> {
     if summary.uncompressed_bytes > limits.max_total_bytes {
-        return Err(ArchiveError::CapExceeded(
+        return Err(ArchiveError::CapExceeded(crate::Cap::new(
+            crate::SafetyCheck::TotalSize,
             "rebuild output exceeded max_total_bytes",
-        ));
+        )));
     }
     if summary.entries_written > limits.max_entries {
-        return Err(ArchiveError::CapExceeded(
+        return Err(ArchiveError::CapExceeded(crate::Cap::new(
+            crate::SafetyCheck::EntryCount,
             "rebuild output exceeded max_entries",
-        ));
+        )));
     }
     Ok(())
 }

@@ -76,6 +76,7 @@ export const queryKeys = {
     severity?: string;
     include_resolved?: boolean;
     include_dismissed?: boolean;
+    scan_id?: string;
     limit?: number;
   }) => ["admin", "health-issues", filters] as const,
   /** Prefix for every cross-library scan-run query (dashboard failures

@@ -3,7 +3,14 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AlertTriangle, CheckCircle2, Info, XCircle } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Info,
+  ScanLine,
+  X,
+  XCircle,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -61,6 +68,9 @@ export function FindingsView() {
   const tab = (sp.get("tab") as Tab) ?? "activity";
   const severity = (sp.get("severity") as Severity) ?? "all";
   const libraryId = sp.get("library_id") ?? "all";
+  // Set by a scan row's findings link: one run's findings, filtered by the
+  // server (`?scan_id=`), never by the client.
+  const scanId = sp.get("scan_id") || null;
 
   const { data: libraries } = useLibraryList();
 
@@ -107,7 +117,17 @@ export function FindingsView() {
             onChange={(v) => setParam("library_id", v)}
           />
         </FilterRow>
-        <HealthIssuesRail severity={severity} libraryId={libraryId} />
+        {scanId ? (
+          <ScanFilterNotice
+            scanId={scanId}
+            onClear={() => setParam("scan_id", null)}
+          />
+        ) : null}
+        <HealthIssuesRail
+          severity={severity}
+          libraryId={libraryId}
+          scanId={scanId}
+        />
       </TabsContent>
     </Tabs>
   );
@@ -144,16 +164,50 @@ function SeverityChips({
   );
 }
 
+/** Says which scan run the findings are filtered to, with a way out. */
+export function ScanFilterNotice({
+  scanId,
+  onClear,
+}: {
+  scanId: string;
+  onClear: () => void;
+}) {
+  return (
+    <div
+      className="bg-muted/50 flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-sm"
+      data-testid="findings-scan-filter"
+    >
+      <ScanLine
+        className="text-muted-foreground size-4 shrink-0"
+        aria-hidden="true"
+      />
+      <span>
+        Showing findings from scan run{" "}
+        <span className="font-mono text-xs" title={scanId}>
+          {scanId.slice(0, 8)}
+        </span>
+      </span>
+      <Button size="sm" variant="ghost" className="ml-auto" onClick={onClear}>
+        <X className="size-4" aria-hidden="true" />
+        Clear scan filter
+      </Button>
+    </div>
+  );
+}
+
 function HealthIssuesRail({
   severity,
   libraryId,
+  scanId,
 }: {
   severity: Severity;
   libraryId: string;
+  scanId: string | null;
 }) {
   const filters = {
     severity: severity === "all" ? undefined : severity,
     library_id: libraryId === "all" ? undefined : libraryId,
+    scan_id: scanId ?? undefined,
     limit: 50,
   };
   const query = useAdminHealthIssues(filters);
@@ -167,14 +221,25 @@ function HealthIssuesRail({
       <Card>
         <CardContent className="text-muted-foreground py-12 text-center text-sm">
           <CheckCircle2 className="text-primary mx-auto mb-2 size-6" />
-          No matching health issues. Your libraries look clean.
+          {scanId
+            ? "This scan run has no open findings."
+            : "No matching health issues. Your libraries look clean."}
         </CardContent>
       </Card>
     );
   }
 
+  const total = data?.pages[0]?.total;
   return (
     <div className="space-y-2">
+      {typeof total === "number" ? (
+        <p
+          className="text-muted-foreground text-xs"
+          data-testid="findings-total"
+        >
+          {total} {total === 1 ? "finding" : "findings"}
+        </p>
+      ) : null}
       {items.map((row) => (
         <HealthIssueRow key={row.id} row={row} />
       ))}

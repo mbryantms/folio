@@ -176,7 +176,7 @@ fn decompression_bomb_is_rejected_by_ratio_cap() {
     let err =
         Cb7::open_path_unchecked(&p, ArchiveLimits::default()).expect_err("bomb must not open");
     assert!(
-        matches!(err, ArchiveError::CapExceeded("compression ratio")),
+        matches!(err, ArchiveError::CapExceeded(c) if c.what == "compression ratio"),
         "got {err:?}"
     );
 }
@@ -286,7 +286,7 @@ fn caps_reject_when_tightened() {
     ];
     for (limits, want) in cases {
         match Cb7::open_path_unchecked(&path, limits) {
-            Err(ArchiveError::CapExceeded(got)) => assert_eq!(got, want),
+            Err(ArchiveError::CapExceeded(got)) => assert_eq!(got.what, want),
             other => panic!("{want}: expected CapExceeded, got {other:?}"),
         }
     }

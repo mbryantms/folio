@@ -182,7 +182,7 @@ fn cbt_rejects_oversized_entry() {
         ..tiny_limits()
     };
     match archive::cbt::Cbt::open_path_unchecked(&p, limits) {
-        Err(archive::ArchiveError::CapExceeded(which)) => assert_eq!(which, "entry size"),
+        Err(archive::ArchiveError::CapExceeded(which)) => assert_eq!(which.what, "entry size"),
         other => panic!("expected entry-size cap, got {other:?}"),
     }
 }
@@ -207,7 +207,7 @@ fn cbt_rejects_oversized_total() {
         ..tiny_limits()
     };
     match archive::cbt::Cbt::open_path_unchecked(&p, limits) {
-        Err(archive::ArchiveError::CapExceeded(which)) => assert_eq!(which, "total bytes"),
+        Err(archive::ArchiveError::CapExceeded(which)) => assert_eq!(which.what, "total bytes"),
         other => panic!("expected total-bytes cap, got {other:?}"),
     }
 }
@@ -228,7 +228,7 @@ fn cbt_rejects_excessive_entry_count() {
         ..tiny_limits()
     };
     match archive::cbt::Cbt::open_path_unchecked(&p, limits) {
-        Err(archive::ArchiveError::CapExceeded(which)) => assert_eq!(which, "entry count"),
+        Err(archive::ArchiveError::CapExceeded(which)) => assert_eq!(which.what, "entry count"),
         other => panic!("expected entry-count cap, got {other:?}"),
     }
 }

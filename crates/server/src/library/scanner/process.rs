@@ -148,6 +148,14 @@ enum ArchiveOutcome {
     /// the operator's fix is different (replace / rename the file, not
     /// re-tag it).
     MalformedArchive(String),
+    /// The reader refused the file on a protective limit or an unsafe
+    /// entry name (`ArchiveError::safety_check`). Routed to
+    /// `ArchiveSafetyRefusal`, not `MalformedArchive`: the file may be
+    /// intact.
+    Refused {
+        check: archive::SafetyCheck,
+        error: String,
+    },
     Encrypted,
     Unreadable(String),
 }
@@ -443,6 +451,23 @@ async fn parse_archive_for_ingest(
             });
             (ComicInfo::default(), None, 0, IssueState::Malformed)
         }
+        ArchiveOutcome::Refused { check, error } => {
+            tracing::warn!(
+                path = %path.display(),
+                check = check.as_str(),
+                error = %error,
+                "archive refused by a safety limit",
+            );
+            // Same counter and parse state as a malformed archive: the
+            // file did not ingest as readable. The finding says why.
+            stats.files_malformed += 1;
+            health.emit(IssueKind::ArchiveSafetyRefusal {
+                path: path.to_path_buf(),
+                check: check.as_str().to_owned(),
+                error,
+            });
+            (ComicInfo::default(), None, 0, IssueState::Malformed)
+        }
         ArchiveOutcome::Unreadable(e) => {
             tracing::warn!(path = %path.display(), error = %e, "io error reading archive");
             stats.files_skipped += 1;
@@ -561,6 +586,7 @@ async fn open_for_ingest(
 }
 
 /// Outcome of attempting a scan-time CBR/CB7→CBZ conversion.
+#[derive(Debug)]
 enum CbrIngestAction {
     /// Converted to this `.cbz`; caller should ingest it.
     Converted(std::path::PathBuf),
@@ -572,6 +598,32 @@ enum CbrIngestAction {
     /// The file can never be read this way (a multi-part RAR set): a
     /// `MalformedArchive` finding with this reason.
     SkipMalformed(String),
+    /// The RAR / 7z reader refused the file on a protective limit or an
+    /// unsafe entry name: an `ArchiveSafetyRefusal` finding, not the
+    /// "turn conversion on" advice of `UnsupportedArchiveFormat` (it is
+    /// already on).
+    SkipRefused {
+        check: archive::SafetyCheck,
+        error: String,
+    },
+}
+
+/// How a failed conversion is reported. Split out of [`convert_for_ingest`]
+/// so each error shape is testable without a fixture that trips it.
+fn classify_convert_error(e: &super::cbr_convert::CbrConvertError) -> Option<CbrIngestAction> {
+    use super::cbr_convert::CbrConvertError;
+    let CbrConvertError::Rewrite(crate::archive_rewrite::RewriteError::ArchiveErr(ae)) = e else {
+        return None;
+    };
+    if ae.is_multi_volume_rar() {
+        return Some(CbrIngestAction::SkipMalformed(
+            archive::cbr::MULTI_VOLUME_MESSAGE.to_owned(),
+        ));
+    }
+    ae.safety_check().map(|check| CbrIngestAction::SkipRefused {
+        check,
+        error: ae.to_string(),
+    })
 }
 
 /// The read-only container formats the scanner can convert to `.cbz`.
@@ -654,20 +706,19 @@ async fn convert_for_ingest(
             Ok(CbrIngestAction::SkipDuplicate)
         }
         // A multi-part RAR set is never read (its other parts would be
-        // opened by name): reported with that reason, not as a format the
-        // library could convert by turning an option on.
-        Err(super::cbr_convert::CbrConvertError::Rewrite(
-            crate::archive_rewrite::RewriteError::ArchiveErr(e),
-        )) if e.is_multi_volume_rar() => {
-            tracing::info!(path = %path.display(), ext, "scanner: multi-part RAR archive not read");
-            Ok(CbrIngestAction::SkipMalformed(
-                archive::cbr::MULTI_VOLUME_MESSAGE.to_owned(),
-            ))
-        }
-        Err(e) => {
-            tracing::warn!(path = %path.display(), ext, error = %e, "scanner: conversion to CBZ failed");
-            Ok(CbrIngestAction::SkipUnsupported)
-        }
+        // opened by name), and a reader refusal on a safety limit is not a
+        // format problem: both are reported with their own finding, not as
+        // a format the library could convert by turning an option on.
+        Err(e) => match classify_convert_error(&e) {
+            Some(action) => {
+                tracing::info!(path = %path.display(), ext, error = %e, "scanner: archive not converted");
+                Ok(action)
+            }
+            None => {
+                tracing::warn!(path = %path.display(), ext, error = %e, "scanner: conversion to CBZ failed");
+                Ok(CbrIngestAction::SkipUnsupported)
+            }
+        },
     }
 }
 
@@ -975,7 +1026,16 @@ pub async fn prepare_ingest<C: ConnectionTrait>(
                     });
                     return Ok(None);
                 }
-                // Conversion failed (malformed, encrypted, cap exceeded, IO):
+                CbrIngestAction::SkipRefused { check, error } => {
+                    stats.files_skipped += 1;
+                    health.emit(IssueKind::ArchiveSafetyRefusal {
+                        path: path.to_path_buf(),
+                        check: check.as_str().to_owned(),
+                        error,
+                    });
+                    return Ok(None);
+                }
+                // Conversion failed (malformed, encrypted, IO):
                 // fall through to the same skip + health issue as when
                 // conversion is disabled.
                 CbrIngestAction::SkipUnsupported => {}
@@ -2022,11 +2082,14 @@ fn parse_archive_timed_with(
             );
         }
         Err(other) => {
-            return (
-                ArchiveOutcome::MalformedArchive(other.to_string()),
-                timing,
-                ArchiveDiagnostics::default(),
-            );
+            let outcome = match other.safety_check() {
+                Some(check) => ArchiveOutcome::Refused {
+                    check,
+                    error: other.to_string(),
+                },
+                None => ArchiveOutcome::MalformedArchive(other.to_string()),
+            };
+            return (outcome, timing, ArchiveDiagnostics::default());
         }
     };
 
@@ -3342,6 +3405,44 @@ async fn write_metroninfo_external_ids<C: ConnectionTrait>(
 
 #[cfg(test)]
 mod tests {
+    use super::{CbrIngestAction, classify_convert_error};
+    use crate::archive_rewrite::RewriteError;
+    use crate::library::scanner::cbr_convert::CbrConvertError;
+
+    fn refused(e: archive::ArchiveError) -> Option<CbrIngestAction> {
+        classify_convert_error(&CbrConvertError::Rewrite(RewriteError::ArchiveErr(e)))
+    }
+
+    /// Every safety refusal the RAR / 7z readers or the CBZ writer can
+    /// raise during conversion becomes its own finding; anything else
+    /// keeps the generic skip.
+    #[test]
+    fn conversion_refusals_are_classified() {
+        use archive::{ArchiveError, Cap, SafetyCheck};
+        for check in [
+            SafetyCheck::EntryCount,
+            SafetyCheck::EntrySize,
+            SafetyCheck::TotalSize,
+            SafetyCheck::CompressionRatio,
+            SafetyCheck::DecoderMemory,
+        ] {
+            match refused(ArchiveError::CapExceeded(Cap::new(check, "cap"))) {
+                Some(CbrIngestAction::SkipRefused { check: got, .. }) => assert_eq!(got, check),
+                other => panic!("{check:?}: {other:?}"),
+            }
+        }
+        assert!(matches!(
+            refused(ArchiveError::UnsafeEntry("../x".into())),
+            Some(CbrIngestAction::SkipRefused {
+                check: SafetyCheck::UnsafeEntryName,
+                ..
+            })
+        ));
+        assert!(refused(ArchiveError::Malformed("bad".into())).is_none());
+        assert!(refused(ArchiveError::Encrypted).is_none());
+        assert!(classify_convert_error(&CbrConvertError::UnknownContainer).is_none());
+    }
+
     use super::*;
 
     /// A Folio-rewritten archive carries ComicInfo `<Year>/<Month>` (no

@@ -1663,6 +1663,103 @@ pub struct SeriesListView {
     /// the `COUNT(*)` cost on every page fetch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total: Option<i64>,
+    /// "Did you mean …?" series names for a search (`?q=`) whose first
+    /// page found nothing: the closest names the caller can see, best
+    /// first, at most [`SUGGESTION_LIMIT`]. Absent on every other
+    /// response, including a zero-hit search with nothing close enough.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestions: Option<Vec<SeriesNameSuggestion>>,
+}
+
+/// One "Did you mean …?" entry on a zero-hit series search.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct SeriesNameSuggestion {
+    /// The series' display name; searching for it finds the series.
+    pub name: String,
+}
+
+/// Most suggestions a zero-hit search returns.
+pub const SUGGESTION_LIMIT: u64 = 3;
+/// Shortest query (letters and digits of the normalized form) that asks
+/// for suggestions: one or two characters make at most a couple of
+/// trigrams and would match half the library.
+pub const SUGGESTION_MIN_CHARS: usize = 3;
+/// `pg_trgm.word_similarity_threshold` for the suggestion query (the
+/// default is 0.6). `word_similarity` is the best score of the query
+/// against one contiguous run of the name's trigrams (shared / (query +
+/// run - shared)), so a typo costs what it breaks of that run, not what
+/// length the word has. Measured (`documented_word_similarity_scores` in
+/// `tests/search_suggestions.rs`): `sandmn` 0.71, `helboy` 0.67,
+/// `invisble` 0.58, `batnan` 0.43, `hulc` 0.6 clear it; noise
+/// stays well under (`zzzzqq` vs "zuzu" 0.17, `qwrtpz` 0). A typo near
+/// the start of a short word leaves no run (`sega` vs "saga" 0.25, level
+/// with noise), so that case stays out of reach.
+pub const SUGGESTION_WORD_SIMILARITY_SQL: &str =
+    "SET LOCAL pg_trgm.word_similarity_threshold = 0.4";
+
+/// The suggestion query over `base` (the caller's visible, active series
+/// with the request's facet filters): distinct names whose normalized form
+/// contains a word-level trigram match for `normalized`, best first. The
+/// `%>` operator is what the `series_normalized_name_trgm` GIN index
+/// answers. Public so the EXPLAIN guard in the tests runs this exact SQL.
+pub fn series_suggestion_select(
+    base: sea_orm::Select<series::Entity>,
+    normalized: &str,
+) -> sea_orm::Select<series::Entity> {
+    base.select_only()
+        .column(series::Column::Name)
+        .filter(Expr::cust_with_values(
+            "series.normalized_name %> $1",
+            [normalized.to_owned()],
+        ))
+        .group_by(series::Column::Name)
+        .order_by_desc(Expr::cust_with_values(
+            "max(word_similarity($1, series.normalized_name))",
+            [normalized.to_owned()],
+        ))
+        .order_by_desc(Expr::cust_with_values(
+            "max(similarity($1, series.normalized_name))",
+            [normalized.to_owned()],
+        ))
+        .order_by_asc(series::Column::Name)
+        .limit(SUGGESTION_LIMIT)
+}
+
+/// Run [`series_suggestion_select`] with the suggestion threshold set for
+/// this transaction only. Empty when the query is under the length floor;
+/// a database error is logged and treated as "no suggestion" so the
+/// search response itself never fails on it.
+async fn series_name_suggestions(
+    app: &AppState,
+    base: sea_orm::Select<series::Entity>,
+    text: &str,
+) -> Vec<SeriesNameSuggestion> {
+    use sea_orm::{ConnectionTrait, TransactionTrait};
+    let normalized = entity::series::normalize_name(text);
+    if normalized.chars().filter(|c| c.is_alphanumeric()).count() < SUGGESTION_MIN_CHARS {
+        return Vec::new();
+    }
+    let run = async {
+        let txn = app.db.begin().await?;
+        txn.execute_unprepared(SUGGESTION_WORD_SIMILARITY_SQL)
+            .await?;
+        let names: Vec<String> = series_suggestion_select(base, &normalized)
+            .into_tuple()
+            .all(&txn)
+            .await?;
+        txn.commit().await?;
+        Ok::<_, sea_orm::DbErr>(names)
+    };
+    match run.await {
+        Ok(names) => names
+            .into_iter()
+            .map(|name| SeriesNameSuggestion { name })
+            .collect(),
+        Err(e) => {
+            tracing::warn!(error = %e, "series suggestion query failed; continuing without");
+            Vec::new()
+        }
+    }
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -1774,7 +1871,11 @@ fn validate_list_series_query_params(q: &ListSeriesQuery) -> Result<(), &'static
     Ok(())
 }
 
-fn apply_series_visibility(
+/// The visibility step of the series list (and of its search and
+/// suggestion queries): active series, the caller's library grant or the
+/// `?library=` it asked for, and the age cap. `None` when the caller can
+/// see nothing. Public so the suggestion EXPLAIN guard plans the same base.
+pub fn apply_series_visibility(
     mut select: sea_orm::Select<series::Entity>,
     visible: &access::VisibleLibraries,
     library: Option<Uuid>,
@@ -2331,6 +2432,7 @@ pub async fn list(
             items: Vec::new(),
             next_cursor: None,
             total: Some(0),
+            suggestions: None,
         })
         .into_response()
     };
@@ -2382,6 +2484,9 @@ pub async fn list(
         // the two GIN-indexed arms and matching `id = ANY(...)` is the same
         // set (A OR B ≡ id ∈ A ∪ B) with an index on every step — ~6x
         // faster on the 2,500-series stress library.
+        // The suggestion query (zero-hit first page only) starts from the
+        // same visible + faceted set, before the text match.
+        let suggestion_base = select.clone();
         let filtered = select.filter(Expr::cust_with_values(
             "series.id = ANY(ARRAY( \
                SELECT ss.id FROM series ss \
@@ -2462,10 +2567,18 @@ pub async fn list(
                 item.snippet = Some(s);
             }
         }
+        // U-11: a first page with no hit offers the closest visible names.
+        let suggestions = if total == Some(0) {
+            Some(series_name_suggestions(&app, suggestion_base, text).await)
+                .filter(|s| !s.is_empty())
+        } else {
+            None
+        };
         return Json(SeriesListView {
             items,
             next_cursor,
             total,
+            suggestions,
         })
         .into_response();
     }
@@ -2518,6 +2631,7 @@ pub async fn list(
         items: hydrate_series(&app, page, user.id, &visible_libs).await,
         next_cursor,
         total,
+        suggestions: None,
     })
     .into_response()
 }

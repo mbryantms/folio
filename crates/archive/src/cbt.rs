@@ -95,11 +95,17 @@ impl Cbt {
 
             let size = entry.header().size().unwrap_or(0);
             if size > limits.max_entry_bytes {
-                return Err(ArchiveError::CapExceeded("entry size"));
+                return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                    crate::SafetyCheck::EntrySize,
+                    "entry size",
+                )));
             }
             total_bytes = total_bytes.saturating_add(size);
             if total_bytes > limits.max_total_bytes {
-                return Err(ArchiveError::CapExceeded("total bytes"));
+                return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                    crate::SafetyCheck::TotalSize,
+                    "total bytes",
+                )));
             }
 
             let data_offset = entry.raw_file_position();
@@ -113,7 +119,10 @@ impl Cbt {
                 compressed_size: size,
             });
             if entries.len() as u64 > limits.max_entries {
-                return Err(ArchiveError::CapExceeded("entry count"));
+                return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                    crate::SafetyCheck::EntryCount,
+                    "entry count",
+                )));
             }
         }
 
@@ -201,7 +210,10 @@ impl Cbt {
         len: u64,
     ) -> Result<Vec<u8>, ArchiveError> {
         if start.saturating_add(len) > self.limits.max_entry_bytes {
-            return Err(ArchiveError::CapExceeded("range exceeds entry cap"));
+            return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                crate::SafetyCheck::EntrySize,
+                "range exceeds entry cap",
+            )));
         }
         let offset = self.data_offset(entry)?;
         let size = entry.uncompressed_size;
@@ -222,7 +234,10 @@ impl Cbt {
         sink: &mut W,
     ) -> Result<u64, ArchiveError> {
         if entry.uncompressed_size > self.limits.max_entry_bytes {
-            return Err(ArchiveError::CapExceeded("entry size"));
+            return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                crate::SafetyCheck::EntrySize,
+                "entry size",
+            )));
         }
         let offset = self.data_offset(entry)?;
         let mut f = self.source.reader();
@@ -295,7 +310,10 @@ impl ComicArchive for Cbt {
             .get(&entry.name)
             .ok_or_else(|| ArchiveError::Malformed("entry offset missing".into()))?;
         if entry.uncompressed_size > self.limits.max_entry_bytes {
-            return Err(ArchiveError::CapExceeded("entry size"));
+            return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                crate::SafetyCheck::EntrySize,
+                "entry size",
+            )));
         }
         let mut buf = vec![0u8; entry.uncompressed_size as usize];
         self.source.read_exact_at(&mut buf, offset)?;
