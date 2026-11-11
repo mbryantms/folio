@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, LibraryBig, Search } from "lucide-react";
 import { Kbd } from "@/components/folio/kbd";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -42,6 +42,13 @@ import { useSearchActions } from "@/lib/search/use-search-actions";
 import { SEARCH_CATEGORIES, type SearchHit } from "@/lib/search/types";
 
 const MAX_PER_CATEGORY = 5;
+/** cmdk value prefix of a "Did you mean" item. */
+const SUGGESTION_VALUE_PREFIX = "suggest:";
+/** cmdk value meaning "nothing highlighted" (matches no item). */
+const NO_HIGHLIGHT = "\u0000none:";
+/** Keys cmdk moves the highlight with; `CTRL_NAV_KEYS` only with Ctrl. */
+const NAV_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End"]);
+const CTRL_NAV_KEYS = new Set(["j", "k", "n", "p"]);
 const QUERY_DEBOUNCE_MS = 200;
 
 /**
@@ -92,9 +99,10 @@ export function SearchModal({
   }, [raw]);
   const contentQuery = commandMode ? "" : debounced;
 
-  const { enabled, isLoading, groups, total } = useGlobalSearch(contentQuery, {
-    perCategory: MAX_PER_CATEGORY,
-  });
+  const { enabled, isLoading, groups, total, suggestions } = useGlobalSearch(
+    contentQuery,
+    { perCategory: MAX_PER_CATEGORY },
+  );
 
   // Role-gated actions, recomputed per keystroke. Non-admins never see
   // admin destinations even via direct keyword match.
@@ -121,8 +129,47 @@ export function SearchModal({
         hits: groups[def.key].slice(0, MAX_PER_CATEGORY),
       })).filter((s) => s.hits.length > 0);
 
+  // Every category came back empty (U-11): say so, offer the server's
+  // "Did you mean" series names as items, and a Browse link.
+  const noResults = !commandMode && enabled && !isLoading && total === 0;
+  const suggestionItems = noResults ? suggestions : [];
+
+  // Suggestions are not results: plain Enter with no result keeps opening
+  // the full search page, so they stay out of this count.
   const hasItems =
     actions.length > 0 || contentSections.some((s) => s.hits.length > 0);
+
+  // cmdk's highlighted item, controlled so a suggestion is highlighted only
+  // when the user moves onto it with the keyboard. cmdk highlights the
+  // first item on its own as items mount, and on pointer hover; for a
+  // suggestion either would make plain Enter replace the user's query
+  // with a name they never chose, depending on whether the suggestions
+  // had arrived yet. A rejected suggestion leaves a "nothing highlighted"
+  // marker scoped to this query (a fresh one each time, so cmdk's internal
+  // value is always overwritten); a new query drops it, so its results get
+  // cmdk's usual first-item highlight.
+  const [highlighted, setHighlighted] = useState("");
+  const keyboardNav = useRef(false);
+  const noHighlightSeq = useRef(0);
+  const noHighlightPrefix = `${NO_HIGHLIGHT}${contentQuery}\u0000`;
+  const commandValue =
+    highlighted.startsWith(NO_HIGHLIGHT) &&
+    !highlighted.startsWith(noHighlightPrefix)
+      ? ""
+      : highlighted;
+  function onCommandValueChange(next: string) {
+    if (next.startsWith(SUGGESTION_VALUE_PREFIX) && !keyboardNav.current) {
+      noHighlightSeq.current += 1;
+      setHighlighted(`${noHighlightPrefix}${noHighlightSeq.current}`);
+      return;
+    }
+    setHighlighted(next);
+  }
+  const suggestionHighlighted = commandValue.startsWith(
+    SUGGESTION_VALUE_PREFIX,
+  );
+  const nothingHighlighted =
+    commandValue === "" || commandValue.startsWith(NO_HIGHLIGHT);
   // Empty-input states: recents chips (if any) or a short hint, above the
   // suggested commands. Shown only when there's nothing to search yet
   // (not enabled, not command mode).
@@ -168,6 +215,13 @@ export function SearchModal({
     handleOpenChange(false);
     runAction(action);
   }
+  function runSuggestion(q: string) {
+    setRaw(q);
+    setDebounced(q);
+  }
+  function commitBrowse() {
+    handleOpenChange(false);
+  }
   function commitFullSearch() {
     if (contentQuery) recents.add(contentQuery);
     handleOpenChange(false);
@@ -176,14 +230,34 @@ export function SearchModal({
 
   // cmdk owns Enter for the highlighted item. We intercept two cases at
   // the input (stopping propagation so cmdk doesn't also act): Mod+Enter
-  // → full search, and plain Enter with no quick hits → full search.
+  // → full search, and plain Enter with no quick hits (or nothing
+  // highlighted) → full search.
   function onInputKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    // The Enter (or arrow) that commits an IME composition is not ours.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    // Runs before cmdk's own keydown handler on the root, which moves the
+    // highlight synchronously in this same dispatch: an arrow-key move may
+    // highlight a suggestion. The flag lasts this one keystroke only, so a
+    // later hover or a paste (no keydown) never inherits it.
+    keyboardNav.current =
+      NAV_KEYS.has(e.key) || (e.ctrlKey && CTRL_NAV_KEYS.has(e.key));
+    if (keyboardNav.current) {
+      queueMicrotask(() => {
+        keyboardNav.current = false;
+      });
+    }
     if (e.key !== "Enter") return;
     if (!commandMode && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       e.stopPropagation();
       commitFullSearch();
-    } else if (!commandMode && enabled && !hasItems) {
+    } else if (
+      !commandMode &&
+      enabled &&
+      (!hasItems || nothingHighlighted) &&
+      // A suggestion the user arrowed onto: cmdk's Enter runs it.
+      !suggestionHighlighted
+    ) {
       e.preventDefault();
       e.stopPropagation();
       commitFullSearch();
@@ -216,6 +290,8 @@ export function SearchModal({
         <Command
           shouldFilter={false}
           loop
+          value={commandValue}
+          onValueChange={onCommandValueChange}
           className="flex min-h-0 flex-1 flex-col gap-0 bg-transparent"
         >
           <div className="flex items-start [&>[data-slot=command-input-wrapper]]:min-w-0 [&>[data-slot=command-input-wrapper]]:flex-1">
@@ -269,7 +345,20 @@ export function SearchModal({
             ) : null}
             {/* cmdk auto-hides Empty while any item is mounted. Nothing
                   to be empty about before the user has typed. */}
-            {showHint || showRecents || showVisits ? null : (
+            {noResults ? (
+              <div className="text-muted-foreground space-y-1 px-4 pt-5 pb-3 text-center text-xs">
+                <p>No matches for &ldquo;{contentQuery}&rdquo;.</p>
+                <Link
+                  href="/browse"
+                  onClick={commitBrowse}
+                  className="text-foreground focus-visible:ring-ring inline-flex items-center gap-1 rounded-sm font-medium underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:outline-none"
+                >
+                  <LibraryBig className="size-3.5" aria-hidden="true" />
+                  Browse the library
+                </Link>
+              </div>
+            ) : null}
+            {showHint || showRecents || showVisits || noResults ? null : (
               <CommandEmpty>
                 {commandMode
                   ? "No commands match."
@@ -333,6 +422,28 @@ export function SearchModal({
                 ))}
               </CommandGroup>
             ))}
+            {/* After the actions: cmdk's automatic first-item highlight
+                lands on a "Jump to…" action as before, never on a
+                suggestion. */}
+            {suggestionItems.length > 0 ? (
+              <CommandGroup heading="Did you mean">
+                {suggestionItems.map((name) => (
+                  <CommandItem
+                    key={name}
+                    value={`${SUGGESTION_VALUE_PREFIX}${name}`}
+                    onSelect={() => runSuggestion(name)}
+                    aria-label={`Search for ${name}`}
+                    className="gap-3 px-3 py-2"
+                  >
+                    <Search
+                      className="text-muted-foreground size-4 shrink-0"
+                      aria-hidden="true"
+                    />
+                    <span className="truncate">{name}</span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            ) : null}
           </CommandList>
           {showHint ? <SearchHints /> : null}
           <SearchFooter

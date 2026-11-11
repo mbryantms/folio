@@ -34526,6 +34526,16 @@
               "null"
             ]
           },
+          "suggestions": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/SeriesNameSuggestion"
+            },
+            "description": "\"Did you mean …?\" series names for a search (`?q=`) whose first\npage found nothing: the closest names the caller can see, best\nfirst, at most [`SUGGESTION_LIMIT`]. Absent on every other\nresponse, including a zero-hit search with nothing close enough."
+          },
           "total": {
             "type": [
               "integer",
@@ -34745,6 +34755,19 @@
           },
           "tiers": {
             "$ref": "#/components/schemas/SeriesTierCounts"
+          }
+        }
+      },
+      "SeriesNameSuggestion": {
+        "type": "object",
+        "description": "One \"Did you mean …?\" entry on a zero-hit series search.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The series' display name; searching for it finds the series."
           }
         }
       },

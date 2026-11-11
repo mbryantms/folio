@@ -37,6 +37,7 @@ import {
 import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
 import { PhoneControlsBar } from "@/components/library/PhoneControlsBar";
 import { RecentSearches } from "@/components/search/RecentSearches";
+import { SearchNoResults } from "@/components/search/SearchNoResults";
 import {
   RecentVisitsHeader,
   VisitRowContent,
@@ -205,17 +206,31 @@ export function SearchView({
   // Omit `perCategory` so each backend serves its server-side max (the
   // old single `75` quietly clamped to 50 on the issues backend,
   // hiding rows from the rail). Modal usage still passes a small N.
-  const { enabled, isLoading, groups, payloads, categoryTotals, total } =
-    useGlobalSearch(
-      debounced,
-      filtersActive
-        ? { seriesFilters: seriesSearchFiltersToHook(filters) }
-        : {},
-    );
+  const {
+    enabled,
+    isLoading,
+    groups,
+    payloads,
+    categoryTotals,
+    total,
+    suggestions,
+  } = useGlobalSearch(
+    debounced,
+    filtersActive ? { seriesFilters: seriesSearchFiltersToHook(filters) } : {},
+  );
 
   const activeDef = category
     ? SEARCH_CATEGORIES.find((c) => c.key === category)
     : null;
+
+  // Picking a "Did you mean" suggestion runs that search right away and
+  // hands focus back to the box (the button it was on goes away).
+  const inputRef = useRef<HTMLInputElement>(null);
+  const runSuggestion = useCallback((q: string) => {
+    setRaw(q);
+    setDebounced(q);
+    inputRef.current?.focus();
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -287,6 +302,7 @@ export function SearchView({
             className="text-muted-foreground size-4 shrink-0"
           />
           <input
+            ref={inputRef}
             type="search"
             value={raw}
             onChange={(e) => setRaw(e.target.value)}
@@ -366,16 +382,18 @@ export function SearchView({
           ))}
           {/* All-empty fallback. The per-rail null-returns above hide
            *  empty categories individually; if EVERY rail was empty
-           *  this band tells the user something rather than leaving
-           *  the page silent. */}
+           *  this band says so, offers the closest series names the
+           *  server suggested, and a way into Browse (U-11). */}
           {enabled &&
           !isLoading &&
           total === 0 &&
           payloads.series.length === 0 &&
           payloads.issues.length === 0 ? (
-            <p className="text-muted-foreground text-sm">
-              No matches for &ldquo;{debounced}&rdquo; in any category.
-            </p>
+            <SearchNoResults
+              query={debounced}
+              suggestions={suggestions}
+              onPick={runSuggestion}
+            />
           ) : null}
         </div>
       )}

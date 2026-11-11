@@ -2549,6 +2549,7 @@ async fn run_filter_query(app: &AppState, input: CompileInput<'_>) -> axum::resp
         items,
         next_cursor,
         total: None,
+        suggestions: None,
     })
     .into_response()
 }
