@@ -1643,7 +1643,11 @@ export function useUpdateLibraryAccess(id: string) {
     }),
     {
       successMessage: "Library access updated",
-      onSuccess: () => invalidateUser(qc, id),
+      onSuccess: () => {
+        invalidateUser(qc, id);
+        // The access tab's per-library "what this cap hides" figures.
+        void qc.invalidateQueries({ queryKey: queryKeys.libraryAgeRatingsAll });
+      },
     },
   );
 }

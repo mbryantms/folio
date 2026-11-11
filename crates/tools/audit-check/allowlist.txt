@@ -112,6 +112,9 @@ api/library_events.rs::list_library_events  # GET /admin/library-events — dura
 # ── library_hash_backfill.rs ────────────────────────────────
 api/library_hash_backfill.rs::hash_backfill_status  # GET /libraries/{slug}/hash-backfill — read-only progress counts
 
+# ── library_age_ratings.rs ──────────────────────────────────
+api/library_age_ratings.rs::library_age_ratings   # GET /admin/libraries/age-ratings — read-only series counts per age-rating rung, for the age-cap control
+
 # ── library_stats.rs ────────────────────────────────────────
 api/library_stats.rs::library_stats_all   # GET /admin/libraries/stats — read-only per-library counts + disk usage
 api/library_stats.rs::library_stats_one   # GET /admin/libraries/{slug}/stats — read-only, one library's figures

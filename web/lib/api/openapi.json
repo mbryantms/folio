@@ -489,6 +489,28 @@
         }
       }
     },
+    "/api/admin/libraries/age-ratings": {
+      "get": {
+        "operationId": "admin_library_age_ratings",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LibraryAgeRatingsView"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
     "/api/admin/libraries/scan-all": {
       "post": {
         "operationId": "libraries_scan_all",
@@ -15177,6 +15199,26 @@
           }
         }
       },
+      "AgeRatingRungCount": {
+        "type": "object",
+        "description": "Series at one ladder rung.",
+        "required": [
+          "rating",
+          "series_count"
+        ],
+        "properties": {
+          "rating": {
+            "type": "string",
+            "description": "The rung's canonical ladder spelling (a valid cap value)."
+          },
+          "series_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Active series whose rating ranks at this rung, aliases included\n(`Mature` counts under `Mature 17+`).",
+            "minimum": 0
+          }
+        }
+      },
       "AlternateProviderSeries": {
         "type": "object",
         "description": "Where this issue maps in one provider, plus its current match state.",
@@ -26393,6 +26435,40 @@
               "type": "string"
             },
             "description": "Final set of library ids the user should be granted access to. The\nserver replaces the user's `library_user_access` rows with this list."
+          }
+        }
+      },
+      "LibraryAgeRatingsView": {
+        "type": "object",
+        "description": "One library's series, by age rating.",
+        "required": [
+          "library_id",
+          "rungs",
+          "unrated_count",
+          "series_count"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string"
+          },
+          "rungs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgeRatingRungCount"
+            },
+            "description": "Every ladder rung, youngest audience first, zeros included."
+          },
+          "series_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Every active series of the library: the rungs plus `unrated_count`.",
+            "minimum": 0
+          },
+          "unrated_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Active series with no rating the ladder ranks (none, `Unknown`,\n`Rating Pending` or a word the ladder does not know).",
+            "minimum": 0
           }
         }
       },
