@@ -2632,9 +2632,9 @@ mod tests {
         assert!(matches!(err, CompileError::BadValue { .. }));
     }
 
-    /// E9: every text op escapes `\` / `%` / `_` in the value, names the
-    /// escape character, and binds the pattern — the user's string never
-    /// lands in the SQL text. Plain values keep their old pattern.
+    /// `age_rating` value ops fold onto the ladder when the view is
+    /// compiled (a stored alias names its whole rung); unranked text stays
+    /// a verbatim comparison and emptiness keeps the plain column test.
     #[test]
     fn age_rating_conditions_fold_onto_the_ladder_at_compile_time() {
         let series_sql = |op: Op, value: serde_json::Value| {
@@ -2664,6 +2664,9 @@ mod tests {
         );
     }
 
+    /// E9: every text op escapes `\` / `%` / `_` in the value, names the
+    /// escape character, and binds the pattern — the user's string never
+    /// lands in the SQL text. Plain values keep their old pattern.
     #[test]
     fn text_ops_escape_like_metacharacters_and_bind_the_pattern() {
         let cases = [

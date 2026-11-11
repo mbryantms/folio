@@ -349,8 +349,22 @@ pub fn from_publisher_text(raw: &str) -> Option<String> {
     Some(label.to_owned())
 }
 
+/// Words that turn a declared rating into its opposite (`Not for kids`,
+/// `Not suitable for all ages`): text carrying one is not read at all.
+pub const DECLARED_NEGATIONS: [&str; 5] = ["not", "no", "non", "never", "unsuitable"];
+
+/// Words that say a declared rating is for children or every age, and
+/// words that say it is for adults. Text carrying one of each
+/// (`Kids & Adults`, `All ages, adults enjoy it too`) is not read.
+const DECLARED_CHILD_WORDS: [&str; 7] = [
+    "kid", "kids", "child", "children", "all", "everyone", "family",
+];
+const DECLARED_ADULT_WORDS: [&str; 4] = ["adult", "adults", "explicit", "mature"];
+
 /// The rung a rating declared in a `series.json` ranks as, in its
-/// canonical ladder spelling; `None` when it names no rating.
+/// canonical ladder spelling; `None` when it names no rating, and the
+/// series then stays unrated exactly as before declared ratings were
+/// read.
 ///
 /// Mylar writes `metadata.age_rating` as free text: only an operator sets
 /// it, from a menu of `All Ages`, `9+`, `12+`, `15+`, `17+` and `Adult`
@@ -358,12 +372,17 @@ pub fn from_publisher_text(raw: &str) -> Option<String> {
 ///
 /// 1. a ladder rung or alias ranks as itself ([`rank`]);
 /// 2. `Unknown` / `Rating Pending` / blank name nothing;
-/// 3. `All` is `Everyone`;
-/// 4. a bare minimum age (`17+`, `17`, `Ages 12+`, `12+ and up`) maps to
-///    the nearest rung that is not milder than it ([`minimum_age_rung`]);
-/// 5. anything else goes through [`from_publisher_text`] (GCD's publisher
-///    wording: `All Ages`, `Rated T+`, `Mature Readers`, `PSR`, ...) and
-///    counts only when that names a rung.
+/// 3. text with a negation word ([`DECLARED_NEGATIONS`]), or with both a
+///    children / all-ages word and an adult word, names nothing: reading
+///    either kind would risk its opposite;
+/// 4. `All` is `Everyone`;
+/// 5. otherwise the result is the STRICTER of two readings, and nothing
+///    when neither reads: the minimum age the text states (`17`, `17+`,
+///    `18 +`, `Ages 12+`, `For ages 12+`, `MA 15+`, `12 and up`) through
+///    [`minimum_age_rung`], and the publisher wording
+///    [`from_publisher_text`] knows (GCD's table: `All Ages`, `Rated T+`,
+///    `Mature Readers`, `PSR`, ...). A stated age therefore never maps
+///    below its own rung; a phrase with no age maps as GCD maps it.
 ///
 /// Only the declared series rating is read this way; issue ratings from
 /// ComicInfo / MetronInfo still rank only as ladder words or aliases.
@@ -375,15 +394,53 @@ pub fn declared_rung(raw: &str) -> Option<&'static str> {
     if needle.is_empty() || UNRATED.contains(&needle.as_str()) {
         return None;
     }
+    let words: Vec<&str> = needle
+        .split(|c: char| !(c.is_alphanumeric() || c == '+'))
+        .filter(|w| !w.is_empty())
+        .collect();
+    let has_any = |list: &[&str]| words.iter().any(|w| list.contains(w));
+    if has_any(&DECLARED_NEGATIONS)
+        || (has_any(&DECLARED_CHILD_WORDS) && has_any(&DECLARED_ADULT_WORDS))
+    {
+        return None;
+    }
     if needle == "all" {
         return Some("Everyone");
     }
-    if let Some(age) = bare_minimum_age(&needle) {
-        return Some(minimum_age_rung(age));
-    }
-    from_publisher_text(&needle)
-        .and_then(|w| rank(&w))
+    let age = bare_minimum_age(&needle)
+        .into_iter()
+        .chain(stated_minimum_ages(&words))
+        .max()
+        .map(|a| rank(minimum_age_rung(a)));
+    let phrase = from_publisher_text(&needle).map(|w| rank(&w));
+    age.into_iter()
+        .chain(phrase)
+        .flatten()
+        .max()
         .map(|r| LADDER[r as usize])
+}
+
+/// Minimum ages stated inside longer text: a word `N+` (`MA 15+`,
+/// `For ages 12+`) or `N and up` / `N and over` / `N and older`, with N
+/// of one or two digits and at most 21. A bare `13`, a range (`4-8`) or
+/// `13 and under` states no minimum.
+fn stated_minimum_ages<'a>(words: &'a [&'a str]) -> impl Iterator<Item = u32> + 'a {
+    let two_digits = |w: &str| (1..=2).contains(&w.len()) && w.bytes().all(|b| b.is_ascii_digit());
+    words.iter().enumerate().filter_map(move |(i, w)| {
+        let n = if let Some(d) = w.strip_suffix('+') {
+            two_digits(d).then_some(d)
+        } else if two_digits(w)
+            && words.get(i + 1) == Some(&"and")
+            && words
+                .get(i + 2)
+                .is_some_and(|x| matches!(*x, "up" | "over" | "older"))
+        {
+            Some(*w)
+        } else {
+            None
+        }?;
+        n.parse::<u32>().ok().filter(|n| *n <= 21)
+    })
 }
 
 /// `17+`, `17`, `ages 17+`, `age 17`, `17+ and up` (lowercased) → 17.
@@ -410,10 +467,10 @@ fn bare_minimum_age(needle: &str) -> Option<u32> {
 }
 
 /// The rung for "ages `age` and up": the youngest-ranked rung whose own
-/// minimum age is at least `age`, never a milder one. `Everyone` stands
-/// for every age up to 6 (ESRB's E), `Everyone 10+` for 10, `Teen` for
-/// 13, `MA15+` for 15, `Mature 17+` for 17 and `Adults Only 18+` for 18
-/// (the stricter of the two 18+ rungs, as GCD maps `18+`).
+/// minimum age is at least `age`. `Everyone` stands for every age up to 6
+/// (ESRB's E), `Everyone 10+` for 10, `Teen` for 13, `MA15+` for 15,
+/// `Mature 17+` for 17 and `Adults Only 18+` for 18 (the stricter of the
+/// two 18+ rungs, as GCD maps `18+`).
 pub fn minimum_age_rung(age: u32) -> &'static str {
     match age {
         0..=6 => "Everyone",
@@ -672,13 +729,46 @@ mod tests {
             ("Explicit Content", Some("Adults Only 18+")),
             ("MAX", Some("Adults Only 18+")),
             ("Rated E", Some("Everyone")),
+            ("18", Some("Adults Only 18+")),
+            ("18 +", Some("Adults Only 18+")),
+            ("1", Some("Everyone")),
+            ("T", Some("Teen")),
+            ("E", Some("Everyone")),
+            ("AO", Some("Adults Only 18+")),
+            // An age stated inside longer text wins over a milder phrase.
+            ("MA 15+", Some("MA15+")),
+            ("Mature 16+", Some("Mature 17+")),
+            ("Rated 16+", Some("Mature 17+")),
+            ("For ages 12+", Some("Teen")),
+            ("12 and up", Some("Teen")),
+            // Negations and mixed signals are not read.
+            ("Not for kids", None),
+            ("Not suitable for all ages", None),
+            ("Kids & Adults", None),
+            ("Kids-to-Adults", None),
+            ("All ages (adults enjoy it too)", None),
+            ("No rating", None),
+            ("Non-violent", None),
             // Nothing.
             ("Unknown", None),
             ("Rating Pending", None),
             ("", None),
             ("Sixteen and up", None),
-            ("99+", None),
             ("Approved by the Comics Code Authority", None),
+            ("E10+", None),
+            ("Teen+", None),
+            ("PG-13", None),
+            ("TV-MA", None),
+            ("TV-14", None),
+            ("R", None),
+            ("12A", None),
+            ("13 and under", None),
+            ("Under 13", None),
+            ("3-5", None),
+            ("Ages 4-8", None),
+            ("2019", None),
+            ("+16", None),
+            ("99+", None),
         ];
         for (raw, want) in cases {
             assert_eq!(declared_rung(raw), *want, "{raw:?}");

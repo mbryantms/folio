@@ -340,12 +340,19 @@ its ratings onto ladder words; ComicVine carries no rating. The rating a
 `series.json` declares is free text (Mylar writes it from an operator
 menu of `All Ages`, `9+`, `12+`, `15+`, `17+`, `Adult`, and submits
 `All Ages` as `All`); it is read through
-`age_rating::declared_rung`, which accepts ladder words and aliases, `All`,
-bare minimum ages (`17+`, `Ages 12+`, mapped to the nearest rung that is
-not milder: up to 6 → `Everyone`, 7–10 → `Everyone 10+`, 11–13 → `Teen`,
-14–15 → `MA15+`, 16–17 → `Mature 17+`, 18 and up → `Adults Only 18+`) and
-the publisher wording the GCD normaliser knows (`All Ages`, `Rated T+`,
-`Mature Readers`, ...). Text it cannot read ranks nowhere. Issue ratings
+`age_rating::declared_rung`. Ladder words and aliases rank as themselves
+and `All` is `Everyone`. Otherwise the result is the stricter of two
+readings: a minimum age the text states (`17`, `17+`, `Ages 12+`,
+`MA 15+`, `12 and up`; up to 6 → `Everyone`, 7–10 → `Everyone 10+`,
+11–13 → `Teen`, 14–15 → `MA15+`, 16–17 → `Mature 17+`, 18–21 →
+`Adults Only 18+`), and the publisher wording the GCD normaliser knows
+(`All Ages`, `Rated T+`, `Mature Readers`, ...), which maps as GCD maps
+it. Text with a negation word (`not`, `no`, `non`, `never`,
+`unsuitable`), text with both a children / all-ages word and an adult
+word, and text neither reading understands rank nowhere, so the series
+stays unrated. Reading a declared rating is stricter for a capped grant
+but can show a series to a grant with `hide_unrated` on, which hid it
+while it was unrated. Issue ratings
 are not read this way. An alias is not a valid cap.
 
 Edits validate the value: the issue PATCH, the bulk-metadata PATCH and

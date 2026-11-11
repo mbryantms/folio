@@ -195,19 +195,31 @@ docker compose -f compose.prod.yml up -d --no-deps app
   spellings.** Mylar writes the series rating as free text, and only a
   ladder word or one of Metron's words used to count; anything else left
   the series unrated. These now count as the floor for the series'
-  rating (each mapped to the nearest rating that is not milder):
-  `All` and `All Ages` → `Everyone`; a bare minimum age, alone or as
-  `Ages N+` / `N+ and up`: up to `6+` → `Everyone`, `7+` to `10+` (Mylar's
-  `9+`) → `Everyone 10+`, `11+` to `13+` (Mylar's `12+`) → `Teen`, `14+`
-  and `15+` → `MA15+`, `16+` and `17+` → `Mature 17+`, `18+` to `21+` →
-  `Adults Only 18+`; and publisher wording such as `Rated T+`, `T+`,
-  `PSR`, `Parental Advisory` → `Teen`, `Rated M` or `Mature Readers` →
-  `Mature 17+`, `Explicit`, `MAX`, `Adults` → `Adults Only 18+`, `Rated E`
-  → `Everyone`. Other text still rates nothing. A reader with an
-  age-rating cap may therefore no longer see a series whose `series.json`
-  says, for example, `17+`. Like the rest of the declared floor, this
-  takes effect at the next scan that reads each folder; no migration is
-  needed.
+  rating:
+  - `All` and `All Ages` → `Everyone`.
+  - A stated minimum age, alone (`17`, `17+`, `18 +`) or inside other
+    words (`Ages 12+`, `For ages 12+`, `MA 15+`, `12 and up`), up to 21:
+    up to 6 → `Everyone`, 7 to 10 (Mylar's `9+`) → `Everyone 10+`, 11 to
+    13 (Mylar's `12+`) → `Teen`, 14 and 15 → `MA15+`, 16 and 17 →
+    `Mature 17+`, 18 and over → `Adults Only 18+`.
+  - Publisher wording: `Rated T+`, `T+`, `T`, `PSR`, `Parental Advisory`
+    → `Teen`; `Rated M`, `Mature Readers` → `Mature 17+`; `Explicit`,
+    `MAX`, `AO`, `Adults` → `Adults Only 18+`; `Rated E`, `E` →
+    `Everyone`. When the text also states an age, the stricter of the two
+    readings wins (`Mature 16+` → `Mature 17+`).
+  - Text with `not`, `no`, `non`, `never` or `unsuitable` in it, or with
+    both a children or all-ages word and an adult word (`Not for kids`,
+    `Kids & Adults`), is not read, and neither is anything else
+    (`PG-13`, `TV-MA`, `E10+`, `Teen+`, `Ages 4-8`, `13 and under`).
+
+  A series whose rating is read is rated where it used to be unrated.
+  For a grant with an age-rating cap that is stricter: a series whose
+  `series.json` says, for example, `17+` is hidden from a reader capped
+  below it. For a grant with "hide unrated" on it can work the other way:
+  a series that was hidden only because it was unrated is now shown when
+  its declared rating is within the cap. Like the rest of the declared
+  floor, this takes effect at the next scan that reads each folder; no
+  migration is needed.
 - **Age-rating edits are validated.** The issue edit, bulk metadata edit
   and series edit accept a ladder rating, one of Metron's words above,
   or blank; anything else answers 422 ("not a recognised age rating").

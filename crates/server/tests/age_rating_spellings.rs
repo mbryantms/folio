@@ -146,6 +146,30 @@ async fn set_rating(db: &DatabaseConnection, table: &str, id: Value, rating: Opt
     .unwrap();
 }
 
+/// Give the account registered as `email` a grant on `lib`.
+async fn grant(
+    db: &DatabaseConnection,
+    email: &str,
+    lib: Uuid,
+    cap: Option<&str>,
+    hide_unrated: bool,
+) {
+    db.execute_raw(Statement::from_sql_and_values(
+        db.get_database_backend(),
+        "INSERT INTO library_user_access \
+           (user_id, library_id, age_rating_max, hide_unrated, created_at, updated_at) \
+         SELECT id, $2, $3, $4, now(), now() FROM users WHERE email = $1",
+        [
+            Value::from(email.to_owned()),
+            Value::from(lib),
+            Value::from(cap.map(str::to_owned)),
+            Value::from(hide_unrated),
+        ],
+    ))
+    .await
+    .unwrap();
+}
+
 struct World {
     app: TestApp,
     admin: Authed,
@@ -538,30 +562,185 @@ async fn a_capped_reader_does_not_see_a_series_declared_above_the_cap() {
         .await
         .unwrap();
 
-    let reader_id: Uuid = {
-        let row = db
-            .query_one_raw(Statement::from_string(
-                db.get_database_backend(),
-                "SELECT id FROM users WHERE email = 'reader@declared.test'",
-            ))
-            .await
-            .unwrap()
-            .unwrap();
-        row.try_get("", "id").unwrap()
-    };
-    db.execute_raw(Statement::from_sql_and_values(
-        db.get_database_backend(),
-        "INSERT INTO library_user_access \
-           (user_id, library_id, age_rating_max, hide_unrated, created_at, updated_at) \
-         VALUES ($1, $2, 'Teen', false, now(), now())",
-        [Value::from(reader_id), Value::from(lib)],
-    ))
-    .await
-    .unwrap();
+    grant(&db, "reader@declared.test", lib, Some("Teen"), false).await;
 
     let uri = format!("/api/series?library={lib}");
     let all = strings(&get(&app, &uri, &admin).await, Some("name"));
     assert_eq!(all, set(&["Seventeen", "Twelve", "Words"]));
     let seen = strings(&get(&app, &uri, &reader).await, Some("name"));
     assert_eq!(seen, set(&["Twelve", "Words"]));
+}
+
+/// Scan one folder per `(name, declared rating)` into a fresh library;
+/// no issue carries a rating of its own.
+async fn scan_declared(app: &TestApp, dir: &str, declared: &[(&str, &str)]) -> Uuid {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let root = app._data_dir.path().join(dir);
+    for (n, (name, rating)) in declared.iter().enumerate() {
+        let folder = root.join(name);
+        std::fs::create_dir_all(&folder).unwrap();
+        write_cbz(&folder.join(format!("{name} 001.cbz")), n as u32 + 1, name);
+        std::fs::write(
+            folder.join("series.json"),
+            format!(r#"{{"metadata": {{"name": "{name}", "age_rating": "{rating}"}}}}"#),
+        )
+        .unwrap();
+    }
+    let lib = seed_library(&db, &root).await;
+    server::library::scanner::scan_library(&app.state(), lib)
+        .await
+        .unwrap();
+    lib
+}
+
+/// Under a `Teen` cap with hide-unrated on, a series with no rated issue
+/// used to be hidden whatever its `series.json` said. A declared rating
+/// that is read now rates it: `12+` (Teen) is shown, `MA 15+` (MA15+,
+/// not Teen as GCD's table alone would say) stays hidden, and `Not for
+/// kids`, which is not read, leaves it unrated and hidden.
+#[tokio::test]
+async fn a_hide_unrated_reader_sees_only_series_declared_within_the_cap() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@hide.test").await;
+    let reader = register(&app, "reader@hide.test").await;
+    let lib = scan_declared(
+        &app,
+        "hide-lib",
+        &[
+            ("Fifteen", "MA 15+"),
+            ("Twelve", "12+"),
+            ("Negated", "Not for kids"),
+        ],
+    )
+    .await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    grant(&db, "reader@hide.test", lib, Some("Teen"), true).await;
+
+    let uri = format!("/api/series?library={lib}");
+    assert_eq!(
+        strings(&get(&app, &uri, &admin).await, Some("name")),
+        set(&["Fifteen", "Twelve", "Negated"])
+    );
+    assert_eq!(
+        strings(&get(&app, &uri, &reader).await, Some("name")),
+        set(&["Twelve"])
+    );
+}
+
+/// The facet never lists a rating that exists only on content the caller
+/// cannot see: a `Teen` cap drops the Mature series and the issues above
+/// it; hide-unrated also drops unranked text and everything in the
+/// unrated series that holds the issues.
+#[tokio::test]
+async fn the_facet_lists_only_ratings_the_caller_can_see() {
+    let w = world().await;
+    let capped = register(&w.app, "capped@spell.test").await;
+    let hiding = register(&w.app, "hiding@spell.test").await;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    grant(&db, "capped@spell.test", w.lib, Some("Teen"), false).await;
+    grant(&db, "hiding@spell.test", w.lib, Some("Teen"), true).await;
+
+    let series = format!("/api/filter-options/age_ratings?library={}", w.lib);
+    let issues = format!("{series}&entity=issues");
+    assert_eq!(
+        strings(&get(&w.app, &series, &capped).await, None),
+        set(&["Teen", "Unknown", "Rating Pending", "Sixteen"])
+    );
+    assert_eq!(
+        strings(&get(&w.app, &issues, &capped).await, None),
+        set(&["Unknown"])
+    );
+    assert_eq!(
+        strings(&get(&w.app, &series, &hiding).await, None),
+        set(&["Teen"])
+    );
+    assert!(strings(&get(&w.app, &issues, &hiding).await, None).is_empty());
+    // The same lookups without a library scope.
+    assert_eq!(
+        strings(
+            &get(&w.app, "/api/filter-options/age_ratings", &hiding).await,
+            None
+        ),
+        set(&["Teen"])
+    );
+    assert_eq!(
+        strings(
+            &get(
+                &w.app,
+                "/api/filter-options/age_ratings?entity=issues",
+                &capped
+            )
+            .await,
+            None
+        ),
+        set(&["Unknown"])
+    );
+}
+
+/// Quotes, parentheses, LIKE wildcards and a backslash in an unranked
+/// rating, a filter value, a saved-view value and the facet's `q` are
+/// bound text: they match only themselves and never error.
+#[tokio::test]
+async fn injection_shaped_ratings_match_only_their_literal_text() {
+    let w = world().await;
+    let odd = r"'(%_\ odd";
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    let id = SeriesSeed::new(w.lib, "odd").insert(&db).await;
+    set_rating(&db, "series", Value::from(id), Some(odd)).await;
+    let enc = |v: &str| v.bytes().map(|b| format!("%{b:02X}")).collect::<String>();
+
+    for (value, want) in [
+        (odd, set(&[id.to_string().as_str()])),
+        ("%", BTreeSet::new()),
+        ("_", BTreeSet::new()),
+        ("'", BTreeSet::new()),
+        (r"\", BTreeSet::new()),
+    ] {
+        let body = get(
+            &w.app,
+            &format!("/api/series?library={}&age_rating={}", w.lib, enc(value)),
+            &w.admin,
+        )
+        .await;
+        assert_eq!(strings(&body, Some("id")), want, "filter {value:?}");
+        let body = get(
+            &w.app,
+            &format!("/api/issues?library={}&age_rating={}", w.lib, enc(value)),
+            &w.admin,
+        )
+        .await;
+        assert!(strings(&body, Some("id")).is_empty(), "issues {value:?}");
+        assert_eq!(
+            view_results(&w, "filter_series", "is", json!(value)).await,
+            want,
+            "view {value:?}"
+        );
+    }
+
+    for (q, want) in [
+        (r"'(%_\", set(&[odd])),
+        ("'(", set(&[odd])),
+        ("%", BTreeSet::new()),
+        ("_", BTreeSet::new()),
+        (r"\", BTreeSet::new()),
+    ] {
+        for entity in ["", "&entity=issues"] {
+            let body = get(
+                &w.app,
+                &format!(
+                    "/api/filter-options/age_ratings?library={}&q={}{entity}",
+                    w.lib,
+                    enc(q)
+                ),
+                &w.admin,
+            )
+            .await;
+            let want = if entity.is_empty() {
+                want.clone()
+            } else {
+                BTreeSet::new()
+            };
+            assert_eq!(strings(&body, None), want, "q {q:?} {entity}");
+        }
+    }
 }

@@ -177,7 +177,9 @@ from `is_not` / `not_in` as it was from `<>` / `NOT IN`. The list
 endpoints' `?age_rating=` parameters (`GET /series`, `GET /issues`) and
 the `/filter-options/age_ratings` lookup (one option per rung, labelled
 with its canonical spelling; `?entity=issues` lists the issues' own
-ratings) follow the same rule.
+ratings) follow the same rule. The `entity=issues` lookup reads every
+visible issue in scope each time the picker opens (no index covers it);
+that cost is accepted for now.
 
 ### `is_empty` / `is_not_empty`
 
