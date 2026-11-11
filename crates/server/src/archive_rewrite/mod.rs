@@ -551,6 +551,7 @@ fn link_or_copy(
             if linked_backup_ages_from_now(dir, dst, original, reference)? {
                 return Ok(());
             }
+            warn_links_become_copies(dir, original);
             tracing::debug!(
                 dst = %dir.display(dst).display(),
                 "archive_rewrite: the hard link does not read as made now; copying the backup instead",
@@ -578,24 +579,54 @@ fn link_or_copy(
     Ok(())
 }
 
-/// Look at the freshly made link `dst` (no link followed): an error unless
-/// it is still the original's file, then [`link_ages_from_now`].
+/// Look at the freshly made link `dst` (a no-follow `stat`, the file is
+/// not opened): an error unless it is still the original's file (a regular
+/// file with the original's device and inode), then [`link_ages_from_now`].
 fn linked_backup_ages_from_now(
     dir: &LibraryDir,
     dst: &OsStr,
     original: &ArchiveFile,
     reference: SystemTime,
 ) -> Result<bool, RewriteError> {
-    let (file, stamp) = dir.open_regular_identified(dst)?;
-    if stamp.identity() != original.identity()? {
-        return Err(RewriteError::Io(io::Error::other(
+    let st = dir.stat(dst)?;
+    match st {
+        Some(st) if st.kind == EntryKind::Regular && st.identity == original.identity()? => {
+            Ok(link_ages_from_now(backup_made_at_stat(&st), reference))
+        }
+        _ => Err(RewriteError::Io(io::Error::other(
             "the backup name changed while it was being made; nothing was replaced",
-        )));
+        ))),
     }
-    Ok(link_ages_from_now(
-        backup_made_at(&file.metadata()?),
-        reference,
-    ))
+}
+
+/// Say once per process per filesystem (device) that backups there are
+/// made by copy: a hard link was made and then replaced because its age
+/// did not read as "now" (the filesystem does not set ctime on a link, or
+/// the archive's mtime lies in the future). Per file it stays at debug.
+fn warn_links_become_copies(dir: &LibraryDir, original: &ArchiveFile) {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+    static WARNED: OnceLock<Mutex<HashSet<u64>>> = OnceLock::new();
+    let Ok((dev, _)) = original.identity() else {
+        return;
+    };
+    let first = WARNED
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .map(|mut seen| seen.insert(dev))
+        .unwrap_or(false);
+    if first {
+        tracing::warn!(
+            dir = %dir.path().display(),
+            device = dev,
+            "archive_rewrite: backups on this filesystem are made by copy, not hard link: \
+             a fresh hard link here does not read as made now (the filesystem does not \
+             set the change time on a link, as sshfs does not, or the archive's \
+             modification time lies in the future), and the retention sweep ages a \
+             backup by that time. Copies take disk space and time; said once per \
+             filesystem per process",
+        );
+    }
 }
 
 /// Copy all of `src` into the empty `dst`, reading `src` at explicit
@@ -1259,6 +1290,12 @@ pub fn backup_made_at(meta: &fs::Metadata) -> Option<SystemTime> {
             SystemTime::UNIX_EPOCH + std::time::Duration::new(s, nanos)
         });
     made_at(ctime, meta.modified().ok())
+}
+
+/// [`backup_made_at`] from a no-follow `stat` taken without opening the
+/// file ([`crate::library::no_follow::LibraryDir::stat`]).
+pub fn backup_made_at_stat(st: &crate::library::no_follow::EntryStat) -> Option<SystemTime> {
+    made_at(st.ctime, st.mtime)
 }
 
 /// [`backup_made_at`]'s rule over the two timestamps.
@@ -2655,5 +2692,43 @@ mod tests {
         )
         .unwrap();
         assert_eq!(fs::metadata(&bak).unwrap().ino(), src_ino, "a hard link");
+    }
+
+    /// The "not the original's file" branch: a different file, or a link,
+    /// at the backup name when the fresh link is looked at is an error (the
+    /// rewrite stops before the swap); the real link is the control.
+    #[test]
+    fn a_backup_name_that_is_not_the_originals_file_is_an_error() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("issue.cbz");
+        fs::write(&src, b"payload").unwrap();
+        let (folder, name) = root(&dir).open_parent(&src).unwrap();
+        let original = ArchiveFile::new(folder.open_regular(&name).unwrap(), &src);
+        let now = SystemTime::now();
+
+        // Control: the link itself.
+        folder.hard_link(&name, OsStr::new("a.cbz.bak")).unwrap();
+        assert!(
+            linked_backup_ages_from_now(&folder, OsStr::new("a.cbz.bak"), &original, now).unwrap()
+        );
+
+        // Another file at the name.
+        fs::write(dir.path().join("b.cbz.bak"), b"payload").unwrap();
+        assert!(matches!(
+            linked_backup_ages_from_now(&folder, OsStr::new("b.cbz.bak"), &original, now),
+            Err(RewriteError::Io(_))
+        ));
+        // A link to the original at the name: not followed, not the file.
+        std::os::unix::fs::symlink(&src, dir.path().join("c.cbz.bak")).unwrap();
+        assert!(matches!(
+            linked_backup_ages_from_now(&folder, OsStr::new("c.cbz.bak"), &original, now),
+            Err(RewriteError::Io(_))
+        ));
+        // Nothing at the name.
+        assert!(matches!(
+            linked_backup_ages_from_now(&folder, OsStr::new("d.cbz.bak"), &original, now),
+            Err(RewriteError::Io(_))
+        ));
+        assert_eq!(fs::read(&src).unwrap(), b"payload");
     }
 }

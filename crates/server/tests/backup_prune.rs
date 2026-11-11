@@ -288,3 +288,106 @@ async fn todays_sweep_keeps_a_fresh_backup_of_an_old_archive_and_foreign_bak_fil
     assert!(notes.exists() && photo.exists());
     assert_eq!(std::fs::read(&archive).unwrap(), b"rewritten");
 }
+
+/// Write `bytes` into the staging file and, when `bump` is set, move the
+/// staging file's mtime a year ahead: the rewrite must use that mtime as
+/// the reference a fresh link's age is checked against.
+fn stage(
+    io: &server::archive_rewrite::RewriteIo<'_>,
+    bytes: &[u8],
+    bump: bool,
+) -> Result<(), server::archive_rewrite::RewriteError> {
+    use std::io::Write;
+    let mut f = io.staging_file()?;
+    f.write_all(bytes)?;
+    if bump {
+        let ahead = filetime::FileTime::from_system_time(SystemTime::now() + 365 * DAY);
+        filetime::set_file_handle_times(&f, None, Some(ahead))?;
+    }
+    Ok(())
+}
+
+fn ino(p: &Path) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::symlink_metadata(p).unwrap().ino()
+}
+
+/// ARC-1 review: the rewrite passes the staging file's mtime as the
+/// reference. With that mtime a year ahead, a perfectly good link reads as
+/// older than the reference, so the backup must be a copy; passing no
+/// reference (our clock) would keep the link. Control: the same rewrite
+/// without the bump keeps the hard link.
+#[test]
+fn rewrite_checks_the_link_against_the_staging_files_time() {
+    let dir = tempdir().unwrap();
+    let root = server::library::no_follow::LibraryRoot::resolve(dir.path());
+    for (bump, want_link) in [(false, true), (true, false)] {
+        let archive = dir.path().join(format!("issue-{bump}.cbz"));
+        std::fs::write(&archive, b"v1").unwrap();
+        let before = ino(&archive);
+        let out = server::archive_rewrite::rewrite_atomic(&root, &archive, 1, |io| {
+            stage(io, b"v2", bump)
+        })
+        .unwrap();
+        let bak = out.backup.unwrap();
+        assert_eq!(ino(&bak) == before, want_link, "bump={bump}");
+        assert_eq!(std::fs::read(&bak).unwrap(), b"v1");
+        assert_eq!(std::fs::read(&archive).unwrap(), b"v2");
+    }
+}
+
+/// ARC-1 review: an archive whose mtime lies a year in the future would
+/// give a link of unknown age (kept forever); its backup must be a copy
+/// with fresh times. Control: an ordinary old archive's backup is the
+/// original's file (a hard link). Through `rewrite_atomic` and
+/// `convert_atomic`.
+#[test]
+fn a_future_dated_archive_is_backed_up_by_copy_and_an_old_one_by_link() {
+    let dir = tempdir().unwrap();
+    let root = server::library::no_follow::LibraryRoot::resolve(dir.path());
+    let future = filetime::FileTime::from_system_time(SystemTime::now() + 365 * DAY);
+    let past = filetime::FileTime::from_system_time(SystemTime::now() - 400 * DAY);
+    let fresh = |p: &Path| {
+        let m = std::fs::symlink_metadata(p).unwrap();
+        let mtime = m.modified().unwrap();
+        mtime <= SystemTime::now() && mtime > SystemTime::now() - Duration::from_secs(600)
+    };
+
+    for (label, stamp, want_link) in [("old", past, true), ("future", future, false)] {
+        // rewrite_atomic
+        let archive = dir.path().join(format!("rw-{label}.cbz"));
+        std::fs::write(&archive, b"v1").unwrap();
+        filetime::set_file_mtime(&archive, stamp).unwrap();
+        let before = ino(&archive);
+        let out = server::archive_rewrite::rewrite_atomic(&root, &archive, 1, |io| {
+            stage(io, b"v2", false)
+        })
+        .unwrap();
+        let bak = out.backup.unwrap();
+        assert_eq!(ino(&bak) == before, want_link, "rewrite {label}");
+        if !want_link {
+            assert!(fresh(&bak), "the copy has fresh times");
+            let made =
+                server::archive_rewrite::backup_made_at(&std::fs::symlink_metadata(&bak).unwrap());
+            assert!(made.is_some(), "and a known age");
+        }
+
+        // convert_atomic to a new name
+        let original = dir.path().join(format!("cv-{label}.cbr"));
+        let dst = dir.path().join(format!("cv-{label}.cbz"));
+        std::fs::write(&original, b"rar").unwrap();
+        filetime::set_file_mtime(&original, stamp).unwrap();
+        let before = ino(&original);
+        let converted = server::archive_rewrite::convert_atomic(&root, &original, &dst, |io| {
+            stage(io, b"zip", false)
+        })
+        .unwrap();
+        let out = converted.finish();
+        let bak = out.backup.unwrap();
+        assert_eq!(ino(&bak) == before, want_link, "convert {label}");
+        assert_eq!(std::fs::read(&bak).unwrap(), b"rar");
+        if !want_link {
+            assert!(fresh(&bak), "the copy has fresh times");
+        }
+    }
+}

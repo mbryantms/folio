@@ -237,6 +237,30 @@ pub enum EntryKind {
     Other,
 }
 
+/// What a no-follow `stat` of an existing entry says ([`LibraryDir::stat`]).
+/// Taken without opening the entry: no read permission is needed, and no
+/// file data is touched (an open can recall a file on tiered storage).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntryStat {
+    /// Never [`EntryKind::Missing`].
+    pub kind: EntryKind,
+    /// `(device, inode)`.
+    pub identity: (u64, u64),
+    /// Modification time; `None` at or before the epoch.
+    pub mtime: Option<std::time::SystemTime>,
+    /// Inode change time; `None` at or before the epoch.
+    pub ctime: Option<std::time::SystemTime>,
+}
+
+/// A `stat` timestamp as a [`std::time::SystemTime`]; `None` at or before
+/// the epoch.
+fn stat_time(secs: i64, nsec: u32) -> Option<std::time::SystemTime> {
+    u64::try_from(secs)
+        .ok()
+        .filter(|&s| s > 0)
+        .map(|s| std::time::UNIX_EPOCH + Duration::new(s, nsec.min(999_999_999)))
+}
+
 impl LibraryDir {
     /// The directory's path, for messages.
     pub fn path(&self) -> &Path {
@@ -259,6 +283,28 @@ impl LibraryDir {
             Err(Errno::NOENT) => Ok(EntryKind::Missing),
             Err(e) => Err(e.into()),
         }
+    }
+
+    /// A no-follow `stat` of `name` (`fstatat` with `AT_SYMLINK_NOFOLLOW`
+    /// through this directory's handle; the entry is never opened). `None`
+    /// when nothing is at the name.
+    pub fn stat(&self, name: &OsStr) -> std::io::Result<Option<EntryStat>> {
+        let st = match rustix::fs::statat(&self.fd, name, AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(st) => st,
+            Err(Errno::NOENT) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+        let kind = match FileType::from_raw_mode(st.st_mode) {
+            FileType::RegularFile => EntryKind::Regular,
+            FileType::Symlink => EntryKind::Symlink,
+            _ => EntryKind::Other,
+        };
+        Ok(Some(EntryStat {
+            kind,
+            identity: (st.st_dev, st.st_ino),
+            mtime: stat_time(st.st_mtime, u32::try_from(st.st_mtime_nsec).unwrap_or(0)),
+            ctime: stat_time(st.st_ctime, u32::try_from(st.st_ctime_nsec).unwrap_or(0)),
+        }))
     }
 
     /// `(device, inode)` of `name`, without following it.

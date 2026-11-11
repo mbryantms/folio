@@ -224,9 +224,14 @@ pub(crate) fn prune_library_with(
                 stats.bytes += meta.len();
                 tracing::debug!(path = %entry.path().display(), "backup prune: removed");
             }
-            Ok(Removal::Changed(now_there)) => {
+            Ok(Removal::Changed { regular_file_there }) => {
                 stats.skipped_changed += 1;
-                if let Some(m) = now_there {
+                // Count what holds the name now. The tally is a display
+                // value, so a plain `lstat` by path is enough here.
+                if regular_file_there
+                    && let Ok(m) = std::fs::symlink_metadata(entry.path())
+                    && m.file_type().is_file()
+                {
                     tally.add(&m);
                 }
                 tracing::debug!(
@@ -245,22 +250,27 @@ pub(crate) fn prune_library_with(
 }
 
 /// What [`remove_if_still_expired`] did.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 enum Removal {
     Removed,
     /// Not deleted: the name holds another file or no regular file, or the
-    /// file's age no longer qualifies. Carries the metadata of the regular
-    /// file now at the name, to tally.
-    Changed(Option<std::fs::Metadata>),
+    /// file's age no longer qualifies. `regular_file_there` says whether a
+    /// regular file holds the name now (to tally).
+    Changed {
+        regular_file_there: bool,
+    },
 }
 
 /// Delete the backup at `path` only if the name still holds the file the
-/// walk decided on (`walked` = device and inode) and that file's age still
-/// qualifies (made before `cutoff`). The name is looked at again through
-/// the no-follow walk from the root, just before the unlink and in the
-/// same folder handle; a folder on the way that has become a link is
-/// refused. What is left is the window between that look and the unlink
-/// itself, which no portable call closes.
+/// walk decided on (`walked` = device and inode), still a regular file,
+/// whose age still qualifies (made before `cutoff`). The name is looked at
+/// again with a no-follow `stat` through the folder handle the no-follow
+/// walk from the root opens (a folder on the way that has become a link is
+/// refused), just before the unlink in that same handle. The file is never
+/// opened: no read permission is needed (a mode-000 backup is deleted like
+/// any other) and no file data is touched (an open can recall the whole
+/// file on tiered storage). What is left is the window between that look
+/// and the unlink itself, which no portable call closes.
 fn remove_if_still_expired(
     root: &Path,
     path: &Path,
@@ -268,23 +278,24 @@ fn remove_if_still_expired(
     cutoff: SystemTime,
 ) -> Result<Removal, Refusal> {
     let (dir, name) = no_follow::open_library_parent(root, path)?;
-    let (file, stamp) = match dir.open_regular_identified(&name) {
-        Ok(found) => found,
-        Err(Refusal::Missing | Refusal::Symlink | Refusal::NotRegular) => {
-            return Ok(Removal::Changed(None));
-        }
-        Err(e) => return Err(e),
+    let Some(st) = dir.stat(&name).map_err(Refusal::Io)? else {
+        return Ok(Removal::Changed {
+            regular_file_there: false,
+        });
     };
-    let meta = file.metadata().map_err(Refusal::Io)?;
-    drop(file);
+    let regular = st.kind == no_follow::EntryKind::Regular;
     let still_expired =
-        crate::archive_rewrite::backup_made_at(&meta).is_some_and(|made| made < cutoff);
-    if stamp.identity() != walked || !still_expired {
-        return Ok(Removal::Changed(Some(meta)));
+        crate::archive_rewrite::backup_made_at_stat(&st).is_some_and(|made| made < cutoff);
+    if !regular || st.identity != walked || !still_expired {
+        return Ok(Removal::Changed {
+            regular_file_there: regular,
+        });
     }
     match dir.remove_file(&name) {
         Ok(()) => Ok(Removal::Removed),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Removal::Changed(None)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Removal::Changed {
+            regular_file_there: false,
+        }),
         Err(e) => Err(Refusal::Io(e)),
     }
 }
@@ -567,5 +578,58 @@ mod tests {
             (0, 1, 0),
             "{stats:?}"
         );
+
+        // Replaced by a link (to a backup-named file outside): not a regular
+        // file any more, so kept, and the link's target is untouched.
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("victim.cbz.bak");
+        write(&target);
+        write(&bak);
+        let (stats, _) = prune_library_with(dir.path(), 30, SystemTime::now() + 31 * DAY, |p| {
+            fs::remove_file(p).unwrap();
+            std::os::unix::fs::symlink(&target, p).unwrap();
+        });
+        assert_eq!(
+            (stats.removed, stats.skipped_changed, stats.errors),
+            (0, 1, 0),
+            "{stats:?}"
+        );
+        assert!(bak.symlink_metadata().unwrap().file_type().is_symlink());
+        assert!(target.exists());
+    }
+
+    /// The re-check before the delete is a `stat`, not an open: a backup
+    /// Folio may not read (mode 000) is deleted when old, as before the
+    /// re-check existed. Control: the same backup is kept while young.
+    #[test]
+    #[allow(
+        clippy::print_stderr,
+        reason = "a skipped test must say so loudly when it runs as root"
+    )]
+    fn an_unreadable_backup_is_still_pruned_when_old() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let bak = dir.path().join("locked.cbz.bak");
+        write(&bak);
+        fs::set_permissions(&bak, fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::read(&bak).is_ok() {
+            eprintln!(
+                "SKIPPED an_unreadable_backup_is_still_pruned_when_old: running with \
+                 permission to read a mode-000 file (root or CAP_DAC_OVERRIDE), so the \
+                 unreadable case cannot be exercised"
+            );
+            return;
+        }
+        let (stats, _) = prune_library(dir.path(), 30, SystemTime::now() + DAY);
+        assert_eq!((stats.removed, stats.errors), (0, 0), "{stats:?}");
+        assert!(bak.symlink_metadata().is_ok(), "young: kept");
+
+        let (stats, _) = prune_library(dir.path(), 30, SystemTime::now() + 31 * DAY);
+        assert_eq!(
+            (stats.removed, stats.errors, stats.skipped_changed),
+            (1, 0, 0),
+            "{stats:?}"
+        );
+        assert!(bak.symlink_metadata().is_err(), "old: deleted");
     }
 }

@@ -109,8 +109,13 @@ NAS filesystems, two on FAT). A failure part-way leaves either the link
 backup, and the archive at its name in every case. The decision is
 unit-tested with injected times (`a_link_must_read_as_made_now_against_the_reference`)
 and the fallback by a reference the link cannot meet
-(`a_link_that_does_not_age_from_now_is_replaced_by_a_copy`); a filesystem
-that really behaves like sshfs is not available to the tests.
+(`a_link_that_does_not_age_from_now_is_replaced_by_a_copy`;
+`backup_prune.rs::rewrite_checks_the_link_against_the_staging_files_time`
+proves the rewrite passes the staging file's time); a filesystem that
+really behaves like sshfs is not available to the tests. On a filesystem
+whose links fail this check every backup is a full copy; the first time
+that happens on a filesystem (device) the process logs one WARN saying
+backups there are made by copy and why, and each file stays at debug.
 
 **Unknown age is kept, counted and reported.** A backup whose ctime is
 missing (zero) or earlier than its mtime has an unknown age and is
@@ -127,14 +132,24 @@ page's backup card they count toward the files and bytes but have no
 date: a library whose backups all have unknown age shows its count and
 size with both dates as "—".
 
+**Clock skew at prune time.** The sweep compares a backup's change time,
+stamped by the storage server's clock, with Folio's own clock; a server
+clock that runs behind Folio's by more than the retention can still
+prune early (a few minutes of skew against a retention in days does not
+matter).
+
 **The age is checked again just before the delete.** The walk decides
 from its own look at the name, and a rewrite can rotate a fresh backup
 into that name (or a user can copy a file over it) before the delete.
-`backup_prune::remove_if_still_expired` re-opens the name through the
-no-follow walk from the root, just before the unlink and in the same
-folder handle, and deletes only when it still holds the same file
-(device and inode) and that file's age still qualifies; otherwise the
-file is kept and counted in `PruneStats::skipped_changed`. The window
+`backup_prune::remove_if_still_expired` looks at the name again with a
+no-follow `stat` (`LibraryDir::stat`, `fstatat` with
+`AT_SYMLINK_NOFOLLOW`) through the folder handle the no-follow walk from
+the root opens, just before the unlink in that same handle, and deletes
+only when it is still a regular file with the same device and inode and
+its age still qualifies; otherwise the file is kept and counted in
+`PruneStats::skipped_changed` (a vanished file is a skip too). The file
+is never opened: a backup Folio may not read is still pruned, and no
+file data is touched (an open can recall the file on tiered storage). The window
 left is between that look and the unlink itself, which no portable call
 closes. Test: `jobs::backup_prune::a_file_that_changes_between_the_walk_and_the_delete_is_kept`.
 
