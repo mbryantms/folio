@@ -186,7 +186,7 @@ manga-ocr = "0.5.1"
 # fetches and verifies the pinned model files itself (`ocr::models`).
 # No features: the download client stays the crates' own, unused once
 # the verified files are in place.
-hf-hub = { version = "0.4", default-features = false }
+hf-hub = { version = "1.0", default-features = false }
 # Native Tesseract bindings. The `build-tesseract` feature compiles
 # Leptonica 1.84.1 + Tesseract 5.3.4 from source via cmake on the
 # build host and caches them at `~/.tesseract-rs/` across rebuilds.
