@@ -545,11 +545,19 @@ mod tests {
 
         // Another file takes the name (a new inode; its own age would still
         // qualify against this cutoff, so only the identity check saves it).
+        // The newcomer is written first and renamed over the name, the way
+        // a rewrite puts a file in place: created while the old file still
+        // exists, it cannot be handed the old file's inode number. Removing
+        // the old file and then creating a new one can reuse the number at
+        // once on ext4, which made this case fail on CI and pass on tmpfs.
+        // (A real file created that way has a fresh change time, so the age
+        // re-check keeps it; only this test's future cutoff takes that away.)
         write(&bak);
         let later = SystemTime::now() + 31 * DAY;
         let (stats, tally) = prune_library_with(dir.path(), 30, later, |p| {
-            fs::remove_file(p).unwrap();
-            fs::write(p, b"someone else's bytes").unwrap();
+            let incoming = p.with_file_name("incoming.tmp");
+            fs::write(&incoming, b"someone else's bytes").unwrap();
+            fs::rename(&incoming, p).unwrap();
         });
         assert_eq!((stats.removed, stats.skipped_changed), (0, 1), "{stats:?}");
         assert_eq!(fs::read(&bak).unwrap(), b"someone else's bytes");
