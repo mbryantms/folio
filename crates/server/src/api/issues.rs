@@ -755,8 +755,10 @@ pub struct UpdateIssueReq {
     #[serde(default, deserialize_with = "deserialize_some")]
     #[garde(custom(language_code_len))]
     pub language_code: Option<Option<String>>,
+    /// A ladder rung or a recognised alias (`Mature`, `Teen Plus`, …);
+    /// blank or null clears it.
     #[serde(default, deserialize_with = "deserialize_some")]
-    #[garde(skip)]
+    #[garde(custom(crate::library::age_rating::garde_recognised))]
     pub age_rating: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
     #[garde(skip)]
@@ -1129,6 +1131,15 @@ pub async fn update(
         if let Err(e) = res {
             tracing::error!(issue_id = %updated.id, error = %e, "issue external_id (metron) write failed");
         }
+    }
+
+    // The series' rating is its highest-rated issue's (unless a person or
+    // provider set it): an edited issue rating re-derives it now, for
+    // DB-direct and writeback libraries alike (the rescan re-derives it
+    // again from the file). The similar-series cache, which carries series
+    // ratings, is dropped by `manual_rewrite_after_edit` below.
+    if edited_arr.contains(&"age_rating") {
+        crate::library::series_rating::recompute_best_effort(&app.db, &[updated.series_id]).await;
     }
 
     // WP-2.10: in a writeback library the archive is the record, so the
@@ -1730,31 +1741,40 @@ pub async fn list_issue_health(
 /// covers, mid-series translator changes) and bulk-editing them
 /// risks clobbering accurate per-issue credits. Continue using the
 /// per-issue drawer for credits.
-#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Default, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct BulkMetadataPatch {
     /// ISO-639-1 language code (`"ja"`, `"en"`, …). `null` clears.
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub language_code: Option<Option<String>>,
     /// ComicInfo Manga: `"No"` / `"Yes"` / `"YesAndRightToLeft"`.
     /// `null` clears.
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub manga: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub publisher: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub imprint: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(custom(crate::library::age_rating::garde_recognised))]
     pub age_rating: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub format: Option<Option<String>>,
     /// CSV. Replaces the field wholesale; for additive tag operations
     /// the M5 dialog assembles the union client-side and sends it
     /// here.
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub genre: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub tags: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub story_arc: Option<Option<String>>,
 }
 
@@ -1823,11 +1843,14 @@ pub enum BulkMode {
     Replace,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct BulkMetadataReq {
+    #[garde(skip)]
     pub issue_ids: Vec<String>,
+    #[garde(dive)]
     pub patch: BulkMetadataPatch,
     #[serde(default)]
+    #[garde(skip)]
     pub mode: BulkMode,
 }
 
@@ -1879,7 +1902,7 @@ pub async fn bulk_metadata(
     State(app): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
-    Json(req): Json<BulkMetadataReq>,
+    Validated(req): Validated<BulkMetadataReq>,
 ) -> impl IntoResponse {
     const MAX_IDS: usize = 500;
     if req.issue_ids.len() > MAX_IDS {
@@ -1950,6 +1973,9 @@ pub async fn bulk_metadata(
     let mut failed: u32 = 0;
     let mut first_error: Option<String> = None;
     let mut sidecar_rewrites: u32 = 0;
+    // Series whose issue ratings this call edited: their derived rating is
+    // recomputed once after the loop.
+    let mut rated_series: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
     let mode_skip_if_set = matches!(req.mode, BulkMode::SkipIfSet);
 
     for row in rows {
@@ -1995,6 +2021,9 @@ pub async fn bulk_metadata(
         match update_issue_with_user_pins(&app.db, am, &touched_names).await {
             Ok(_) => {
                 updated += 1;
+                if req.patch.age_rating.is_some() {
+                    rated_series.insert(row.series_id);
+                }
                 // WP-2.10: writeback libraries get the edit in the file too.
                 if manual_rewrite_after_edit(&app, &row.id, &user, &ctx).await
                     == crate::metadata::manual_writeback::IssueEnqueue::Enqueued
@@ -2010,6 +2039,11 @@ pub async fn bulk_metadata(
                 first_error.get_or_insert_with(|| super::INTERNAL_ERROR_TEXT.to_owned());
             }
         }
+    }
+
+    if !rated_series.is_empty() {
+        let ids: Vec<Uuid> = rated_series.into_iter().collect();
+        crate::library::series_rating::recompute_best_effort(&app.db, &ids).await;
     }
 
     // Single audit row per call. Payload includes the *names* of the
@@ -2395,8 +2429,8 @@ fn apply_issue_visibility(
             issue::Column::LibraryId.is_in(visible.allowed.iter().copied().collect::<Vec<_>>()),
         );
     }
-    // WP-2.7: age-rating cap — the issue's own rating, falling back to the
-    // series rating (unrated rows pass, see `library::age_rating`).
+    // WP-2.7: age-rating cap — the issue's own rating AND its series'
+    // rating (`hide_unrated` included, see `library::access`).
     if let Some(cap) = visible.issue_cap_condition() {
         select = select.filter(cap);
     }

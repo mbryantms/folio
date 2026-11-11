@@ -132,6 +132,7 @@ async fn grant_library(app: &TestApp, email: &str, lib_id: Uuid) {
         user_id: Set(user_row.id),
         library_id: Set(lib_id),
         age_rating_max: Set(None),
+        hide_unrated: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
     }

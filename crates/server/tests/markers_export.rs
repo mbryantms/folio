@@ -529,6 +529,7 @@ async fn permalink_404s_when_issue_is_no_longer_visible() {
         user_id: Set(user.user_id),
         library_id: Set(lib),
         age_rating_max: Set(None),
+        hide_unrated: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
     }
@@ -587,6 +588,7 @@ async fn export_flags_markers_the_user_can_no_longer_see() {
         user_id: Set(user.user_id),
         library_id: Set(lib),
         age_rating_max: Set(None),
+        hide_unrated: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
     }

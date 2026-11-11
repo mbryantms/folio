@@ -23,9 +23,9 @@
 //! series branch — never a 403, the context param is advisory.
 //!
 //! ACL: the sequence keeps every entry so positions are stable; the
-//! walks skip issues the caller cannot open (`VisibleLibraries::issue_ok`,
-//! issue rating with the series rating as fallback) exactly as the CBL
-//! walk does.
+//! walks skip issues the caller cannot open (`VisibleLibraries::issue_ok`:
+//! the issue's own rating and its series' rating must both pass) exactly
+//! as the CBL walk does.
 
 use std::collections::HashMap;
 
@@ -46,7 +46,7 @@ pub(crate) struct CollectionSequence {
     /// Flat reading order (see the module docs). May be empty.
     pub items: Vec<IssueCardRow>,
     /// Parent series of every item, for the slug / name on the target
-    /// view and the series-rating fallback in the ACL check.
+    /// view and the series-rating half of the ACL check.
     pub series_by_id: HashMap<Uuid, series::Model>,
 }
 
@@ -62,15 +62,18 @@ impl CollectionSequence {
         i32::try_from(self.items.len()).unwrap_or(i32::MAX)
     }
 
-    /// Can the caller open the item at `idx`? Membership + age cap, the
-    /// issue's own rating first and the series rating as fallback.
+    /// Can the caller open the item at `idx`? Membership + age cap: the
+    /// issue's own rating and its series' rating
+    /// ([`access::VisibleLibraries::issue_ok`]).
     pub(crate) fn visible(&self, acl: &access::VisibleLibraries, idx: usize) -> bool {
         let item = &self.items[idx];
+        // A missing series row has no known rating: hidden wherever the
+        // grant hides anything.
         let series_rating = self
             .series_by_id
             .get(&item.series_id)
-            .and_then(|s| s.age_rating.as_deref());
-        acl.issue_ok(item.library_id, item.age_rating.as_deref(), series_rating)
+            .map(|s| s.age_rating.as_deref());
+        acl.issue_ok_lookup(item.library_id, item.age_rating.as_deref(), series_rating)
     }
 
     /// Parent series of the item at `idx`. `None` only if the series row

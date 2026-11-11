@@ -56,5 +56,15 @@ describe("library-access age-rating caps (WP-2.7)", () => {
     );
     expect(req.library_ids.sort()).toEqual(["a", "b"]);
     expect(req.age_rating_caps).toEqual({ a: "Teen" });
+    expect(req.hide_unrated).toEqual({});
+  });
+
+  it("buildAccessRequest passes the loaded hide-unrated set back for selected libraries", () => {
+    const req = buildAccessRequest(
+      new Set(["a", "b"]),
+      new Map(),
+      new Set(["b", "c"]),
+    );
+    expect(req.hide_unrated).toEqual({ b: true });
   });
 });

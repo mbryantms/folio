@@ -78,17 +78,27 @@ export function setCap(
 
 /**
  * Request-body shape for `POST /admin/users/{id}/library-access`: the
- * selected ids plus the caps of selected libraries only.
+ * selected ids plus the caps of selected libraries only. `hideUnrated` is
+ * the set of libraries whose grant hides unrated content; the server turns
+ * the option off for any granted library left out, so a caller that has no
+ * control for it passes back the set it loaded.
  */
 export function buildAccessRequest(
   selected: ReadonlySet<string>,
   caps: CapMap,
-): { library_ids: string[]; age_rating_caps: Record<string, string> } {
+  hideUnrated: ReadonlySet<string> = new Set(),
+): {
+  library_ids: string[];
+  age_rating_caps: Record<string, string>;
+  hide_unrated: Record<string, boolean>;
+} {
   const library_ids = Array.from(selected);
   const age_rating_caps: Record<string, string> = {};
+  const hide_unrated: Record<string, boolean> = {};
   for (const id of library_ids) {
     const cap = caps.get(id);
     if (cap) age_rating_caps[id] = cap;
+    if (hideUnrated.has(id)) hide_unrated[id] = true;
   }
-  return { library_ids, age_rating_caps };
+  return { library_ids, age_rating_caps, hide_unrated };
 }

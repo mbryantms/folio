@@ -1346,6 +1346,7 @@ async fn grant_all_libraries<C: sea_orm::ConnectionTrait>(
             library_id: Set(*library_id),
             user_id: Set(user_id),
             age_rating_max: Set(None),
+            hide_unrated: Set(false),
             created_at: Set(now),
             updated_at: Set(now),
         }

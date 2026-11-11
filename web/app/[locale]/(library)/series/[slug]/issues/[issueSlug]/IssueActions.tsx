@@ -35,6 +35,7 @@ import {
   useUpdateSeries,
   useSetIssueCoverPage,
 } from "@/lib/api/mutations";
+import { AGE_RATING_LADDER } from "@/lib/age-rating";
 import { collectServerErrors } from "@/lib/api/form-errors";
 import { formatRelativeDate } from "@/lib/format";
 import type {
@@ -876,11 +877,11 @@ function EditForm({
                   htmlFor="ed-age"
                   pinField="age_rating"
                 >
-                  <Input
+                  <NativeSelect
                     id="ed-age"
                     value={form.age_rating}
-                    onChange={(e) => set("age_rating", e.target.value)}
-                    placeholder="Teen, Mature 17+"
+                    onChange={(v) => set("age_rating", v)}
+                    options={ageRatingOptions(form.age_rating)}
                   />
                 </Field>
                 <Field label="Format" htmlFor="ed-format" pinField="format">
@@ -1281,4 +1282,23 @@ function linksChanged(prev: IssueLink[], next: FormLink[]): boolean {
     if ((a.label ?? "") !== (b.label ?? "")) return true;
   }
   return false;
+}
+
+/**
+ * Age-rating picker options: the server's ladder (it rejects any other
+ * word), plus the stored value when it is outside the ladder (a provider
+ * word such as Metron's "Teen Plus") so opening the form never changes it.
+ */
+function ageRatingOptions(current: string): Array<{
+  value: string;
+  label: string;
+}> {
+  const opts = [
+    { value: "", label: "Unrated" },
+    ...AGE_RATING_LADDER.map((v) => ({ value: v, label: v })),
+  ];
+  if (current && !opts.some((o) => o.value === current)) {
+    opts.push({ value: current, label: current });
+  }
+  return opts;
 }

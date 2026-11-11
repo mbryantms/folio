@@ -323,6 +323,7 @@ async fn respects_library_acl_and_age_cap() {
         library_id: Set(lib_a),
         user_id: Set(user.user_id),
         age_rating_max: Set(Some("Teen".into())),
+        hide_unrated: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
     }

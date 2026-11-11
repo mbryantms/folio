@@ -1338,16 +1338,8 @@ async fn fetch_series_finished(
     // readers (the grant is checked at hydrate time, as before).
     let mut params: Vec<sea_orm::Value> = vec![user_id.into(), limit.into()];
     let series_cap = acl.raw_cap_clause("s.library_id", "s.age_rating", &mut params);
-    let active_cap = acl.raw_cap_clause(
-        "i.library_id",
-        "COALESCE(i.age_rating, s.age_rating)",
-        &mut params,
-    );
-    let finished_cap = acl.raw_cap_clause(
-        "i.library_id",
-        "COALESCE(i.age_rating, s.age_rating)",
-        &mut params,
-    );
+    let active_cap = acl.issue_cap_sql_joined("i", "s", &mut params);
+    let finished_cap = acl.issue_cap_sql_joined("i", "s", &mut params);
     // Cursor: (occurred_at, series_id::text). The "::text" cast
     // mirrors how the rest of the query orders the id field; using
     // text comparison keeps the cursor compatible across the merge

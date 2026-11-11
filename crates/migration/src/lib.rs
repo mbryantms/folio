@@ -151,8 +151,16 @@ mod m20271105_000001_user_effects;
 mod m20271106_000001_email_change_requests;
 mod m20271107_000001_app_password_lookup_digest;
 mod m20271110_000001_new_in_series_rail;
+mod m20271111_000001_series_rating_from_issues;
 mod m20271111_000002_health_issue_scan_idx;
 mod m20271112_000001_entity_list_indexes;
+
+/// The series-rating migration's frozen ladder and statement, exposed so
+/// the server's tests can check they agree with the runtime derivation.
+pub use m20271111_000001_series_rating_from_issues::{
+    AGE_RATING_ALIASES, AGE_RATING_LADDER, provisional_declared_sql,
+    recompute_all_series_age_ratings_sql,
+};
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -312,6 +320,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20271106_000001_email_change_requests::Migration),
             Box::new(m20271107_000001_app_password_lookup_digest::Migration),
             Box::new(m20271110_000001_new_in_series_rail::Migration),
+            Box::new(m20271111_000001_series_rating_from_issues::Migration),
             Box::new(m20271111_000002_health_issue_scan_idx::Migration),
             Box::new(m20271112_000001_entity_list_indexes::Migration),
         ]
