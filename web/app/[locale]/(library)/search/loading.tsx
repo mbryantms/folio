@@ -2,7 +2,7 @@ import { SearchRailsSkeleton } from "./SearchRailsSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /**
- * Search fallback. `SearchView` is a header (title + card-size / filter
+ * Search fallback. `SearchView` is a header (title + cover-size / filter
  * controls + the always-focused search input + a result-count summary)
  * over one horizontal-scroll rail per category — NOT the inherited
  * `(library)` cover grid. Mirror that exact chrome (input + a couple of

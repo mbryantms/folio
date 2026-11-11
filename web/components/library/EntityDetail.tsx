@@ -30,11 +30,8 @@ import {
 import type { ArcTieInView, EntityDetailView } from "@/lib/api/types";
 import { scopeCaption } from "@/lib/relationships";
 import { ENTITY_KINDS } from "@/lib/entities";
+import { COVER_GRID_STYLE } from "@/lib/library/cover-size";
 import { useInfiniteSentinel } from "@/lib/ui/use-infinite-sentinel";
-
-const GRID_STYLE: React.CSSProperties = {
-  gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
-};
 
 /** Shared landing page for characters / teams / story arcs / publishers
  *  (WP-5.5), built on the creators-page template: a `PageHeader` with the
@@ -252,7 +249,7 @@ function ArcTieIns({ slug }: { slug: string }) {
       {groupTieIns(items).map((g) => (
         <section key={g.label} className="space-y-3">
           <h2 className="text-foreground text-sm font-medium">{g.label}</h2>
-          <ul role="list" className="grid gap-4" style={GRID_STYLE}>
+          <ul role="list" className="grid gap-4" style={COVER_GRID_STYLE}>
             {g.items.map((t) => {
               const caption = scopeCaption(t);
               return (
@@ -301,7 +298,7 @@ function IssuesGrid({ kind, slug }: { kind: EntityKindPath; slug: string }) {
   }
   return (
     <>
-      <ul role="list" className="grid gap-4" style={GRID_STYLE}>
+      <ul role="list" className="grid gap-4" style={COVER_GRID_STYLE}>
         {items.map((issue) => (
           <li key={issue.id}>
             <IssueCard issue={issue} />
@@ -337,7 +334,7 @@ function SeriesGrid({ kind, slug }: { kind: EntityKindPath; slug: string }) {
   }
   return (
     <>
-      <ul role="list" className="grid gap-4" style={GRID_STYLE}>
+      <ul role="list" className="grid gap-4" style={COVER_GRID_STYLE}>
         {items.map((s) => (
           <li key={s.id}>
             <SeriesCard series={s} size="md" />
@@ -380,7 +377,7 @@ function Sentinel({
 
 function SkeletonGrid() {
   return (
-    <ul role="list" className="grid gap-4" style={GRID_STYLE}>
+    <ul role="list" className="grid gap-4" style={COVER_GRID_STYLE}>
       {Array.from({ length: 12 }).map((_, i) => (
         <li key={i}>
           <IssueCardSkeleton />

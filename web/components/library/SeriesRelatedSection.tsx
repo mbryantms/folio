@@ -26,7 +26,7 @@
  *    provider link ("Continued by: Saga (2018) — not in your library").
  *
  * Covers render at `coverWidth` — the issue grid's effective column width
- * for the page's card-size slider (`useGridColumnWidth`), so every cover
+ * at the app-wide cover size (`useGridColumnWidth`), so every cover
  * in the tab matches the grid. Admins also get add / edit
  * (`RelationshipFormDialog`) / remove (behind an `AlertDialog`) and the
  * WP-7.3 "Suggested" chips.
@@ -91,7 +91,7 @@ import type {
   SeriesRelationshipView,
   SeriesView,
 } from "@/lib/api/types";
-import { SERIES_CARD_SIZE } from "@/lib/library/series-card-size";
+import { DEFAULT_COVER_SIZE_PX } from "@/lib/library/cover-size";
 import { kindOrder, scopeCaption } from "@/lib/relationships";
 import { seriesCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
 import { showUndoToast } from "@/lib/ui/undo-toast";
@@ -259,7 +259,7 @@ export function SeriesRelatedSection({
   seriesSlug,
   seriesId,
   seriesName,
-  coverWidth = SERIES_CARD_SIZE.defaultSize,
+  coverWidth = DEFAULT_COVER_SIZE_PX,
 }: {
   seriesSlug: string;
   seriesId: string;

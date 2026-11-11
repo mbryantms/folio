@@ -5,7 +5,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/admin/PageHeader";
 import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
-import { cardGridColumns } from "@/lib/library/card-size";
+import { COVER_GRID_STYLE, COVER_ITEM_STYLE } from "@/lib/library/cover-size";
 import { SeriesCard } from "@/components/library/SeriesCard";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type { CreatorDetailView, CreatorRoleRail } from "@/lib/api/types";
@@ -20,12 +20,6 @@ import { creatorVisit } from "@/lib/search/recent-visits";
  *  carries every series per role as a full `SeriesView`; a prolific
  *  writer would otherwise mount hundreds of cards. */
 const RAIL_CAP = 24;
-
-/** Fixed per-card width inside the overview rails. Matches the
- *  drill-in grid's minimum column so a cover is the same size on both
- *  layouts; the rail shows however many fit the viewport and scrolls
- *  for the rest, which is what keeps it fluid at every width. */
-const CARD_WIDTH_PX = 180;
 
 /** Canonical role list for the chip row in the header. Mirrors the
  *  backend's ROLE_ORDER so order stays stable between the overview
@@ -180,11 +174,11 @@ function CreatorHeader({
 }
 
 /** One role section on the overview: a horizontal `HorizontalScrollRail`
- *  of fixed-width series cards, the same strip the home page, search
- *  categories and the series Related tab use. A fixed card count in an
- *  `auto-fill` grid (the previous layout) left a ragged last row at
- *  every column count other than 4 or 6; a scroller shows whatever
- *  fits and scrolls for the rest. Mounts at most RAIL_CAP cards; when
+ *  of cover-sized series cards (`COVER_ITEM_STYLE`: the app-wide cover
+ *  size), the same strip the home page, search categories and the series
+ *  Related tab use. A fixed card count in a grid (the previous layout)
+ *  left a ragged last row at most column counts; a scroller shows
+ *  whatever fits and scrolls for the rest. Mounts at most RAIL_CAP cards; when
  *  the role has more, a header "View all <N>" link and the rail's
  *  trailing tile both land on the per-role drill-in (the search page
  *  keeps both too — the tile alone is easy to miss past the first
@@ -222,16 +216,12 @@ function RoleRail({
       <HorizontalScrollRail
         as="ul"
         trackLabel={`Series as ${roleLabel}`}
-        itemWidthPx={CARD_WIDTH_PX}
+        coverSized
         viewAllHref={truncated ? viewAllHref : undefined}
         viewAllLabel={`View all ${rail.series.length} as ${roleLabel}`}
       >
         {shown.map((s) => (
-          <li
-            key={s.id}
-            className="shrink-0"
-            style={{ width: `${CARD_WIDTH_PX}px` }}
-          >
+          <li key={s.id} className="shrink-0" style={COVER_ITEM_STYLE}>
             <SeriesCard series={s} size="md" />
           </li>
         ))}
@@ -252,16 +242,7 @@ function SingleRoleGrid({ rail }: { rail: CreatorRoleRail }) {
 
 function SeriesGrid({ series }: { series: CreatorRoleRail["series"] }) {
   return (
-    <ul
-      role="list"
-      className="grid gap-4"
-      // `min(…, calc(50% - 0.5rem))` keeps two columns on a phone — the
-      // guard every other cover grid uses. A bare 180px minimum
-      // collapsed to one full-width column below ~376px.
-      style={{
-        gridTemplateColumns: cardGridColumns(undefined, CARD_WIDTH_PX),
-      }}
-    >
+    <ul role="list" className="grid gap-4" style={COVER_GRID_STYLE}>
       {series.map((s) => (
         <li key={s.id}>
           <SeriesCard series={s} size="md" />

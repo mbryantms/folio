@@ -51,12 +51,6 @@ function renderToolbar(selectMode = false) {
       canSaveView={false}
       onSaveView={noop}
       onClearFacets={noop}
-      cardSize={160}
-      onCardSize={noop}
-      cardSizeMin={96}
-      cardSizeMax={320}
-      cardSizeStep={8}
-      cardSizeDefault={160}
       canSelect
       selectMode={selectMode}
       onEnterSelect={noop}

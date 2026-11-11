@@ -7,14 +7,13 @@ import {
   TextLineSkeleton,
 } from "@/components/skeletons/LoadingShapes";
 import { Skeleton } from "@/components/ui/skeleton";
-
-/** Matches `CARD_WIDTH_PX` in the page's `RoleRail`. */
-const CARD_WIDTH_PX = 180;
+import { COVER_ITEM_STYLE } from "@/lib/library/cover-size";
 
 /**
  * `/creators/<slug>` fallback. The page is a PageHeader ("N series across
  * N roles", role pills on the right) over one "As <role>  N series"
- * section per role, each a horizontal rail of 180px series cards; without
+ * section per role, each a horizontal rail of cover-sized series cards
+ * (`COVER_ITEM_STYLE`, as in the page's `RoleRail`); without
  * this it inherited the creators *index* skeleton (search box + A–Z +
  * name cards).
  */
@@ -42,11 +41,7 @@ export default function CreatorDetailLoading() {
             </div>
             <RailTrackSkeleton>
               {Array.from({ length: 8 }, (_, i) => (
-                <div
-                  key={i}
-                  className="shrink-0"
-                  style={{ width: `${CARD_WIDTH_PX}px` }}
-                >
+                <div key={i} className="shrink-0" style={COVER_ITEM_STYLE}>
                   <SeriesCardSkeleton />
                 </div>
               ))}

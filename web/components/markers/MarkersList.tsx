@@ -97,7 +97,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/folio/dropdown-menu";
-import { CARD_SIZE_KEYS } from "@/lib/library/card-size";
+import { BOOKMARKS_CARD_SIZE_KEY } from "@/lib/library/cover-size";
 
 type KindFilter = BookmarksFeedKind | "all" | "favorite";
 
@@ -135,7 +135,7 @@ const CARD_SIZE_MIN = 100;
 const CARD_SIZE_MAX = 220;
 const CARD_SIZE_STEP = 20;
 const CARD_SIZE_DEFAULT = 140;
-const CARD_SIZE_STORAGE_KEY = CARD_SIZE_KEYS.bookmarks;
+const CARD_SIZE_STORAGE_KEY = BOOKMARKS_CARD_SIZE_KEY;
 
 /** Preset server-side scope for an embedded list (WP-5.2). */
 export type MarkersListScope =
@@ -1048,8 +1048,12 @@ function RowPackedSection({
             style={{ gap: ROW_GAP_PX, alignItems: "flex-start" }}
           >
             {row.items.map((slot) => (
+              // `data-flip-id`: the size slider glides each tile to its
+              // new slot (lib/ui/card-flip.ts), matched by marker id
+              // because a tile changes rows when the row height changes.
               <div
                 key={slot.ref.id}
+                data-flip-id={slot.ref.id}
                 style={{ width: slot.width, flexShrink: 0 }}
               >
                 <MarkerCard

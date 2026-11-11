@@ -27,16 +27,15 @@ import {
   BULK_BACKFILL_PROMPT_THRESHOLD,
 } from "@/components/library/BulkMarkReadDialog";
 import {
-  CardSizeFields,
-  CardSizeOptions,
-} from "@/components/library/CardSizeOptions";
+  CoverSizeFields,
+  CoverSizeOptions,
+} from "@/components/library/CoverSizeOptions";
 import {
   PhoneControlsBar,
   PhoneMenuAction,
 } from "@/components/library/PhoneControlsBar";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
-import { useCardSize } from "@/components/library/use-card-size";
 import {
   CoverGridSkeleton,
   LoadingRegion,
@@ -71,6 +70,7 @@ import {
   useRefreshCblList,
 } from "@/lib/api/mutations";
 import { skippedEntryIds } from "@/lib/library/bulk-archive-skips";
+import { COVER_GRID_STYLE } from "@/lib/library/cover-size";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
 import type { CblEntryHydratedView, SavedViewView } from "@/lib/api/types";
@@ -80,7 +80,6 @@ import { StickyToolbarRow } from "@/components/library/StickyToolbarRow";
 
 import { ViewActionsMenu } from "./ViewActionsMenu";
 import { ViewHeader } from "./ViewHeader";
-import { CARD_SIZE_KEYS, cardGridColumns } from "@/lib/library/card-size";
 
 // Heavy archive-edit dialog (+dnd) — lazy so it stays out of the CBL view's
 // initial bundle; the chunk loads on first open (G6).
@@ -100,12 +99,6 @@ const OfflineDownloadDialog = dynamic(
     ),
   { ssr: false },
 );
-
-const CARD_SIZE_MIN = 120;
-const CARD_SIZE_MAX = 280;
-const CARD_SIZE_STEP = 20;
-const CARD_SIZE_DEFAULT = 160;
-const CARD_SIZE_STORAGE_KEY = CARD_SIZE_KEYS.savedView;
 
 /** Read-first detail page for a CBL saved view. Mirrors filter views:
  *  the page is a consumption surface (issues in CBL position order),
@@ -194,12 +187,6 @@ function CblViewDetailInner({
   // input render but reject focus/clicks.
   const [editPortalContainer, setEditPortalContainer] =
     React.useState<HTMLElement | null>(null);
-  const [cardSize, setCardSize] = useCardSize({
-    storageKey: CARD_SIZE_STORAGE_KEY,
-    min: CARD_SIZE_MIN,
-    max: CARD_SIZE_MAX,
-    defaultSize: CARD_SIZE_DEFAULT,
-  });
 
   // Infinite-scroll sentinel — once it intersects the viewport,
   // fetch the next page. Matches the pattern in IssuesPanel +
@@ -350,10 +337,7 @@ function CblViewDetailInner({
     return (
       <LoadingRegion label="Loading view…" className="space-y-6">
         <PageHeaderSkeleton />
-        <CoverGridSkeleton
-          cardSizeKey={CARD_SIZE_STORAGE_KEY}
-          label="Loading entries…"
-        />
+        <CoverGridSkeleton label="Loading entries…" />
       </LoadingRegion>
     );
   }
@@ -419,9 +403,6 @@ function CblViewDetailInner({
         },
       },
     );
-  };
-  const gridStyle: React.CSSProperties = {
-    gridTemplateColumns: cardGridColumns(CARD_SIZE_STORAGE_KEY, cardSize),
   };
 
   // Jump the page to the Up Next anchor card.
@@ -614,15 +595,7 @@ function CblViewDetailInner({
             }
             menu={(close) => (
               <>
-                <CardSizeFields
-                  cardSize={cardSize}
-                  onCardSize={setCardSize}
-                  min={CARD_SIZE_MIN}
-                  max={CARD_SIZE_MAX}
-                  step={CARD_SIZE_STEP}
-                  defaultSize={CARD_SIZE_DEFAULT}
-                  fieldId="phone-card-size"
-                />
+                <CoverSizeFields fieldId="phone-card-size" />
                 {loadedEntries.length > 0 || selection.selectMode ? (
                   <PhoneMenuAction
                     icon={<ListChecks className="size-4" />}
@@ -640,7 +613,7 @@ function CblViewDetailInner({
         }
       />
       {/* `sm` and up: one control row under the title — stats pills and search on the left;
-       *  Up Next, Select, card size and `⋯` on the right (rule 11) —
+       *  Up Next, Select, cover size and `⋯` on the right (rule 11) —
        *  pinned under the topbar while it fits one line (phone-layout
        *  rule 3). The search flexes between 10rem and 14rem so the row
        *  still fits an iPad-landscape column with the sidebar open. */}
@@ -648,7 +621,7 @@ function CblViewDetailInner({
         {/* `size="header"` matches the h-9 controls beside it. */}
         <CblStatsPills cblListId={list.id} size="header" />
         {/* Page-local search input. Folded into the header's
-         *  actions row alongside card-size + select so the
+         *  actions row alongside cover size + select so the
          *  toolbar reads as one cluster. Search is server-side,
          *  preserving pagination + totals for long CBLs. */}
         <div className="relative max-w-56 min-w-40 flex-1 basis-40">
@@ -696,14 +669,7 @@ function CblViewDetailInner({
               onExit={() => selection.exit()}
             />
           )}
-          <CardSizeOptions
-            cardSize={cardSize}
-            onCardSize={setCardSize}
-            min={CARD_SIZE_MIN}
-            max={CARD_SIZE_MAX}
-            step={CARD_SIZE_STEP}
-            defaultSize={CARD_SIZE_DEFAULT}
-          />
+          <CoverSizeOptions />
           <ViewActionsMenu
             view={savedView}
             onEdit={() => setEditOpen(true)}
@@ -761,11 +727,7 @@ function CblViewDetailInner({
       />
 
       {entriesQuery.isLoading ? (
-        <CoverGridSkeleton
-          className="gap-3"
-          style={gridStyle}
-          label="Loading entries…"
-        />
+        <CoverGridSkeleton className="gap-3" label="Loading entries…" />
       ) : list.stats.total === 0 ? (
         <div className="border-border/60 text-muted-foreground rounded-lg border border-dashed p-8 text-center text-sm">
           This list has no entries yet.
@@ -780,7 +742,7 @@ function CblViewDetailInner({
         </div>
       ) : (
         <>
-          <ul role="list" className="grid gap-3" style={gridStyle}>
+          <ul role="list" className="grid gap-3" style={COVER_GRID_STYLE}>
             {items.map((item) =>
               item.kind === "entry" ? (
                 <li key={item.entry.id} id={`cbl-entry-${item.entry.position}`}>
