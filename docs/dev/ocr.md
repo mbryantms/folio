@@ -305,12 +305,12 @@ The three model artifacts the pipeline depends on:
 
 | Component | Where | Download source | Approx size |
 |---|---|---|---|
-| `comic-text-detector` ONNX | `${HF_HOME}/hub/models--mayocream--comic-text-detector-onnx/` | `mayocream/comic-text-detector-onnx` | ~95 MB |
-| `manga-ocr` ONNX (encoder + decoder + vocab) | `${HF_HOME}/hub/models--mayocream--manga-ocr-onnx/` | `mayocream/manga-ocr-onnx` | ~440 MB |
+| `comic-text-detector` ONNX | `${HOME}/.cache/huggingface/hub/models--mayocream--comic-text-detector-onnx/` | `mayocream/comic-text-detector-onnx` | ~95 MB |
+| `manga-ocr` ONNX (encoder + decoder + vocab) | `${HOME}/.cache/huggingface/hub/models--mayocream--manga-ocr-onnx/` | `mayocream/manga-ocr-onnx` | ~440 MB |
 | Tesseract LSTM (`eng.traineddata`) | `${TESSDATA_PREFIX}` (default `${HOME}/.tesseract-rs/tessdata`) | tessdata_best (build script) | ~15 MB |
 
-`HF_HOME` defaults to `${HOME}/.cache/huggingface`. The first
-request that touches a model triggers download + ~1–2 s session
+The ONNX cache path follows `HOME`, not `HF_HOME` (see the gotcha
+below). The first request that touches a model triggers download + ~1–2 s session
 build for ONNX, or a one-time cmake build for Tesseract (cached at
 `~/.tesseract-rs/`).
 
@@ -320,9 +320,13 @@ Every ONNX file is pinned to a commit of its Hugging Face repository
 and to a SHA-256 ([`ocr::models`](../../crates/server/src/ocr/models.rs)).
 Before `ComicTextDetector::new` / `MangaOCR::new` run, Folio itself
 fetches each missing file from
-`https://huggingface.co/<repo>/resolve/<commit>/<file>` (connect 20 s,
-per-read 60 s, 30 min overall, cut off past the published size),
-hashes it while it streams, and only then moves it to
+`https://huggingface.co/<repo>/resolve/<commit>/<file>` over https
+only (connect 20 s, per-read 60 s, 30 min overall, at most 5 redirects,
+each https and never to an internal address literal, cut off past the
+published size), hashes it while it streams into an exclusive,
+randomly named temporary file (`.folio-part-*`, removed if the
+download fails; a leftover from a killed process is swept after 35
+minutes and is not counted by `GET /admin/ocr/models`), and only then moves it to
 `hub/models--<org>--<repo>/snapshots/<commit>/<file>` and points
 `refs/main` at `<commit>`. The upstream constructor finds the file
 there and does not download anything. A digest mismatch deletes the
@@ -331,6 +335,23 @@ download, logs the file and both digests, and fails the request with
 already in the cache (from before the pin, or changed on disk) is
 hashed once per process; a mismatch deletes it and fetches it again
 from the pinned commit.
+
+The fetch runs in a background task, one per repository for the whole
+process. OCR requests sit under the 60 s JSON route timeout, so the
+first request after a cold start may still time out while the ~440 MB
+manga models download; the download carries on, and later requests
+wait on it or find the verified files. After a failed attempt
+(network down, a digest mismatch) the repository is not tried again
+for 5 minutes; requests in that window get `ocr_model_unverified`
+without a new download.
+
+The check covers what arrives over the network and what sits in the
+cache at startup. Anyone who can write the cache directory can swap a
+file between the check and the load: that directory needs the same
+trust as the database and `/data/secrets/`. After an upgrade that moves
+the pin, the previous `snapshots/<old commit>/` folder (and, for files
+the hub downloaded before pinning, its `blobs/`) stays on disk unused
+and can be deleted.
 
 | Repository | Commit | File | SHA-256 | Bytes |
 |---|---|---|---|---|

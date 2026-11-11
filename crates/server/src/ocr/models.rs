@@ -7,22 +7,30 @@
 //! unchecked. Before either constructor runs, [`ensure_pinned`] puts
 //! every file the constructor reads into that cache itself:
 //!
-//! 1. the file is fetched from `/resolve/<commit>/<file>` (an immutable
-//!    revision, never a branch), with timeouts and a byte cap equal to
-//!    the file's published size;
-//! 2. its SHA-256 is computed while it streams to a temporary file and
-//!    compared with the pinned digest; a mismatch deletes the temporary
-//!    file and fails with [`ModelVerifyError`], so nothing unverified is
-//!    ever renamed into place;
+//! 1. the file is fetched over https from `/resolve/<commit>/<file>` (an
+//!    immutable revision, never a branch), with timeouts, bounded
+//!    https-only redirects that refuse internal address literals, and a
+//!    byte cap equal to the file's published size;
+//! 2. its SHA-256 is computed while it streams to an exclusive temporary
+//!    file and compared with the pinned digest; a mismatch drops the
+//!    temporary file and fails with [`ModelVerifyError`], so nothing
+//!    unverified is ever moved into place;
 //! 3. it lands at `snapshots/<commit>/<file>`, and `refs/main` is
 //!    pointed at `<commit>`, which is exactly where the upstream
 //!    constructor looks first, so it loads the verified file and never
 //!    reaches the network.
 //!
+//! The fetch runs in a detached task, one per repository for the whole
+//! process ([`Pinner`]): a request that times out or disconnects stops
+//! waiting, but the download carries on, and later requests wait on the
+//! same task or find the verified files. After a failed attempt the
+//! repository is not tried again for [`RETRY_AFTER`]; requests in that
+//! window get the same error without touching the disk or the network.
+//!
 //! A file already in the cache (a cache populated before pinning, or one
-//! changed on disk) is hashed too, once per process: the callers run this
-//! inside their `OnceCell` initializer. A cached file whose digest does
-//! not match is deleted and fetched again from the pinned revision.
+//! changed on disk) is hashed too, once per process. A cached file whose
+//! digest does not match is deleted and fetched again from the pinned
+//! revision.
 //!
 //! There is no setting for another model source: the upstream crates
 //! hardcode the repositories and `Api::new()` ignores `HF_ENDPOINT`, so
@@ -43,12 +51,15 @@
 //! 3. Update `revision`, `sha256` and `size` below, and the table in
 //!    `docs/dev/ocr.md`.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant, SystemTime};
 
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
+use tokio::sync::watch;
 
 /// The only host the models come from.
 pub const HF_ENDPOINT: &str = "https://huggingface.co";
@@ -111,11 +122,22 @@ pub const MANGA_FILES: &[PinnedFile] = &[
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
 const TOTAL_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// Redirect hops followed (the hub answers LFS files with one redirect
+/// to its CDN).
+const MAX_REDIRECTS: usize = 5;
+/// How long a repository is left alone after a failed attempt.
+pub const RETRY_AFTER: Duration = Duration::from_secs(5 * 60);
+/// Temporary download names start with this; nothing else in the cache
+/// does.
+const PART_PREFIX: &str = ".folio-part-";
+/// A temporary file older than this belongs to a download that cannot
+/// still be running (it outlived [`TOTAL_TIMEOUT`]) and is swept.
+const STALE_PART_AGE: Duration = Duration::from_secs(35 * 60);
 
 /// A model file could not be fetched or did not match its pin. The OCR
 /// request that triggered the load fails with this; the file is never
 /// loaded.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ModelVerifyError {
     pub repo: &'static str,
     pub file: &'static str,
@@ -169,54 +191,176 @@ impl PinnedFile {
     }
 }
 
-/// The hub cache root the upstream crates read (`Cache::default()`).
-pub fn hub_cache_root() -> anyhow::Result<PathBuf> {
-    std::panic::catch_unwind(hf_hub::Cache::default)
-        .map(|c| c.path().clone())
-        .map_err(|_| anyhow::anyhow!("no home directory for the OCR model cache"))
+/// `true` for a temporary download file name, so disk reports can leave
+/// unfinished downloads out.
+pub fn is_partial_download(name: &str) -> bool {
+    name.starts_with(PART_PREFIX)
 }
 
-fn http_client() -> anyhow::Result<reqwest::Client> {
-    Ok(reqwest::Client::builder()
+/// The hub cache root the upstream crates read (`Cache::default()`).
+pub fn hub_cache_root() -> Result<PathBuf, String> {
+    std::panic::catch_unwind(hf_hub::Cache::default)
+        .map(|c| c.path().clone())
+        .map_err(|_| "no home directory for the OCR model cache".to_owned())
+}
+
+/// The download client. `require_https` is off only in this module's
+/// tests, whose local servers speak plain http.
+fn http_client(require_https: bool) -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .read_timeout(READ_TIMEOUT)
         .timeout(TOTAL_TIMEOUT)
-        .build()?)
+        .https_only(require_https)
+        .redirect(crate::util::ssrf::outbound_redirect_policy(
+            MAX_REDIRECTS,
+            require_https,
+        ))
+        .build()
+        .map_err(|e| format!("could not build the download client: {e}"))
+}
+
+type Outcome = Result<(), ModelVerifyError>;
+
+#[derive(Default)]
+struct RepoState {
+    verified: bool,
+    failed: Option<(Instant, ModelVerifyError)>,
+    inflight: Option<watch::Receiver<Option<Outcome>>>,
+}
+
+/// Single-flight fetch-and-verify, one detached task per repository.
+pub struct Pinner {
+    client: reqwest::Client,
+    endpoint: String,
+    cache_root: PathBuf,
+    retry_after: Duration,
+    repos: Mutex<HashMap<&'static str, RepoState>>,
+}
+
+impl Pinner {
+    fn new(
+        endpoint: &str,
+        cache_root: PathBuf,
+        retry_after: Duration,
+        require_https: bool,
+    ) -> Result<Arc<Self>, String> {
+        Ok(Arc::new(Self {
+            client: http_client(require_https)?,
+            endpoint: endpoint.to_owned(),
+            cache_root,
+            retry_after,
+            repos: Mutex::new(HashMap::new()),
+        }))
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, HashMap<&'static str, RepoState>> {
+        // A poisoned map only means a panic elsewhere mid-update; the
+        // flags it holds are still meaningful.
+        self.repos.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Make `files` (all of one repository) present and verified. Waits
+    /// on the repository's download task; dropping this future stops the
+    /// wait, never the download.
+    pub async fn ensure(self: &Arc<Self>, files: &'static [PinnedFile]) -> Outcome {
+        let Some(first) = files.first() else {
+            return Ok(());
+        };
+        let repo = first.repo;
+        let mut rx = {
+            let mut map = self.state();
+            let st = map.entry(repo).or_default();
+            if st.verified {
+                return Ok(());
+            }
+            if let Some((at, err)) = &st.failed {
+                let since = at.elapsed();
+                if since < self.retry_after {
+                    return Err(ModelVerifyError {
+                        reason: format!(
+                            "{}; not retried until {} s after that attempt",
+                            err.reason,
+                            self.retry_after.as_secs()
+                        ),
+                        ..err.clone()
+                    });
+                }
+            }
+            match &st.inflight {
+                Some(rx) => rx.clone(),
+                None => {
+                    let (tx, rx) = watch::channel(None);
+                    st.inflight = Some(rx.clone());
+                    let me = Arc::clone(self);
+                    tokio::spawn(async move {
+                        let res = me.fetch_and_verify(files).await;
+                        {
+                            let mut map = me.state();
+                            let st = map.entry(repo).or_default();
+                            st.inflight = None;
+                            match &res {
+                                Ok(()) => {
+                                    st.verified = true;
+                                    st.failed = None;
+                                }
+                                Err(e) => st.failed = Some((Instant::now(), e.clone())),
+                            }
+                        }
+                        let _ = tx.send(Some(res));
+                    });
+                    rx
+                }
+            }
+        };
+        match rx.wait_for(Option::is_some).await {
+            Ok(done) => done.clone().unwrap_or(Ok(())),
+            Err(_) => {
+                // The task ended without an answer (it panicked): let
+                // the next request start a fresh one.
+                self.state().entry(repo).or_default().inflight = None;
+                Err(first.fail("the download task ended without a result"))
+            }
+        }
+    }
+
+    async fn fetch_and_verify(&self, files: &[PinnedFile]) -> Outcome {
+        for f in files {
+            ensure_file(&self.client, &self.endpoint, &self.cache_root, f).await?;
+        }
+        // Point the branch the upstream crates ask for at the pinned
+        // commit, after every file of the repository is in place.
+        let mut seen: Vec<&str> = Vec::new();
+        for f in files {
+            if seen.contains(&f.repo) {
+                continue;
+            }
+            seen.push(f.repo);
+            write_ref(&f.repo_dir(&self.cache_root), f.revision)
+                .await
+                .map_err(|e| f.fail(format!("could not write the cache ref: {e}")))?;
+        }
+        Ok(())
+    }
 }
 
 /// Make every file in `files` present and verified in the default hub
-/// cache, from the default endpoint. Call before the upstream
-/// constructor that reads them.
-pub async fn ensure_pinned(files: &[PinnedFile]) -> anyhow::Result<()> {
-    let root = hub_cache_root()?;
-    let client = http_client()?;
-    ensure_in(&client, HF_ENDPOINT, &root, files).await
-}
-
-/// [`ensure_pinned`] against an explicit endpoint and cache root (test
-/// seam).
-pub async fn ensure_in(
-    client: &reqwest::Client,
-    endpoint: &str,
-    cache_root: &Path,
-    files: &[PinnedFile],
-) -> anyhow::Result<()> {
-    for f in files {
-        ensure_file(client, endpoint, cache_root, f).await?;
-    }
-    // Point the branch the upstream crates ask for at the pinned commit,
-    // after every file of the repository is in place.
-    let mut seen: Vec<&str> = Vec::new();
-    for f in files {
-        if seen.contains(&f.repo) {
-            continue;
+/// cache, from the hub over https. Call before the upstream constructor
+/// that reads them.
+pub async fn ensure_pinned(files: &'static [PinnedFile]) -> anyhow::Result<()> {
+    static DEFAULT: OnceLock<Result<Arc<Pinner>, String>> = OnceLock::new();
+    let pinner = DEFAULT.get_or_init(|| {
+        let root = hub_cache_root()?;
+        Pinner::new(HF_ENDPOINT, root, RETRY_AFTER, true)
+    });
+    let pinner = match pinner {
+        Ok(p) => p,
+        Err(e) => {
+            let f = files.first().copied().unwrap_or(DETECTOR_FILES[0]);
+            return Err(f.fail(e.clone()).into());
         }
-        seen.push(f.repo);
-        write_ref(&f.repo_dir(cache_root), f.revision)
-            .await
-            .map_err(|e| f.fail(format!("could not write the cache ref: {e}")))?;
-    }
-    Ok(())
+    };
+    pinner.ensure(files).await.map_err(Into::into)
 }
 
 async fn write_ref(repo_dir: &Path, revision: &str) -> std::io::Result<()> {
@@ -226,9 +370,17 @@ async fn write_ref(repo_dir: &Path, revision: &str) -> std::io::Result<()> {
     if tokio::fs::read_to_string(&target).await.ok().as_deref() == Some(revision) {
         return Ok(());
     }
-    let tmp = refs.join(format!(".main.{}.tmp", std::process::id()));
-    tokio::fs::write(&tmp, revision).await?;
-    tokio::fs::rename(&tmp, &target).await
+    let revision = revision.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let mut tmp = tempfile::Builder::new()
+            .prefix(PART_PREFIX)
+            .tempfile_in(&refs)?;
+        std::io::Write::write_all(&mut tmp, revision.as_bytes())?;
+        tmp.persist(&target).map_err(|e| e.error)?;
+        Ok(())
+    })
+    .await
+    .map_err(std::io::Error::other)?
 }
 
 /// One file: verify the cached copy, or fetch and verify a fresh one.
@@ -238,8 +390,11 @@ pub async fn ensure_file(
     endpoint: &str,
     cache_root: &Path,
     f: &PinnedFile,
-) -> anyhow::Result<PathBuf> {
+) -> Result<PathBuf, ModelVerifyError> {
     let path = f.snapshot_path(cache_root);
+    if let Some(dir) = path.parent() {
+        sweep_stale_parts(dir).await;
+    }
     if tokio::fs::symlink_metadata(&path).await.is_ok() {
         match sha256_file(&path).await {
             Ok(digest) if digest == f.sha256 => return Ok(path),
@@ -267,6 +422,33 @@ pub async fn ensure_file(
     Ok(path)
 }
 
+/// Remove temporary files a killed process left behind: ours, and the
+/// `.<file>.<pid>.part` names of the first pinning build. Only files old
+/// enough that no download can still be writing them.
+async fn sweep_stale_parts(dir: &Path) {
+    let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
+        return;
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let ours = is_partial_download(&name) || (name.starts_with('.') && name.ends_with(".part"));
+        if !ours {
+            continue;
+        }
+        let old = entry
+            .metadata()
+            .await
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| SystemTime::now().duration_since(t).ok())
+            .is_some_and(|age| age > STALE_PART_AGE);
+        if old {
+            let _ = tokio::fs::remove_file(entry.path()).await;
+        }
+    }
+}
+
 /// Delete a cached snapshot entry. `hf_hub` stores snapshot entries as
 /// links into `blobs/`; the blob goes too when it lives in this
 /// repository's cache folder.
@@ -287,52 +469,54 @@ async fn download_verified(
     endpoint: &str,
     f: &PinnedFile,
     dest: &Path,
-) -> anyhow::Result<()> {
+) -> Result<(), ModelVerifyError> {
     let dir = dest
         .parent()
         .ok_or_else(|| f.fail("cache path has no parent"))?;
     tokio::fs::create_dir_all(dir)
         .await
         .map_err(|e| f.fail(format!("could not create the cache folder: {e}")))?;
-    let tmp = dir.join(format!(".{}.{}.part", f.file, std::process::id()));
+    // Exclusive, randomly named, removed when dropped: a failed or
+    // cancelled download leaves nothing, and two processes sharing the
+    // volume never write into the same file.
+    let tmp = tempfile::Builder::new()
+        .prefix(PART_PREFIX)
+        .tempfile_in(dir)
+        .map_err(|e| f.fail(format!("could not create a temporary file: {e}")))?;
+    let out = tmp
+        .as_file()
+        .try_clone()
+        .map_err(|e| f.fail(format!("could not open the temporary file: {e}")))?;
 
-    let result = stream_to(client, &f.url(endpoint), f, &tmp).await;
-    match result {
-        Ok(digest) if digest == f.sha256 => {
-            tokio::fs::rename(&tmp, dest)
-                .await
-                .map_err(|e| f.fail(format!("could not move the verified file into place: {e}")))?;
-            tracing::info!(
-                repo = f.repo,
-                file = f.file,
-                revision = f.revision,
-                "ocr model: downloaded and verified"
-            );
-            Ok(())
-        }
-        Ok(digest) => {
-            let _ = tokio::fs::remove_file(&tmp).await;
-            let err = f.fail(format!(
-                "sha256 {digest} does not match the pinned {}; the download was deleted",
-                f.sha256
-            ));
-            tracing::error!(error = %err, "ocr model: digest mismatch");
-            Err(err.into())
-        }
-        Err(e) => {
-            let _ = tokio::fs::remove_file(&tmp).await;
-            tracing::error!(error = %e, "ocr model: download failed");
-            Err(e.into())
-        }
+    let digest = stream_to(client, &f.url(endpoint), f, tokio::fs::File::from_std(out)).await?;
+    if digest != f.sha256 {
+        // `tmp` drops here and takes the bytes with it. The caller logs.
+        return Err(f.fail(format!(
+            "sha256 {digest} does not match the pinned {}; the download was deleted",
+            f.sha256
+        )));
     }
+    tmp.persist(dest).map_err(|e| {
+        f.fail(format!(
+            "could not move the verified file into place: {}",
+            e.error
+        ))
+    })?;
+    tracing::info!(
+        repo = f.repo,
+        file = f.file,
+        revision = f.revision,
+        "ocr model: downloaded and verified"
+    );
+    Ok(())
 }
 
-/// Stream the body to `tmp`, hashing as it goes; stop past `f.size`.
+/// Stream the body into `out`, hashing as it goes; stop past `f.size`.
 async fn stream_to(
     client: &reqwest::Client,
     url: &str,
     f: &PinnedFile,
-    tmp: &Path,
+    mut out: tokio::fs::File,
 ) -> Result<String, ModelVerifyError> {
     let mut resp = client
         .get(url)
@@ -342,16 +526,14 @@ async fn stream_to(
     if !resp.status().is_success() {
         return Err(f.fail(format!("download answered {}", resp.status())));
     }
-    if resp.content_length().is_some_and(|n| n > f.size) {
+    if let Some(n) = resp.content_length()
+        && n > f.size
+    {
         return Err(f.fail(format!(
-            "the server announced {} bytes, more than the pinned {}",
-            resp.content_length().unwrap_or_default(),
+            "the server announced {n} bytes, more than the pinned {}",
             f.size
         )));
     }
-    let mut out = tokio::fs::File::create(tmp)
-        .await
-        .map_err(|e| f.fail(format!("could not create a temporary file: {e}")))?;
     let mut hasher = Sha256::new();
     let mut taken: u64 = 0;
     while let Some(chunk) = resp
@@ -408,36 +590,51 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncReadExt;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     const BODY: &[u8] = b"pretend onnx bytes";
+    const REV: &str = "0123456789abcdef0123456789abcdef01234567";
+    const ROUTE: &str =
+        "/acme/model-onnx/resolve/0123456789abcdef0123456789abcdef01234567/model.onnx";
 
     fn sha(bytes: &[u8]) -> String {
         hex(&Sha256::digest(bytes))
-    }
-
-    fn spec(sha256: &'static str, size: u64) -> PinnedFile {
-        PinnedFile {
-            repo: "acme/model-onnx",
-            revision: "0123456789abcdef0123456789abcdef01234567",
-            file: "model.onnx",
-            sha256,
-            size,
-        }
     }
 
     fn leak(s: String) -> &'static str {
         Box::leak(s.into_boxed_str())
     }
 
-    async fn serve(body: &'static [u8]) -> MockServer {
+    fn spec(sha256: &'static str, size: u64) -> PinnedFile {
+        PinnedFile {
+            repo: "acme/model-onnx",
+            revision: REV,
+            file: "model.onnx",
+            sha256,
+            size,
+        }
+    }
+
+    fn files(f: PinnedFile) -> &'static [PinnedFile] {
+        Box::leak(vec![f].into_boxed_slice())
+    }
+
+    fn client() -> reqwest::Client {
+        http_client(false).unwrap()
+    }
+
+    fn pinner(endpoint: &str, root: &Path, retry_after: Duration) -> Arc<Pinner> {
+        Pinner::new(endpoint, root.to_path_buf(), retry_after, false).unwrap()
+    }
+
+    async fn serve(template: ResponseTemplate, expect: u64) -> MockServer {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path(
-                "/acme/model-onnx/resolve/0123456789abcdef0123456789abcdef01234567/model.onnx",
-            ))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(body))
+            .and(path(ROUTE))
+            .respond_with(template)
+            .expect(expect)
             .mount(&server)
             .await;
         server
@@ -490,18 +687,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn accepts_the_pinned_bytes_and_points_the_ref_at_the_commit() {
-        let server = serve(BODY).await;
+    async fn the_production_client_refuses_plain_http() {
+        let server = serve(ResponseTemplate::new(200).set_body_bytes(BODY), 0).await;
         let root = tempfile::tempdir().unwrap();
         let f = spec(leak(sha(BODY)), BODY.len() as u64);
-        ensure_in(&reqwest::Client::new(), &server.uri(), root.path(), &[f])
+        let https_only = http_client(true).unwrap();
+        let err = ensure_file(&https_only, &server.uri(), root.path(), &f)
+            .await
+            .unwrap_err();
+        assert!(err.reason.contains("download failed"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn accepts_the_pinned_bytes_and_points_the_ref_at_the_commit() {
+        let server = serve(ResponseTemplate::new(200).set_body_bytes(BODY), 1).await;
+        let root = tempfile::tempdir().unwrap();
+        let f = spec(leak(sha(BODY)), BODY.len() as u64);
+        pinner(&server.uri(), root.path(), RETRY_AFTER)
+            .ensure(files(f))
             .await
             .expect("verified");
         let path = f.snapshot_path(root.path());
         assert_eq!(std::fs::read(&path).unwrap(), BODY);
-        let r = std::fs::read_to_string(root.path().join("models--acme--model-onnx/refs/main"))
-            .unwrap();
-        assert_eq!(r, f.revision);
+        let refs = root.path().join("models--acme--model-onnx/refs");
+        assert_eq!(
+            std::fs::read_to_string(refs.join("main")).unwrap(),
+            f.revision
+        );
+        assert_eq!(std::fs::read_dir(&refs).unwrap().count(), 1, "no temp left");
         // `hf_hub`'s own cache lookup now resolves to the verified file.
         let cached = hf_hub::Cache::new(root.path().to_path_buf())
             .model(f.repo.to_owned())
@@ -511,13 +724,13 @@ mod tests {
 
     #[tokio::test]
     async fn refuses_and_deletes_bytes_with_the_wrong_digest() {
-        let server = serve(BODY).await;
+        let server = serve(ResponseTemplate::new(200).set_body_bytes(BODY), 1).await;
         let root = tempfile::tempdir().unwrap();
         let f = spec(leak(sha(b"something else")), BODY.len() as u64);
-        let err = ensure_in(&reqwest::Client::new(), &server.uri(), root.path(), &[f])
+        let err = pinner(&server.uri(), root.path(), RETRY_AFTER)
+            .ensure(files(f))
             .await
             .unwrap_err();
-        let err = err.downcast::<ModelVerifyError>().expect("typed error");
         assert!(err.reason.contains("does not match"), "{err}");
         let dir = f.snapshot_path(root.path()).parent().unwrap().to_path_buf();
         let left: Vec<_> = std::fs::read_dir(&dir).unwrap().collect();
@@ -532,15 +745,62 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn refuses_a_body_larger_than_the_pin() {
-        let server = serve(BODY).await;
+    async fn refuses_an_announced_length_larger_than_the_pin() {
+        let server = serve(ResponseTemplate::new(200).set_body_bytes(BODY), 1).await;
         let root = tempfile::tempdir().unwrap();
         let f = spec(leak(sha(BODY)), (BODY.len() - 1) as u64);
-        let err = ensure_file(&reqwest::Client::new(), &server.uri(), root.path(), &f)
+        let err = ensure_file(&client(), &server.uri(), root.path(), &f)
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("bytes"), "{err}");
+        assert!(err.reason.contains("announced"), "{err}");
         assert!(!f.snapshot_path(root.path()).exists());
+    }
+
+    /// A chunked body has no Content-Length, so only the streaming cap
+    /// can stop it.
+    #[tokio::test]
+    async fn cuts_off_a_chunked_body_past_the_pin() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let mut seen = Vec::new();
+            while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = sock.read(&mut buf).await.unwrap();
+                if n == 0 {
+                    return;
+                }
+                seen.extend_from_slice(&buf[..n]);
+            }
+            let _ = sock
+                .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+                .await;
+            // 4 KiB chunks, well past a 64-byte pin.
+            let chunk = vec![b'x'; 4096];
+            for _ in 0..16 {
+                let head = format!("{:x}\r\n", chunk.len());
+                if sock.write_all(head.as_bytes()).await.is_err()
+                    || sock.write_all(&chunk).await.is_err()
+                    || sock.write_all(b"\r\n").await.is_err()
+                {
+                    return;
+                }
+            }
+            let _ = sock.write_all(b"0\r\n\r\n").await;
+        });
+        let root = tempfile::tempdir().unwrap();
+        let f = spec(leak(sha(b"irrelevant")), 64);
+        let err = ensure_file(&client(), &format!("http://{addr}"), root.path(), &f)
+            .await
+            .unwrap_err();
+        assert!(err.reason.contains("exceeded"), "{err}");
+        let dir = f.snapshot_path(root.path()).parent().unwrap().to_path_buf();
+        assert_eq!(
+            std::fs::read_dir(dir).unwrap().count(),
+            0,
+            "no partial file left"
+        );
     }
 
     #[tokio::test]
@@ -553,17 +813,16 @@ mod tests {
 
         // The pinned source is unreachable: the altered file is refused
         // and removed rather than loaded.
-        let dead = "http://127.0.0.1:9";
-        let err = ensure_file(&reqwest::Client::new(), dead, root.path(), &f)
+        let err = ensure_file(&client(), "http://127.0.0.1:9", root.path(), &f)
             .await
             .unwrap_err();
-        assert!(err.downcast_ref::<ModelVerifyError>().is_some(), "{err}");
+        assert!(err.reason.contains("download failed"), "{err}");
         assert!(!path.exists(), "the altered file is deleted");
 
         // With the source back, it is replaced by the verified bytes.
         std::fs::write(&path, b"altered on disk").unwrap();
-        let server = serve(BODY).await;
-        let got = ensure_file(&reqwest::Client::new(), &server.uri(), root.path(), &f)
+        let server = serve(ResponseTemplate::new(200).set_body_bytes(BODY), 1).await;
+        let got = ensure_file(&client(), &server.uri(), root.path(), &f)
             .await
             .unwrap();
         assert_eq!(std::fs::read(got).unwrap(), BODY);
@@ -576,14 +835,121 @@ mod tests {
         let path = f.snapshot_path(root.path());
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, BODY).unwrap();
-        let got = ensure_file(
-            &reqwest::Client::new(),
-            "http://127.0.0.1:9",
-            root.path(),
-            &f,
-        )
-        .await
-        .unwrap();
+        let got = ensure_file(&client(), "http://127.0.0.1:9", root.path(), &f)
+            .await
+            .unwrap();
         assert_eq!(got, path);
+    }
+
+    #[tokio::test]
+    async fn stale_part_files_are_swept_and_fresh_ones_kept() {
+        let root = tempfile::tempdir().unwrap();
+        let f = spec(leak(sha(BODY)), BODY.len() as u64);
+        let path = f.snapshot_path(root.path());
+        let dir = path.parent().unwrap();
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(&path, BODY).unwrap();
+        let old = dir.join(format!("{PART_PREFIX}old"));
+        let legacy = dir.join(".model.onnx.42.part");
+        let fresh = dir.join(format!("{PART_PREFIX}fresh"));
+        for p in [&old, &legacy, &fresh] {
+            std::fs::write(p, b"partial").unwrap();
+        }
+        let long_ago = SystemTime::now() - Duration::from_secs(3600);
+        for p in [&old, &legacy] {
+            std::fs::File::options()
+                .write(true)
+                .open(p)
+                .unwrap()
+                .set_modified(long_ago)
+                .unwrap();
+        }
+        ensure_file(&client(), "http://127.0.0.1:9", root.path(), &f)
+            .await
+            .unwrap();
+        assert!(!old.exists() && !legacy.exists(), "stale parts swept");
+        assert!(fresh.exists(), "a part that may still be written is kept");
+        assert!(is_partial_download(
+            &fresh.file_name().unwrap().to_string_lossy()
+        ));
+    }
+
+    /// A request that stops waiting (timeout, disconnect) does not stop
+    /// the download: it completes in the background and the next request
+    /// finds the verified file without another download.
+    #[tokio::test]
+    async fn a_dropped_wait_does_not_abort_the_download() {
+        let server = serve(
+            ResponseTemplate::new(200)
+                .set_body_bytes(BODY)
+                .set_delay(Duration::from_millis(400)),
+            1,
+        )
+        .await;
+        let root = tempfile::tempdir().unwrap();
+        let f = spec(leak(sha(BODY)), BODY.len() as u64);
+        let fs = files(f);
+        let p = pinner(&server.uri(), root.path(), RETRY_AFTER);
+
+        let first = tokio::time::timeout(Duration::from_millis(50), p.ensure(fs)).await;
+        assert!(first.is_err(), "the first wait is dropped mid-download");
+
+        let path = f.snapshot_path(root.path());
+        for _ in 0..100 {
+            if path.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            BODY,
+            "the download completed"
+        );
+        // Verified once for the process: no second request (the mock
+        // expects exactly one).
+        p.ensure(fs).await.expect("later call succeeds");
+        p.ensure(fs).await.expect("and again");
+        server.verify().await;
+    }
+
+    /// Concurrent waiters share one download.
+    #[tokio::test]
+    async fn concurrent_requests_share_one_download() {
+        let server = serve(
+            ResponseTemplate::new(200)
+                .set_body_bytes(BODY)
+                .set_delay(Duration::from_millis(200)),
+            1,
+        )
+        .await;
+        let root = tempfile::tempdir().unwrap();
+        let fs = files(spec(leak(sha(BODY)), BODY.len() as u64));
+        let p = pinner(&server.uri(), root.path(), RETRY_AFTER);
+        let (a, b, c) = tokio::join!(p.ensure(fs), p.ensure(fs), p.ensure(fs));
+        assert!(a.is_ok() && b.is_ok() && c.is_ok());
+        server.verify().await;
+    }
+
+    /// After a failure the repository is left alone for the retry
+    /// interval: requests in that window get the error without a
+    /// download, and the next one after it tries again.
+    #[tokio::test]
+    async fn a_failed_attempt_is_not_retried_at_once() {
+        let server = serve(ResponseTemplate::new(503), 2).await;
+        let root = tempfile::tempdir().unwrap();
+        let fs = files(spec(leak(sha(BODY)), BODY.len() as u64));
+        let p = pinner(&server.uri(), root.path(), Duration::from_millis(300));
+
+        let e1 = p.ensure(fs).await.unwrap_err();
+        assert!(e1.reason.contains("503"), "{e1}");
+        let e2 = p.ensure(fs).await.unwrap_err();
+        assert!(e2.reason.contains("not retried"), "{e2}");
+        assert_eq!(e2.repo, "acme/model-onnx");
+
+        tokio::time::sleep(Duration::from_millis(350)).await;
+        let e3 = p.ensure(fs).await.unwrap_err();
+        assert!(!e3.reason.contains("not retried"), "{e3}");
+        server.verify().await;
     }
 }

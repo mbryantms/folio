@@ -83,6 +83,8 @@ comic-text-detector = { workspace = true }
 # from HF on first init (~80 MB encoder + decoder).
 manga-ocr = { workspace = true }
 hf-hub = { workspace = true }
+# Exclusive, self-removing temp files for OCR model downloads.
+tempfile = "3"
 # Western OCR via vendored Tesseract 5.3.4 + Leptonica 1.84.1 (M2).
 # Build script compiles natively via cmake; cache lives at
 # `~/.tesseract-rs/` and survives `cargo clean`.
@@ -163,7 +165,6 @@ redis = { workspace = true }
 reqwest = { workspace = true }
 insta = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-tempfile = "3"
 # Independent XML leaf walk for the ComicTagger parity test (WP-6.4) — the
 # comparison must not go through Folio's own ComicInfo parser.
 quick-xml = { workspace = true }
