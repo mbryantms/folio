@@ -18,29 +18,47 @@
 #
 # 2. The runner image gives apt a list of mirrors, all three under
 #    ubuntu.com (/etc/apt/apt-mirrors.txt: azure.archive, archive,
-#    security). A full mirror on another domain is added to that list. It
-#    goes last while the Ubuntu hosts resolve, so a healthy job never uses
-#    it, and first when they do not, so the job does not wait out three dead
-#    hosts for every file.
+#    security). Full mirrors on other domains are added to that list. They
+#    go last while the Ubuntu hosts resolve, so a healthy job never uses
+#    them, and first when they do not, so the job does not wait out three
+#    dead hosts for every file.
+#
+#    More than one, because a single mirror can have a bad moment of its
+#    own: the same day one smoke job read the package index from the first
+#    mirror and then could not connect to it for the packages, with the
+#    Ubuntu hosts still unreachable behind it.
 #
 #    apt checks every package index against the Ubuntu archive key whatever
-#    host served it, so the mirror cannot change what gets installed.
+#    host served it, so a mirror cannot change what gets installed. Each one
+#    listed here was checked to carry the runner's release with its
+#    `-updates` and `-security` pockets and the `amd64v3` variant.
 set -euo pipefail
 
 echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries >/dev/null
 
 mirrors=/etc/apt/apt-mirrors.txt
-fallback=http://mirrors.edge.kernel.org/ubuntu/
+fallbacks=(
+  http://mirrors.edge.kernel.org/ubuntu/
+  http://mirrors.mit.edu/ubuntu/
+  http://ftp.osuosl.org/pub/ubuntu/
+)
 
-if [ -f "$mirrors" ] && ! grep -qF "$fallback" "$mirrors"; then
+if [ -f "$mirrors" ] && ! grep -qF "${fallbacks[0]}" "$mirrors"; then
   if getent hosts azure.archive.ubuntu.com >/dev/null 2>&1; then
     count=$(grep -c . "$mirrors" || true)
-    printf '%s\tpriority:%s\n' "$fallback" "$((count + 1))" | sudo tee -a "$mirrors" >/dev/null
+    for url in "${fallbacks[@]}"; do
+      count=$((count + 1))
+      printf '%s\tpriority:%s\n' "$url" "$count"
+    done | sudo tee -a "$mirrors" >/dev/null
   else
-    echo "::warning title=apt fallback mirror::Ubuntu's package hosts do not resolve on this runner. apt uses ${fallback} first for this job."
+    echo "::warning title=apt fallback mirrors::Ubuntu's package hosts do not resolve on this runner. apt uses ${fallbacks[*]} first for this job."
     {
-      printf '%s\tpriority:1\n' "$fallback"
-      awk -F'\t' 'NF { print $1 "\tpriority:" NR + 1 }' "$mirrors"
+      n=0
+      for url in "${fallbacks[@]}"; do
+        n=$((n + 1))
+        printf '%s\tpriority:%s\n' "$url" "$n"
+      done
+      awk -F'\t' -v base="${#fallbacks[@]}" 'NF { print $1 "\tpriority:" NR + base }' "$mirrors"
     } | sudo tee "$mirrors.new" >/dev/null
     sudo mv "$mirrors.new" "$mirrors"
   fi
