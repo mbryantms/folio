@@ -212,7 +212,18 @@ five phases. Series and issue paths reuse phases 3–5 in a narrowed form.
     a path outside the root as `UnreadableFile`; thumbnail generation
     records the refusal as the job's error; deep validation counts the
     file as unopenable; cover hashing skips it; a writeback job ends as
-    a refusal.
+    a refusal and fails the run that queued it. The scanner stores the
+    file's size and modification time from the same handle it hashes
+    and parses (`fstat`), so the row's fingerprint describes that file.
+    `series.json` is read through the folder handle too, at most 1 MiB.
+    Presence and fingerprint checks that only decide whether to look at
+    a file (`exists()`, `metadata()` in the folder walk and the
+    unchanged-file fast path) may follow links; every read does not.
+  - **Multi-part RAR.** A RAR that is one part of a multi-part set is
+    not read: its other parts would be opened by name, which no checked
+    handle covers. The scan reports it as `MalformedArchive` with the
+    reason ("multi-part RAR archives are not supported … repack the
+    parts as one archive"); repack the parts into a single archive.
   - **Hard links** cannot be told apart from ordinary files and are
     deliberately not refused: download tools commonly hard-link finished
     files into a library.

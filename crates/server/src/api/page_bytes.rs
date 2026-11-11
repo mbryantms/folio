@@ -75,12 +75,17 @@ pub async fn serve(
     // not-found. Checked on every request, before any cached reader or
     // cached variant is used. The pread fast path below reads through this
     // handle, and the archive reader (`zip_lru`) is built from it (or reused
-    // only when it was built from the same file).
-    let Some(file) = crate::library::no_follow::open_issue(&app, &row).await else {
-        return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
+    // only when it was built from the same file). A failed library lookup
+    // is a server error, never not-found.
+    let archive_file = match crate::library::no_follow::open_issue_archive(&app, &row).await {
+        Ok(f) => f,
+        Err(crate::library::no_follow::Refusal::Lookup(_)) => {
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+        Err(_) => return error(StatusCode::NOT_FOUND, "not_found", "issue not found"),
     };
-    let archive_file = match file.try_clone() {
-        Ok(dup) => archive::ArchiveFile::new(dup, &row.file_path),
+    let file = match archive_file.file().try_clone() {
+        Ok(dup) => dup,
         Err(e) => {
             tracing::warn!(error = %e, issue_id = %row.id, "page bytes: handle dup failed");
             return error(

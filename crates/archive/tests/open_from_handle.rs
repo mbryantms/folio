@@ -220,7 +220,59 @@ fn a_multi_volume_rar_is_refused() {
     let err = archive::open_path_unchecked(&path, ArchiveLimits::default())
         .err()
         .expect("a volume archive is refused");
-    assert!(err.to_string().contains("multi-volume"), "{err}");
+    assert!(err.is_multi_volume_rar(), "{err}");
+    assert!(
+        err.to_string().contains("repack"),
+        "the reason says what to do: {err}"
+    );
+}
+
+/// Where reopening through `/proc/self/fd` is not available (forced here
+/// with `without_proc_fd`), the reader uses the display path under the
+/// identity check and reads the archive correctly.
+#[test]
+fn cbr_fallback_path_reads_the_archive() {
+    let fixture = fixture("synthetic-3page.cbr");
+    let mut expected = archive::open_path_unchecked(&fixture, ArchiveLimits::default()).unwrap();
+    let want = all_pages(&mut *expected);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("issue.cbr");
+    std::fs::copy(&fixture, &path).unwrap();
+    let src = ArchiveFile::new(std::fs::File::open(&path).unwrap(), &path).without_proc_fd();
+    let mut cbr = archive::cbr::Cbr::open_file(src, ArchiveLimits::default()).unwrap();
+    assert!(cbr.uses_checked_path(), "the fallback was taken");
+    assert_eq!(all_pages(&mut cbr), want);
+}
+
+/// On the fallback path a pass refuses to read once the name leads to a
+/// different file or to a link: the identity check runs around every pass.
+#[test]
+fn cbr_fallback_path_detects_a_swapped_name() {
+    let fixture = fixture("synthetic-3page.cbr");
+    for how in [Swap::RenamedAway, Swap::LinkToOtherArchive] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("issue.cbr");
+        std::fs::copy(&fixture, &path).unwrap();
+        // Another copy of the same RAR: the bytes alone would read fine, so
+        // only the identity check can tell the files apart.
+        let other = dir.path().join("other.cbr");
+        std::fs::copy(&fixture, &other).unwrap();
+        let src = ArchiveFile::new(std::fs::File::open(&path).unwrap(), &path).without_proc_fd();
+        let mut cbr = archive::cbr::Cbr::open_file(src, ArchiveLimits::default()).unwrap();
+        let first = cbr.pages()[0].name.clone();
+        swap(&path, &other, how);
+        if matches!(how, Swap::RenamedAway) {
+            std::fs::copy(&other, &path).unwrap();
+        }
+        let err = cbr
+            .read_entry_bytes(&first)
+            .expect_err("a swapped name is refused on the fallback path");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("no longer names") || msg.contains("symbolic link"),
+            "{how:?}: {msg}"
+        );
+    }
 }
 
 /// Set the "volume" flag in a RAR5 main archive header and fix its CRC.

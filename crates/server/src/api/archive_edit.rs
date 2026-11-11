@@ -92,7 +92,7 @@ pub async fn page_count(
         Ok(Ok(n)) => (StatusCode::OK, Json(PageCountResponse { page_count: n })).into_response(),
         Ok(Err(e)) => error(StatusCode::UNPROCESSABLE_ENTITY, "archive.unreadable", &e),
         Err(e) => {
-            tracing::error!(error = %e, "archive page-count: join failed");
+            tracing::error!(error = %e, "archive page-count: server fault");
             error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
         }
     }
@@ -101,13 +101,15 @@ pub async fn page_count(
 /// The archive's live page count, read through a handle from the
 /// no-follow walk (`library::no_follow`). A refused file (a link, not a
 /// regular file, outside the root) answers like an unreadable archive.
-/// The outer `Err` is a join failure.
+/// The outer `Err` is a server fault (a failed library lookup or a join
+/// failure), answered 500.
 async fn live_page_count(
     app: &AppState,
     row: &entity::issue::Model,
-) -> Result<Result<usize, String>, tokio::task::JoinError> {
+) -> Result<Result<usize, String>, String> {
     let source = match crate::library::no_follow::open_issue_archive(app, row).await {
         Ok(s) => s,
+        Err(r @ crate::library::no_follow::Refusal::Lookup(_)) => return Err(r.to_string()),
         Err(r) => return Ok(Err(format!("archive not opened: {r}"))),
     };
     let limits = app.cfg().archive_limits();
@@ -117,6 +119,7 @@ async fn live_page_count(
             .map_err(|e| e.to_string())
     })
     .await
+    .map_err(|e| format!("join failed: {e}"))
 }
 
 /// Upper bound on a single bulk request. A large but bounded fan-out keeps
@@ -247,7 +250,7 @@ pub async fn edit(
             return error(StatusCode::UNPROCESSABLE_ENTITY, "archive.unreadable", &e);
         }
         Err(e) => {
-            tracing::error!(error = %e, "archive edit: page-count join failed");
+            tracing::error!(error = %e, "archive edit: page-count server fault");
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
@@ -534,16 +537,21 @@ pub async fn restore(
     // backup or the archive (or on the folder path) is refused.
     let target = std::path::PathBuf::from(&row.file_path);
     let restore_res = match crate::library::no_follow::library_root(&app, row.library_id).await {
-        Some(root) => {
+        Ok(Some(root)) => {
             tokio::task::spawn_blocking(move || {
                 archive_rewrite::restore_latest_backup(&root, &target)
             })
             .await
         }
-        None => Ok(Err(archive_rewrite::RewriteError::Io(std::io::Error::new(
+        Ok(None) => Ok(Err(archive_rewrite::RewriteError::Io(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             "library not found",
         )))),
+        // A failed lookup is a server fault (answered 500 below), never
+        // "no backup".
+        Err(e) => Ok(Err(archive_rewrite::RewriteError::Io(
+            std::io::Error::other(format!("library lookup failed: {e}")),
+        ))),
     };
 
     // Always release the mutex regardless of outcome.
@@ -562,11 +570,16 @@ pub async fn restore(
             );
         }
         Ok(Err(e @ archive_rewrite::RewriteError::Refused(_))) => {
+            // The backup or the archive is a symbolic link, is not a
+            // regular file, or a folder on the way is a link: nothing was
+            // restored. Not "no backup": there is something there, Folio
+            // will not use it.
             tracing::warn!(issue_id = %row.id, error = %e, "archive restore: refused");
             return error(
-                StatusCode::NOT_FOUND,
-                "archive.no_backup",
-                "no backup is available to restore",
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "archive.restore_refused",
+                "the backup or the archive is a symbolic link or not a regular file; \
+                 nothing was restored",
             );
         }
         Ok(Err(e)) => {

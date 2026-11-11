@@ -428,15 +428,22 @@ async fn load_page_image(
     row: &issue::Model,
     page: u32,
 ) -> Result<image::DynamicImage, Box<Response>> {
-    // Same rules as the page routes (`library::no_follow`): a link, a
-    // non-regular file or a path outside the root is not-found; a missing
-    // file keeps the unreadable-archive answer below. The reader is built
-    // from this handle (or reused only for the same file).
+    // Same rules as the page routes (`library::no_follow`). What OCR
+    // answers for each refusal:
+    //   - a link, a non-regular file, a path outside the root, or an I/O
+    //     error opening it: 404 not_found (as before handles were used);
+    //   - a missing file: 500 archive_unreadable, the answer it always gave
+    //     when the reader could not open the archive;
+    //   - a failed library lookup: 500 (a server fault, never not-found).
+    // The reader is built from this handle (or reused only for the same
+    // file).
     use crate::library::no_follow::Refusal;
     let archive_file = match crate::library::no_follow::open_issue_archive(app, row).await {
         Ok(f) => Ok(f),
-        Err(Refusal::Missing | Refusal::Io(_)) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-        Err(_) => Err(StatusCode::NOT_FOUND),
+        Err(Refusal::Missing | Refusal::Lookup(_)) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(Refusal::Symlink | Refusal::NotRegular | Refusal::OutsideRoot | Refusal::Io(_)) => {
+            Err(StatusCode::NOT_FOUND)
+        }
     };
     let archive_file = match archive_file {
         Ok(f) => f,

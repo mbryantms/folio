@@ -300,7 +300,20 @@ pub async fn handle(
             }
             let message = format!("sidecar writeback for {}: {e}", job.issue_id);
             return match disposition {
-                FailureDisposition::Refused => Ok(()),
+                FailureDisposition::Refused => {
+                    // Not retried (the answer would not change), but a
+                    // refusal met at the file still fails the run: the XML
+                    // never landed and the post-apply writes are dropped.
+                    if e.refusal_fails_run() {
+                        fail_triggering_run(
+                            &state,
+                            &job,
+                            &format!("{RUN_ERROR_PREFIX} refused: {e}"),
+                        )
+                        .await;
+                    }
+                    Ok(())
+                }
                 FailureDisposition::Retrying { attempt } => {
                     tracing::warn!(
                         issue_id = %job.issue_id,
@@ -718,13 +731,38 @@ impl WritebackError {
     /// A symbolic link (the archive, or a folder on its path), a
     /// non-regular file or a path outside the library root is refused by
     /// the no-follow writer (`RewriteError::Refused`): also an answer.
+    ///
+    /// A conversion whose `.cbz` name is already taken
+    /// (`DestinationExists`) and a multi-part RAR set are answers too.
     pub(crate) fn is_refusal(&self) -> bool {
         use crate::library::scanner::cbr_convert::CbrConvertError;
         match self {
             Self::IssueGone(_) | Self::WritebackDisabled(_) | Self::UnsupportedFormat(_) => true,
+            Self::Convert(CbrConvertError::DestinationExists(_)) => true,
+            Self::Rewrite(RewriteError::ArchiveErr(e))
+            | Self::Convert(CbrConvertError::Rewrite(RewriteError::ArchiveErr(e))) => {
+                e.is_multi_volume_rar()
+            }
             Self::Rewrite(e) | Self::Convert(CbrConvertError::Rewrite(e)) => e.is_refusal(),
             _ => false,
         }
+    }
+
+    /// Whether a refusal must still fail the run that queued the rewrite:
+    /// every refusal met *at the file* (a link, not a regular file,
+    /// outside the root, the `.cbz` name taken, a multi-part RAR), because
+    /// the run says "applied" while the XML never landed and the
+    /// post-apply writes were dropped. The three older refusals keep their
+    /// behaviour and leave the run alone: the format gate is decided by
+    /// the apply dispatch first (`sidecar_refusal`, reported in
+    /// `sidecar_skip_reasons`), writeback switched off is the operator's
+    /// own choice, and an issue that is gone leaves nothing to apply to.
+    pub(crate) fn refusal_fails_run(&self) -> bool {
+        self.is_refusal()
+            && !matches!(
+                self,
+                Self::IssueGone(_) | Self::WritebackDisabled(_) | Self::UnsupportedFormat(_)
+            )
     }
 }
 
@@ -884,9 +922,9 @@ pub(crate) async fn rewrite_one_issue(
     // step still leaves a readable, correctly-pointed archive.
     // Every read and write below goes through the library root's no-follow
     // walk (`library::no_follow`, `archive_rewrite`): a link is refused.
-    let root = crate::library::no_follow::library_root(state, lib.id)
-        .await
-        .ok_or_else(|| WritebackError::IssueGone(format!("library missing for {}", row.id)))?;
+    // The root comes from the library row loaded above: no second lookup
+    // that could fail and be mistaken for "library gone".
+    let root = crate::library::no_follow::library_root_of(state, &lib).await;
     let archive_path = if is_cbr || is_cb7 {
         let src = source_path.clone();
         let conv_root = std::sync::Arc::clone(&root);
@@ -910,13 +948,24 @@ pub(crate) async fn rewrite_one_issue(
             WritebackError::Db(sea_orm::DbErr::Custom(format!("join: {join_err}")))
         })??;
         state.zip_lru.invalidate(&row.id);
+        // Both names exist now. Repoint the row first, then remove the old
+        // name (`Converted::finish`); if the row can't be repointed, undo
+        // the conversion (`Converted::abandon`) so the row's name is again
+        // the only copy and a retry starts clean.
+        let new_path = converted.outcome.target.clone();
         let am = issue::ActiveModel {
             id: Set(row.id.clone()),
-            file_path: Set(converted.to_string_lossy().into_owned()),
+            file_path: Set(new_path.to_string_lossy().into_owned()),
             updated_at: Set(Utc::now().fixed_offset()),
             ..Default::default()
         };
-        am.update(&state.db).await?;
+        if let Err(e) = am.update(&state.db).await {
+            let _ = tokio::task::spawn_blocking(move || converted.abandon()).await;
+            return Err(e.into());
+        }
+        let converted = tokio::task::spawn_blocking(move || converted.finish().target)
+            .await
+            .unwrap_or(new_path);
         // First CBR conversion in a library stamps `cbr_convert_confirmed_at`
         // so the page editor stops prompting for the format change (CB7 has
         // no page-editor path, so it leaves the gate alone).

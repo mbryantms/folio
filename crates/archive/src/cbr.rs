@@ -30,10 +30,18 @@
 //! passes a name that reaches the handle instead
 //! ([`ArchiveFile::rar_name`]): `/proc/self/fd/<n>` on Linux, which reopens
 //! exactly the file the caller opened whatever happened to its path since.
-//! Where `/proc/self/fd` is unavailable the display path is used and its
-//! device and inode are checked against the handle before and after every
-//! pass, refusing a link or a different file. Multi-volume archives are
-//! refused: UnRAR would open the other volumes by name.
+//! Where `/proc/self/fd` is unavailable, or UnRAR cannot open the `/proc`
+//! name (a sandbox that forbids reopening descriptors that way), the
+//! display path is used instead and its device and inode are checked
+//! against the handle before and after every pass, refusing a link or a
+//! different file. The choice is made once, at open, and kept for every
+//! later pass.
+//!
+//! Multi-part (multi-volume) RAR sets are not read: UnRAR would open the
+//! sibling volumes by name, which no checked handle can cover. Opening one
+//! fails with [`ArchiveError::Malformed`] carrying
+//! [`MULTI_VOLUME_MESSAGE`] ([`ArchiveError::is_multi_volume_rar`]); the
+//! scanner reports it as a malformed-archive finding with that reason.
 //!
 //! NOTICE: this file uses the `unrar` crate; its license requires
 //! attribution to rarlab's UnRAR library.
@@ -44,8 +52,12 @@ use crate::{
     entry_name::validate as sanitize_entry_name, image_sniff,
 };
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use unrar::{Archive, VolumeInfo};
+
+/// The reason a multi-part RAR set is not read, as the user sees it.
+pub const MULTI_VOLUME_MESSAGE: &str = "multi-part RAR archives are not supported: \
+     only single-file archives are read; repack the parts as one archive";
 
 const IGNORED_NAMES: &[&str] = &["Thumbs.db", "desktop.ini"];
 
@@ -61,6 +73,8 @@ pub struct Cbr {
     /// The open file. Kept open for the reader's life: the name handed to
     /// UnRAR (`/proc/self/fd/<n>`) is only valid while it is.
     source: ArchiveFile,
+    /// The name every pass hands UnRAR, chosen at open.
+    rar: RarName,
     entries: Vec<ArchiveEntry>,
     limits: ArchiveLimits,
     /// Image-named entries whose bytes failed the content sniff at open.
@@ -80,17 +94,9 @@ impl Cbr {
     /// Open from a file the caller already opened. Every pass reaches the
     /// same file (see the module docs).
     pub fn open_file(source: ArchiveFile, limits: ArchiveLimits) -> Result<Self, ArchiveError> {
-        let (name, check) = source.rar_name();
-        if check {
-            source.check_rar_name()?;
-        }
-        let listing = Archive::new(&name)
-            .open_for_listing()
-            .map_err(|e| ArchiveError::Malformed(format!("cbr open: {e}")))?;
+        let (listing, rar) = open_listing(&source)?;
         if !matches!(listing.volume_info(), VolumeInfo::None) {
-            return Err(ArchiveError::Malformed(
-                "multi-volume RAR archives are not supported".to_owned(),
-            ));
+            return Err(ArchiveError::Malformed(MULTI_VOLUME_MESSAGE.to_owned()));
         }
 
         let mut entries: Vec<ArchiveEntry> = Vec::new();
@@ -133,11 +139,10 @@ impl Cbr {
             }
         }
 
-        if check {
-            source.check_rar_name()?;
-        }
+        rar.finish_pass(&source)?;
         let mut me = Self {
             source,
+            rar,
             entries,
             limits,
             skipped: Vec::new(),
@@ -164,7 +169,7 @@ impl Cbr {
         if candidates.is_empty() {
             return;
         }
-        let non_images = match sniff_candidates(&self.source, &candidates, self.limits) {
+        let non_images = match sniff_candidates(&self.source, &self.rar, &candidates, self.limits) {
             Ok(set) => set,
             Err(e) => {
                 tracing::debug!(
@@ -206,11 +211,12 @@ impl Cbr {
 /// image.
 fn sniff_candidates(
     source: &ArchiveFile,
+    rar: &RarName,
     candidates: &HashSet<String>,
     limits: ArchiveLimits,
 ) -> Result<HashSet<String>, ArchiveError> {
     let mut non_images = HashSet::new();
-    let mut cursor = open_for_processing(source)?;
+    let mut cursor = rar.open_for_processing(source)?;
     loop {
         let Some(open) = cursor
             .read_header()
@@ -241,30 +247,75 @@ fn sniff_candidates(
         }
         cursor = next;
     }
-    finish_pass(source)?;
+    rar.finish_pass(source)?;
     Ok(non_images)
 }
 
-/// Start a processing pass over the caller's file (see the module docs).
-fn open_for_processing(
-    source: &ArchiveFile,
-) -> Result<unrar::OpenArchive<unrar::Process, unrar::CursorBeforeHeader>, ArchiveError> {
-    let (name, check) = source.rar_name();
-    if check {
-        source.check_rar_name()?;
-    }
-    Archive::new(&name)
-        .open_for_processing()
-        .map_err(|e| ArchiveError::Malformed(format!("cbr open: {e}")))
+/// The name UnRAR opens for every pass over one reader's file, and whether
+/// it is the checked fallback (see the module docs).
+#[derive(Debug, Clone)]
+struct RarName {
+    name: PathBuf,
+    /// The display path: its identity is checked before and after a pass.
+    check: bool,
 }
 
-/// End of a pass: on the fallback path, confirm the name still led to the
-/// caller's file for the whole pass.
-fn finish_pass(source: &ArchiveFile) -> Result<(), ArchiveError> {
-    if source.rar_name().1 {
-        source.check_rar_name()?;
+/// Open the listing pass and settle the name every later pass uses:
+/// `/proc/self/fd/<n>` when [`ArchiveFile::rar_name`] offers it and UnRAR
+/// can open it, else the display path under the identity check.
+fn open_listing(
+    source: &ArchiveFile,
+) -> Result<
+    (
+        unrar::OpenArchive<unrar::List, unrar::CursorBeforeHeader>,
+        RarName,
+    ),
+    ArchiveError,
+> {
+    let (name, check) = source.rar_name();
+    if !check {
+        match Archive::new(&name).open_for_listing() {
+            Ok(listing) => return Ok((listing, RarName { name, check: false })),
+            Err(e) => tracing::debug!(
+                path = %source.display_path().display(),
+                error = %e,
+                "cbr: opening through /proc/self/fd failed; using the checked path",
+            ),
+        }
     }
-    Ok(())
+    let rar = RarName {
+        name: source.display_path().to_path_buf(),
+        check: true,
+    };
+    source.check_rar_name()?;
+    let listing = Archive::new(&rar.name)
+        .open_for_listing()
+        .map_err(|e| ArchiveError::Malformed(format!("cbr open: {e}")))?;
+    Ok((listing, rar))
+}
+
+impl RarName {
+    /// Start a processing pass over the caller's file.
+    fn open_for_processing(
+        &self,
+        source: &ArchiveFile,
+    ) -> Result<unrar::OpenArchive<unrar::Process, unrar::CursorBeforeHeader>, ArchiveError> {
+        if self.check {
+            source.check_rar_name()?;
+        }
+        Archive::new(&self.name)
+            .open_for_processing()
+            .map_err(|e| ArchiveError::Malformed(format!("cbr open: {e}")))
+    }
+
+    /// End of a pass: on the fallback path, confirm the name still led to
+    /// the caller's file for the whole pass.
+    fn finish_pass(&self, source: &ArchiveFile) -> Result<(), ArchiveError> {
+        if self.check {
+            source.check_rar_name()?;
+        }
+        Ok(())
+    }
 }
 
 impl ComicArchive for Cbr {
@@ -294,7 +345,7 @@ impl ComicArchive for Cbr {
             .map(|s| s.canonical)
             .unwrap_or_else(|_| name.to_ascii_lowercase());
 
-        let mut cursor = open_for_processing(&self.source)?;
+        let mut cursor = self.rar.open_for_processing(&self.source)?;
 
         loop {
             let Some(open) = cursor
@@ -316,7 +367,7 @@ impl ComicArchive for Cbr {
                 let (data, _next) = open
                     .read()
                     .map_err(|e| ArchiveError::Malformed(format!("cbr read: {e}")))?;
-                finish_pass(&self.source)?;
+                self.rar.finish_pass(&self.source)?;
                 return Ok(data);
             }
             cursor = open
@@ -328,5 +379,13 @@ impl ComicArchive for Cbr {
     }
     fn path(&self) -> &Path {
         self.source.display_path()
+    }
+}
+
+impl Cbr {
+    /// Whether this reader went through the checked display path rather
+    /// than `/proc/self/fd` (see the module docs). For tests.
+    pub fn uses_checked_path(&self) -> bool {
+        self.rar.check
     }
 }

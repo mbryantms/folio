@@ -50,7 +50,8 @@ all relative to the folder handle:
    before anything is written; a missing archive is the additions path.
 2. Create the staging file `<name>.<32 hex>.tmp` with `O_CREAT | O_EXCL |
    O_NOFOLLOW` (an unpredictable name; anything already there, a link
-   included, fails the rewrite).
+   included, fails the rewrite). The staging file gets the mode any new
+   file gets (0o666 less the umask), as before handles were used.
 3. The writer reads the original through the handle from step 1 and
    writes into the staging handle; validation re-opens the staging handle
    (never the name).
@@ -59,32 +60,102 @@ all relative to the folder handle:
    and inode, not a link); otherwise stop with nothing replaced. Rotate
    the older `.bak.N` slots, then hard-link the archive into `.bak`
    (`linkat`; when links are refused, copy from the original's handle
-   into a `.bak` created exclusively).
+   into a `.bak` created exclusively, with `copy_file_range` where the
+   kernel offers it, and give it the original's permission bits).
 6. Confirm again, then rename the staging file over the archive
    (`renameat`): the target is never missing.
-7. fsync the folder.
+7. fsync the folder. A failure of this one fsync is logged at ERROR and
+   **not** returned: the new file is already in place and the original is
+   in `.bak`, and an error would make the sidecar job retry, whose
+   rotation would delete `.bak` (with one slot, the only copy of the
+   original) and link the rewritten file in its place.
 
-A failure at any step leaves the original intact (at worst an orphan
-staging file, reaped by the startup cleanup). Per writer:
+**Staging files never outlive a failure.** The staging file (and a
+backup copy being filled) is held by a guard that removes it when the
+call returns an error or a panic unwinds through it (a `spawn_blocking`
+task included), and only while the name still holds the file it created.
+Only a crash that kills the process leaves one, for the startup cleanup.
+
+### Crash points
+
+What is on disk, and what the issue row names, if the process dies after
+each step. The row is only ever changed by the caller, after the call.
+
+| Writer | After | On disk | Row names |
+|---|---|---|---|
+| `rewrite_atomic` (page editor CBZ/CBT, sidecar, in-place conversion) | staging written (4) | original at its name, staging file | the archive: original |
+| | backup made (5) | original at its name and at `.bak` | original |
+| | rename (6) | new file at the name, original at `.bak` | new file |
+| `convert_atomic` to a new name (page editor CBR, sidecar CBR/CB7, scan conversion) | staging written | original at its name, staging file | original |
+| | backup made | original at its name and at `.bak` | original |
+| | rename to the new name | original at its name and `.bak`, new file at the new name | original |
+| | caller repointed the row | as above | new file |
+| | `Converted::finish` | original at `.bak` only, new file at the new name | new file |
+| `rename_into_place` (scan, a ZIP that wore `.cbr`) | hard link made | the same file at both names | original |
+| | `finish` | the file at the new name only | new file |
+
+There is no window in which the row names a file that is not there: a
+conversion removes the original's old name only in
+`Converted::finish`, which each caller runs after its row is repointed
+(the page editor after its transaction commits, the sidecar job after
+its row update; the scanner has no row to repoint, it ingests the new
+`.cbz` and reconciles a row for the old name as missing). A caller that
+could not repoint its row calls `Converted::abandon`, which removes the
+new file so the original is again the only copy at its name and a retry
+starts from the same state. A crash between the rename and the row
+update leaves both names; the next attempt then finds the new name taken
+and is refused (`DestinationExists`, below) until the operator removes
+one of the two. One window remains where the filesystem refuses hard
+links: `rename_into_place` then renames (no-replace) instead, and the row
+names the old path from that rename until the caller's update.
+
+### Never over another file
+
+A conversion never replaces a file at its destination name. The name is
+checked before anything is written (an existing file is
+`RewriteError::DestinationExists`, a link `Refused`), and the final rename
+is `renameat2(RENAME_NOREPLACE)` (`LibraryDir::rename_noreplace`), so a
+file that appears at the name while the new archive is being written is
+not replaced either. Where `RENAME_NOREPLACE` is not available (not
+Linux, or a filesystem that answers `EINVAL` / `ENOSYS` / `EOPNOTSUPP`,
+as some network filesystems do) it falls back to looking at the name
+without following it and then renaming, which leaves the moment between
+the two.
+
+### Refusals and what the user sees
+
+| Writer | Refusal (link, not a regular file, outside the root, name taken, multi-part RAR) |
+|---|---|
+| Page editor | the edit fails with the reason in the audit row; nothing is written |
+| Sidecar rewrite | not retried; the triggering run is marked failed (`sidecar rewrite refused: …`), and an error library event says "refused". The older refusals (format gate, writeback off, issue gone) complete without failing the run, as before. |
+| Restore from `.bak` | 422 `archive.restore_refused`; a missing `.bak` stays 404 `archive.no_backup` |
+| Scan conversion | a `.cbz` twin skips the file quietly; a multi-part RAR is a malformed-archive finding with that reason |
+
+A database error while a job looks up the library is a transient error
+(the job is retried); a request answers 500. Neither is ever reported as
+"not found" or "library gone".
+
+Per writer:
 
 - **Page editor** (single and bulk, `jobs::archive_edit::edit_one_issue`):
   CBZ / CBT through `rewrite_atomic`; CBR through `convert_atomic`
-  (same folder handle; the original is renamed to `.bak`, then the
-  staging file to the `.cbz` name). A link at the archive or on its
-  folder path fails the edit (`EditError::Rewrite(Refused)`).
+  to the sibling `.cbz`, settled with `finish` after the row commit
+  (or undone with `abandon` when the commit failed). A link at the
+  archive or on its folder path fails the edit
+  (`EditError::Rewrite(Refused)`), and so does a `.cbz` that already
+  exists (`DestinationExists`).
 - **Restore from `.bak`** (`archive_rewrite::restore_latest_backup`):
   `renameat(.bak → archive)` in the folder handle; a `.bak` or archive
-  that is a link is refused, answered as "no backup" (404).
+  that is a link is refused.
 - **Sidecar rewrite** (`jobs::rewrite_sidecars`, also behind manual
   edits, drift flush and re-emit): `rewrite_atomic`, with CBR / CB7
-  conversion first through `convert_atomic`. A refusal is a
-  `WritebackError::is_refusal()`: the job completes without retry, the
-  run is left as it is and an error event says "refused".
+  conversion first through `convert_atomic` (row repointed, then
+  `finish`).
 - **CBR / CB7 → CBZ conversion at scan**
-  (`scanner::cbr_convert`): the destination check, the move-into-place of
-  a renamed ZIP (`archive_rewrite::rename_into_place`) and the repack
-  (`convert_atomic`) all work in the folder handle; the source is read
-  through the handle `convert_atomic` opened.
+  (`scanner::cbr_convert`): the move-into-place of a renamed ZIP
+  (`rename_into_place`) and the repack (`convert_atomic`) work in the
+  folder handle; the source is read through the handle `convert_atomic`
+  opened.
 - **`.bak` retention prune** and **startup staging cleanup**: the walk
   only finds candidates (it never descends into a link); each delete
   goes through `no_follow::remove_library_file`, which re-walks from the
@@ -92,13 +163,25 @@ staging file, reaped by the startup cleanup). Per writer:
 
 Tests: `archive_rewrite` unit tests (`rewrite_refuses_*`,
 `rewrite_stays_in_the_checked_folder_when_it_is_swapped_mid_way`,
+`crash_at_every_step_leaves_target_readable`,
+`convert_crash_at_every_step_keeps_the_original_at_its_name`,
+`convert_refuses_an_existing_destination_and_changes_neither_file`,
+`convert_never_replaces_a_destination_that_appears_mid_way`,
+`convert_abandon_leaves_the_original_as_it_was`,
+`a_failed_rewrite_leaves_no_staging_file`,
+`a_failed_sync_after_the_swap_is_ok_and_keeps_the_backup`,
+`copied_backup_keeps_the_original_mode_and_new_files_get_the_default`,
 `staging_create_fails_closed_on_existing_file_or_link`,
 `restore_refuses_a_backup_or_target_that_is_a_link`,
 `convert_refuses_an_original_or_destination_that_is_a_link`,
+`rename_into_place_refuses_links_and_keeps_an_existing_destination`,
 `startup_cleanup_never_removes_through_a_link`),
+`no_follow::rename_noreplace_never_replaces_an_existing_entry`,
 `cbr_convert.rs::conversion_refuses_a_linked_source_or_folder`,
-`symlinks.rs::page_editor_refuses_*` / `::restore_refuses_a_backup_that_is_a_link`,
-and `writeback_job_retry.rs::sidecar_rewrite_*_is_a_refusal`.
+`symlinks.rs::page_editor_*` / `::restore_refuses_a_backup_that_is_a_link` /
+`::cbr_and_cb7_issues_replaced_by_links_are_refused`,
+and `writeback_job_retry.rs::sidecar_rewrite_*_is_a_refusal` /
+`::a_failed_lookup_is_retried_not_taken_for_a_missing_library`.
 
 ## Paths that read but never write
 

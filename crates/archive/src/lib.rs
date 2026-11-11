@@ -14,8 +14,10 @@
 //! CB7 read the handle with positioned reads (independent cursors over one
 //! descriptor); CBR goes through the UnRAR library, which opens by name,
 //! so it is given `/proc/self/fd/<n>` for the handle on Linux and otherwise
-//! checks the name's device and inode against the handle around each pass
-//! (see [`source::ArchiveFile::rar_name`]). The writers take an open
+//! (or when UnRAR cannot open that name) checks the name's device and
+//! inode against the handle around each pass (see
+//! [`source::ArchiveFile::rar_name`]). A multi-part RAR set is refused
+//! ([`ArchiveError::is_multi_volume_rar`]). The writers take an open
 //! `File` to write into. The path-taking constructors (`open_path_unchecked`)
 //! open by name and follow links: they exist for files outside any library
 //! root (tests, temp files) and must not be given a library path; the
@@ -180,6 +182,14 @@ pub enum ArchiveError {
     Io(String),
     #[error("malformed archive: {0}")]
     Malformed(String),
+}
+
+impl ArchiveError {
+    /// The RAR reader refused a multi-part set
+    /// ([`cbr::MULTI_VOLUME_MESSAGE`]).
+    pub fn is_multi_volume_rar(&self) -> bool {
+        matches!(self, Self::Malformed(m) if m == cbr::MULTI_VOLUME_MESSAGE)
+    }
 }
 
 impl From<std::io::Error> for ArchiveError {

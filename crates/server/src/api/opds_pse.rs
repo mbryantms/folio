@@ -113,10 +113,14 @@ pub async fn stream(
         }
     }
     // Regular file below the library root, no symbolic link on the way
-    // (`library::no_follow`), or not-found. The pread fast path reads
-    // through this handle.
-    let Some(file) = crate::library::no_follow::open_issue(&app, &issue_row).await else {
-        return error(StatusCode::NOT_FOUND, "not_found");
+    // (`library::no_follow`), or not-found (a failed library lookup is a
+    // server error). The pread fast path reads through this handle.
+    let archive_file = match crate::library::no_follow::open_issue_archive(&app, &issue_row).await {
+        Ok(f) => f,
+        Err(crate::library::no_follow::Refusal::Lookup(_)) => {
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal");
+        }
+        Err(_) => return error(StatusCode::NOT_FOUND, "not_found"),
     };
 
     let page_index = n as usize;
@@ -137,9 +141,10 @@ pub async fn stream(
     // than refactored into a shared helper because page_bytes also wires
     // up Cache-Control and If-Range against the `CurrentUser` etag, both
     // of which don't apply here verbatim.
-    // The reader is built from (or must match) the handle just opened.
-    let archive_file = match file.try_clone() {
-        Ok(dup) => archive::ArchiveFile::new(dup, &issue_row.file_path),
+    // The reader is built from (or must match) the handle just opened; the
+    // pread fast path streams from a second handle to the same file.
+    let file = match archive_file.file().try_clone() {
+        Ok(dup) => dup,
         Err(e) => {
             tracing::warn!(error = %e, issue_id = %issue_row.id, "pse: handle dup failed");
             return error(StatusCode::INTERNAL_SERVER_ERROR, "archive_unreadable");

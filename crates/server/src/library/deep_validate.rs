@@ -274,7 +274,7 @@ async fn walk(
     // Every archive is opened through the no-follow walk from this root
     // (`library::no_follow`).
     let root = crate::library::no_follow::library_root(state, library_id)
-        .await
+        .await?
         .ok_or_else(|| anyhow::anyhow!("library {library_id} not found"))?;
     let poll_every = opts.cancel_poll_interval.unwrap_or(CANCEL_POLL_INTERVAL);
     let mut last_poll: Option<Instant> = None;

@@ -64,6 +64,9 @@ pub enum Refusal {
     NotRegular,
     /// Any other error from the filesystem.
     Io(std::io::Error),
+    /// The library's root could not be looked up (a database error). Not an
+    /// answer about the file: a request answers 5xx, a job retries.
+    Lookup(String),
 }
 
 impl fmt::Display for Refusal {
@@ -74,6 +77,7 @@ impl fmt::Display for Refusal {
             Self::Symlink => f.write_str("path goes through a symbolic link"),
             Self::NotRegular => f.write_str("not a regular file"),
             Self::Io(e) => write!(f, "i/o error: {e}"),
+            Self::Lookup(e) => write!(f, "library lookup failed: {e}"),
         }
     }
 }
@@ -265,6 +269,12 @@ impl LibraryDir {
 
     /// Open `name` for reading: no link followed, regular files only.
     pub fn open_regular(&self, name: &OsStr) -> Result<File, Refusal> {
+        Ok(self.open_regular_identified(name)?.0)
+    }
+
+    /// [`LibraryDir::open_regular`], plus the `(device, inode)` of the
+    /// opened file from the `fstat` the check already makes.
+    pub fn open_regular_identified(&self, name: &OsStr) -> Result<(File, (u64, u64)), Refusal> {
         // Stat before opening so a device or FIFO is never opened at all.
         let pre = rustix::fs::statat(&self.fd, name, AtFlags::SYMLINK_NOFOLLOW)
             .map_err(|e| refusal_for(&self.fd, name, e))?;
@@ -287,7 +297,7 @@ impl LibraryDir {
         if !FileType::from_raw_mode(st.st_mode).is_file() {
             return Err(Refusal::NotRegular);
         }
-        Ok(File::from(fd))
+        Ok((File::from(fd), (st.st_dev, st.st_ino)))
     }
 
     /// Create `name` as a new file, read-write. Exclusive (`O_EXCL`) and
@@ -308,6 +318,41 @@ impl LibraryDir {
     pub fn rename(&self, from: &OsStr, to: &OsStr) -> std::io::Result<()> {
         rustix::fs::renameat(&self.fd, from, &self.fd, to)?;
         Ok(())
+    }
+
+    /// Rename `from` to `to` (both in this directory) only if nothing is at
+    /// `to`; otherwise fail with `ErrorKind::AlreadyExists` and change
+    /// nothing. On Linux this is `renameat2(RENAME_NOREPLACE)`, one atomic
+    /// step. Where that is not available (another platform, or a
+    /// filesystem that answers `EINVAL` / `ENOSYS` / `EOPNOTSUPP`, which
+    /// some network filesystems do) it falls back to looking at `to`
+    /// without following it and then renaming: an entry created at `to`
+    /// between the two would be replaced.
+    pub fn rename_noreplace(&self, from: &OsStr, to: &OsStr) -> std::io::Result<()> {
+        #[cfg(target_os = "linux")]
+        match rustix::fs::renameat_with(
+            &self.fd,
+            from,
+            &self.fd,
+            to,
+            rustix::fs::RenameFlags::NOREPLACE,
+        ) {
+            Ok(()) => return Ok(()),
+            Err(Errno::INVAL | Errno::NOSYS | Errno::OPNOTSUPP) => {
+                tracing::debug!(
+                    dir = %self.path.display(),
+                    "RENAME_NOREPLACE not supported here; checking the destination before renaming",
+                );
+            }
+            Err(e) => return Err(e.into()),
+        }
+        if self.kind(to)? != EntryKind::Missing {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "destination already exists",
+            ));
+        }
+        self.rename(from, to)
     }
 
     /// Make `to` a second name for the file at `from`, both in this
@@ -387,27 +432,49 @@ impl LibraryRoots {
 
     /// The library's root, from the map while fresh, else from the database
     /// (one projected query) with the canonical path resolved on the
-    /// blocking pool. `None` when the library does not exist.
+    /// blocking pool. `Ok(None)` when the library does not exist; `Err`
+    /// when the lookup itself failed (never reported as not-found).
     pub async fn get(
         &self,
         db: &sea_orm::DatabaseConnection,
         library_id: Uuid,
-    ) -> Option<Arc<LibraryRoot>> {
-        if let Ok(m) = self.map.lock()
-            && let Some(r) = m.get(&library_id)
-            && r.loaded_at.elapsed() < ROOT_TTL
-        {
-            return Some(Arc::clone(r));
+    ) -> Result<Option<Arc<LibraryRoot>>, sea_orm::DbErr> {
+        if let Some(r) = self.fresh(library_id, None) {
+            return Ok(Some(r));
         }
         use sea_orm::{EntityTrait, QuerySelect};
-        let configured = entity::library::Entity::find_by_id(library_id)
+        let Some(configured) = entity::library::Entity::find_by_id(library_id)
             .select_only()
             .column(entity::library::Column::RootPath)
             .into_tuple::<String>()
             .one(db)
-            .await
-            .ok()
-            .flatten()?;
+            .await?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(self.resolve_and_store(library_id, configured).await))
+    }
+
+    /// The root of a library row the caller already loaded: no database
+    /// query, so nothing here can fail. Reuses the cached entry while it is
+    /// fresh and names the same configured path.
+    pub async fn of(&self, lib: &entity::library::Model) -> Arc<LibraryRoot> {
+        if let Some(r) = self.fresh(lib.id, Some(&lib.root_path)) {
+            return r;
+        }
+        self.resolve_and_store(lib.id, lib.root_path.clone()).await
+    }
+
+    /// The cached entry while fresh (and, with `configured`, only when it
+    /// names that path).
+    fn fresh(&self, library_id: Uuid, configured: Option<&str>) -> Option<Arc<LibraryRoot>> {
+        let m = self.map.lock().ok()?;
+        let r = m.get(&library_id)?;
+        let same = configured.is_none_or(|c| r.configured == Path::new(c));
+        (same && r.loaded_at.elapsed() < ROOT_TTL).then(|| Arc::clone(r))
+    }
+
+    async fn resolve_and_store(&self, library_id: Uuid, configured: String) -> Arc<LibraryRoot> {
         let configured = PathBuf::from(configured);
         let for_block = configured.clone();
         let canonical = tokio::task::spawn_blocking(move || std::fs::canonicalize(for_block).ok())
@@ -422,34 +489,49 @@ impl LibraryRoots {
         if let Ok(mut m) = self.map.lock() {
             m.insert(library_id, Arc::clone(&root));
         }
-        Some(root)
+        root
     }
 }
 
-/// Open an issue's stored file through [`open_below_roots`]. A refusal
-/// (symbolic link, outside the root, not a regular file) is logged at WARN
-/// with the issue id and the reason, never anything read from the file; a
-/// missing file only at DEBUG (the caller has its own missing-file answer).
-pub async fn open_issue_checked(
+/// Open an issue's stored file through [`open_below_roots`], as an
+/// [`archive::ArchiveFile`] that carries the file's `(device, inode)` from
+/// the open (so the page cache's identity check costs no further system
+/// call). Readers built from it (directly or through `zip_lru`) read only
+/// through this handle. A refusal (symbolic link, outside the root, not a
+/// regular file) is logged at WARN with the issue id and the reason, never
+/// anything read from the file; a missing file only at DEBUG (the caller
+/// has its own missing-file answer). A failed library lookup is
+/// [`Refusal::Lookup`]: request paths answer 5xx for it, jobs retry.
+pub async fn open_issue_archive(
     state: &AppState,
     row: &entity::issue::Model,
-) -> Result<File, Refusal> {
+) -> Result<archive::ArchiveFile, Refusal> {
     let issue_id = row.id.as_str();
-    let Some(root) = state.library_roots.get(&state.db, row.library_id).await else {
-        tracing::debug!(issue_id, "issue file not opened: library not found");
-        return Err(Refusal::Missing);
+    let root = match state.library_roots.get(&state.db, row.library_id).await {
+        Ok(Some(root)) => root,
+        Ok(None) => {
+            tracing::debug!(issue_id, "issue file not opened: library not found");
+            return Err(Refusal::Missing);
+        }
+        Err(e) => {
+            tracing::warn!(issue_id, error = %e, "issue file not opened: library lookup failed");
+            return Err(Refusal::Lookup(e.to_string()));
+        }
     };
     let path = row.file_path.clone();
     let opened = tokio::task::spawn_blocking(move || {
-        open_below_roots(
+        let (dir, name) = open_parent_below_roots(
             &root.configured,
             root.canonical.as_deref(),
             Path::new(&path),
-        )
+        )?;
+        dir.open_regular_identified(&name)
     })
     .await;
     match opened {
-        Ok(Ok(f)) => Ok(f),
+        Ok(Ok((f, identity))) => {
+            Ok(archive::ArchiveFile::new(f, PathBuf::from(&row.file_path)).with_identity(identity))
+        }
         Ok(Err(Refusal::Missing)) => {
             tracing::debug!(issue_id, "issue file missing");
             Err(Refusal::Missing)
@@ -465,28 +547,21 @@ pub async fn open_issue_checked(
     }
 }
 
-/// Open an issue's stored file for a reader. `None` means the route answers
-/// not-found (missing file included).
-pub async fn open_issue(state: &AppState, row: &entity::issue::Model) -> Option<File> {
-    open_issue_checked(state, row).await.ok()
-}
-
-/// [`open_issue_checked`] wrapped for the archive crate: the handle plus
-/// the stored path to show in messages. Readers built from it (directly or
-/// through `zip_lru`) read only through this handle.
-pub async fn open_issue_archive(
-    state: &AppState,
-    row: &entity::issue::Model,
-) -> Result<archive::ArchiveFile, Refusal> {
-    let f = open_issue_checked(state, row).await?;
-    Ok(archive::ArchiveFile::new(f, PathBuf::from(&row.file_path)))
-}
-
 /// The library root of `library_id` as configured and resolved, for a
-/// blocking caller that opens or writes a library file itself (writers,
-/// background jobs). `None` when the library does not exist.
-pub async fn library_root(state: &AppState, library_id: Uuid) -> Option<Arc<LibraryRoot>> {
+/// caller that has only the id. `Ok(None)` when the library does not
+/// exist; `Err` when the lookup failed. A caller that already loaded the
+/// library row uses [`library_root_of`] instead.
+pub async fn library_root(
+    state: &AppState,
+    library_id: Uuid,
+) -> Result<Option<Arc<LibraryRoot>>, sea_orm::DbErr> {
     state.library_roots.get(&state.db, library_id).await
+}
+
+/// The library root of a library row the caller already loaded (writers,
+/// background jobs). No database query.
+pub async fn library_root_of(state: &AppState, lib: &entity::library::Model) -> Arc<LibraryRoot> {
+    state.library_roots.of(lib).await
 }
 
 impl LibraryRoot {
@@ -519,25 +594,31 @@ impl LibraryRoot {
     }
 }
 
-/// Read a small sidecar (`series.json`) that sits in a folder the scan
-/// already proved: refuses a symbolic link or anything but a regular file
-/// in the final component. Blocking.
-pub fn read_sidecar(path: &Path) -> std::io::Result<Vec<u8>> {
+/// Largest sidecar [`read_sidecar`] reads.
+pub const MAX_SIDECAR_BYTES: u64 = 1024 * 1024;
+
+/// Read a small sidecar (`series.json`) at `path` below `root`, through the
+/// same no-follow walk as every other library read: no link on the folder
+/// path or at the name, a regular file only, read through the handle that
+/// check opened. At most [`MAX_SIDECAR_BYTES`]; a larger file is an error
+/// (`InvalidData`). Blocking.
+pub fn read_sidecar(root: &Path, path: &Path) -> std::io::Result<Vec<u8>> {
     use std::io::Read;
-    let fd = rustix::fs::open(
-        path,
-        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::NOCTTY | OFlags::CLOEXEC,
-        Mode::empty(),
-    )?;
-    let st = rustix::fs::fstat(&fd)?;
-    if !FileType::from_raw_mode(st.st_mode).is_file() {
+    let refused = |r: Refusal| match r {
+        Refusal::Io(e) => e,
+        Refusal::Missing => std::io::Error::new(std::io::ErrorKind::NotFound, "file is missing"),
+        other => std::io::Error::new(std::io::ErrorKind::InvalidInput, other.to_string()),
+    };
+    let (dir, name) = open_library_parent(root, path).map_err(refused)?;
+    let f = dir.open_regular(&name).map_err(refused)?;
+    let mut out = Vec::new();
+    f.take(MAX_SIDECAR_BYTES + 1).read_to_end(&mut out)?;
+    if out.len() as u64 > MAX_SIDECAR_BYTES {
         return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "not a regular file",
+            std::io::ErrorKind::InvalidData,
+            "sidecar is larger than 1 MiB",
         ));
     }
-    let mut out = Vec::new();
-    File::from(fd).read_to_end(&mut out)?;
     Ok(out)
 }
 
@@ -689,10 +770,43 @@ mod tests {
         std::fs::write(&outside, b"{}").unwrap();
         let link = root.join("Series").join("series.json");
         symlink(&outside, &link).unwrap();
-        assert!(read_sidecar(&link).is_err());
+        assert!(read_sidecar(&root, &link).is_err());
         std::fs::remove_file(&link).unwrap();
         std::fs::write(&link, b"{}").unwrap();
-        assert_eq!(read_sidecar(&link).unwrap(), b"{}");
+        assert_eq!(read_sidecar(&root, &link).unwrap(), b"{}");
+    }
+
+    #[test]
+    fn sidecar_in_a_linked_folder_or_over_the_cap_is_refused() {
+        let (tmp, root) = lib();
+        let outside = tmp.path().join("elsewhere");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("series.json"), b"{}").unwrap();
+        symlink(&outside, root.join("Linked")).unwrap();
+        assert!(read_sidecar(&root, &root.join("Linked").join("series.json")).is_err());
+        let big = root.join("Series").join("series.json");
+        std::fs::write(&big, vec![b' '; (MAX_SIDECAR_BYTES + 1) as usize]).unwrap();
+        let err = read_sidecar(&root, &big).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn rename_noreplace_never_replaces_an_existing_entry() {
+        let (_tmp, root) = lib();
+        let a = root.join("Series").join("a");
+        let b = root.join("Series").join("b");
+        std::fs::write(&a, b"a").unwrap();
+        std::fs::write(&b, b"b").unwrap();
+        let (dir, _) = open_library_parent(&root, &a).unwrap();
+        let err = dir
+            .rename_noreplace(OsStr::new("a"), OsStr::new("b"))
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&a).unwrap(), b"a");
+        assert_eq!(std::fs::read(&b).unwrap(), b"b");
+        dir.rename_noreplace(OsStr::new("a"), OsStr::new("c"))
+            .unwrap();
+        assert_eq!(std::fs::read(root.join("Series").join("c")).unwrap(), b"a");
     }
 
     #[test]

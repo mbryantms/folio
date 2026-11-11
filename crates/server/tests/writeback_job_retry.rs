@@ -480,8 +480,10 @@ async fn sidecar_refusal_returns_ok_and_is_not_retried() {
 }
 
 /// Runs the sidecar job on its last budgeted attempt and checks it ended as
-/// a refusal: `Ok` (never an `Err` to retry), nothing requeued, the run not
-/// failed, one error event that says "refused".
+/// a refusal met at the file: `Ok` (never an `Err` to retry), nothing
+/// requeued, one error event that says "refused", and the triggering run
+/// marked failed with the reason (the XML never landed, so the run must
+/// not stay "applied").
 async fn assert_refused_without_retry(app: &TestApp, issue_id: &str, run_id: Uuid) {
     let mut worker = with_retry_budget_attempt(rewrite_sidecars::handle);
     worker(
@@ -493,11 +495,10 @@ async fn assert_refused_without_retry(app: &TestApp, issue_id: &str, run_id: Uui
     .expect("a refusal is Ok, never an Err to retry");
     let queued = drain::<RewriteIssueSidecarsJob>(app, rewrite_hash(app)).await;
     assert!(queued.is_empty(), "nothing requeued: {queued:?}");
-    assert_eq!(
-        run_row(app, run_id).await.status,
-        "completed",
-        "a refusal does not fail the run"
-    );
+    let run = run_row(app, run_id).await;
+    assert_eq!(run.status, "failed", "a refusal at the file fails the run");
+    let summary = run.error_summary.expect("error_summary set");
+    assert!(summary.contains("refused"), "{summary}");
     let events = events_for(app, issue_id).await;
     assert_eq!(events.len(), 1, "{events:?}");
     assert_eq!(events[0].severity, "error");
@@ -616,6 +617,70 @@ async fn sidecar_rewrite_converting_a_linked_cbr_is_a_refusal() {
     assert!(!cbr.with_extension("cbz").exists(), "no conversion");
     assert!(!dir.path().join("saga-1.cbr.bak").exists());
     assert_eq!(std::fs::read(&victim).unwrap(), cbr_bytes);
+}
+
+/// The same for a CB7 issue in a library that allows CB7 conversion.
+#[tokio::test]
+async fn sidecar_rewrite_converting_a_linked_cb7_is_a_refusal() {
+    let app = TestApp::spawn().await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .with_auto_convert_cb7_on_scan()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
+    let cb7 = dir.path().join("saga-1.cb7");
+    let cb7_bytes = std::fs::read(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/synthetic-3page.cb7"),
+    )
+    .unwrap();
+    let issue_id = IssueSeed::new(lib_id, series_id, &cb7, &cb7_bytes, 1.0)
+        .insert(&app.state().db)
+        .await;
+    let run_id = seed_run(&app, "issue", &issue_id, json!({"kind": "issue"})).await;
+    let outside = tempdir().unwrap();
+    let victim = outside.path().join("victim.cb7");
+    std::fs::write(&victim, &cb7_bytes).unwrap();
+    std::fs::remove_file(&cb7).unwrap();
+    std::os::unix::fs::symlink(&victim, &cb7).unwrap();
+
+    assert_refused_without_retry(&app, &issue_id, run_id).await;
+    assert!(!cb7.with_extension("cbz").exists(), "no conversion");
+    assert_eq!(std::fs::read(&victim).unwrap(), cb7_bytes);
+}
+
+/// A CBR whose `.cbz` name is already taken by another file: the
+/// conversion is refused (not retried), the run is failed with the reason,
+/// and both files are exactly as they were.
+#[tokio::test]
+async fn sidecar_rewrite_of_a_cbr_with_a_taken_cbz_name_is_a_refusal() {
+    let app = TestApp::spawn().await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .with_auto_convert_cbr_on_scan()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
+    let cbr = dir.path().join("saga-1.cbr");
+    let cbr_bytes = std::fs::read(cbr_fixture()).unwrap();
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbr, &cbr_bytes, 1.0)
+        .insert(&app.state().db)
+        .await;
+    let run_id = seed_run(&app, "issue", &issue_id, json!({"kind": "issue"})).await;
+    let taken = dir.path().join("saga-1.cbz");
+    let taken_bytes = build_cbz_bytes("another issue");
+    std::fs::write(&taken, &taken_bytes).unwrap();
+
+    assert_refused_without_retry(&app, &issue_id, run_id).await;
+    assert_eq!(std::fs::read(&cbr).unwrap(), cbr_bytes);
+    assert_eq!(std::fs::read(&taken).unwrap(), taken_bytes);
 }
 
 /// The busy-lock requeue budget is spent: the write is dropped loudly and,
@@ -887,4 +952,40 @@ async fn apply_job_with_an_exhausted_busy_budget_marks_the_run_failed() {
             .cloned(),
         Some(json!(run_id))
     );
+}
+
+/// A database fault while the rewrite job looks things up is a transient
+/// error apalis retries, never a "library gone" refusal that completes the
+/// task and drops the edit. The library root's own lookup reports a failed
+/// query as an error, not as a missing library.
+#[tokio::test]
+async fn a_failed_lookup_is_retried_not_taken_for_a_missing_library() {
+    let f = writeback_issue().await;
+    let lib_id = entity::issue::Entity::find_by_id(f.issue_id.clone())
+        .one(&f.app.state().db)
+        .await
+        .unwrap()
+        .unwrap()
+        .library_id;
+    // Close the app's own pool: every query from here on fails, as during
+    // a database outage.
+    let state = f.app.state();
+    let closed = state.db.clone();
+    state.db.clone().close().await.unwrap();
+
+    let roots = server::library::no_follow::LibraryRoots::new();
+    assert!(
+        roots.get(&closed, lib_id).await.is_err(),
+        "a failed lookup is an error, not Ok(None)"
+    );
+
+    let before = std::fs::read(&f.cbz).unwrap();
+    let res = rewrite_sidecars::handle(
+        sidecar_job(&f.issue_id, f.run_id),
+        Data::new(state),
+        Attempt::new_with_value(1),
+    )
+    .await;
+    assert!(res.is_err(), "Err, so apalis retries it");
+    assert_eq!(std::fs::read(&f.cbz).unwrap(), before, "nothing written");
 }

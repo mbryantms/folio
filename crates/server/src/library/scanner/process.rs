@@ -499,20 +499,35 @@ async fn parse_archive_for_ingest(
 /// the row; a non-regular file or a path outside the root is an
 /// `UnreadableFile` finding. A missing file or an I/O error is an `Err`,
 /// as the hash read used to report it.
+///
+/// Also returns the file's size and modification time taken from the open
+/// handle (`fstat`, on the blocking pool), so the row's fingerprint, the
+/// hash and the parse all describe the same file.
 async fn open_for_ingest(
     lib: &library::Model,
     path: &Path,
     stats: &mut ScanStats,
     health: &mut HealthCollector,
-) -> anyhow::Result<Option<archive::ArchiveFile>> {
+) -> anyhow::Result<Option<(archive::ArchiveFile, Fingerprint)>> {
     use crate::library::no_follow::{Refusal, open_library_file};
     let root = PathBuf::from(&lib.root_path);
     let p = path.to_path_buf();
-    let opened = tokio::task::spawn_blocking(move || open_library_file(&root, &p))
-        .await
-        .map_err(|e| anyhow::anyhow!("ingest open task failed: {e}"))?;
+    let opened = tokio::task::spawn_blocking(move || {
+        open_library_file(&root, &p).and_then(|f| {
+            let meta = f.metadata().map_err(Refusal::Io)?;
+            let fingerprint =
+                fingerprint_of(&meta).map_err(|e| Refusal::Io(std::io::Error::other(e)))?;
+            use std::os::unix::fs::MetadataExt;
+            Ok((f, fingerprint, (meta.dev(), meta.ino())))
+        })
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("ingest open task failed: {e}"))?;
     match opened {
-        Ok(f) => Ok(Some(archive::ArchiveFile::new(f, path))),
+        Ok((f, fingerprint, identity)) => Ok(Some((
+            archive::ArchiveFile::new(f, path).with_identity(identity),
+            fingerprint,
+        ))),
         Err(Refusal::Symlink) => {
             tracing::info!(
                 library_id = %lib.id,
@@ -541,6 +556,7 @@ async fn open_for_ingest(
             format!("{} is missing", path.display()),
         ))),
         Err(Refusal::Io(e)) => Err(e.into()),
+        Err(Refusal::Lookup(e)) => Err(anyhow::anyhow!("library lookup failed: {e}")),
     }
 }
 
@@ -553,6 +569,9 @@ enum CbrIngestAction {
     /// Conversion couldn't run (malformed/encrypted/IO); caller falls back
     /// to the `UnsupportedArchiveFormat` skip.
     SkipUnsupported,
+    /// The file can never be read this way (a multi-part RAR set): a
+    /// `MalformedArchive` finding with this reason.
+    SkipMalformed(String),
 }
 
 /// The read-only container formats the scanner can convert to `.cbz`.
@@ -608,10 +627,14 @@ async fn convert_for_ingest(
         .map_err(|e| anyhow::anyhow!("archive work semaphore closed: {e}"))?;
     let result = tokio::task::spawn_blocking(move || {
         let root = crate::library::no_follow::LibraryRoot::resolve(root);
-        match format {
+        let converted = match format {
             ConvertibleFormat::Cbr => super::cbr_convert::convert_cbr_to_cbz(&root, &src, limits),
             ConvertibleFormat::Cb7 => super::cbr_convert::convert_cb7_to_cbz(&root, &src, limits),
-        }
+        };
+        // The scanner has no row to repoint before the original's old name
+        // goes: it ingests the `.cbz` next (a row for the old name, if any,
+        // is reconciled as missing), so the conversion is settled at once.
+        converted.map(|c| c.finish().target)
     })
     .await
     .map_err(|e| anyhow::anyhow!("{} convert task failed: {e}", format.ext()))?;
@@ -629,6 +652,17 @@ async fn convert_for_ingest(
                 "scanner: .cbz twin already exists; skipping conversion",
             );
             Ok(CbrIngestAction::SkipDuplicate)
+        }
+        // A multi-part RAR set is never read (its other parts would be
+        // opened by name): reported with that reason, not as a format the
+        // library could convert by turning an option on.
+        Err(super::cbr_convert::CbrConvertError::Rewrite(
+            crate::archive_rewrite::RewriteError::ArchiveErr(e),
+        )) if e.is_multi_volume_rar() => {
+            tracing::info!(path = %path.display(), ext, "scanner: multi-part RAR archive not read");
+            Ok(CbrIngestAction::SkipMalformed(
+                archive::cbr::MULTI_VOLUME_MESSAGE.to_owned(),
+            ))
         }
         Err(e) => {
             tracing::warn!(path = %path.display(), ext, error = %e, "scanner: conversion to CBZ failed");
@@ -870,7 +904,7 @@ pub async fn prepare_ingest<C: ConnectionTrait>(
     // handle opened by the no-follow walk from the library root
     // (`library::no_follow`): the bytes ingested are the file that was
     // checked, never a name opened again.
-    let Some(source) = open_for_ingest(lib, path, stats, health).await? else {
+    let Some((source, (size, mtime))) = open_for_ingest(lib, path, stats, health).await? else {
         return Ok(None);
     };
     let ext_lower = path
@@ -931,6 +965,14 @@ pub async fn prepare_ingest<C: ConnectionTrait>(
                 // path; skip the source quietly (likely a duplicate).
                 CbrIngestAction::SkipDuplicate => {
                     stats.files_skipped += 1;
+                    return Ok(None);
+                }
+                CbrIngestAction::SkipMalformed(error) => {
+                    stats.files_skipped += 1;
+                    health.emit(IssueKind::MalformedArchive {
+                        path: path.to_path_buf(),
+                        error,
+                    });
                     return Ok(None);
                 }
                 // Conversion failed (malformed, encrypted, cap exceeded, IO):
@@ -1891,9 +1933,10 @@ pub fn open_file_fingerprint(
     fingerprint_of(&f.metadata()?)
 }
 
-fn fingerprint_of(
-    meta: &std::fs::Metadata,
-) -> anyhow::Result<(i64, chrono::DateTime<chrono::Utc>)> {
+/// A file's size and modification time as the scanner stores them.
+type Fingerprint = (i64, chrono::DateTime<chrono::Utc>);
+
+fn fingerprint_of(meta: &std::fs::Metadata) -> anyhow::Result<Fingerprint> {
     let mtime: chrono::DateTime<chrono::Utc> = truncate_to_micros(meta.modified()?.into());
     Ok((meta.len() as i64, mtime))
 }
@@ -2790,11 +2833,12 @@ pub fn special_type_from_format(format: &str) -> Option<&'static str> {
 /// Read `series.json` from the folder root, if present. Returns `None`
 /// silently when the file is missing or malformed (a malformed series.json
 /// shouldn't block scanning — the spec calls for it as a hint).
-pub fn read_series_json(folder: &Path) -> Option<SeriesMetadata> {
+///
+/// Read through the no-follow walk from `library_root` (a link on the
+/// folder path or at the name is never followed), at most 1 MiB.
+pub fn read_series_json(library_root: &Path, folder: &Path) -> Option<SeriesMetadata> {
     let p = folder.join("series.json");
-    // A `series.json` that is a symbolic link is never read (links below a
-    // library root are never followed).
-    let bytes = crate::library::no_follow::read_sidecar(&p).ok()?;
+    let bytes = crate::library::no_follow::read_sidecar(library_root, &p).ok()?;
     match parsers::series_json::parse(&bytes) {
         Ok(s) => Some(s.metadata),
         Err(e) => {

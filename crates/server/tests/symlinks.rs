@@ -1029,7 +1029,8 @@ async fn page_editor_refuses_a_folder_replaced_by_a_link() {
 }
 
 /// Restoring from `.bak` through the API refuses a backup that is a link
-/// (answered as "no backup") and leaves the archive and the link's target
+/// (422 `archive.restore_refused`, not "no backup": something is there,
+/// Folio will not use it) and leaves the archive and the link's target
 /// alone.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn restore_refuses_a_backup_that_is_a_link() {
@@ -1060,7 +1061,148 @@ async fn restore_refuses_a_backup_that_is_a_link() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(resp.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(body["error"]["code"], "archive.restore_refused", "{body}");
     assert_eq!(std::fs::read(&l.archive).unwrap(), before);
     assert_eq!(std::fs::read(&victim).unwrap(), victim_bytes);
+}
+
+// ───────── CBR and CB7 issues ─────────
+
+fn fixture(name: &str) -> Vec<u8> {
+    std::fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures")
+            .join(name),
+    )
+    .unwrap()
+}
+
+/// A library (archive writes on, both conversions allowed) with one issue
+/// row for `name` holding `bytes`.
+async fn seeded_issue(app: &TestApp, root: &Path, name: &str, bytes: &[u8]) -> (Uuid, String) {
+    use common::seed::{IssueSeed, SeriesSeed};
+    let series_dir = root.join("Saga");
+    std::fs::create_dir_all(&series_dir).unwrap();
+    let lib_id = LibrarySeed::new(root)
+        .with_sidecar_writeback()
+        .with_auto_convert_cbr_on_scan()
+        .with_auto_convert_cb7_on_scan()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
+    let issue_id = IssueSeed::new(lib_id, series_id, &series_dir.join(name), bytes, 1.0)
+        .insert(&app.state().db)
+        .await;
+    (lib_id, issue_id)
+}
+
+/// A CBR issue and a CB7 issue whose archives were replaced by links to
+/// readable copies outside the library: the readers that open them by
+/// format (deep validation opens every format; the page editor converts a
+/// CBR) refuse both, and nothing outside is touched.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cbr_and_cb7_issues_replaced_by_links_are_refused() {
+    for (name, fixture_name) in [
+        ("Saga 001.cbr", "synthetic-3page.cbr"),
+        ("Saga 001.cb7", "synthetic-3page.cb7"),
+    ] {
+        let app = TestApp::spawn().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("library");
+        let bytes = fixture(fixture_name);
+        let (lib_id, issue_id) = seeded_issue(&app, &root, name, &bytes).await;
+        let archive = root.join("Saga").join(name);
+        let outside = tmp.path().join(name);
+        std::fs::write(&outside, &bytes).unwrap();
+        std::fs::remove_file(&archive).unwrap();
+        symlink(&outside, &archive).unwrap();
+
+        let stats = server::library::deep_validate::run(&app.state(), lib_id)
+            .await
+            .unwrap();
+        assert_eq!(stats.issues_unopenable, 1, "{name}: {stats:?}");
+
+        if name.ends_with(".cbr") {
+            let res =
+                server::jobs::archive_edit::edit_one_issue(&app.state(), &edit_job(&issue_id))
+                    .await;
+            let err = res.err().expect("refused");
+            assert!(err.to_string().contains("symbolic link"), "{name}: {err}");
+        }
+        assert_eq!(std::fs::read(&outside).unwrap(), bytes, "{name}");
+        assert_eq!(
+            names_in(&root.join("Saga")),
+            [name],
+            "{name}: nothing written"
+        );
+    }
+}
+
+/// The page editor converts a CBR to a sibling `.cbz`. When a separate
+/// `.cbz` with that name already exists (another issue's file), the edit is
+/// refused and both files are byte-for-byte what they were; no staging
+/// file or backup is left. Before, the conversion's final rename replaced
+/// the other issue's file.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_editor_never_converts_a_cbr_over_an_existing_cbz() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("library");
+    let cbr_bytes = fixture("synthetic-3page.cbr");
+    let (_lib_id, issue_id) = seeded_issue(&app, &root, "Saga 001.cbr", &cbr_bytes).await;
+    let sibling = root.join("Saga").join("Saga 001.cbz");
+    write_decodable_cbz(&sibling);
+    let sibling_bytes = std::fs::read(&sibling).unwrap();
+
+    let res = server::jobs::archive_edit::edit_one_issue(&app.state(), &edit_job(&issue_id)).await;
+    let err = res.err().expect("refused");
+    assert!(err.to_string().contains("already exists"), "{err}");
+    assert_eq!(std::fs::read(&sibling).unwrap(), sibling_bytes);
+    assert_eq!(
+        std::fs::read(root.join("Saga").join("Saga 001.cbr")).unwrap(),
+        cbr_bytes
+    );
+    assert_eq!(
+        names_in(&root.join("Saga")),
+        ["Saga 001.cbr", "Saga 001.cbz"],
+        "no staging file, no .bak"
+    );
+    let row = issue::Entity::find_by_id(issue_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(row.file_path.ends_with("Saga 001.cbr"), "row not repointed");
+}
+
+/// The page editor's CBR conversion, end to end: the row names the new
+/// `.cbz`, the original is kept as `.cbr.bak`, and the old name is gone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_editor_converts_a_cbr_and_repoints_the_row() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("library");
+    let cbr_bytes = fixture("synthetic-3page.cbr");
+    let (_lib_id, issue_id) = seeded_issue(&app, &root, "Saga 001.cbr", &cbr_bytes).await;
+    let res = server::jobs::archive_edit::edit_one_issue(&app.state(), &edit_job(&issue_id))
+        .await
+        .expect("converted");
+    assert_eq!(res.page_count_after, 2);
+    let dir = root.join("Saga");
+    assert_eq!(names_in(&dir), ["Saga 001.cbr.bak", "Saga 001.cbz"]);
+    assert_eq!(
+        std::fs::read(dir.join("Saga 001.cbr.bak")).unwrap(),
+        cbr_bytes
+    );
+    let row = issue::Entity::find_by_id(issue_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.file_path, dir.join("Saga 001.cbz").to_string_lossy());
 }

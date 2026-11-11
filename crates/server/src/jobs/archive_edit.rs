@@ -420,14 +420,24 @@ pub async fn edit_one_issue(
     // Every read and write of the archive goes through the library root's
     // no-follow walk (`library::no_follow`, `archive_rewrite`): a link (the
     // archive or a folder on its path) is refused.
-    let root = crate::library::no_follow::library_root(state, lib.id)
-        .await
-        .ok_or_else(|| EditError::IssueGone(format!("library missing for {}", row.id)))?;
+    // From the library row loaded above: no second lookup that could fail
+    // and be mistaken for "library gone".
+    let root = crate::library::no_follow::library_root_of(state, &lib).await;
 
-    let (backup, before, after) = tokio::task::spawn_blocking(
-        move || -> Result<(Option<PathBuf>, usize, usize), EditError> {
+    // A CBR converts to a new name: the result holds the original at its
+    // old name too (`archive_rewrite::Converted`) until the row is
+    // repointed below; `pending` is settled after the commit (or undone).
+    type Edited = (
+        Option<PathBuf>,
+        usize,
+        usize,
+        Option<archive_rewrite::Converted>,
+    );
+    let (backup, before, after, pending) =
+        tokio::task::spawn_blocking(move || -> Result<Edited, EditError> {
             let mut before = 0usize;
             let mut after = 0usize;
+            let mut pending = None;
             let backup = match format {
                 EditFormat::Cbz => {
                     let outcome =
@@ -503,14 +513,74 @@ pub async fn edit_one_issue(
                             Ok(())
                         },
                     )?;
-                    outcome.backup
+                    let backup = outcome.outcome.backup.clone();
+                    pending = Some(outcome);
+                    backup
                 }
             };
-            Ok((backup, before, after))
-        },
+            Ok((backup, before, after, pending))
+        })
+        .await
+        .map_err(|e| EditError::Image(format!("join: {e}")))??;
+
+    // Everything from here to the commit repoints the row; a CBR
+    // conversion's old name is removed only once that committed, and the
+    // conversion is undone if it did not, so the row never names a file
+    // that is not there.
+    let committed = finish_edit(
+        state,
+        job,
+        &row,
+        &lib,
+        format,
+        &archive_path,
+        &dst_path,
+        before,
+        after,
     )
-    .await
-    .map_err(|e| EditError::Image(format!("join: {e}")))??;
+    .await;
+    match (committed, pending) {
+        (Ok(anchors), pending) => {
+            if let Some(c) = pending {
+                let _ = tokio::task::spawn_blocking(move || c.finish()).await;
+            }
+            let moved = (dst_path != archive_path).then(|| dst_path.clone());
+            Ok(EditResult {
+                library_id: row.library_id,
+                series_id: row.series_id,
+                archive_path: dst_path,
+                page_count_before: before,
+                page_count_after: after,
+                backup_path: backup,
+                moved_to: moved,
+                anchors,
+            })
+        }
+        (Err(e), pending) => {
+            if let Some(c) = pending {
+                let _ = tokio::task::spawn_blocking(move || c.abandon()).await;
+            }
+            Err(e)
+        }
+    }
+}
+
+/// The bookkeeping after the archive was rewritten: thumbnails, anchors,
+/// the issue row (repointed at a CBR's new `.cbz`), committed in one
+/// transaction.
+#[allow(clippy::too_many_arguments)]
+async fn finish_edit(
+    state: &AppState,
+    job: &ArchiveEditJob,
+    row: &issue::Model,
+    lib: &entity::library::Model,
+    format: EditFormat,
+    archive_path: &Path,
+    dst_path: &Path,
+    before: usize,
+    after: usize,
+) -> Result<crate::reading::page_remap::RemapOutcome, EditError> {
+    let cfg = state.cfg();
 
     state.zip_lru.invalidate(&row.id);
 
@@ -532,7 +602,7 @@ pub async fn edit_one_issue(
         }
     }
 
-    let moved = (dst_path != archive_path).then(|| dst_path.clone());
+    let moved = (dst_path != archive_path).then(|| dst_path.to_path_buf());
 
     // Bookkeeping: clear thumbnail stamps so the post-scan pipeline
     // regenerates them, stamp the edit, reset the cover index when the
@@ -595,7 +665,7 @@ pub async fn edit_one_issue(
         crate::reading::page_hash::hash_all_pages(
             state,
             Path::new(&lib.root_path),
-            dst_path.clone(),
+            dst_path.to_path_buf(),
         )
         .await
     } else {
@@ -633,16 +703,7 @@ pub async fn edit_one_issue(
         }
     }
 
-    Ok(EditResult {
-        library_id: row.library_id,
-        series_id: row.series_id,
-        archive_path: dst_path,
-        page_count_before: before,
-        page_count_after: after,
-        backup_path: backup,
-        moved_to: moved,
-        anchors,
-    })
+    Ok(anchors)
 }
 
 /// Map an [`OpError`]/[`EditError`] raised inside the rewrite closure back

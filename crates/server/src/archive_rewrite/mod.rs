@@ -26,8 +26,16 @@
 //! On success, the original file at `target` is preserved as
 //! `<target>.bak` and the new file lives at `target`. On failure mid-way
 //! (write error, cap exceeded, fsync error, rename error), the original
-//! file is *never* mutated — the worst case is an orphan `.tmp` sibling,
-//! which [`startup_cleanup`] will reap on the next boot.
+//! file is *never* mutated, and the staging file is removed again (a
+//! guard that also runs when a panic unwinds); only a crash that kills
+//! the process leaves an orphan `.tmp` sibling, which [`startup_cleanup`]
+//! reaps on the next boot. Once the new file is in place, a failed fsync
+//! of the folder is logged, not returned (see [`RewriteStep::FinalSync`]).
+//!
+//! Conversions ([`convert_atomic`], [`rename_into_place`]) never replace
+//! a file at their destination name ([`RewriteError::DestinationExists`],
+//! a no-replace rename), and leave the original at its old name until the
+//! caller has repointed its row ([`Converted`]).
 //!
 //! **`target` is never missing.** The backup slot is filled by
 //! hard-linking (or, when the filesystem refuses links, copying) the
@@ -100,12 +108,18 @@ pub enum RewriteError {
     /// refusal, not a fault: retrying gives the same answer.
     #[error("refused: {0}")]
     Refused(Refusal),
+    /// A conversion's destination name is already taken (another archive,
+    /// often another issue's file). Nothing was written over it. A refusal:
+    /// retrying gives the same answer until someone resolves the clash.
+    #[error("destination already exists: {}", .0.display())]
+    DestinationExists(PathBuf),
 }
 
 impl RewriteError {
-    /// True for [`RewriteError::Refused`].
+    /// True for [`RewriteError::Refused`] and
+    /// [`RewriteError::DestinationExists`].
     pub fn is_refusal(&self) -> bool {
-        matches!(self, Self::Refused(_))
+        matches!(self, Self::Refused(_) | Self::DestinationExists(_))
     }
 }
 
@@ -117,6 +131,7 @@ impl From<Refusal> for RewriteError {
         match r {
             Refusal::Missing => Self::Io(io::Error::new(ErrorKind::NotFound, "file is missing")),
             Refusal::Io(e) => Self::Io(e),
+            Refusal::Lookup(e) => Self::Io(io::Error::other(format!("library lookup failed: {e}"))),
             other => Self::Refused(other),
         }
     }
@@ -244,9 +259,13 @@ pub enum RewriteStep {
     /// `target` linked/copied into `<target>.bak`; `target` still holds
     /// the old bytes.
     BackedUp,
-    /// `<target>.tmp` renamed over `target`; the parent dir is not yet
-    /// fsynced.
+    /// `<target>.tmp` renamed over `target` (for a conversion: renamed to
+    /// the new name); the parent dir is not yet fsynced.
     Swapped,
+    /// The folder fsync after the swap. Unlike the other points, an `Err`
+    /// from the hook here stands in for that fsync *failing* (the process
+    /// lives on): it is logged and the call still returns `Ok`.
+    FinalSync,
 }
 
 /// The target's folder and name, opened through the no-follow walk.
@@ -311,7 +330,7 @@ where
     let (dir, name) = open_target(root, target)?;
     let original = open_original(&dir, &name, target)?;
     let tmp_name = staging_name(&name);
-    let staging = dir.create_new(&tmp_name)?;
+    let (staging, mut guard) = Staged::create(&dir, &tmp_name)?;
     let staging_path = dir.display(&tmp_name);
 
     write_into(&RewriteIo {
@@ -342,8 +361,9 @@ where
     // rename overwrites it in place.
     confirm_unchanged(&dir, &name, original.as_ref())?;
     dir.rename(&tmp_name, &name)?;
+    guard.disarm();
     fault(RewriteStep::Swapped)?;
-    dir.sync()?;
+    sync_after_swap(&dir, &name, &mut fault);
 
     Ok(RewriteOutcome {
         target: target.to_path_buf(),
@@ -351,15 +371,100 @@ where
     })
 }
 
+/// fsync the folder after the new file took its name. The work is done at
+/// that point: the new file is in place and the original sits in `.bak`.
+/// A failure is logged at ERROR and NOT returned, because the caller's
+/// answer to an error is to retry, and a retry would rotate the backup
+/// slots again, which with one slot deletes `.bak` (the only copy of the
+/// original) and links the already-rewritten file in its place.
+fn sync_after_swap<H>(dir: &LibraryDir, name: &OsStr, fault: &mut H)
+where
+    H: FnMut(RewriteStep) -> Result<(), RewriteError>,
+{
+    let synced = fault(RewriteStep::FinalSync).and_then(|()| Ok(dir.sync()?));
+    if let Err(e) = synced {
+        tracing::error!(
+            path = %dir.display(name).display(),
+            error = %e,
+            "archive_rewrite: the new file is in place but syncing its folder failed; \
+             not retried, so the backup is kept",
+        );
+    }
+}
+
+/// A file this module created in a library folder (a staging file, or a
+/// backup copy being filled) that must not outlive a failed rewrite. Until
+/// [`Staged::disarm`], dropping it (an early `?` return, or a panic
+/// unwinding through `spawn_blocking`) removes the name again, and only if
+/// it still names the file that was created (same device and inode, not a
+/// link): something else that took the name since is left alone. A crash
+/// that skips the drop leaves the file for [`startup_cleanup`].
+struct Staged<'d> {
+    dir: &'d LibraryDir,
+    name: OsString,
+    identity: Option<(u64, u64)>,
+}
+
+impl<'d> Staged<'d> {
+    /// Create `name` exclusively in `dir` and guard it.
+    fn create(dir: &'d LibraryDir, name: &OsStr) -> Result<(fs::File, Self), RewriteError> {
+        let file = dir.create_new(name)?;
+        let identity = file_identity(&file)?;
+        Ok((
+            file,
+            Self {
+                dir,
+                name: name.to_os_string(),
+                identity: Some(identity),
+            },
+        ))
+    }
+
+    /// The name now holds the finished file (renamed into place, or a
+    /// complete backup): keep it.
+    fn disarm(&mut self) {
+        self.identity = None;
+    }
+}
+
+impl Drop for Staged<'_> {
+    fn drop(&mut self) {
+        let Some(identity) = self.identity else {
+            return;
+        };
+        let still_ours = self.dir.kind(&self.name).ok() == Some(EntryKind::Regular)
+            && self.dir.identity(&self.name).ok() == Some(identity);
+        if !still_ours {
+            return;
+        }
+        if let Err(e) = self.dir.remove_file(&self.name) {
+            tracing::warn!(
+                path = %self.dir.display(&self.name).display(),
+                error = %e,
+                "archive_rewrite: could not remove a leftover file after a failed rewrite",
+            );
+        }
+    }
+}
+
+/// `(device, inode)` of an open file.
+fn file_identity(f: &fs::File) -> io::Result<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let m = f.metadata()?;
+    Ok((m.dev(), m.ino()))
+}
+
 /// Make `dst` a second name for the original at `src` (both in `dir`)
 /// without ever removing `src`: a hard link when the filesystem supports
 /// one (same inode, zero extra bytes, instant; `linkat` without
-/// `AT_SYMLINK_FOLLOW`), else a full byte copy read from the original's
-/// handle into a file created exclusively at `dst` (cross-device layouts,
-/// NAS / SMB / FAT mounts, or filesystems that refuse links on the file —
-/// `EXDEV`, `EPERM`, `ENOTSUP`, `EMLINK`). Either way `src` is untouched,
-/// which is what keeps the target readable through the whole swap. `dst`
-/// must not exist (the rotation freed the slot).
+/// `AT_SYMLINK_FOLLOW`), else a full copy read from the original's handle
+/// into a file created exclusively at `dst` (cross-device layouts, NAS /
+/// SMB / FAT mounts, or filesystems that refuse links on the file —
+/// `EXDEV`, `EPERM`, `ENOTSUP`, `EMLINK`). The copy carries the original's
+/// permission bits, as `fs::copy` did; a hard link shares them anyway.
+/// Either way `src` is untouched, which is what keeps the target readable
+/// through the whole swap. `dst` must not exist (the rotation freed the
+/// slot). A copy that fails part-way is removed again.
 fn link_or_copy(
     dir: &LibraryDir,
     src: &OsStr,
@@ -379,12 +484,60 @@ fn link_or_copy(
             // defensive: clear anything at `dst` before copying so a
             // stale slot never masquerades as the backup.
             let _ = dir.remove_file(dst);
-            let mut out = dir.create_new(dst)?;
-            io::copy(&mut original.reader(), &mut out)?;
+            let (out, mut guard) = Staged::create(dir, dst)?;
+            copy_from_handle(original.file(), &out)?;
+            out.set_permissions(original.file().metadata()?.permissions())?;
             out.sync_all()?;
+            guard.disarm();
             Ok(())
         }
     }
+}
+
+/// Copy all of `src` into the empty `dst`, reading `src` at explicit
+/// offsets so the shared descriptor's position (and any other reader of
+/// it) is never disturbed. `copy_file_range(2)` on Linux (in-kernel, and
+/// a reflink or server-side copy where the filesystem offers one), else
+/// positioned reads and writes with a 1 MiB buffer.
+fn copy_from_handle(src: &fs::File, dst: &fs::File) -> io::Result<()> {
+    use std::os::unix::fs::FileExt;
+    let len = src.metadata()?.len();
+    let mut off: u64 = 0;
+    #[cfg(target_os = "linux")]
+    {
+        use rustix::io::Errno;
+        while off < len {
+            let want = usize::try_from(len - off)
+                .unwrap_or(usize::MAX)
+                .min(1 << 30);
+            let mut off_out = off;
+            match rustix::fs::copy_file_range(src, Some(&mut off), dst, Some(&mut off_out), want) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(Errno::INTR) => {}
+                // Not offered for this pair of files: copy by hand from
+                // wherever the kernel got to.
+                Err(Errno::XDEV | Errno::NOSYS | Errno::INVAL | Errno::OPNOTSUPP) => break,
+                Err(e) => return Err(e.into()),
+            }
+        }
+    }
+    let mut buf = vec![0u8; 1 << 20];
+    while off < len {
+        let n = src.read_at(&mut buf, off)?;
+        if n == 0 {
+            break;
+        }
+        dst.write_all_at(&buf[..n], off)?;
+        off += n as u64;
+    }
+    if off != len {
+        return Err(io::Error::new(
+            ErrorKind::UnexpectedEof,
+            "the original ended before the backup copy was complete",
+        ));
+    }
+    Ok(())
 }
 
 /// Suffix of every staging file [`temp_staging`] names.
@@ -495,100 +648,307 @@ fn rotate_backups(dir: &LibraryDir, target: &OsStr, retain_count: i32) -> Result
     Ok(())
 }
 
-/// Atomically convert one archive into another under a *different* name in
-/// the same folder — the CBR→CBZ edit path (`archive-rewrite-1.0` M6).
-/// Unlike [`rewrite_atomic`], the original (`original`, e.g. `foo.cbr`)
-/// and the destination (`dst`, e.g. `foo.cbz`) have different names. Same
-/// folder-handle discipline as [`rewrite_atomic`] (no link followed below
-/// `root`, every step relative to the folder handle, the original read
-/// through its handle, a staging file created exclusively):
+/// A conversion whose new file is in place under its new name while the
+/// original still sits at its old name (and, for a repack, also at
+/// `<original>.bak`). The caller repoints whatever refers to the old name
+/// (the issue row) and then calls [`Converted::finish`], which removes the
+/// old name; or, when it could not repoint, [`Converted::abandon`], which
+/// removes the new file again. Until one of them runs, both names exist,
+/// so whichever name the row holds at a crash, the file is there.
+#[must_use = "finish() removes the original name once the row is repointed; abandon() undoes"]
+#[derive(Debug)]
+pub struct Converted {
+    /// `target` is the new file; `backup` the `.bak` holding the original,
+    /// when one was made.
+    pub outcome: RewriteOutcome,
+    pending: Option<Pending>,
+}
+
+/// The two names a [`Converted`] still has to settle.
+#[derive(Debug)]
+struct Pending {
+    dir: LibraryDir,
+    original: OsString,
+    original_identity: (u64, u64),
+    placed: OsString,
+    placed_identity: (u64, u64),
+}
+
+impl Converted {
+    /// A conversion with nothing left to settle (an in-place conversion).
+    fn done(outcome: RewriteOutcome) -> Self {
+        Self {
+            outcome,
+            pending: None,
+        }
+    }
+
+    /// Nothing was converted: `target` already was what the caller wanted
+    /// (a ZIP named `.cbz`).
+    pub fn unchanged(target: PathBuf) -> Self {
+        Self::done(RewriteOutcome {
+            target,
+            backup: None,
+        })
+    }
+
+    /// The row now names the new file: remove the original's old name
+    /// (the original stays in `.bak` when the conversion made one), then
+    /// fsync the folder. Only removed while the name still holds the
+    /// original (same device and inode, not a link); anything else there
+    /// is left alone. A failure here is logged, not returned: the
+    /// conversion is complete, and the leftover name holds the original's
+    /// bytes. Blocking.
+    pub fn finish(self) -> RewriteOutcome {
+        if let Some(p) = &self.pending {
+            let same = p.dir.kind(&p.original).ok() == Some(EntryKind::Regular)
+                && p.dir.identity(&p.original).ok() == Some(p.original_identity);
+            if same {
+                if let Err(e) = p.dir.remove_file(&p.original) {
+                    tracing::warn!(
+                        path = %p.dir.display(&p.original).display(),
+                        error = %e,
+                        "archive_rewrite: converted, but the original's old name could not be removed",
+                    );
+                } else if let Err(e) = p.dir.sync() {
+                    tracing::error!(
+                        path = %p.dir.display(&p.original).display(),
+                        error = %e,
+                        "archive_rewrite: converted, but syncing the folder after removing the original's old name failed",
+                    );
+                }
+            } else {
+                tracing::warn!(
+                    path = %p.dir.display(&p.original).display(),
+                    "archive_rewrite: converted; the original's old name changed meanwhile and was left alone",
+                );
+            }
+        }
+        self.outcome
+    }
+
+    /// The row could not be repointed: remove the new file (only while its
+    /// name still holds it) so the original, still at its name, is again
+    /// the only copy, and a later retry starts from the same state. The
+    /// original and its `.bak` are left as they are. Blocking.
+    pub fn abandon(self) {
+        let Some(p) = &self.pending else {
+            return;
+        };
+        let same = p.dir.kind(&p.placed).ok() == Some(EntryKind::Regular)
+            && p.dir.identity(&p.placed).ok() == Some(p.placed_identity);
+        if !same {
+            return;
+        }
+        match p.dir.remove_file(&p.placed).and_then(|()| p.dir.sync()) {
+            Ok(()) => tracing::info!(
+                path = %p.dir.display(&p.placed).display(),
+                "archive_rewrite: conversion undone; the original is unchanged",
+            ),
+            Err(e) => tracing::warn!(
+                path = %p.dir.display(&p.placed).display(),
+                error = %e,
+                "archive_rewrite: could not remove the converted file while undoing",
+            ),
+        }
+    }
+}
+
+/// The destination name in the original's folder; any other folder is
+/// refused (`NoParent`).
+fn same_folder_name(original: &Path, dst: &Path) -> Result<OsString, RewriteError> {
+    match (dst.parent(), dst.file_name()) {
+        (Some(p), Some(n)) if Some(p) == original.parent() => Ok(n.to_os_string()),
+        _ => Err(RewriteError::NoParent(dst.to_path_buf())),
+    }
+}
+
+/// The destination name must be free: a link is refused as a link, any
+/// other entry as [`RewriteError::DestinationExists`].
+fn require_free(dir: &LibraryDir, name: &OsStr, dst: &Path) -> Result<(), RewriteError> {
+    match dir.kind(name)? {
+        EntryKind::Missing => Ok(()),
+        EntryKind::Symlink => Err(RewriteError::Refused(Refusal::Symlink)),
+        EntryKind::Regular | EntryKind::Other => {
+            Err(RewriteError::DestinationExists(dst.to_path_buf()))
+        }
+    }
+}
+
+/// Map a no-replace rename or link that found its name taken.
+fn taken(e: io::Error, dst: &Path) -> RewriteError {
+    if e.kind() == ErrorKind::AlreadyExists {
+        RewriteError::DestinationExists(dst.to_path_buf())
+    } else {
+        RewriteError::Io(e)
+    }
+}
+
+/// Convert one archive into another — the CBR/CB7→CBZ path of the page
+/// editor, the sidecar writeback and the scanner. Same folder-handle
+/// discipline as [`rewrite_atomic`] (no link followed below `root`, every
+/// step relative to the folder handle, the original read through its
+/// handle, a staging file created exclusively and removed again on any
+/// failure).
 ///
-///   1. Caller reads the original through its handle and writes the new
-///      archive into the staging file `<dst>.<hex>.tmp`.
-///   2. fsync the staging file + the folder.
-///   3. Rename `original` → `<original>.bak` (the `.cbr` is kept as the
-///      single rollback slot; an existing `.bak` is overwritten).
-///   4. Rename the staging file → `dst`.
-///   5. fsync the folder.
+/// **In place** (`dst == original`, a RAR or 7z that wore `.cbz`): exactly
+/// the [`rewrite_atomic`] sequence with one backup slot, so the original
+/// ends up in `<name>.bak` and the name never goes missing.
 ///
-/// The original or the destination being a link is refused. On failure
-/// before step 3 the original is untouched (worst case an orphan
-/// `<dst>.<hex>.tmp` staging file, reaped by [`startup_cleanup`]). Returns
-/// the `.bak` path of the preserved original.
+/// **To a new name** (`foo.cbr` → `foo.cbz`):
+///
+///   1. Refuse a destination that exists ([`RewriteError::DestinationExists`],
+///      a link as [`RewriteError::Refused`]): a conversion never writes over
+///      another file.
+///   2. Write the new archive into `<dst>.<hex>.tmp`; fsync it and the
+///      folder.
+///   3. Confirm the original is unchanged, then hard-link (or copy) it to
+///      `<original>.bak` (an older `.bak` is replaced): the original now
+///      has two names.
+///   4. Rename the staging file to `dst` without replacing anything
+///      ([`LibraryDir::rename_noreplace`]); fsync the folder (a failure of
+///      that fsync is logged, not returned).
+///   5. Return a [`Converted`]: the original is still at its name. The
+///      caller repoints its row at `dst` and calls [`Converted::finish`],
+///      which removes the original's old name and fsyncs the folder.
+///
+/// There is no moment without a file at the name the row holds: the
+/// original's name is removed only after the caller has moved the row.
 pub fn convert_atomic<F>(
     root: &LibraryRoot,
     original: &Path,
     dst: &Path,
     write_into: F,
-) -> Result<RewriteOutcome, RewriteError>
+) -> Result<Converted, RewriteError>
 where
     F: FnOnce(&RewriteIo<'_>) -> Result<(), RewriteError>,
 {
-    let (dir, orig_name) = open_target(root, original)?;
-    let dst_name = match (dst.parent(), dst.file_name()) {
-        (Some(p), Some(n)) if Some(p) == original.parent() => n.to_os_string(),
-        _ => return Err(RewriteError::NoParent(dst.to_path_buf())),
-    };
-    let source = open_original(&dir, &orig_name, original)?;
-    match dir.kind(&dst_name)? {
-        EntryKind::Symlink => return Err(RewriteError::Refused(Refusal::Symlink)),
-        EntryKind::Other => return Err(RewriteError::Refused(Refusal::NotRegular)),
-        EntryKind::Missing | EntryKind::Regular => {}
+    convert_atomic_with_faults(root, original, dst, write_into, |_| Ok(()))
+}
+
+/// [`convert_atomic`] with the fault hook of [`rewrite_atomic_with_faults`]
+/// at the same points (for a new name, `Rotated` is the old `.bak`
+/// cleared, `Swapped` the staging file renamed to `dst`). Tests only.
+pub fn convert_atomic_with_faults<F, H>(
+    root: &LibraryRoot,
+    original: &Path,
+    dst: &Path,
+    write_into: F,
+    mut fault: H,
+) -> Result<Converted, RewriteError>
+where
+    F: FnOnce(&RewriteIo<'_>) -> Result<(), RewriteError>,
+    H: FnMut(RewriteStep) -> Result<(), RewriteError>,
+{
+    if dst == original {
+        return rewrite_atomic_with_faults(root, original, 1, write_into, fault)
+            .map(Converted::done);
     }
+    let (dir, orig_name) = open_target(root, original)?;
+    let dst_name = same_folder_name(original, dst)?;
+    let Some(source) = open_original(&dir, &orig_name, original)? else {
+        return Err(Refusal::Missing.into());
+    };
+    require_free(&dir, &dst_name, dst)?;
     let tmp_name = staging_name(&dst_name);
-    let staging = dir.create_new(&tmp_name)?;
+    let (staging, mut guard) = Staged::create(&dir, &tmp_name)?;
     let staging_path = dir.display(&tmp_name);
+    let placed_identity = file_identity(&staging)?;
 
     write_into(&RewriteIo {
-        source: source.as_ref(),
+        source: Some(&source),
         staging: &staging,
         staging_path: &staging_path,
     })?;
     staging.sync_all()?;
     drop(staging);
     dir.sync()?;
+    fault(RewriteStep::Staged)?;
 
+    confirm_unchanged(&dir, &orig_name, Some(&source))?;
+    // One rollback slot: an older `.bak` of the original gives way.
+    rotate_backups(&dir, &orig_name, 1)?;
+    fault(RewriteStep::Rotated)?;
     let backup = backup_slot_name(&orig_name, 0);
-    if source.is_some() {
-        confirm_unchanged(&dir, &orig_name, source.as_ref())?;
-        // rename overwrites any prior .bak atomically.
-        dir.rename(&orig_name, &backup)?;
-    }
-    if dir.kind(&dst_name)? == EntryKind::Symlink {
-        return Err(RewriteError::Refused(Refusal::Symlink));
-    }
-    dir.rename(&tmp_name, &dst_name)?;
-    dir.sync()?;
+    link_or_copy(&dir, &orig_name, &backup, &source)?;
+    fault(RewriteStep::BackedUp)?;
 
-    Ok(RewriteOutcome {
-        target: dst.to_path_buf(),
-        backup: Some(dir.display(&backup)),
+    dir.rename_noreplace(&tmp_name, &dst_name)
+        .map_err(|e| taken(e, dst))?;
+    guard.disarm();
+    drop(guard);
+    fault(RewriteStep::Swapped)?;
+    sync_after_swap(&dir, &dst_name, &mut fault);
+
+    Ok(Converted {
+        outcome: RewriteOutcome {
+            target: dst.to_path_buf(),
+            backup: Some(dir.display(&backup)),
+        },
+        pending: Some(Pending {
+            original_identity: source.identity()?,
+            dir,
+            original: orig_name,
+            placed: dst_name,
+            placed_identity,
+        }),
     })
 }
 
-/// Move `src` to `dst` (same folder) — a ZIP that only wore another
-/// extension, moved into place byte-for-byte. Relative to the folder
-/// handle from the no-follow walk; `src` must be a regular file and `dst`
-/// must not exist (a link at either is refused). Returns `false` when
-/// `dst` already exists. The rename is atomic, so a crash can't leave a
-/// half-file.
-pub fn rename_into_place(root: &LibraryRoot, src: &Path, dst: &Path) -> Result<bool, RewriteError> {
+/// Give `src`'s file (a ZIP that only wore another extension) the name
+/// `dst` in the same folder, byte-for-byte, without replacing anything: a
+/// destination that exists is [`RewriteError::DestinationExists`], a link
+/// at either name is refused. The file gets the new name as a hard link
+/// (which itself refuses an existing name), so the old name still holds it
+/// until the caller repoints its row and calls [`Converted::finish`]. Where
+/// the filesystem refuses hard links it is renamed instead
+/// ([`LibraryDir::rename_noreplace`]); then the old name is gone at once and
+/// a row still holding it points at nothing until the caller repoints it.
+pub fn rename_into_place(
+    root: &LibraryRoot,
+    src: &Path,
+    dst: &Path,
+) -> Result<Converted, RewriteError> {
     let (dir, src_name) = open_target(root, src)?;
-    let dst_name = match (dst.parent(), dst.file_name()) {
-        (Some(p), Some(n)) if Some(p) == src.parent() => n.to_os_string(),
-        _ => return Err(RewriteError::NoParent(dst.to_path_buf())),
-    };
-    if open_original(&dir, &src_name, src)?.is_none() {
+    let dst_name = same_folder_name(src, dst)?;
+    let Some(source) = open_original(&dir, &src_name, src)? else {
         return Err(Refusal::Missing.into());
+    };
+    require_free(&dir, &dst_name, dst)?;
+    let identity = source.identity()?;
+    let outcome = RewriteOutcome {
+        target: dst.to_path_buf(),
+        backup: None,
+    };
+    match dir.hard_link(&src_name, &dst_name) {
+        Ok(()) => {
+            sync_after_swap(&dir, &dst_name, &mut |_| Ok(()));
+            Ok(Converted {
+                outcome,
+                pending: Some(Pending {
+                    dir,
+                    original: src_name,
+                    original_identity: identity,
+                    placed: dst_name,
+                    placed_identity: identity,
+                }),
+            })
+        }
+        Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+            Err(RewriteError::DestinationExists(dst.to_path_buf()))
+        }
+        Err(e) => {
+            tracing::debug!(
+                src = %dir.display(&src_name).display(),
+                error = %e,
+                "archive_rewrite: hard link refused; renaming the archive into place instead",
+            );
+            dir.rename_noreplace(&src_name, &dst_name)
+                .map_err(|e| taken(e, dst))?;
+            sync_after_swap(&dir, &dst_name, &mut |_| Ok(()));
+            Ok(Converted::done(outcome))
+        }
     }
-    match dir.kind(&dst_name)? {
-        EntryKind::Missing => {}
-        EntryKind::Symlink => return Err(RewriteError::Refused(Refusal::Symlink)),
-        _ => return Ok(false),
-    }
-    dir.rename(&src_name, &dst_name)?;
-    dir.sync()?;
-    Ok(true)
 }
 
 /// One backup-slot path for `target` — `<target>.bak` for slot 0,
@@ -1221,7 +1581,7 @@ mod tests {
         let dst = dir.path().join("issue.cbz");
         fs::write(&original, b"rar-bytes").unwrap();
 
-        let outcome = convert_atomic(&root(&dir), &original, &dst, |io| {
+        let converted = convert_atomic(&root(&dir), &original, &dst, |io| {
             let mut read = Vec::new();
             io::Read::read_to_end(&mut io.source()?.reader(), &mut read)?;
             assert_eq!(
@@ -1231,6 +1591,10 @@ mod tests {
             put(io, b"zip-bytes")
         })
         .unwrap();
+        // Both names hold a file until the caller has repointed its row.
+        assert_eq!(fs::read(&original).unwrap(), b"rar-bytes");
+        assert_eq!(fs::read(&dst).unwrap(), b"zip-bytes");
+        let outcome = converted.finish();
 
         assert!(!original.exists(), "original .cbr moved away");
         assert_eq!(fs::read(&dst).unwrap(), b"zip-bytes");
@@ -1485,12 +1849,294 @@ mod tests {
         );
         fs::remove_file(&src).unwrap();
         fs::write(&src, b"PK").unwrap();
+        // Onto an existing name: refused, both files exactly as they were.
+        let res = rename_into_place(&f.root, &src, &f.target);
         assert!(
-            !rename_into_place(&f.root, &src, &f.target).unwrap(),
-            "issue.cbz exists"
+            matches!(res, Err(RewriteError::DestinationExists(_))),
+            "{res:?}"
         );
-        assert!(rename_into_place(&f.root, &src, &f.series.join("zip.cbz")).unwrap());
-        assert_eq!(fs::read(f.series.join("zip.cbz")).unwrap(), b"PK");
+        assert!(res.unwrap_err().is_refusal());
+        assert_eq!(fs::read(&src).unwrap(), b"PK");
+        assert_eq!(fs::read(&f.target).unwrap(), b"v1");
+        // Onto a free name: the file has both names until `finish`.
+        let zip = f.series.join("zip.cbz");
+        let converted = rename_into_place(&f.root, &src, &zip).unwrap();
+        assert_eq!(fs::read(&src).unwrap(), b"PK", "old name kept until finish");
+        assert_eq!(fs::read(&zip).unwrap(), b"PK");
+        converted.finish();
+        assert!(!src.exists());
+        assert_eq!(fs::read(&zip).unwrap(), b"PK");
+    }
+
+    // ── conversion: never over another file, never without a file ──
+
+    /// Every name in `dir` that is a staging file.
+    fn staging_files(dir: &Path) -> Vec<String> {
+        names_in(dir)
+            .into_iter()
+            .filter(|n| is_staging_name(n))
+            .collect()
+    }
+
+    #[test]
+    fn convert_refuses_an_existing_destination_and_changes_neither_file() {
+        let dir = TempDir::new().unwrap();
+        let original = dir.path().join("issue.cbr");
+        let other = dir.path().join("issue.cbz");
+        fs::write(&original, b"rar-bytes").unwrap();
+        fs::write(&other, b"another issue's cbz").unwrap();
+        let mut ran = false;
+        let res = convert_atomic(&root(&dir), &original, &other, |io| {
+            ran = true;
+            put(io, b"zip-bytes")
+        });
+        assert!(
+            matches!(res, Err(RewriteError::DestinationExists(_))),
+            "{res:?}"
+        );
+        assert!(!ran, "nothing is written when the name is taken");
+        assert_eq!(fs::read(&original).unwrap(), b"rar-bytes");
+        assert_eq!(fs::read(&other).unwrap(), b"another issue's cbz");
+        assert_eq!(names_in(dir.path()), ["issue.cbr", "issue.cbz"]);
+    }
+
+    /// The destination appears while the new archive is being written (the
+    /// check before writing passed): the final no-replace rename refuses,
+    /// both files stay as they are, and the staging file is removed.
+    #[test]
+    fn convert_never_replaces_a_destination_that_appears_mid_way() {
+        let dir = TempDir::new().unwrap();
+        let original = dir.path().join("issue.cbr");
+        let dst = dir.path().join("issue.cbz");
+        fs::write(&original, b"rar-bytes").unwrap();
+        let res = convert_atomic(&root(&dir), &original, &dst, |io| {
+            fs::write(&dst, b"arrived meanwhile").unwrap();
+            put(io, b"zip-bytes")
+        });
+        assert!(
+            matches!(res, Err(RewriteError::DestinationExists(_))),
+            "{res:?}"
+        );
+        assert_eq!(fs::read(&dst).unwrap(), b"arrived meanwhile");
+        assert_eq!(fs::read(&original).unwrap(), b"rar-bytes");
+        assert!(staging_files(dir.path()).is_empty());
+    }
+
+    /// A crash (or error) after each step of a conversion to a new name:
+    /// the original's bytes are always at its own name (and at `.bak` once
+    /// the backup was made), the new name holds either nothing or the whole
+    /// new file, and nothing else is left over. The guard removes the
+    /// staging file on the way out; a real crash would leave only that.
+    #[test]
+    fn convert_crash_at_every_step_keeps_the_original_at_its_name() {
+        for step in [
+            RewriteStep::Staged,
+            RewriteStep::Rotated,
+            RewriteStep::BackedUp,
+            RewriteStep::Swapped,
+        ] {
+            let dir = TempDir::new().unwrap();
+            let original = dir.path().join("issue.cbr");
+            let dst = dir.path().join("issue.cbz");
+            fs::write(&original, b"rar-bytes").unwrap();
+            fs::write(dir.path().join("issue.cbr.bak"), b"older-bytes").unwrap();
+            let res = convert_atomic_with_faults(
+                &root(&dir),
+                &original,
+                &dst,
+                |io| put(io, b"zip-bytes"),
+                |at| {
+                    if at == step {
+                        Err(RewriteError::Io(io::Error::other(format!(
+                            "crash at {at:?}"
+                        ))))
+                    } else {
+                        Ok(())
+                    }
+                },
+            );
+            assert!(res.is_err(), "fault at {step:?} must surface");
+            assert_eq!(
+                fs::read(&original).unwrap(),
+                b"rar-bytes",
+                "original at its name after {step:?}"
+            );
+            let bak = fs::read(dir.path().join("issue.cbr.bak")).ok();
+            match step {
+                RewriteStep::Staged => assert_eq!(bak.as_deref(), Some(&b"older-bytes"[..])),
+                RewriteStep::Rotated => assert_eq!(bak, None, "old slot cleared"),
+                _ => assert_eq!(bak.as_deref(), Some(&b"rar-bytes"[..]), "{step:?}"),
+            }
+            if step == RewriteStep::Swapped {
+                assert_eq!(fs::read(&dst).unwrap(), b"zip-bytes");
+            } else {
+                assert!(!dst.exists(), "no half file at the new name after {step:?}");
+            }
+            assert!(
+                staging_files(dir.path()).is_empty(),
+                "staging removed after {step:?}"
+            );
+        }
+    }
+
+    /// Between the conversion and `finish` (the window in which the caller
+    /// repoints its row) both names hold a file; `abandon` undoes the
+    /// conversion and leaves the original as the only copy at its name.
+    #[test]
+    fn convert_abandon_leaves_the_original_as_it_was() {
+        let dir = TempDir::new().unwrap();
+        let original = dir.path().join("issue.cbr");
+        let dst = dir.path().join("issue.cbz");
+        fs::write(&original, b"rar-bytes").unwrap();
+        let converted =
+            convert_atomic(&root(&dir), &original, &dst, |io| put(io, b"zip-bytes")).unwrap();
+        converted.abandon();
+        assert_eq!(fs::read(&original).unwrap(), b"rar-bytes");
+        assert!(!dst.exists());
+        // A retry starts from the same state and succeeds.
+        convert_atomic(&root(&dir), &original, &dst, |io| put(io, b"zip-bytes"))
+            .unwrap()
+            .finish();
+        assert_eq!(fs::read(&dst).unwrap(), b"zip-bytes");
+        assert_eq!(
+            fs::read(dir.path().join("issue.cbr.bak")).unwrap(),
+            b"rar-bytes"
+        );
+        assert!(!original.exists());
+    }
+
+    /// In place (a RAR named `.cbz`): the rewrite sequence, so the name is
+    /// never missing and the original lands in `.bak`.
+    #[test]
+    fn convert_in_place_keeps_the_name_and_backs_up_the_original() {
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("issue.cbz");
+        fs::write(&target, b"rar-bytes").unwrap();
+        let outcome = convert_atomic(&root(&dir), &target, &target, |io| put(io, b"zip-bytes"))
+            .unwrap()
+            .finish();
+        assert_eq!(fs::read(&target).unwrap(), b"zip-bytes");
+        assert_eq!(fs::read(outcome.backup.unwrap()).unwrap(), b"rar-bytes");
+    }
+
+    // ── staging files never outlive a failure ──
+
+    #[test]
+    fn a_failed_rewrite_leaves_no_staging_file() {
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("issue.cbz");
+        fs::write(&target, b"v1").unwrap();
+        // The writer fails after writing.
+        let res = rewrite_atomic(&root(&dir), &target, 1, |io| {
+            put(io, b"partial")?;
+            Err(RewriteError::ValidationFailed("synthetic".into()))
+        });
+        assert!(res.is_err());
+        assert!(staging_files(dir.path()).is_empty());
+        // A fault after the staging file is complete and synced.
+        let res = rewrite_atomic_with_faults(
+            &root(&dir),
+            &target,
+            1,
+            |io| put(io, b"v2"),
+            |at| {
+                if at == RewriteStep::BackedUp {
+                    Err(RewriteError::Io(io::Error::other("injected")))
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert!(res.is_err());
+        assert!(staging_files(dir.path()).is_empty());
+        assert_eq!(fs::read(&target).unwrap(), b"v1");
+        // A panic inside the writer (as in a `spawn_blocking` task).
+        let r = root(&dir);
+        let t = target.clone();
+        let caught = std::panic::catch_unwind(move || {
+            let _ = rewrite_atomic(&r, &t, 1, |io| {
+                put(io, b"half").unwrap();
+                panic!("writer panicked");
+            });
+        });
+        assert!(caught.is_err());
+        assert!(staging_files(dir.path()).is_empty());
+        assert_eq!(fs::read(&target).unwrap(), b"v1");
+    }
+
+    // ── the folder fsync after the swap ──
+
+    /// The new file is in place when the folder fsync after the swap
+    /// fails: the call returns `Ok` (a retry would rotate the backup slots
+    /// again and, with one slot, delete the only copy of the original), and
+    /// `.bak` still holds the original.
+    #[test]
+    fn a_failed_sync_after_the_swap_is_ok_and_keeps_the_backup() {
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("issue.cbz");
+        fs::write(&target, b"v1").unwrap();
+        let failing_sync = |at| {
+            if at == RewriteStep::FinalSync {
+                Err(RewriteError::Io(io::Error::other("fsync failed")))
+            } else {
+                Ok(())
+            }
+        };
+        let outcome =
+            rewrite_atomic_with_faults(&root(&dir), &target, 1, |io| put(io, b"v2"), failing_sync)
+                .expect("the work is done; not an error");
+        assert_eq!(fs::read(&target).unwrap(), b"v2");
+        assert_eq!(fs::read(outcome.backup.unwrap()).unwrap(), b"v1");
+
+        let original = dir.path().join("other.cbr");
+        let dst = dir.path().join("other.cbz");
+        fs::write(&original, b"rar").unwrap();
+        let converted = convert_atomic_with_faults(
+            &root(&dir),
+            &original,
+            &dst,
+            |io| put(io, b"zip"),
+            failing_sync,
+        )
+        .expect("the conversion is done; not an error");
+        assert_eq!(fs::read(&dst).unwrap(), b"zip");
+        assert_eq!(fs::read(dir.path().join("other.cbr.bak")).unwrap(), b"rar");
+        converted.finish();
+    }
+
+    // ── file modes ──
+
+    /// A backup made by copying (hard links refused) keeps the original's
+    /// permission bits, as `fs::copy` did; the rewritten file gets the mode
+    /// any newly created file gets (0o666 less the umask), as before
+    /// handles were used.
+    #[cfg(unix)]
+    #[test]
+    fn copied_backup_keeps_the_original_mode_and_new_files_get_the_default() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("issue.cbz");
+        fs::write(&src, b"payload").unwrap();
+        fs::set_permissions(&src, fs::Permissions::from_mode(0o640)).unwrap();
+        fs::write(dir.path().join("issue.cbz.bak"), b"stale").unwrap();
+        let (folder, name) = root(&dir).open_parent(&src).unwrap();
+        let original = ArchiveFile::new(folder.open_regular(&name).unwrap(), &src);
+        link_or_copy(&folder, &name, OsStr::new("issue.cbz.bak"), &original).unwrap();
+        let bak = dir.path().join("issue.cbz.bak");
+        assert_eq!(fs::read(&bak).unwrap(), b"payload");
+        assert_eq!(
+            fs::metadata(&bak).unwrap().permissions().mode() & 0o7777,
+            0o640
+        );
+
+        let probe = dir.path().join("probe");
+        fs::File::create(&probe).unwrap();
+        let default_mode = fs::metadata(&probe).unwrap().permissions().mode() & 0o7777;
+        rewrite_atomic(&root(&dir), &src, 1, |io| put(io, b"v2")).unwrap();
+        assert_eq!(
+            fs::metadata(&src).unwrap().permissions().mode() & 0o7777,
+            default_mode
+        );
     }
 
     #[test]

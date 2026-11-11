@@ -203,12 +203,14 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
         None
     };
 
-    // The archive is read through a handle opened by the no-follow walk
-    // (`library::no_follow`): a link, a non-regular file or a path outside
-    // the root fails the job like an unreadable archive.
-    let opened = crate::library::no_follow::open_issue_archive(&app, &row).await;
     let outcome = match app.archive_work_semaphore.clone().acquire_owned().await {
         Ok(permit) => {
+            // The archive is read through a handle opened by the no-follow
+            // walk (`library::no_follow`): a link, a non-regular file or a
+            // path outside the root fails the job like an unreadable
+            // archive. Opened only once the permit is held, so queued jobs
+            // hold no descriptor while they wait.
+            let opened = crate::library::no_follow::open_issue_archive(&app, &row).await;
             tokio::task::spawn_blocking(move || {
                 let _permit = permit;
                 let source = opened.map_err(|r| {

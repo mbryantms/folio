@@ -1582,9 +1582,16 @@ pub(crate) async fn download(
         _ => return not_found(),
     };
     // Never through a symbolic link, and only a regular file below the
-    // library root; the response streams from this handle.
-    let Some(f) = crate::library::no_follow::open_issue(&app, &row).await else {
-        return not_found();
+    // library root; the response streams from this handle. A failed library
+    // lookup is a server error, not not-found.
+    let f = match crate::library::no_follow::open_issue_archive(&app, &row).await {
+        Ok(f) => f,
+        Err(crate::library::no_follow::Refusal::Lookup(e)) => return server_error(e),
+        Err(_) => return not_found(),
+    };
+    let f = match f.file().try_clone() {
+        Ok(f) => f,
+        Err(e) => return server_error(e),
     };
     let mut f = tokio::fs::File::from_std(f);
     let total = f.metadata().await.ok().map(|m| m.len()).unwrap_or(0);

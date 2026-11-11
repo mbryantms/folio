@@ -30,6 +30,12 @@ use std::sync::Arc;
 pub struct ArchiveFile {
     file: Arc<File>,
     display: PathBuf,
+    /// `(device, inode)` the caller already took from this handle
+    /// ([`ArchiveFile::with_identity`]), so [`ArchiveFile::identity`] need
+    /// not `fstat` again.
+    known_identity: Option<(u64, u64)>,
+    /// Whether [`ArchiveFile::rar_name`] may use `/proc/self/fd/<n>`.
+    proc_fd: bool,
 }
 
 impl ArchiveFile {
@@ -40,7 +46,27 @@ impl ArchiveFile {
         Self {
             file: Arc::new(file),
             display: display_path.into(),
+            known_identity: None,
+            proc_fd: true,
         }
+    }
+
+    /// Record the `(device, inode)` the caller took from this same handle
+    /// (an `fstat` it already made while opening it, off the async
+    /// runtime). [`ArchiveFile::identity`] then answers without a system
+    /// call. The caller vouches that the pair describes this handle.
+    pub fn with_identity(mut self, identity: (u64, u64)) -> Self {
+        self.known_identity = Some(identity);
+        self
+    }
+
+    /// Never hand UnRAR `/proc/self/fd/<n>`; use the checked display path
+    /// instead ([`ArchiveFile::rar_name`]). For tests of that path, and for
+    /// a deployment where reopening a descriptor through `/proc` is not
+    /// permitted.
+    pub fn without_proc_fd(mut self) -> Self {
+        self.proc_fd = false;
+        self
     }
 
     /// Open `path` with an ordinary open, following symbolic links. For
@@ -117,10 +143,14 @@ impl ArchiveFile {
         Ok(out)
     }
 
-    /// `(device, inode)` of the open file, from the handle.
+    /// `(device, inode)` of the open file: the pair recorded with
+    /// [`ArchiveFile::with_identity`], else from the handle (`fstat`).
     #[cfg(unix)]
     pub fn identity(&self) -> io::Result<(u64, u64)> {
         use std::os::unix::fs::MetadataExt;
+        if let Some(known) = self.known_identity {
+            return Ok(known);
+        }
         let m = self.file.metadata()?;
         Ok((m.dev(), m.ino()))
     }
@@ -132,16 +162,19 @@ impl ArchiveFile {
     /// On Linux this is `/proc/self/fd/<n>`: opening it reopens the file
     /// description this handle refers to, whatever has happened to the
     /// original name since. Where `/proc/self/fd` is not available (another
-    /// platform, or `/proc` not mounted) it falls back to the display path,
-    /// and [`ArchiveFile::check_rar_name`] must be called before and after
+    /// platform, `/proc` not mounted, or [`ArchiveFile::without_proc_fd`])
+    /// it falls back to the display path, and
+    /// [`ArchiveFile::check_rar_name`] must be called before and after
     /// each pass: it refuses the read when the name no longer leads to the
     /// same file (device and inode) or is a symbolic link. That fallback
-    /// narrows the window to the pass itself rather than closing it.
+    /// narrows the window to the pass itself rather than closing it. The
+    /// RAR reader also falls back when UnRAR cannot open the `/proc` name
+    /// (a sandbox that forbids reopening descriptors through `/proc`).
     pub fn rar_name(&self) -> (PathBuf, bool) {
         #[cfg(target_os = "linux")]
         {
             use std::os::fd::AsRawFd;
-            if Path::new("/proc/self/fd").is_dir() {
+            if self.proc_fd && Path::new("/proc/self/fd").is_dir() {
                 return (
                     PathBuf::from(format!("/proc/self/fd/{}", self.file.as_raw_fd())),
                     false,
