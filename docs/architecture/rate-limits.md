@@ -37,10 +37,11 @@ Every limit that is attached to a route today. A route not listed here has no li
 | `DELETE /me` (wrong passwords also count as failed auth) | `account_delete` | IP | 1 / min | 5 |
 | Marker writes (`POST /me/markers`, `PATCH`/`DELETE /me/markers/{id}`, `POST /me/markers/bulk-delete`, `POST /me/markers/restore`), one shared bucket | `marker_write` | IP | 10 / s | 60 |
 | Free-text search, metadata writes, collection and saved-view writes, saved-view previews, collection reorder | see [Per-user web-app buckets](#per-user-web-app-buckets) | user | | |
+| Page bytes, page thumbnails and stored covers | see [Page bytes and thumbnails](#page-bytes-and-thumbnails) | user | | |
 | CBL imports: create (upload / URL / catalog), manual refresh, manual check (`cbl::quota`; admins exempt; Redis fixed 1 h window) | `cbl_import` | user | 20 / hour | none |
 | `PATCH /me/account` requests that change the email while mail delivery is configured (see [Email-change requests](#email-change-requests)) | none (request row) | user | 5 / hour | none |
 
-No limit: page bytes (`GET /issues/{id}/pages/{n}`), thumbnails and stored covers (`…/pages/{n}/thumb`, `/issues/{id}/covers/{cover_id}`), library and series scans (`POST /libraries/{slug}/scan`, `POST /series/{slug}/scan`), OPDS progression (`/opds/v1/progression/{id}`), the Komga shim (`/api/v1/books/*`), `POST /auth/refresh`, and every other route not in this table.
+No limit: library and series scans (`POST /libraries/{slug}/scan`, `POST /series/{slug}/scan`), OPDS progression (`/opds/v1/progression/{id}`), the Komga shim (`/api/v1/books/*`), `POST /auth/refresh`, and every other route not in this table.
 
 ### Failed-auth lockout
 
@@ -91,9 +92,29 @@ Each instance is its own store, so a script that rotates across the four `metada
 
 Verified against the code at `ed5d9019` on 2026-11-10 (per-user web-app buckets).
 
+## Page bytes and thumbnails
+
+Audit 2026-11 A9. Both buckets are per user with the IP fallback (`build_per_user`), as above. App-password and anonymous requests key by address, so a household whose reader apps use app passwords behind one NAT shares one budget; the numbers leave room for that. The governor runs before the handler: a conditional request that ends in 304 and a request refused for a missing session spend a token like a page read, and a limited request never opens an archive.
+
+| Bucket | Routes | Sustained | Burst | Why it is enough |
+|---|---|---|---|---|
+| `pages` | `GET /issues/{id}/pages/{n}` (every `?w=` variant, `HEAD` included) | 250 / s | 2,000 | The reader warms 3 pages ahead and 2 behind with at most 4 in flight (`web/lib/reader/use-prefetch.ts`); holding the next-page key turns about 30 pages a second at about 2 new URLs per turn, about 60/s, about 1,000 requests over a 500-page issue. 250/s is 4x that pace and the burst holds the whole sweep twice. The offline downloader keeps 3 fetches in flight with no pacing (`web/lib/pwa/downloads.ts`); its speed is estimated, not measured, at 75–150 pages a second on a LAN, more for small pages. It waits out a 429 instead of failing (below), so a downloader faster than the bucket is slowed, never stopped. |
+| `thumbnails` | `GET /issues/{id}/pages/{n}/thumb` and `GET /issues/{id}/covers/{cover_id}` (one store) | 500 / s | 4,000 | The page editor requests every page's thumbnail at once under a fresh URL per open, 500 for a 500-page issue; the reader strip warms 25 on open. Cover grids are virtualized and lazy and grow 60 cards per list page through the `search` bucket (10/s), so new covers arrive at most about 600 a second by construction, a few hundred in a fast fling; inside the installed app the service worker revalidates every paint, so revisited covers count as well. The downloader's strip-thumbnail phase runs at an estimated 300/s on a LAN and waits out a 429 like its pages. The burst holds eight page-editor opens back to back. |
+
+What the clients do on a 429:
+
+- **Offline downloads** wait for `Retry-After` (at least 1 s, at most 30 s) and fetch the same asset again, with 3 fetches still in flight; after 8 consecutive 429s on one asset (`MAX_RATE_LIMIT_RETRIES`) that issue fails as a retryable error and the queue moves on to the next issue.
+- **The reader page** asks the server for the failure's status (a `HEAD` probe, as it does for 404 / 409 / 410); on a 429 it goes back to loading, waits for `Retry-After` and loads again, up to 3 times (`MAX_PAGE_RATE_LIMIT_WAITS`), and keeps its one silent immediate retry for other failures. Past that it shows Tap to retry.
+- **Covers, strip thumbnails and the page editor's thumbnails** cannot read an `<img>` status, so every failed load is re-requested after 1 s and then 3 s (`components/RetryingImg.tsx`) before it shows as failed. A truly missing image costs two extra requests.
+- **The service worker** does not cache a 429: it stores only `ok` answers, so a limited revalidation leaves the cached copy in place and an uncached image gets the 429, which the retry above handles.
+
+Other routes that serve page bytes or covers keep their own buckets: OPDS PSE pages (`/opds/pse/{issue_id}/{n}`) and whole-archive downloads (`/opds/v1/issues/{id}/file`, `/opds/v2/issues/{id}/file`, `/opds/v1.2/books/{id}/file/{filename}`) are on `opds_stream`; OPDS feeds link covers to `/issues/{id}/pages/0/thumb`, which is the `thumbnails` bucket (keyed by address for app-password clients); OCR reads page bytes behind `ocr` and `ocr.detect`. The Komga shim (`/api/v1/books/*`) serves no page bytes.
+
+Verified against the code at `0cf46f56` on 2026-11-11 (page bytes and thumbnails).
+
 ## Behavior on bucket exhaustion
 
-- 429 with `Retry-After` (seconds, at least 1).
+- 429 with `Retry-After` (seconds, at least 1, equal to the body's `retry_after_seconds`). Until A9 the governor's own unfloored header replaced it, so every bucket that refills faster than once a second sent `Retry-After: 0`.
 - `Content-Type: application/json` body: `{ "error": { "code": "rate_limited", "message": "...", "retry_after_seconds": N } }`.
 - The CBL import quota and the email-change request limit answer the same 429 shape. The failed-auth lockout answers 429 `auth.locked_out` (see [Failed-auth lockout](#failed-auth-lockout)).
 - If a request carries no resolvable client IP (a wiring fault), a per-IP bucket answers 500 `internal`.

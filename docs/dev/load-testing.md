@@ -871,6 +871,13 @@ about 31,800 answers of 429 per 200 on the entity labels).
   above (each label's statements, parameters inlined, `pgbench -c 16`).
   Spreading the load over several users does not help much: each user
   adds one bucket's 10/s.
+- Bounded by the `pages` bucket (250/s, burst 2,000, per user): the
+  hand-run page-turn recipes below. One token gets the burst and then
+  250 requests a second; past that, `oha` counts 429s. Read them as
+  latency at or below that rate (`oha -q 200` keeps a run under it), or
+  log in several users and give each `oha` its own token. Thumbnails and
+  stored covers have their own bucket (500/s, burst 4,000), which bounds
+  any thumbnail recipe the same way.
 
 To drive a server by hand, whether the perf server, `just dev` or a
 compose stack:
@@ -886,7 +893,7 @@ H=(-H "Authorization: Bearer $TOKEN")
 
 | §18.3 scenario | recipe |
 |---|---|
-| 50 concurrent readers turning pages | `oha -z 60s -c 50 "${H[@]}" "$API/issues/$ISSUE_ID/pages/3"`. This hits one page, the cached path. To spread across pages, use `--rand-regex-url 'http://127\.0\.0\.1:8080/issues/<id>/pages/[0-9]'`, where the URL is a regex so dots must be escaped. Watch `folio_zip_lru_open_fds` on `/metrics`. |
+| 50 concurrent readers turning pages | `oha -z 60s -c 50 -q 200 "${H[@]}" "$API/issues/$ISSUE_ID/pages/3"`. One token is held to the `pages` bucket (250/s after a burst of 2,000), so `-q 200` keeps every answer real; 50 real readers are 50 tokens. This hits one page, the cached path. To spread across pages, use `--rand-regex-url 'http://127\.0\.0\.1:8080/issues/<id>/pages/[0-9]'`, where the URL is a regex so dots must be escaped. Watch `folio_zip_lru_open_fds` on `/metrics`. |
 | 1 active scan + 10 concurrent readers | start `curl -X POST "${H[@]}" "$API/api/libraries/$LIB_SLUG/scan?force=true"`, then immediately run the page-turn command with `-c 10 -z 120s`. Compare p99 against the idle run. |
 | 1000-series library list pagination | `oha -z 30s -c 16 "${H[@]}" "$API/api/series?limit=50"`. For deep pages, take a `next_cursor` from one response and add `&cursor=…`. |
 | Search query mix at 100 QPS | `oha -z 60s -q 100 -c 20 "${H[@]}" "$API/api/series?q=crimson&limit=8"` (autocomplete) alongside `oha -z 60s -q 20 "${H[@]}" "$API/api/issues/search?q=phoenix"` (full search). |
