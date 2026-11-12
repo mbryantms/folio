@@ -1,4 +1,13 @@
-//! `comic-text-detector` singleton.
+//! `comic-text-detector` singleton: the page detector of the legacy
+//! engine set (`COMIC_OCR_LEGACY_ENGINES=true`). The current set's
+//! detector is [`super::bubbles`]. This module goes away with the legacy
+//! set one release after the engine change.
+//!
+//! The upstream crate builds its ONNX Runtime session with the default
+//! thread count (one per physical core of the machine, whatever the
+//! process may use), which is why a page takes tens of seconds in a
+//! container limited to a few cores. That is left as it was: the legacy
+//! set exists to behave exactly like the previous release.
 //!
 //! The upstream crate's [`ComicTextDetector::new`] loads a ~90 MB ONNX
 //! from the Hugging Face cache. [`super::models::ensure_pinned`] puts a

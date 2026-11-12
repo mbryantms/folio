@@ -1,16 +1,20 @@
 //! `Recognizer` trait + result type.
 //!
 //! Trait surface and `Recognition`/`Word`/`Language` shapes live in
-//! this parent module so they're stable for callers (the pipeline +
-//! request handler in M3) regardless of which engine is selected.
+//! this parent module so they're stable for callers (the pipeline and
+//! the request handler) regardless of which engine is selected.
 //!
 //! Implementations:
 //!
-//! - [`western::WesternOcr`] — native Tesseract 5 with the
-//!   `tessdata_best` LSTM models, vendored via `tesseract-rs`.
-//! - [`manga::MangaOcr`] — vertical Japanese OCR backed by
-//!   `manga-ocr`'s ViT encoder + BERT decoder on ONNX Runtime.
+//! - [`ctc::LineOcr`]: Western text with the current engine set. A line
+//!   finder splits the balloon, a CTC line model reads the lines.
+//! - [`manga::MangaOcr`]: vertical Japanese OCR backed by `manga-ocr`'s
+//!   ViT encoder + BERT decoder on ONNX Runtime (both engine sets).
+//! - [`western::WesternOcr`]: Western text with the legacy engine set.
+//!   Native Tesseract 5 with the `tessdata_best` LSTM models, vendored
+//!   via `tesseract-rs`.
 
+pub mod ctc;
 pub mod manga;
 pub mod western;
 
@@ -18,12 +22,11 @@ use image::DynamicImage;
 
 /// Output of a single OCR pass over a cropped bubble.
 ///
-/// `words` is `None` when the engine doesn't expose per-word boxes
-/// (manga-ocr in particular returns a single string). The client
-/// uses `text` for `marker.selection.text`; the optional fields are
-/// surfaced if present so the reader can render word-level
-/// highlights or replace the user's drag rect with the refined
-/// bubble outline.
+/// `words` holds the pieces the engine read, with their boxes in crop
+/// pixels: one entry per word for Tesseract, one entry per text line for
+/// the CTC line recogniser (its unit is the line). `None` when the
+/// engine exposes no pieces (manga-ocr returns a single string) or read
+/// nothing. The client uses `text` for `marker.selection.text`.
 #[derive(Debug, Clone)]
 pub struct Recognition {
     pub text: String,
@@ -40,8 +43,9 @@ pub struct Word {
     pub xmax: f32,
     pub ymax: f32,
     /// 0-based index of the textline the word sits on, in reading
-    /// order. Lets the postprocess stage join hyphenated line
-    /// breaks without re-deriving geometry from the bboxes.
+    /// order (for a line entry: the line's own index). Lets the
+    /// postprocess stage join hyphenated line breaks without
+    /// re-deriving geometry from the bboxes.
     pub line_index: u32,
 }
 
@@ -54,9 +58,9 @@ pub enum Language {
     Manga,
 }
 
-/// Anything that can take a cropped image and return text. M2 ships
-/// two implementations; M3 dispatches between them based on the
-/// request body's `lang` hint.
+/// Anything that can take a cropped image and return text. The
+/// pipeline picks the implementation from the request's language and
+/// the engine set (`ocr::pipeline::prepare_models`).
 pub trait Recognizer: Send + Sync {
     fn recognize(&self, image: &DynamicImage) -> anyhow::Result<Recognition>;
 }

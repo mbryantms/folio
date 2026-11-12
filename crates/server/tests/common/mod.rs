@@ -1095,6 +1095,7 @@ impl TestApp {
             watch_debounce_secs: 30,
             watch_poll_interval_secs: 300,
             watch_force_poll: false,
+            ocr_legacy_engines: false,
             archive_max_entries: 50_000,
             archive_max_total_bytes: 8 * 1024 * 1024 * 1024,
             archive_max_entry_bytes: 512 * 1024 * 1024,

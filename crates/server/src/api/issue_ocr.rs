@@ -18,8 +18,11 @@
 //!
 //! ACL: same as page bytes — visible-to-user library check via
 //! [`visible`]. Rate limits: the POST sits on the `OCR` bucket, the
-//! GET on the stricter `OCR_DETECT` bucket (a detect-cache miss is
-//! the most expensive single operation the server exposes).
+//! GET on the stricter `OCR_DETECT` bucket.
+//!
+//! Which engines run is [`EngineSet::from_config`], read once per
+//! request and passed down: it selects the models, the cleanup rules
+//! and the cache keys (the two sets never share an entry).
 //!
 //! Concurrency (audit S-23): rate limits are per caller, so the heavy
 //! part of both routes (page decode, detection, recognition) also runs
@@ -67,6 +70,7 @@ use super::page_source::{PageUnavailable, issue_not_found, no_store};
 use crate::auth::CurrentUser;
 use crate::library::zip_lru::{CachedReader, lock_reader};
 use crate::middleware::rate_limit;
+use crate::ocr::EngineSet;
 use crate::ocr::cache::{self, CachedDetection};
 use crate::ocr::page_cache::{Claim, Lookup, PageKey, SharedPage, decoded_pages};
 use crate::ocr::pipeline::{
@@ -165,21 +169,12 @@ pub struct OcrRequest {
     #[serde(default)]
     #[garde(skip)]
     pub lang: Option<String>,
-    /// When `true`, run `comic-text-detector` over the page to snap
-    /// the user's drag rect to the tightest enclosing speech-bubble
-    /// polygon. When `false` (or omitted — that's the default as of
-    /// v0.3.26), the recognizer runs on the user's rect verbatim.
-    ///
-    /// Why default off: on CPU-constrained hosts the detector costs
-    /// ~50 s on the *first* bubble of a page (subsequent bubbles on
-    /// the same page hit the polygon cache and run ~200 ms). That
-    /// cold-start makes the snap-to-bubble feature unusable in
-    /// practice. Operators on fast hardware can flip the request
-    /// flag to `true` to opt in; a future server config knob will
-    /// let them flip the default. The recognizer-only path
-    /// (~200 ms total) matches what the old browser-side
-    /// tesseract.js delivered, just better quality (real Tesseract
-    /// 5 + tessdata_best, not the in-browser fast variant).
+    /// When `true`, run the page detector (or use its cached result
+    /// for the page) and snap the rectangle to the detected text region
+    /// it overlaps most; the snapped box comes back as `refined_bbox`.
+    /// When `false` or omitted (the default), the recognizer reads the
+    /// rectangle as sent: the way to read a region taken from the
+    /// text-regions route, which is already a detected box.
     #[serde(default)]
     #[garde(skip)]
     pub detect: Option<bool>,
@@ -276,14 +271,16 @@ pub struct OcrResponse {
     /// Recognized text after the postprocess cleanup pass
     /// ([`crate::ocr::postprocess`]).
     pub text: String,
-    /// Mean confidence in `[0.0, 1.0]` over the words kept by the
-    /// cleanup pass (Tesseract); manga-ocr reports `1.0` (or `0.0`
-    /// for an empty result) since the greedy decoder doesn't expose
-    /// per-token probabilities.
+    /// Confidence in `[0.0, 1.0]`. Western text: the mean over the
+    /// text lines read, each line scored by the mean probability of its
+    /// characters (a line that could not be read counts as 0).
+    /// manga-ocr reports `1.0` (or `0.0` for an empty result) since its
+    /// greedy decoder doesn't expose per-token probabilities.
     pub confidence: f32,
-    /// Detector's snap-to-bubble rectangle in page-pixel coords.
-    /// `None` when no detector hit overlapped the user's region —
-    /// the recognizer ran on the user's rect verbatim.
+    /// The detected box that was read, in page-pixel coords, when it
+    /// is not the region as sent: the region a `detect: true` request
+    /// was snapped to. Absent when the recognizer read the user's rect
+    /// verbatim.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refined_bbox: Option<OcrRegion>,
     /// Recognizer the pipeline actually ran (`"western"` |
@@ -293,13 +290,16 @@ pub struct OcrResponse {
     #[serde(default)]
     pub lang: String,
     /// Engine output before cleanup. Present only when cleanup
-    /// changed the text — a debugging aid, and the raw material for
-    /// golden-fixture authoring when users report junk output.
+    /// changed the text (for Western text: the lines as read, one per
+    /// line, where `text` has them joined) — a debugging aid, and the
+    /// raw material for golden-fixture authoring.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw_text: Option<String>,
-    /// Per-word boxes in page-pixel coords, post-cleanup. `None`
-    /// when the engine doesn't expose word data (manga-ocr) or the
-    /// iterator yielded nothing.
+    /// The pieces the text was read in, in reading order, with their
+    /// boxes in page-pixel coords. Western text: one entry per text
+    /// line (the recognizer reads whole lines, so an entry's `text`
+    /// holds several words). Absent for manga-ocr, which returns one
+    /// string, and when nothing was read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub words: Option<Vec<OcrWord>>,
     /// Decoded page width in pixels, the space `refined_bbox` and
@@ -310,11 +310,12 @@ pub struct OcrResponse {
     pub page_h: u32,
 }
 
-/// One recognized word: cleaned text + confidence + page-pixel box.
+/// One piece of the recognized text (a text line; see
+/// `OcrResponse.words`): its text, confidence and page-pixel box.
 #[derive(Debug, Deserialize, Serialize, Clone, utoipa::ToSchema)]
 pub struct OcrWord {
     pub text: String,
-    /// `[0.0, 1.0]`, from Tesseract's per-word score.
+    /// `[0.0, 1.0]`: the recognizer's score for this piece.
     pub confidence: f32,
     pub x: u32,
     pub y: u32,
@@ -347,7 +348,11 @@ pub struct TextRegionView {
     pub h: f32,
     /// Detector confidence, `[0.0, 1.0]`.
     pub confidence: f32,
-    /// Detector class index (0 = text block, 1 = text line).
+    /// What the detector took the region for: 0 = a balloon, 2 = text
+    /// outside balloons (a caption on the art, a sound effect). Every
+    /// region is a box to read as a whole. (A server running the
+    /// previous engines, `COMIC_OCR_LEGACY_ENGINES`, sends that
+    /// detector's classes: 0 = text block, 1 = text line.)
     pub class: u32,
 }
 
@@ -384,14 +389,20 @@ impl OcrResponse {
     }
 }
 
-impl From<CachedDetection> for TextRegionsView {
-    fn from(d: CachedDetection) -> Self {
+impl TextRegionsView {
+    /// A page's detection as the client sees it: the boxes the engine
+    /// set offers as regions ([`EngineSet::is_region_class`]: balloons
+    /// and free text of the current detector, not the text boxes inside
+    /// balloons, which stay server-side), clamped to the page, in
+    /// percent.
+    pub(crate) fn from_detection(d: CachedDetection, engines: EngineSet) -> Self {
         let (pw, ph) = (d.page_w as f32, d.page_h as f32);
         let regions = if pw <= 0.0 || ph <= 0.0 {
             Vec::new()
         } else {
             d.bboxes
                 .iter()
+                .filter(|b| engines.is_region_class(b.class))
                 .filter_map(|b| {
                     let xmin = b.xmin.clamp(0.0, pw);
                     let ymin = b.ymin.clamp(0.0, ph);
@@ -497,9 +508,9 @@ pub async fn serve(
     };
 
     // ─── Resolve detect mode ─────────────────────────────────────
-    // Default off: see [`OcrRequest::detect`] for the rationale —
-    // the detector cold-start is too slow on most operator hosts to
-    // run by default. Clients opt in explicitly.
+    // Default off (see [`OcrRequest::detect`]): a region from the
+    // text-regions route is read as sent. Clients opt in to snapping
+    // for a rectangle the user drew.
     let detect = req.detect.unwrap_or(false);
 
     // ─── Cache lookup (M4) ───────────────────────────────────────
@@ -524,11 +535,19 @@ pub async fn serve(
         Language::Manga => "manga",
     };
     // The keys carry the engine fingerprint (`ocr::cache`), computed once
-    // per process off the async runtime.
-    cache::warm_fingerprints().await;
+    // per process and engine set, off the async runtime.
+    let engines = EngineSet::from_config(&app.cfg());
+    cache::warm_fingerprints_for(engines).await;
     let result_key = |r: &OcrRegion| {
         let region_hash = cache::region_hash(r.x, r.y, r.w, r.h);
-        cache::cache_key(&row.content_hash, req.page, lang_str, detect, &region_hash)
+        cache::cache_key_for(
+            engines,
+            &row.content_hash,
+            req.page,
+            lang_str,
+            detect,
+            &region_hash,
+        )
     };
     if let Some(r) = &pixel_region
         && let Some(hit) = cache::get(&app.jobs.redis, &result_key(r)).await
@@ -567,7 +586,7 @@ pub async fn serve(
         Err(resp) => return *resp,
     };
     // ─── Models (a first-use download waits here, without a permit) ─
-    let models = match prepare_models(&row.content_hash, language, detect).await {
+    let models = match prepare_models(engines, &row.content_hash, language, detect).await {
         Ok(m) => m,
         Err(e) => {
             tracing::error!(error = %e, "ocr: model preparation failed");
@@ -707,10 +726,11 @@ pub async fn text_regions(
     // ─── Cache lookup ────────────────────────────────────────────
     // Checked before the archive is touched: a hit skips page load
     // and decode entirely, making warm requests a Redis round-trip.
-    cache::warm_fingerprints().await;
-    let key = cache::detect_cache_key(&row.content_hash, page);
+    let engines = EngineSet::from_config(&app.cfg());
+    cache::warm_fingerprints_for(engines).await;
+    let key = cache::detect_cache_key_for(engines, &row.content_hash, page);
     if let Some(hit) = cache::get_detect(&app.jobs.redis, &key).await {
-        return Json(TextRegionsView::from(hit)).into_response();
+        return Json(TextRegionsView::from_detection(hit, engines)).into_response();
     }
 
     // ─── Cheap checks (no permit, no page bytes) ─────────────────
@@ -719,7 +739,7 @@ pub async fn text_regions(
         Err(resp) => return *resp,
     };
     // ─── Detector (a first-use download waits here, no permit) ───
-    let detector = match prepare_detector(&row.content_hash).await {
+    let detector = match prepare_detector(engines, &row.content_hash).await {
         Ok(d) => d,
         Err(e) => {
             tracing::error!(error = %e, "ocr: detector preparation failed");
@@ -735,6 +755,7 @@ pub async fn text_regions(
         };
     match detect_and_cache_regions(
         app.jobs.redis.clone(),
+        engines,
         &row.content_hash,
         page,
         decoded,
@@ -743,7 +764,7 @@ pub async fn text_regions(
     )
     .await
     {
-        Ok(detection) => Json(TextRegionsView::from(detection)).into_response(),
+        Ok(detection) => Json(TextRegionsView::from_detection(detection, engines)).into_response(),
         Err(e) => {
             tracing::error!(error = %e, "ocr: text-region detection failed");
             ocr_failure(&e, "text-region detection failed")
@@ -1045,6 +1066,44 @@ mod tests {
         assert_eq!((r.x, r.y, r.w, r.h), (0, 0, 10, 5));
         // Less than half a pixel: nothing left.
         assert!(pct(50.0, 50.0, 0.1, 0.1).to_pixels(200, 100).is_none());
+    }
+
+    /// Clients get the regions of a page: with the current engines the
+    /// balloons and the free text, not the text boxes inside balloons
+    /// the detection also holds; with the legacy engines every box.
+    #[test]
+    fn text_regions_are_the_region_classes_of_the_engine_set() {
+        use crate::ocr::cache::CachedBbox;
+        let detection = || CachedDetection {
+            page_w: 1000,
+            page_h: 2000,
+            bboxes: [(0, 100.0), (1, 120.0), (2, 600.0)]
+                .into_iter()
+                .map(|(class, x)| CachedBbox {
+                    xmin: x,
+                    ymin: 200.0,
+                    xmax: x + 200.0,
+                    ymax: 600.0,
+                    confidence: 0.9,
+                    class,
+                })
+                .collect(),
+        };
+        let classes = |engines| -> Vec<u32> {
+            TextRegionsView::from_detection(detection(), engines)
+                .regions
+                .iter()
+                .map(|r| r.class)
+                .collect()
+        };
+        assert_eq!(classes(EngineSet::Current), [0, 2]);
+        assert_eq!(classes(EngineSet::Legacy), [0, 1, 2]);
+        // Percent of the page, as before.
+        let view = TextRegionsView::from_detection(detection(), EngineSet::Current);
+        assert_eq!((view.page_w, view.page_h), (1000, 2000));
+        let r = &view.regions[0];
+        assert!((r.x - 10.0).abs() < 1e-4 && (r.y - 10.0).abs() < 1e-4);
+        assert!((r.w - 20.0).abs() < 1e-4 && (r.h - 20.0).abs() < 1e-4);
     }
 
     /// Over the limit a request waits, then gets 503 + Retry-After, not a

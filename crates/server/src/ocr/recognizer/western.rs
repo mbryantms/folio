@@ -1,4 +1,8 @@
-//! Western OCR via the native Tesseract bindings.
+//! Western OCR via the native Tesseract bindings: the Western
+//! recogniser of the legacy engine set (`COMIC_OCR_LEGACY_ENGINES=true`).
+//! The current set reads Western text with [`super::ctc`]. Unchanged
+//! from the previous release; removed with the Tesseract build one
+//! release after the engine change.
 //!
 //! [`WesternOcr::shared`] returns the process-wide singleton. Init
 //! costs cover (a) locating the `eng.traineddata` LSTM model — read

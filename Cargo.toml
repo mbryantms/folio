@@ -182,6 +182,13 @@ sevenz-rust2 = { version = "0.25", default-features = false, features = ["ppmd",
 # 2026-05-17); any bump that crosses crates needs a re-probe.
 comic-text-detector = "0.5.1"
 manga-ocr = "0.5.1"
+# ONNX Runtime binding and array crate for the sessions Folio builds
+# itself (`ocr::session`: balloon detector, line finder, line
+# recogniser). Both were already in the tree through the two crates
+# above; the exact `ort` pin is theirs, so there is one runtime, and it
+# moves together with them.
+ort = "=2.0.0-rc.10"
+ndarray = "0.16"
 # Only for `Cache` (the cache path the two crates above read): Folio
 # fetches and verifies the pinned model files itself (`ocr::models`).
 # No features: the download client stays the crates' own, unused once

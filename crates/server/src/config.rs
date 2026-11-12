@@ -291,6 +291,15 @@ pub struct Config {
     #[serde(default)]
     pub watch_force_poll: bool,
 
+    /// Text reading: run the previous engines (`comic-text-detector` and
+    /// Tesseract) instead of the current ones (`ocr::EngineSet`).
+    /// Infrastructure, so env-only (`COMIC_OCR_LEGACY_ENGINES`, default
+    /// false, read at start). **Temporary**: it exists for one release so
+    /// a deploy can go back to the old engines without a revert, and goes
+    /// away together with the Tesseract build.
+    #[serde(default)]
+    pub ocr_legacy_engines: bool,
+
     // Archive limits (spec §4.1.1). Defaults mirror the `archive` crate's
     // `ArchiveLimits::default()`; overridable per-deploy via the
     // `COMIC_ARCHIVE_MAX_*` env vars to tune DoS bounds for unusually
@@ -619,6 +628,7 @@ impl std::fmt::Debug for Config {
             .field("watch_debounce_secs", &self.watch_debounce_secs)
             .field("watch_poll_interval_secs", &self.watch_poll_interval_secs)
             .field("watch_force_poll", &self.watch_force_poll)
+            .field("ocr_legacy_engines", &self.ocr_legacy_engines)
             .field("archive_max_entries", &self.archive_max_entries)
             .field("archive_max_total_bytes", &self.archive_max_total_bytes)
             .field("archive_max_entry_bytes", &self.archive_max_entry_bytes)
@@ -2139,6 +2149,7 @@ mod tests {
             watch_debounce_secs: default_watch_debounce_secs(),
             watch_poll_interval_secs: default_watch_poll_interval_secs(),
             watch_force_poll: false,
+            ocr_legacy_engines: false,
             archive_max_entries: 0,
             archive_max_total_bytes: 0,
             archive_max_entry_bytes: 0,
@@ -2242,6 +2253,35 @@ mod tests {
             .extract()
             .expect("a leftover archive_max_nesting key extracts");
         cfg.validate().expect("defaults validate");
+    }
+
+    /// The OCR engine switch is off unless asked for, and the key
+    /// `Env::prefixed("COMIC_")` yields for `COMIC_OCR_LEGACY_ENGINES`
+    /// (`ocr_legacy_engines`, its `true` parsed to a boolean like every
+    /// other env flag) selects the previous engines.
+    #[test]
+    fn ocr_legacy_engines_default_off_and_selectable() {
+        const BASE: &str = "database_url = 'postgres://x'\nredis_url = 'redis://x'\n\
+                            library_path = '/l'\ndata_path = '/d'\npublic_url = 'http://localhost'\n";
+        let cfg: Config = Figment::new()
+            .merge(Toml::string(BASE))
+            .extract()
+            .expect("defaults extract");
+        assert!(!cfg.ocr_legacy_engines);
+        assert_eq!(
+            crate::ocr::EngineSet::from_config(&cfg),
+            crate::ocr::EngineSet::Current
+        );
+        let cfg: Config = Figment::new()
+            .merge(Toml::string(BASE))
+            .merge(("ocr_legacy_engines", true))
+            .extract()
+            .expect("the switch extracts");
+        assert!(cfg.ocr_legacy_engines);
+        assert_eq!(
+            crate::ocr::EngineSet::from_config(&cfg),
+            crate::ocr::EngineSet::Legacy
+        );
     }
 
     #[test]
