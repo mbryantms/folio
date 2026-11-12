@@ -322,6 +322,15 @@ docker compose -f compose.prod.yml up -d --no-deps app
     a denial. On SELinux hosts a bind mount still needs its usual `:z` /
     `:Z` suffix.
 
+### Unreleased — the removed-file purge no longer stalls behind rows it keeps
+
+- Migration `m20271114_000001_issues_purge_keyset_idx` adds a partial
+  index on confirmed-removed issues. Nothing to do.
+- The daily removed-file purge reads its candidates page by page and caps
+  each library at 5,000 deletions per run (it used to read at most 5,000
+  candidates). Rows it keeps because their folder cannot be read no longer
+  stop it from reaching the removed rows behind them.
+
 ### Unreleased — a lost token refresh can be retried for a minute
 
 - Migration `m20271113_000001_auth_session_refresh_grace` adds two
