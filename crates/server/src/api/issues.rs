@@ -2907,7 +2907,7 @@ pub async fn list(
         let has_more = rows.len() as u64 > limit;
         let next_cursor = has_more.then(|| super::series::encode_offset_cursor(offset + limit));
         let page: Vec<IssueCardRow> = rows.into_iter().take(limit as usize).collect();
-        return hydrate_and_respond(&app, page, next_cursor, total).await;
+        return hydrate_and_respond(&app, user.id, page, next_cursor, total).await;
     }
 
     let sort = q.sort.unwrap_or_default();
@@ -2957,7 +2957,7 @@ pub async fn list(
     };
     let next_cursor = compute_next_issue_cursor(&app, &rows, limit, sort, user.id).await;
     let page: Vec<IssueCardRow> = rows.into_iter().take(limit as usize).collect();
-    hydrate_and_respond(&app, page, next_cursor, total).await
+    hydrate_and_respond(&app, user.id, page, next_cursor, total).await
 }
 
 /// Look up the calling user's rating for one issue by id; used to
@@ -3022,6 +3022,7 @@ fn apply_user_rating_cursor(
 /// series slug. One batched series fetch keeps it O(1) round-trips.
 async fn hydrate_and_respond(
     app: &AppState,
+    user_id: Uuid,
     rows: Vec<IssueCardRow>,
     next_cursor: Option<String>,
     total: Option<i64>,
@@ -3049,7 +3050,7 @@ async fn hydrate_and_respond(
     };
     let series_lookup: std::collections::HashMap<Uuid, series::Model> =
         series_rows.into_iter().map(|s| (s.id, s)).collect();
-    let items: Vec<IssueSummaryView> = rows
+    let mut items: Vec<IssueSummaryView> = rows
         .into_iter()
         .filter_map(|i| {
             let s = series_lookup.get(&i.series_id)?;
@@ -3063,6 +3064,7 @@ async fn hydrate_and_respond(
             )
         })
         .collect();
+    crate::api::issue_card::attach_progress(&app.db, user_id, &mut items).await;
     Json(IssueListView {
         items,
         next_cursor,
@@ -3156,7 +3158,7 @@ pub async fn search(
             tracing::warn!(error = %e, "issue snippet fetch failed; continuing without");
             std::collections::HashMap::new()
         });
-    let items = rows
+    let mut items: Vec<IssueSearchHit> = rows
         .into_iter()
         .filter_map(|i| {
             let s = series_lookup.get(&i.series_id)?;
@@ -3170,6 +3172,12 @@ pub async fn search(
             })
         })
         .collect();
+    crate::api::issue_card::attach_progress(
+        &app.db,
+        user.id,
+        items.iter_mut().map(|h| &mut h.issue),
+    )
+    .await;
     Json(IssueSearchView { items }).into_response()
 }
 

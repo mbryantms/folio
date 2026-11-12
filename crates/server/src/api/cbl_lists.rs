@@ -1314,7 +1314,7 @@ pub async fn entries(
     };
     let visible = &acl;
 
-    let items: Vec<CblEntryHydratedView> = page_rows
+    let mut items: Vec<CblEntryHydratedView> = page_rows
         .iter()
         .map(|entry| {
             let issue_view = entry
@@ -1370,6 +1370,12 @@ pub async fn entries(
             }
         })
         .collect();
+    crate::api::issue_card::attach_progress(
+        &app.db,
+        user.id,
+        items.iter_mut().filter_map(|e| e.issue.as_mut()),
+    )
+    .await;
 
     Json(CblEntryListView {
         items,

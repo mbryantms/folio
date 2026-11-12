@@ -57,6 +57,7 @@ export type SortOrder = Schemas["SortOrder"];
 export type UpdateSeriesReq = Schemas["UpdateSeriesReq"];
 export type IssueState = Schemas["IssueState"];
 export type IssueSummaryView = Schemas["IssueSummaryView"];
+export type IssueCardProgress = Schemas["IssueCardProgress"];
 export type IssueListView = Schemas["IssueListView"];
 export type IssueSearchHit = Schemas["IssueSearchHit"];
 export type IssueSearchView = Schemas["IssueSearchView"];

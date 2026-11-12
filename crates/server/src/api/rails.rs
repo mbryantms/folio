@@ -46,7 +46,7 @@ use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::{error, not_found};
-use crate::api::issue_card::IssueCardRow;
+use crate::api::issue_card::{IssueCardRow, attach_progress};
 use crate::api::series::{IssueSummaryView, SeriesView, hydrate_series};
 use crate::auth::CurrentUser;
 use crate::library::access;
@@ -1009,7 +1009,7 @@ pub async fn new_in_series(
     };
     let mut by_id: std::collections::HashMap<String, OnDeckIssue> =
         cards.into_iter().map(|c| (c.id.clone(), c)).collect();
-    let items: Vec<IssueSummaryView> = rows
+    let mut items: Vec<IssueSummaryView> = rows
         .into_iter()
         .filter_map(|r| {
             let card = by_id.remove(&r.id)?;
@@ -1019,6 +1019,7 @@ pub async fn new_in_series(
             )
         })
         .collect();
+    attach_progress(&app.db, user.id, &mut items).await;
     Json(NewInSeriesView {
         items,
         next_cursor,
@@ -1116,7 +1117,7 @@ pub async fn on_this_day(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
-    let items: Vec<IssueSummaryView> = rows
+    let mut items: Vec<IssueSummaryView> = rows
         .into_iter()
         .map(|r| IssueSummaryView {
             cover_url: Some(format!("/issues/{}/pages/0/thumb", r.id)),
@@ -1134,8 +1135,10 @@ pub async fn on_this_day(
             special_type: r.special_type,
             created_at: r.created_at.to_rfc3339(),
             updated_at: r.updated_at.to_rfc3339(),
+            progress: None,
         })
         .collect();
+    attach_progress(&app.db, user.id, &mut items).await;
     Json(OnThisDayView { month, day, items }).into_response()
 }
 
@@ -1376,7 +1379,7 @@ pub async fn recent_issues(State(app): State<AppState>, user: CurrentUser) -> Re
         }
     }
 
-    let items: Vec<IssueSummaryView> = rows
+    let mut items: Vec<IssueSummaryView> = rows
         .into_iter()
         .map(|r| {
             // `state` is pinned 'active' by the WHERE, so the cover URL is
@@ -1398,9 +1401,11 @@ pub async fn recent_issues(State(app): State<AppState>, user: CurrentUser) -> Re
                 special_type: r.special_type,
                 created_at: r.created_at.to_rfc3339(),
                 updated_at: r.updated_at.to_rfc3339(),
+                progress: None,
             }
         })
         .collect();
+    attach_progress(&app.db, user.id, &mut items).await;
 
     Json(RecentIssuesView { items }).into_response()
 }

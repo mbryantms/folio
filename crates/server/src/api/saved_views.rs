@@ -2319,6 +2319,7 @@ impl IssueViewRow {
             special_type: self.special_type,
             created_at: self.created_at.to_rfc3339(),
             updated_at: self.updated_at.to_rfc3339(),
+            progress: None,
         }
     }
 }
@@ -2458,10 +2459,11 @@ async fn run_issue_filter_query(
     } else {
         None
     };
-    let items = rows
+    let mut items: Vec<IssueSummaryView> = rows
         .into_iter()
         .map(IssueViewRow::into_summary_view)
         .collect();
+    crate::api::issue_card::attach_progress(&app.db, input.user_id, &mut items).await;
     Json(IssueListView {
         items,
         next_cursor,
