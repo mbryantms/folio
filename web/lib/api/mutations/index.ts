@@ -28,7 +28,11 @@ import {
   type PriorProgress,
   type ProgressWrite,
 } from "./progress";
-import { invalidateRails, invalidateSeriesProgress } from "./rails";
+import {
+  invalidateIssueCards,
+  invalidateRails,
+  invalidateSeriesProgress,
+} from "./rails";
 
 // Re-exports kept stable across the M5 directory split so callers
 // can continue to import everything from `"@/lib/api/mutations"`.
@@ -44,7 +48,11 @@ export * from "./duplicates";
 export * from "./hash-backfill";
 export * from "./sidecar-reemit";
 export * from "./markers";
-export { invalidateRails, invalidateSeriesProgress } from "./rails";
+export {
+  invalidateIssueCards,
+  invalidateRails,
+  invalidateSeriesProgress,
+} from "./rails";
 export {
   issueProgressKey,
   restoreProgress,
@@ -611,6 +619,7 @@ export function useBulkMarkProgress() {
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
         invalidateSeriesProgress(qc);
+        invalidateIssueCards(qc);
         const message = summarizeBulkProgress(data, input.finished);
         const prior = (ctx as MarkProgressCtx | undefined)?.prior;
         if (!prior || data?.updated === 0) {
@@ -656,6 +665,7 @@ export function useBulkMarkSeriesMatchingProgress(seriesSlug: string) {
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
         invalidateSeriesProgress(qc);
+        invalidateIssueCards(qc, { refetchActive: true });
       },
     },
   );
@@ -775,6 +785,7 @@ export function useBulkMarkSeriesProgress() {
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
         invalidateSeriesProgress(qc);
+        invalidateIssueCards(qc, { refetchActive: true });
       },
     },
   );
@@ -1495,6 +1506,7 @@ export function useUpsertIssueProgress() {
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
         invalidateSeriesProgress(qc);
+        invalidateIssueCards(qc);
         const prior = (ctx as MarkProgressCtx | undefined)?.prior;
         if (typeof input.finished !== "boolean" || !prior) return;
         showUndoToast({
@@ -1536,6 +1548,7 @@ export function useUpsertSeriesProgress(seriesId: string) {
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
         invalidateSeriesProgress(qc);
+        invalidateIssueCards(qc, { refetchActive: true });
       },
     },
   );

@@ -2596,12 +2596,14 @@ export function useSimilarRailInfinite(opts?: { enabled?: boolean }) {
   });
 }
 
-/** Full per-user progress list. Powers the finished/in-progress badges
- *  on issue covers across library/series/saved-view surfaces. One
- *  shared query — every IssueCard subscribes by the same key, so the
- *  network call fans out across the page. Mutations in
+/** Full per-user progress list (every record of the viewer). Issue
+ *  cards draw their badge from the card's own `progress` field
+ *  ([`useCardProgress`](./card-progress.ts)) and enable this only for a
+ *  card from a response that doesn't carry it, so a page whose lists all
+ *  embed progress never makes the request. One shared query: every card
+ *  that needs it subscribes by the same key. Mutations in
  *  [mutations.ts](./mutations.ts) invalidate this. */
-export function useUserProgress() {
+export function useUserProgress(opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: queryKeys.userProgress,
     queryFn: async () => {
@@ -2609,6 +2611,7 @@ export function useUserProgress() {
       return new Map(resp.records.map((r) => [r.issue_id, r]));
     },
     staleTime: 30_000,
+    enabled: opts?.enabled ?? true,
   });
 }
 

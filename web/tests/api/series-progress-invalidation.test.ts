@@ -6,7 +6,9 @@
  * invalidated the series detail query that carries `progress_summary`.
  * Every progress-changing mutation (and Undo's `restoreProgress`) now
  * invalidates the series detail, the series listings and the entity
- * series grids, and nothing deeper under the `series` prefix.
+ * series grids, plus the issue-card lists that embed the viewer's
+ * progress (series issue list, entity issue grids), and nothing else
+ * under the `series` prefix.
  */
 import { QueryClient } from "@tanstack/react-query";
 import type * as ReactQuery from "@tanstack/react-query";
@@ -55,7 +57,8 @@ const ENTITY_SERIES = queryKeys.entityItems(
   "series",
   24,
 );
-// Under the `series` prefix but carrying no progress — must stay fresh.
+// Issue-card lists embed the viewer's progress per card
+// (`invalidateIssueCards`); the appearances tab carries none.
 const SERIES_ISSUES = queryKeys.seriesIssues("saga", {} as never);
 const SERIES_APPEARANCES = queryKeys.seriesAppearances("saga");
 const ENTITY_ISSUES = queryKeys.entityItems(
@@ -84,14 +87,16 @@ function invalidated(key: readonly unknown[]): boolean {
   return qc.getQueryState(key as QueryKey)?.isInvalidated ?? false;
 }
 
-function expectSeriesProgressInvalidated() {
+/** `cards`: the mutation also ran `invalidateIssueCards`, which owns the
+ *  issue-card lists (`invalidateSeriesProgress` alone leaves them). */
+function expectSeriesProgressInvalidated({ cards = true } = {}) {
   expect(invalidated(SERIES)).toBe(true);
   expect(invalidated(SERIES_BY_ID)).toBe(true);
   expect(invalidated(SERIES_LIST)).toBe(true);
   expect(invalidated(ENTITY_SERIES)).toBe(true);
-  expect(invalidated(SERIES_ISSUES)).toBe(false);
+  expect(invalidated(SERIES_ISSUES)).toBe(cards);
   expect(invalidated(SERIES_APPEARANCES)).toBe(false);
-  expect(invalidated(ENTITY_ISSUES)).toBe(false);
+  expect(invalidated(ENTITY_ISSUES)).toBe(cards);
 }
 
 /** Mount a hook (a plain call — the mocks make it hook-free) and return
@@ -153,7 +158,7 @@ describe("invalidateSeriesProgress", () => {
   it("marks without refetching when refetchActive is false", () => {
     const spy = vi.spyOn(qc, "invalidateQueries");
     invalidateSeriesProgress(qc, { refetchActive: false });
-    expectSeriesProgressInvalidated();
+    expectSeriesProgressInvalidated({ cards: false });
     for (const [filters] of spy.mock.calls) {
       expect(filters?.refetchType).toBe("none");
     }

@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch, getCsrfToken } from "@/lib/api/auth-refresh";
 import {
+  invalidateIssueCards,
   invalidateRails,
   invalidateSeriesProgress,
 } from "@/lib/api/mutations/rails";
@@ -168,11 +169,27 @@ export function useReaderProgressWrite(opts: {
           // series summary is read once per issue, so don't refetch it on
           // every page turn.
           invalidateSeriesProgress(qc, { refetchActive: false });
+          // Lists whose cards embed progress: stale only, refetched on
+          // their next mount. The reply below updates mounted cards.
+          invalidateIssueCards(qc);
           // Hand the reply's run back to the writer, which adopts it for
           // the next write (after a `restart` it is the new run; a newer
           // run than ours means another device restarted — follow it).
           try {
-            const reply = (await response.json()) as { run?: unknown };
+            const reply = (await response.json()) as {
+              run?: unknown;
+              issue_id?: unknown;
+              updated_at?: unknown;
+            };
+            // The stored record (a `ProgressView`): every issue card and
+            // the issue page read it under `issueProgress`, so the badge
+            // follows the read without refetching a list.
+            if (
+              typeof reply.issue_id === "string" &&
+              typeof reply.updated_at === "string"
+            ) {
+              qc.setQueryData(queryKeys.issueProgress(reply.issue_id), reply);
+            }
             return typeof reply.run === "number" ? { run: reply.run } : true;
           } catch {
             /* keepalive replies may be unreadable after unload */

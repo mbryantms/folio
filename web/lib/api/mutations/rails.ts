@@ -85,3 +85,41 @@ export function invalidateSeriesProgress(
     refetchType: "none",
   });
 }
+
+/** Invalidate the issue-card lists that embed the viewer's progress on
+ *  each card (`IssueSummaryView.progress`) and that [`invalidateRails`]
+ *  does not already cover: the series page's issue list
+ *  (`queryKeys.seriesIssues`), the cross-library issue grid and issue
+ *  search (`queryKeys.issuesCrossList` / `issueSearch`), the entity
+ *  pages' issue grids and insights, and the New issues and On this day
+ *  rails. Saved-view, reading-list, collection and New-in-series cards
+ *  are under `invalidateRails`' prefixes.
+ *
+ *  A write that names its issues (a mark, a bulk mark, the reader's
+ *  per-page write) has already put each issue's record under
+ *  `queryKeys.issueProgress`, which every mounted card reads, so it only
+ *  marks these lists stale (`refetchActive: false`, the default): the
+ *  next mount refetches them, and no mounted infinite list re-requests
+ *  every loaded page for one write. A write that names no issues (mark a
+ *  whole series, "select all matching") passes `refetchActive: true` so
+ *  the mounted list redraws its badges from the server. */
+export function invalidateIssueCards(
+  qc: ReturnType<typeof useQueryClient>,
+  opts: { refetchActive?: boolean } = {},
+) {
+  const refetchType = opts.refetchActive ? "active" : "none";
+  qc.invalidateQueries({
+    queryKey: queryKeyPrefixes.series,
+    predicate: (q) => q.queryKey[2] === "issues",
+    refetchType,
+  });
+  qc.invalidateQueries({ queryKey: queryKeyPrefixes.issues, refetchType });
+  qc.invalidateQueries({
+    queryKey: queryKeyPrefixes.entities,
+    predicate: (q) =>
+      q.queryKey[3] === "issues" || q.queryKey[3] === "insights",
+    refetchType,
+  });
+  qc.invalidateQueries({ queryKey: queryKeys.recentIssues, refetchType });
+  qc.invalidateQueries({ queryKey: queryKeyPrefixes.onThisDay, refetchType });
+}

@@ -25,7 +25,11 @@ import { readStateFor } from "@/lib/reading-state";
 import { jsonFetch, queryKeys } from "../queries";
 import type { ContinueReadingView, ProgressView } from "../types";
 import { apiMutate } from "./_core";
-import { invalidateRails, invalidateSeriesProgress } from "./rails";
+import {
+  invalidateIssueCards,
+  invalidateRails,
+  invalidateSeriesProgress,
+} from "./rails";
 import { apiPath } from "../path";
 
 export type ProgressMap = Map<string, ProgressView>;
@@ -34,11 +38,12 @@ export type ProgressMap = Map<string, ProgressView>;
  *  there was none (never opened). */
 export type PriorProgress = Map<string, ProgressView | null>;
 
-/** Live per-issue progress record for surfaces that don't load the
- *  whole `/progress` map (the issue page). Written by the optimistic
- *  mark and by the mark's response; empty otherwise. */
+/** Live per-issue progress record (`queryKeys.issueProgress`) for
+ *  surfaces that don't load the whole `/progress` map: the issue page and
+ *  every issue card. Written by the optimistic mark, the mark's response
+ *  and the reader's write replies; empty otherwise. */
 export function issueProgressKey(issueId: string): QueryKey {
-  return ["progress", "issue", issueId];
+  return queryKeys.issueProgress(issueId);
 }
 
 export type ProgressWrite = {
@@ -236,6 +241,7 @@ export async function restoreProgress(
     qc.invalidateQueries({ queryKey: queryKeys.userProgress });
     invalidateRails(qc);
     invalidateSeriesProgress(qc);
+    invalidateIssueCards(qc);
   }
 }
 

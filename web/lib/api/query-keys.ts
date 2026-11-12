@@ -653,8 +653,14 @@ export const queryKeys = {
   sessions: ["auth", "sessions"] as const,
   /** /me/app-passwords — self-managed Bearer credentials (M7). */
   appPasswords: ["auth", "app-passwords"] as const,
-  /** `GET /progress` — full per-user progress list, used by issue cards
-   *  to render finished / in-progress badges. Invalidated by progress
+  /** `GET /progress` — full per-user progress list. Issue cards read
+   *  their badge from the card's own `progress` and fall back to this
+   *  only on a response that doesn't carry it. Invalidated by progress
    *  mutations. */
   userProgress: ["progress", "list"] as const,
+  /** One issue's latest progress record as this tab last wrote it (the
+   *  optimistic mark, the mark's reply, the reader's write reply). Never
+   *  fetched: cards and the issue page observe it so a write shows
+   *  without refetching the lists that embed the card's progress. */
+  issueProgress: (issueId: string) => ["progress", "issue", issueId] as const,
 };

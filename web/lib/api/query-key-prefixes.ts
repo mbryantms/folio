@@ -11,6 +11,11 @@ export const queryKeyPrefixes = {
   series: ["series"] as const,
   /** Every series listing (`queryKeys.seriesList`, one-shot + infinite). */
   seriesList: ["series", "list"] as const,
+  /** Cross-library issue listing and issue search
+   *  (`queryKeys.issuesCrossList`, `queryKeys.issueSearch`). */
+  issues: ["issues"] as const,
+  /** The on-this-day rail, every calendar day (`queryKeys.onThisDay`). */
+  onThisDay: ["rails", "on-this-day"] as const,
   /** Every saved-view query: index, detail, results. */
   savedViews: ["saved-views"] as const,
   /** Every home-rail query. */
