@@ -78,6 +78,7 @@ use super::manga_crop::{MANGA_CROP, MangaCrop, manga_crop};
 use super::page_cache::SharedPage;
 use super::postprocess::{self, Cleaned};
 use super::recognizer::{Language, Recognizer, ctc::LineOcr, manga::MangaOcr, western::WesternOcr};
+use super::regions;
 use crate::api::issue_ocr::OcrResponse;
 
 /// Full-page text detection. The real ones are [`BubbleDetector`] and,
@@ -744,9 +745,8 @@ pub(crate) struct Crop {
 /// Decide what to read. `user` is the request's region clamped to the
 /// page, `boxes` the page's detection (empty when the run has none).
 ///
-/// 1. With `detect`, the region of the engine set that overlaps `user`
-///    most replaces it ([`pick_bbox_page`]); with no overlap `user`
-///    stays.
+/// 1. With `detect`, the snap candidate that overlaps `user` most
+///    replaces it ([`pick_bbox_page`]); with no overlap `user` stays.
 /// 2. A Japanese request with the current engines then goes through
 ///    [`manga_crop`], which may narrow the region to the text box inside
 ///    it (`manga` chooses; the legacy engines read the region as they
@@ -776,11 +776,17 @@ pub(crate) fn choose_crop(
     }
 }
 
-/// Pick the region with the largest intersection area against the
-/// user's rect: among the boxes of a page's detection, those the engine
-/// set offers as regions ([`EngineSet::is_region_class`]). Both are in
-/// page-pixel coordinates. Discards candidates with zero overlap or that
-/// round out to an empty rect.
+/// Pick the box a drawn rectangle snaps to: the candidate with the
+/// largest intersection area against the user's rect, and among equals
+/// the smallest box (a rectangle drawn wholly inside a balloon that
+/// itself lies in a larger region snaps to the balloon). Both are in
+/// page-pixel coordinates. Candidates with zero overlap or that round
+/// out to an empty rect are discarded.
+///
+/// The candidates are the page's regions for the current engines
+/// ([`regions::regions`]: balloons and free text, near-duplicates
+/// removed). For the legacy engines they are every box of the detection,
+/// blocks and lines alike, as they always were.
 fn pick_bbox_page(
     engines: EngineSet,
     bboxes: &[CachedBbox],
@@ -788,15 +794,24 @@ fn pick_bbox_page(
     page_w: u32,
     page_h: u32,
 ) -> Option<Rect> {
-    bboxes
+    let regions;
+    let candidates: &[CachedBbox] = match engines {
+        EngineSet::Current => {
+            regions = regions::regions(engines, bboxes, page_w, page_h);
+            &regions
+        }
+        EngineSet::Legacy => bboxes,
+    };
+    candidates
         .iter()
-        .filter(|b| engines.is_region_class(b.class))
         .filter_map(|b| {
             let r = bbox_to_rect(b, page_w, page_h)?;
             let overlap = r.intersection(user)?.area();
             Some((overlap, r))
         })
-        .max_by_key(|(overlap, _)| *overlap)
+        .max_by(|(overlap_a, a), (overlap_b, b)| {
+            overlap_a.cmp(overlap_b).then(b.area().cmp(&a.area()))
+        })
         .map(|(_, r)| r)
 }
 
@@ -909,6 +924,67 @@ mod tests {
                 1500
             ),
             Some(rect(100, 100, 220, 320))
+        );
+    }
+
+    /// A rectangle drawn wholly inside a balloon that lies in a larger
+    /// region overlaps both in full: the snap takes the smaller box,
+    /// whichever was detected first.
+    #[test]
+    fn a_snap_tie_goes_to_the_smaller_box() {
+        let caption = classed(2, 50.0, 50.0, 900.0, 700.0);
+        let balloon = classed(0, 100.0, 100.0, 300.0, 400.0);
+        let user = rect(150, 150, 60, 60);
+        for boxes in [
+            [caption.clone(), balloon.clone()],
+            [balloon.clone(), caption.clone()],
+        ] {
+            for engines in [EngineSet::Current, EngineSet::Legacy] {
+                assert_eq!(
+                    pick_bbox_page(engines, &boxes, &user, 1000, 1500),
+                    Some(BALLOON),
+                    "{engines:?}"
+                );
+            }
+        }
+        // A larger overlap still beats a smaller box.
+        let reaching_out = rect(250, 150, 100, 60);
+        assert_eq!(
+            pick_bbox_page(
+                EngineSet::Current,
+                &[caption, balloon],
+                &reaching_out,
+                1000,
+                1500
+            ),
+            Some(rect(50, 50, 850, 650))
+        );
+    }
+
+    /// With the current engines the snap sees the page's regions: of two
+    /// boxes around the same region only the one that was kept. The
+    /// legacy engines snap to any box of the detection, as before.
+    #[test]
+    fn a_snap_uses_the_de_duplicated_regions_of_the_current_engines() {
+        let as_text = CachedBbox {
+            confidence: 0.80,
+            ..classed(2, 399.0, 381.0, 746.0, 427.0)
+        };
+        let as_balloon = CachedBbox {
+            confidence: 0.85,
+            ..classed(0, 400.0, 380.0, 747.0, 428.0)
+        };
+        let boxes = [as_text, as_balloon];
+        // Inside both: without the de-duplication the tie would go to
+        // the smaller, lower-scored box.
+        let user = rect(500, 390, 50, 20);
+        assert_eq!(
+            pick_bbox_page(EngineSet::Current, &boxes, &user, 1000, 1500),
+            Some(rect(400, 380, 347, 48))
+        );
+        assert_eq!(
+            pick_bbox_page(EngineSet::Legacy, &boxes, &user, 1000, 1500),
+            Some(rect(399, 381, 347, 46))
         );
     }
 
@@ -1033,8 +1109,9 @@ mod tests {
         for manga in [MangaCrop::Region, MangaCrop::TextInRegion] {
             let tap = crop_of(EngineSet::Legacy, Language::Manga, false, manga, BALLOON);
             assert_eq!((tap.read, tap.refined_bbox), (BALLOON, None));
-            // Snapping takes the box with the largest overlap, here the
-            // legacy detector's class-1 box under the drawn rectangle.
+            // Snapping takes any box of the legacy detector: the drawn
+            // rectangle lies in the block and in its line, and of two
+            // full overlaps the smaller box wins.
             let snapped = crop_of(
                 EngineSet::Legacy,
                 Language::Manga,

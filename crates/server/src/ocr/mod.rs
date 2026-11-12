@@ -25,6 +25,8 @@
 //!
 //! - [`pipeline`]: `detect → snap to a region → crop → recognize → clean`,
 //!   behind `POST /me/issues/{id}/ocr` and the text-regions route.
+//! - [`regions`]: which boxes of a page's detection are its regions, with
+//!   each detector's duplicates removed, so clients get the final set.
 //! - [`page_cache`]: in-process cache of decoded pages, so the
 //!   balloon-by-balloon requests on one page decode it once.
 //! - [`postprocess`]: pure-function cleanup of engine output.
@@ -46,6 +48,7 @@ pub mod page_cache;
 pub mod pipeline;
 pub mod postprocess;
 pub mod recognizer;
+pub mod regions;
 pub(crate) mod session;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -82,12 +85,13 @@ impl EngineSet {
         }
     }
 
-    /// Whether a class of this set's page detector is a region: a box
-    /// the text-regions route returns and `detect: true` snaps to. The
-    /// current detector's regions are balloons and free text
+    /// Whether a class of this set's page detector is a region class: one
+    /// whose boxes the text-regions route returns and `detect: true`
+    /// snaps to (after [`regions::regions`] removed the set's
+    /// duplicates). The current detector's are balloons and free text
     /// ([`bubbles::is_region_class`]); the text inside a balloon stays in
-    /// the page's detection but is not offered. Every box of the legacy
-    /// detector is a region, as before.
+    /// the page's detection but is not offered. Every class of the
+    /// legacy detector is one, as before.
     pub const fn is_region_class(self, class: u32) -> bool {
         match self {
             EngineSet::Current => bubbles::is_region_class(class),

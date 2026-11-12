@@ -199,11 +199,11 @@ export function MarkerOverlay({
       gcTime: PAGE_TEXT_GC_MS,
     },
   );
-  // THE text boxes of this page (`text-regions.ts`): nested line boxes
-  // collapsed into their block, in reading order. The outlines drawn, the
-  // pointer hit-test and the keyboard proxies all use this one set, and
-  // the page-text panel reads the same set, so a tap, a key press and the
-  // panel read the same box.
+  // THE text boxes of this page (`text-regions.ts`): the regions the
+  // server sent (it de-duplicates), in reading order. The outlines drawn,
+  // the pointer hit-test and the keyboard proxies all use this one set,
+  // and the page-text panel reads the same set, so a tap, a key press and
+  // the panel read the same box.
   const direction = useReaderStore((s) => s.direction);
   const textBoxes = React.useMemo(
     () =>

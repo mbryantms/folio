@@ -326,6 +326,8 @@ pub struct OcrWord {
 /// Detected text regions for one page, in percent-of-page
 /// coordinates (0–100 floats — the reader's native marker
 /// representation, consumable by its SVG overlay without math).
+/// The set is final: one box per region to read, duplicates already
+/// removed. A box inside a larger one is a region of its own.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct TextRegionsView {
     /// Decoded page width in pixels. Doubles as a `naturalSize`
@@ -390,35 +392,24 @@ impl OcrResponse {
 }
 
 impl TextRegionsView {
-    /// A page's detection as the client sees it: the boxes the engine
-    /// set offers as regions ([`EngineSet::is_region_class`]: balloons
-    /// and free text of the current detector, not the text boxes inside
-    /// balloons, which stay server-side), clamped to the page, in
-    /// percent.
+    /// A page's detection as the client sees it: the page's regions for
+    /// the engine set ([`crate::ocr::regions::regions`]: the region
+    /// classes, clamped to the page, the set's duplicates removed), in
+    /// percent. The client draws and reads exactly this set.
     pub(crate) fn from_detection(d: CachedDetection, engines: EngineSet) -> Self {
         let (pw, ph) = (d.page_w as f32, d.page_h as f32);
         let regions = if pw <= 0.0 || ph <= 0.0 {
             Vec::new()
         } else {
-            d.bboxes
+            crate::ocr::regions::regions(engines, &d.bboxes, d.page_w, d.page_h)
                 .iter()
-                .filter(|b| engines.is_region_class(b.class))
-                .filter_map(|b| {
-                    let xmin = b.xmin.clamp(0.0, pw);
-                    let ymin = b.ymin.clamp(0.0, ph);
-                    let xmax = b.xmax.clamp(0.0, pw);
-                    let ymax = b.ymax.clamp(0.0, ph);
-                    if xmax <= xmin || ymax <= ymin {
-                        return None;
-                    }
-                    Some(TextRegionView {
-                        x: xmin / pw * 100.0,
-                        y: ymin / ph * 100.0,
-                        w: (xmax - xmin) / pw * 100.0,
-                        h: (ymax - ymin) / ph * 100.0,
-                        confidence: b.confidence,
-                        class: b.class,
-                    })
+                .map(|b| TextRegionView {
+                    x: b.xmin / pw * 100.0,
+                    y: b.ymin / ph * 100.0,
+                    w: (b.xmax - b.xmin) / pw * 100.0,
+                    h: (b.ymax - b.ymin) / ph * 100.0,
+                    confidence: b.confidence,
+                    class: b.class,
                 })
                 .collect()
         };
@@ -1074,10 +1065,11 @@ mod tests {
     #[test]
     fn text_regions_are_the_region_classes_of_the_engine_set() {
         use crate::ocr::cache::CachedBbox;
+        // Three boxes side by side, one of each class index.
         let detection = || CachedDetection {
             page_w: 1000,
             page_h: 2000,
-            bboxes: [(0, 100.0), (1, 120.0), (2, 600.0)]
+            bboxes: [(0, 100.0), (1, 350.0), (2, 600.0)]
                 .into_iter()
                 .map(|(class, x)| CachedBbox {
                     xmin: x,

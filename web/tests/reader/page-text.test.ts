@@ -1,8 +1,9 @@
 /**
  * Pure helpers behind the page-text panel and the text-region keyboard
- * proxies (WP-4.8): reading order, nested-box de-duplication, the bounded
- * in-order OCR pool, and the recognizer → `lang` mapping. Also pins the
- * panel's default shortcut against the keybind registry.
+ * proxies (WP-4.8): reading order (over the server's regions, which
+ * arrive de-duplicated), the bounded in-order OCR pool, and the
+ * recognizer → `lang` mapping. Also pins the panel's default shortcut
+ * against the keybind registry.
  */
 import { describe, expect, it } from "vitest";
 import type { TextRegionView } from "@/lib/api/types";
@@ -40,21 +41,20 @@ describe("readingOrderRegions", () => {
     expect(readingOrderRegions([c, a, b], "rtl")).toEqual([a, b, c]);
   });
 
-  it("drops boxes nested inside a larger one so text isn't read twice", () => {
-    const block = r(10, 10, 40, 20);
-    const line = r(12, 12, 30, 5); // fully inside `block`
+  it("keeps a box inside a larger one: both are regions to read", () => {
+    const large = r(10, 10, 40, 40);
+    const inner = r(12, 30, 30, 8); // fully inside `large`
     const other = r(70, 10, 20, 10);
-    expect(readingOrderRegions([line, block, other], "ltr")).toEqual([
-      block,
-      other,
-    ]);
+    const ordered = readingOrderRegions([inner, large, other], "ltr");
+    expect(ordered).toHaveLength(3);
+    expect(new Set(ordered)).toEqual(new Set([large, inner, other]));
   });
 
-  it("keeps exactly one of two identical boxes and skips empty ones", () => {
+  it("skips boxes with no area", () => {
     const a = r(10, 10, 20, 10);
-    const dup = r(10, 10, 20, 10);
-    const empty = r(50, 50, 0, 10);
-    expect(readingOrderRegions([a, dup, empty], "ltr")).toEqual([a]);
+    const flat = r(50, 50, 0, 10);
+    const line = r(50, 70, 10, 0);
+    expect(readingOrderRegions([flat, a, line], "ltr")).toEqual([a]);
   });
 
   it("keeps partially overlapping neighbours", () => {

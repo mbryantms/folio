@@ -126,25 +126,32 @@ function r(x: number, y: number, w: number, h: number): TextRegionView {
 }
 
 describe("the page's text boxes (D2)", () => {
-  const block = r(30, 30, 40, 40);
-  const line = r(35, 45, 30, 8);
+  // The server sends the final set: a large region, a balloon inside it,
+  // and a box elsewhere are three regions.
+  const large = r(30, 30, 40, 40);
+  const inner = r(35, 45, 30, 8);
   const other = r(5, 80, 10, 10);
 
-  it("drops a line box inside its balloon and keeps the rest", () => {
-    expect(pageTextBoxes([line, block, other])).toEqual([block, other]);
+  it("keeps a small box inside a large one", () => {
+    expect(pageTextBoxes([inner, large, other])).toEqual([inner, large, other]);
   });
 
-  it("a point inside the line hits the balloon once the set is de-duplicated", () => {
-    const boxes = pageTextBoxes([block, line]);
-    expect(hitTestBox(boxes, 50, 49)).toBe(block);
-    // Over the raw detector output the smallest box (the line) would win.
-    expect(hitTestBox([block, line], 50, 49)).toBe(line);
+  it("drops only boxes with no area", () => {
+    expect(pageTextBoxes([r(50, 50, 0, 10), large, r(60, 60, 10, 0)])).toEqual([
+      large,
+    ]);
+  });
+
+  it("a point inside the inner box hits it; a point beside it hits the large one", () => {
+    const boxes = pageTextBoxes([large, inner]);
+    expect(hitTestBox(boxes, 50, 49)).toBe(inner);
+    expect(hitTestBox(boxes, 50, 35)).toBe(large);
     expect(hitTestBox(boxes, 1, 1)).toBeNull();
   });
 
   it("reading order is the same set, ordered", () => {
-    expect(new Set(readingOrderRegions([line, block, other], "ltr"))).toEqual(
-      new Set(pageTextBoxes([line, block, other])),
+    expect(new Set(readingOrderRegions([inner, large, other], "ltr"))).toEqual(
+      new Set(pageTextBoxes([inner, large, other])),
     );
   });
 });
