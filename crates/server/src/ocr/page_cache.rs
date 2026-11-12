@@ -70,6 +70,10 @@ impl PageKey {
     pub fn content_hash(&self) -> &str {
         &self.content_hash
     }
+
+    pub fn page(&self) -> u32 {
+        self.page
+    }
 }
 
 /// A decoded page shared between the cache and the requests using it.
@@ -228,6 +232,22 @@ impl DecodedPages {
                 }
             }
         });
+    }
+
+    /// Forget every page of `content_hash`. Debug builds only: lets a
+    /// test act as if the idle expiry had passed.
+    #[cfg(debug_assertions)]
+    pub fn forget_for_tests(&self, content_hash: &str) {
+        let mut st = self.lock();
+        let mut freed = 0;
+        st.slots.retain(|k, slot| match slot {
+            Slot::Ready { bytes, .. } if k.content_hash == content_hash => {
+                freed += *bytes;
+                false
+            }
+            _ => true,
+        });
+        st.bytes -= freed;
     }
 
     /// `(pages, bytes)` held. For tests and diagnostics.

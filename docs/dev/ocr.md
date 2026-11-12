@@ -52,9 +52,20 @@ postprocess pipeline that ships with the Rust binary.
   rotations).
 - The result cache keys on the pixel rectangle after conversion, so a
   `region_pct` request and the equivalent `region` request share an
-  entry. A `region` request is looked up before any page work; a
-  `region_pct` one only after the decode (it needs the size), under the
-  permit — with the decoded-page cache that costs a map lookup.
+  entry. Both are looked up before any page work: a `region` request
+  directly, a `region_pct` request through the **stored page size** —
+  every OCR decode (either route) writes the decoded `{w}x{h}` to
+  `ocr:pagesize:v{N}:{fp}:{content_hash}:{page}` (30-day expiry; `N` =
+  `OCR_PAGE_SIZE_VERSION`, bumped when the decode path would size the
+  same bytes differently; `fp` hashes it with the decode limits). With
+  the size stored, the percent box is converted, the result key built
+  and looked up before the models, the permit and the decode, so a
+  repeat tap is two Redis GETs. A cached payload is used only when its
+  `page_w`/`page_h` equal the stored size. A miss on either key goes on
+  to the normal path; after its decode, a stored size that differs from
+  the decoded one is replaced (logged at warn), and the decoded size is
+  what the conversion uses. The detect cache also carries page sizes,
+  but only for detected pages, so it is not used for this.
 - `page_w` / `page_h` (always present) are the decoded page size: the
   space `refined_bbox` and `words` are in. Cached payloads from before
   these fields existed are retired with result version 3.
@@ -128,8 +139,9 @@ Error codes (envelope `{ "error": { "code", "message" } }`):
 | 503 | `library_offline` | The file is missing and the library root itself cannot be opened or is empty (an unmounted share); `Retry-After: 30` |
 
 Order of work in both routes: visibility (a hidden issue is the
-unknown-id 404), the result cache (a hit takes no permit; for a
-`region_pct` request the lookup moves after the decode, see above), the cheap
+unknown-id 404), the result cache (a hit takes no permit; a
+`region_pct` request finds its key through the stored page size, see
+above), the cheap
 checks (encrypted row, missing file, offline library, unreadable archive,
 page past the end, the page entry's listed size over the per-entry cap;
 none waits for a permit, and none reads the page), the models (a
@@ -166,6 +178,7 @@ visibility (ACL)  ── hidden or unknown issue: 404
    │
    ▼
 Redis result cache ── HIT? 200, no permit taken
+   (region_pct: via the stored page size)
    │
    ▼ miss
 cheap checks (encrypted, missing file, offline library, page range, entry size)
@@ -180,10 +193,13 @@ OCR permit (≤ 10 s wait, else 503)
 decoded-page cache ── miss: read + decode the page (415 on a bad image)
    │
    ▼
-region bounds check (422) / region_pct → pixels (clamped)
+region bounds check (422) / region_pct → pixels with the decoded size
+   (clamped; a stored page size that disagrees is replaced)
    │
    ▼
 region_pct only: Redis result cache ── HIT? 200
+   (normally already answered before the models: see the
+   region_pct notes under Endpoints)
    │
    ▼  ── from here on a detached task owning the permit ──
 detect: false (default) ─────────────────┐

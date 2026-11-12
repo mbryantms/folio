@@ -55,10 +55,20 @@ pub const CACHE_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 /// `SET key payload EX ttl`, bounded by [`CACHE_WRITE_TIMEOUT`]. Failures
 /// are logged and swallowed (fail-open).
 async fn set_bounded(redis: &ConnectionManager, key: &str, payload: String, what: &str) {
+    set_bounded_ttl(redis, key, payload, CACHE_TTL, what).await;
+}
+
+async fn set_bounded_ttl(
+    redis: &ConnectionManager,
+    key: &str,
+    payload: String,
+    ttl: Duration,
+    what: &str,
+) {
     let mut conn = redis.clone();
     let set = tokio::time::timeout(
         CACHE_WRITE_TIMEOUT,
-        conn.set_ex::<_, _, ()>(key, payload, CACHE_TTL.as_secs()),
+        conn.set_ex::<_, _, ()>(key, payload, ttl.as_secs()),
     )
     .await;
     match set {
@@ -647,5 +657,103 @@ mod tests {
         // as a miss rather than serving dimensionless data.
         let v1 = r#"[{"xmin":1.0,"ymin":2.0,"xmax":3.0,"ymax":4.0,"confidence":0.9,"class":0}]"#;
         assert!(serde_json::from_str::<CachedDetection>(v1).is_err());
+    }
+}
+
+// ───────── decoded page size ─────────
+//
+// A `region_pct` request needs the decoded page size to find its pixel
+// rectangle, and with it its result-cache key. Storing the size of every
+// page the OCR routes decode lets a repeat request answer from the result
+// cache before the models, the permit and the decode, like a pixel
+// request. The decode is the authority: the handler compares the stored
+// size with every decode it does and overwrites it (with a warning) when
+// they differ.
+
+/// Version of the page-size entry. Bump when the decode path changes
+/// what size it produces for the same bytes (orientation handling, the
+/// decoder); the decode limits are folded in by [`page_size_key`].
+pub const OCR_PAGE_SIZE_VERSION: u32 = 1;
+
+/// Expiry of a page-size entry: two integers, kept for 30 days.
+pub const PAGE_SIZE_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+
+/// Hash of what decides a decoded page's size besides its bytes: the
+/// entry version and the decode limits (a page past a limit does not
+/// decode at all).
+fn page_size_fingerprint() -> &'static str {
+    static FP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        short_hash(&[
+            format!("page-size-v{OCR_PAGE_SIZE_VERSION}"),
+            format!(
+                "max-dim={}",
+                crate::util::image_decode::MAX_DECODE_DIMENSION
+            ),
+            format!(
+                "max-alloc={}",
+                crate::util::image_decode::MAX_DECODE_ALLOC_BYTES
+            ),
+        ])
+    });
+    &FP
+}
+
+/// Redis key of the decoded size of one page of one file version.
+pub fn page_size_key(content_hash: &str, page: u32) -> String {
+    format!(
+        "ocr:pagesize:v{OCR_PAGE_SIZE_VERSION}:{}:{content_hash}:{page}",
+        page_size_fingerprint()
+    )
+}
+
+/// The stored decoded size `(width, height)`, or `None` on a miss, a
+/// malformed value or a Redis error (fail-open).
+pub async fn get_page_size(redis: &ConnectionManager, key: &str) -> Option<(u32, u32)> {
+    let mut conn = redis.clone();
+    match conn.get::<_, Option<String>>(key).await {
+        Ok(Some(raw)) => {
+            let (w, h) = raw.split_once('x')?;
+            match (w.parse::<u32>(), h.parse::<u32>()) {
+                (Ok(w), Ok(h)) if w > 0 && h > 0 => Some((w, h)),
+                _ => None,
+            }
+        }
+        Ok(None) => None,
+        Err(e) => {
+            tracing::warn!(error = %e, key, "ocr page size: GET failed; treating as miss");
+            None
+        }
+    }
+}
+
+/// Store a decoded size (`"{w}x{h}"`). Bounded and fail-open like the
+/// other cache writes.
+pub async fn put_page_size(redis: &ConnectionManager, key: &str, (w, h): (u32, u32)) {
+    set_bounded_ttl(
+        redis,
+        key,
+        format!("{w}x{h}"),
+        PAGE_SIZE_TTL,
+        "ocr page size",
+    )
+    .await;
+}
+
+#[cfg(test)]
+mod page_size_tests {
+    use super::*;
+
+    #[test]
+    fn page_size_key_shape() {
+        let k = page_size_key("hashA", 7);
+        let parts: Vec<&str> = k.split(':').collect();
+        assert_eq!(
+            parts[..3],
+            ["ocr", "pagesize", &format!("v{OCR_PAGE_SIZE_VERSION}")]
+        );
+        assert_eq!(parts[3].len(), FINGERPRINT_HEX_LEN);
+        assert_eq!(parts[4..], ["hashA", "7"]);
+        assert_ne!(page_size_key("hashA", 7), page_size_key("hashB", 7));
+        assert_ne!(page_size_key("hashA", 7), page_size_key("hashA", 8));
     }
 }

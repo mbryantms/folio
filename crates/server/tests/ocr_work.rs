@@ -25,6 +25,10 @@ use server::ocr::pipeline::{PageDetector, test_models};
 use server::ocr::recognizer::{Recognition, Recognizer};
 use tower::ServiceExt;
 
+/// Tests that need OCR permits share this; a test that holds every
+/// permit takes it exclusively, so it never starves the others into a 503.
+static ALL_PERMITS: tokio::sync::RwLock<()> = tokio::sync::RwLock::const_new(());
+
 // ─── Stand-ins ───────────────────────────────────────────────────
 
 /// A detector that takes `delay` and finds one box.
@@ -247,6 +251,7 @@ async fn wait_for_key(app: &TestApp, key: &str) -> bool {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_detection_that_outlives_its_request_is_cached() {
+    let _shared = ALL_PERMITS.read().await;
     let app = TestApp::spawn().await;
     let admin = register(&app, "ocr-work-detect@example.com").await;
     let tmp = tempfile::tempdir().unwrap();
@@ -293,6 +298,7 @@ async fn a_snap_detection_that_outlives_its_request_is_cached() {
     // `detect: true` on the OCR POST: the request is dropped mid-detection.
     // The detection is cached; the recognition is skipped (nobody waits
     // for it), so the result cache stays empty.
+    let _shared = ALL_PERMITS.read().await;
     let app = TestApp::spawn().await;
     let admin = register(&app, "ocr-work-snap@example.com").await;
     let tmp = tempfile::tempdir().unwrap();
@@ -338,6 +344,7 @@ async fn a_snap_detection_that_outlives_its_request_is_cached() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_recognition_that_outlives_its_request_is_cached() {
+    let _shared = ALL_PERMITS.read().await;
     let app = TestApp::spawn().await;
     let admin = register(&app, "ocr-work-recognize@example.com").await;
     let tmp = tempfile::tempdir().unwrap();
@@ -386,6 +393,7 @@ fn region_body(x: u32) -> serde_json::Value {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn region_requests_on_one_page_decode_it_once() {
+    let _shared = ALL_PERMITS.read().await;
     let app = TestApp::spawn().await;
     let admin = register(&app, "ocr-work-pages@example.com").await;
     let tmp = tempfile::tempdir().unwrap();
@@ -420,6 +428,7 @@ async fn region_requests_on_one_page_decode_it_once() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_hidden_issue_is_404_with_a_warm_page_cache() {
+    let _shared = ALL_PERMITS.read().await;
     let app = TestApp::spawn().await;
     let admin = register(&app, "ocr-work-hidden-admin@example.com").await;
     let reader = register(&app, "ocr-work-hidden-reader@example.com").await;
@@ -457,6 +466,7 @@ async fn a_hidden_issue_is_404_with_a_warm_page_cache() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_changed_content_hash_is_a_page_cache_miss() {
     use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+    let _shared = ALL_PERMITS.read().await;
     let app = TestApp::spawn().await;
     let admin = register(&app, "ocr-work-rehash@example.com").await;
     let tmp = tempfile::tempdir().unwrap();
@@ -537,6 +547,7 @@ async fn echo_issue(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_percent_region_reads_the_pixel_crop_and_shares_its_cache_entry() {
+    let _shared = ALL_PERMITS.read().await;
     let app = TestApp::spawn().await;
     let admin = register(&app, "ocr-work-pct@example.com").await;
     let tmp = tempfile::tempdir().unwrap();
@@ -579,6 +590,7 @@ async fn a_percent_region_reads_the_pixel_crop_and_shares_its_cache_entry() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_percent_region_is_clamped_and_wins_over_a_pixel_region() {
+    let _shared = ALL_PERMITS.read().await;
     let app = TestApp::spawn().await;
     let admin = register(&app, "ocr-work-pct-clamp@example.com").await;
     let tmp = tempfile::tempdir().unwrap();
@@ -632,6 +644,7 @@ async fn a_percent_region_is_clamped_and_wins_over_a_pixel_region() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn bad_percent_regions_are_422_with_field_details() {
+    let _shared = ALL_PERMITS.read().await;
     let app = TestApp::spawn().await;
     let admin = register(&app, "ocr-work-pct-bad@example.com").await;
     let tmp = tempfile::tempdir().unwrap();
@@ -713,4 +726,134 @@ async fn bad_percent_regions_are_422_with_field_details() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     assert_eq!(body["error"]["details"][0]["field"], "region", "{body}");
     assert_eq!(echo.calls.load(Ordering::SeqCst), 0);
+}
+
+// ─── S8: a cached percent request needs no permit ────────────────
+
+fn pct_body() -> serde_json::Value {
+    serde_json::json!({ "page": 0, "lang": "western",
+        "region_pct": { "x": 10.0, "y": 10.0, "w": 25.0, "h": 30.0 } })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_cached_percent_request_needs_no_permit_and_reads_no_page() {
+    let _alone = ALL_PERMITS.write().await;
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "ocr-work-pct-fast@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (id, echo) = echo_issue(&app, &tmp.path().join("lib"), 210, 100).await;
+
+    let (status, first) = send(&app, ocr_request(&admin, &id, pct_body())).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert!(
+        wait_for_key(&app, &server::ocr::cache::page_size_key(&id, 0)).await,
+        "the decode stored the page size"
+    );
+    let reads = server::api::issue_ocr::ocr_page_reads_for(&id);
+    assert_eq!(reads, 1);
+
+    // Every permit held by other work.
+    let sem = server::api::issue_ocr::ocr_semaphore();
+    let held = sem
+        .acquire_many(server::api::issue_ocr::OCR_MAX_CONCURRENT as u32)
+        .await
+        .unwrap();
+    let t = std::time::Instant::now();
+    let (status, body) = send(&app, ocr_request(&admin, &id, pct_body())).await;
+    let took = t.elapsed();
+    drop(held);
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        took < server::api::issue_ocr::OCR_PERMIT_WAIT / 2,
+        "answered without waiting for a permit ({took:?})"
+    );
+    assert_eq!(body["text"], "53x30");
+    assert_eq!(
+        (body["page_w"].as_u64(), body["page_h"].as_u64()),
+        (Some(210), Some(100))
+    );
+    assert_eq!(
+        server::api::issue_ocr::ocr_page_reads_for(&id),
+        reads,
+        "no page read"
+    );
+    assert_eq!(
+        echo.calls.load(Ordering::SeqCst),
+        1,
+        "nothing recognized again"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_page_size_outlives_the_decoded_page() {
+    let _shared = ALL_PERMITS.read().await;
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "ocr-work-pct-size@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (id, _echo) = echo_issue(&app, &tmp.path().join("lib"), 211, 100).await;
+
+    let (status, body) = send(&app, ocr_request(&admin, &id, pct_body())).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        server::api::issue_ocr::ocr_page_reads_for(&id),
+        1,
+        "decoded once"
+    );
+    assert!(wait_for_key(&app, &server::ocr::cache::page_size_key(&id, 0)).await);
+
+    // As if the decoded page had expired.
+    server::ocr::page_cache::decoded_pages().forget_for_tests(&id);
+    let (status, again) = send(&app, ocr_request(&admin, &id, pct_body())).await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again["text"], body["text"]);
+    assert_eq!(
+        server::api::issue_ocr::ocr_page_reads_for(&id),
+        1,
+        "no second read"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_hidden_issue_is_404_with_the_size_and_result_cached() {
+    let _shared = ALL_PERMITS.read().await;
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "ocr-work-pct-hidden-admin@example.com").await;
+    let reader = register(&app, "ocr-work-pct-hidden-reader@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (id, echo) = echo_issue(&app, &tmp.path().join("lib"), 212, 100).await;
+
+    let (status, body) = send(&app, ocr_request(&admin, &id, pct_body())).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(wait_for_key(&app, &server::ocr::cache::page_size_key(&id, 0)).await);
+
+    let (status, body) = send(&app, ocr_request(&reader, &id, pct_body())).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["error"]["code"], "not_found");
+    assert!(body.get("text").is_none());
+    assert_eq!(echo.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_stored_size_that_disagrees_with_the_decode_is_replaced() {
+    use redis::AsyncCommands;
+    let _shared = ALL_PERMITS.read().await;
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "ocr-work-pct-stale@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (id, _echo) = echo_issue(&app, &tmp.path().join("lib"), 213, 100).await;
+    let size_key = server::ocr::cache::page_size_key(&id, 0);
+    let mut redis = app.state().jobs.redis.clone();
+    let _: () = redis.set_ex(&size_key, "400x300", 600).await.unwrap();
+
+    let (status, body) = send(&app, ocr_request(&admin, &id, pct_body())).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // Converted with the decoded 213 x 100 (x 21..75, y 10..40), not the
+    // stored 400 x 300.
+    assert_eq!(
+        (body["page_w"].as_u64(), body["page_h"].as_u64()),
+        (Some(213), Some(100))
+    );
+    assert_eq!(body["text"], "54x30");
+    let stored: Option<String> = redis.get(&size_key).await.unwrap();
+    assert_eq!(stored.as_deref(), Some("213x100"), "the decode replaced it");
 }

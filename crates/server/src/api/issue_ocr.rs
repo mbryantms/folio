@@ -531,6 +531,26 @@ pub async fn serve(
     {
         return Json(hit).into_response();
     }
+    // A `region_pct` request finds its pixel rect through the stored
+    // decoded size (written on every OCR decode), so a repeat answers
+    // here too: no models, no permit, no decode. The cached payload must
+    // carry the same size, or it is not used. A miss on either key goes
+    // on to the decode, which is the authority on the size.
+    let size_key = cache::page_size_key(&row.content_hash, req.page);
+    let stored_size = match &req.region_pct {
+        Some(pct) => {
+            let stored = cache::get_page_size(&app.jobs.redis, &size_key).await;
+            if let Some((w, h)) = stored
+                && let Some(r) = pct.to_pixels(w, h)
+                && let Some(hit) = cache::get(&app.jobs.redis, &result_key(&r)).await
+                && (hit.page_w, hit.page_h) == (w, h)
+            {
+                return Json(hit).into_response();
+            }
+            stored
+        }
+        None => None,
+    };
 
     // ─── Cheap checks (no permit, no page bytes) ─────────────────
     let located = match locate_page(&app, &row, req.page).await {
@@ -547,11 +567,28 @@ pub async fn serve(
     };
     // ─── Decode (under the OCR permit, held by the work) ─────────
     let page_key = PageKey::new(&row.content_hash, req.page);
-    let (decoded, permit) = match page_image_holding(located, page_key).await {
-        Ok(pair) => pair,
-        Err(resp) => return *resp,
-    };
+    let (decoded, permit) =
+        match page_image_holding(located, page_key, app.jobs.redis.clone()).await {
+            Ok(pair) => pair,
+            Err(resp) => return *resp,
+        };
     let (page_w, page_h) = (decoded.width(), decoded.height());
+    // The decode wins over a stored size that disagrees with it (or one
+    // that is missing because the page came from the decoded-page cache).
+    if req.region_pct.is_some() && stored_size != Some((page_w, page_h)) {
+        if let Some(stored) = stored_size {
+            tracing::warn!(
+                issue_id = %row.id,
+                page = req.page,
+                stored_w = stored.0,
+                stored_h = stored.1,
+                page_w,
+                page_h,
+                "ocr: stored page size differs from the decode; replacing it"
+            );
+        }
+        cache::put_page_size(&app.jobs.redis, &size_key, (page_w, page_h)).await;
+    }
     let region = match (pixel_region, &req.region_pct) {
         (Some(r), _) => {
             if r.x.saturating_add(r.w) > page_w || r.y.saturating_add(r.h) > page_h {
@@ -672,10 +709,11 @@ pub async fn text_regions(
     };
     // ─── Decode + detect (under the OCR permit, held by the work) ─
     let page_key = PageKey::new(&row.content_hash, page);
-    let (decoded, permit) = match page_image_holding(located, page_key).await {
-        Ok(pair) => pair,
-        Err(resp) => return *resp,
-    };
+    let (decoded, permit) =
+        match page_image_holding(located, page_key, app.jobs.redis.clone()).await {
+            Ok(pair) => pair,
+            Err(resp) => return *resp,
+        };
     match detect_and_cache_regions(
         app.jobs.redis.clone(),
         &row.content_hash,
@@ -834,6 +872,7 @@ enum ReadDecodeError {
 async fn page_image_holding(
     located: LocatedPage,
     key: PageKey,
+    redis: redis::aio::ConnectionManager,
 ) -> Result<(SharedPage, SemaphorePermit<'static>), Box<Response>> {
     let permit = ocr_permit(&OCR_PERMITS, OCR_PERMIT_WAIT).await?;
     let pages = decoded_pages();
@@ -845,7 +884,7 @@ async fn page_image_holding(
                 let _ = done.wait_for(|stored| *stored).await;
             }
             Lookup::Claimed(claim) => {
-                return read_and_decode_holding(located, permit, claim).await;
+                return read_and_decode_holding(located, permit, claim, redis).await;
             }
         }
     }
@@ -859,11 +898,14 @@ async fn page_image_holding(
 /// `page_source` mapping as the cheap checks (the claim is dropped, so a
 /// request waiting for this page tries itself). `decode_limited`
 /// (security M0) caps decoded dimensions so a malicious archive can't OOM
-/// the box via a decompression bomb.
+/// the box via a decompression bomb. The decoded size is written to the
+/// page-size cache from the same task (`cache::put_page_size`), so it is
+/// stored even when the request is gone.
 async fn read_and_decode_holding<P: Send + 'static>(
     located: LocatedPage,
     permit: P,
     claim: Claim,
+    redis: redis::aio::ConnectionManager,
 ) -> Result<(SharedPage, P), Box<Response>> {
     let LocatedPage { reader, entry } = located;
     let work = blocking_with_permit(permit, move || {
@@ -886,6 +928,11 @@ async fn read_and_decode_holding<P: Send + 'static>(
         );
         metrics::histogram!("folio_ocr_page_decode_seconds")
             .record(started.elapsed().as_secs_f64());
+        let size_key = cache::page_size_key(claim.key().content_hash(), claim.key().page());
+        let size = (page.width(), page.height());
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move { cache::put_page_size(&redis, &size_key, size).await });
+        }
         claim.fulfil(Arc::clone(&page));
         Ok(page)
     })
