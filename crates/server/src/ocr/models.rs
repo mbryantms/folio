@@ -1,11 +1,10 @@
 //! Pinned, digest-verified OCR model files.
 //!
-//! `comic-text-detector` and `manga-ocr` load their ONNX models through
-//! `hf_hub::api::sync::Api::new()`, which reads the Hugging Face cache
-//! (`Cache::default()`, i.e. `$HOME/.cache/huggingface/hub`) and would
-//! otherwise download the repository's `main` branch, unpinned and
-//! unchecked. Before either constructor runs, [`ensure_pinned`] puts
-//! every file the constructor reads into that cache itself:
+//! Every model file the OCR engines load is listed here with its
+//! Hugging Face repository, an immutable commit and a SHA-256
+//! ([`PinnedFile`]). Before an engine builds its session,
+//! [`ensure_pinned`] puts the files into the hub cache
+//! (`Cache::default()`, i.e. `$HOME/.cache/huggingface/hub`) itself:
 //!
 //! 1. the file is fetched over https from `/resolve/<commit>/<file>` (an
 //!    immutable revision, never a branch), with timeouts, bounded
@@ -16,9 +15,15 @@
 //!    temporary file and fails with [`ModelVerifyError`], so nothing
 //!    unverified is ever moved into place;
 //! 3. it lands at `snapshots/<commit>/<file>`, and `refs/main` is
-//!    pointed at `<commit>`, which is exactly where the upstream
-//!    constructor looks first, so it loads the verified file and never
-//!    reaches the network.
+//!    pointed at `<commit>`.
+//!
+//! The engines Folio runs itself (the balloon detector, the line finder,
+//! the line recogniser) then open the file at that path
+//! ([`cached_path`]). `manga-ocr` and the legacy `comic-text-detector`
+//! load through `hf_hub::api::sync::Api::new()`, which looks at
+//! `refs/main` first and so finds the same verified file without
+//! reaching the network; left alone it would download the repository's
+//! `main` branch, unpinned and unchecked.
 //!
 //! The fetch runs in a detached task, one per repository for the whole
 //! process ([`Pinner`]): a request that times out or disconnects stops
@@ -32,24 +37,23 @@
 //! digest does not match is deleted and fetched again from the pinned
 //! revision.
 //!
-//! There is no setting for another model source: the upstream crates
-//! hardcode the repositories and `Api::new()` ignores `HF_ENDPOINT`, so
-//! the pin covers every way the models can be loaded. Operators on
-//! air-gapped hosts pre-stage the files at `snapshots/<commit>/` (see
-//! `docs/dev/ocr.md`); they are verified like any other cached file.
+//! There is no setting for another model source, so the pin covers every
+//! way the models can be loaded. Operators on air-gapped hosts pre-stage
+//! the files at `snapshots/<commit>/` (see `docs/dev/ocr.md`); they are
+//! verified like any other cached file.
 //!
-//! # Updating the pin
-//!
-//! Looked up 2026-11-11 (UTC): the `main` branch of both repositories
-//! pointed at the commits below (last modified 2025-05-08). To move it:
+//! # Updating a pin
 //!
 //! 1. `curl -s https://huggingface.co/api/models/<repo>/revision/main?blobs=true`
 //!    gives the commit (`sha`) and, per LFS file, `lfs.sha256` and `size`.
-//! 2. For a non-LFS file (`vocab.txt`), download
+//! 2. For a non-LFS file (`vocab.txt`, `inference.yml`), download
 //!    `https://huggingface.co/<repo>/resolve/<commit>/<file>` and run
 //!    `sha256sum` on it (`git hash-object` should equal its `blobId`).
 //! 3. Update `revision`, `sha256` and `size` below, and the table in
 //!    `docs/dev/ocr.md`.
+//!
+//! Looked up: the balloon detector, line finder and line recognisers on
+//! 2026-11-12; `manga-ocr` and `comic-text-detector` on 2026-11-11.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -83,7 +87,8 @@ const DETECTOR_REVISION: &str = "a5d67ec772adef819ef5b0e7aa701fcf4c8bf74a";
 const MANGA_REPO: &str = "mayocream/manga-ocr-onnx";
 const MANGA_REVISION: &str = "24b12778d85800835e2ca409236de281b8ab7b9f";
 
-/// What `ComicTextDetector::new` reads.
+/// What `ComicTextDetector::new` reads: the detector of the legacy engine
+/// set (`ocr::detector`), fetched only when that set is selected.
 pub const DETECTOR_FILES: &[PinnedFile] = &[PinnedFile {
     repo: DETECTOR_REPO,
     revision: DETECTOR_REVISION,
@@ -116,6 +121,163 @@ pub const MANGA_FILES: &[PinnedFile] = &[
         size: 30_216,
     },
 ];
+
+/// The page detector of the current engine set (`ocr::bubbles`): an
+/// RT-DETR-v2 export, 8-bit quantized, that finds balloons and free text.
+pub const BUBBLE_DETECTOR_FILES: &[PinnedFile] = &[PinnedFile {
+    repo: "ogkalu/comic-text-and-bubble-detector",
+    revision: "16e8a622f91fabc6b5b65c96d32d1183f8843546",
+    file: "detector-v4-s_int8.onnx",
+    sha256: "5fe9e4f576e49d4e7e8b0e029d6d3cdc252abd4694113e1cae120e62c931ea79",
+    size: 11_120_765,
+}];
+
+/// The line finder (`ocr::lines`): PP-OCRv5 mobile text detection (DB).
+/// Its thresholds are constants in that module, so the repository's
+/// `inference.yml` is not fetched.
+pub const LINE_FINDER_FILES: &[PinnedFile] = &[PinnedFile {
+    repo: "PaddlePaddle/PP-OCRv5_mobile_det_onnx",
+    revision: "e6f4fa85f00e168c862bc462aebca69eef9b3d3d",
+    file: "inference.onnx",
+    sha256: "a431985659dc921974177a95adcfbb90fd9e51989a5e04d70d0b75f597b6e61d",
+    size: 4_826_518,
+}];
+
+/// Where a line recogniser's character list comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DictSource {
+    /// The `PostProcess.character_dict` list of this PaddleOCR
+    /// `inference.yml`, one of the model's pinned files. The model then
+    /// has two classes more than the list: the CTC blank first, the
+    /// space last.
+    PaddleInferenceYml(&'static str),
+}
+
+/// A CTC line recogniser the Western path can run
+/// (`ocr::recognizer::ctc`): its files, which of them is the model, and
+/// where the characters come from. Switching recogniser is a change to
+/// [`WESTERN_REC`] (plus the result-cache fingerprint, which follows the
+/// pins by itself).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LineRecModel {
+    /// Stable identifier (admin models card, logs).
+    pub id: &'static str,
+    /// Every file fetched for it, all of one repository.
+    pub files: &'static [PinnedFile],
+    /// The ONNX model among [`Self::files`].
+    pub onnx: &'static str,
+    pub dictionary: DictSource,
+}
+
+impl LineRecModel {
+    /// The pin of one of the model's files by name.
+    pub fn file(&self, name: &str) -> Option<&'static PinnedFile> {
+        self.files.iter().find(|f| f.file == name)
+    }
+}
+
+const fn paddle_rec(id: &'static str, files: &'static [PinnedFile]) -> LineRecModel {
+    LineRecModel {
+        id,
+        files,
+        onnx: "inference.onnx",
+        dictionary: DictSource::PaddleInferenceYml("inference.yml"),
+    }
+}
+
+const EN_REC_REPO: &str = "PaddlePaddle/en_PP-OCRv5_mobile_rec_onnx";
+const EN_REC_REVISION: &str = "3fafbc3b5dcf93dd72add9f48368be8a3a2cd33b";
+const LATIN_REC_REPO: &str = "PaddlePaddle/latin_PP-OCRv5_mobile_rec_onnx";
+const LATIN_REC_REVISION: &str = "89d3a50e2c27e2e7cceeab0e944c25c807d5db4f";
+const V6_SMALL_REC_REPO: &str = "PaddlePaddle/PP-OCRv6_small_rec_onnx";
+const V6_SMALL_REC_REVISION: &str = "b8f84f0b80c529de40b4fbb3544b84fa7233a513";
+
+/// PP-OCRv5 mobile recognition, English: a 436-character alphabet that
+/// cannot produce characters of other scripts.
+pub const EN_PP_OCRV5_MOBILE_REC: LineRecModel = paddle_rec(
+    "en-pp-ocrv5-mobile-rec",
+    &[
+        PinnedFile {
+            repo: EN_REC_REPO,
+            revision: EN_REC_REVISION,
+            file: "inference.onnx",
+            sha256: "b5f833dfc5d0eb71da397b4efa06ebeee9b431b690a47d6af40d77d8eabc557f",
+            size: 7_848_423,
+        },
+        PinnedFile {
+            repo: EN_REC_REPO,
+            revision: EN_REC_REVISION,
+            file: "inference.yml",
+            sha256: "27e91d0582f40168aa218303c76e184bc78fa7a5d105aad0cfbad8458b441067",
+            size: 3_964,
+        },
+    ],
+);
+
+/// PP-OCRv5 mobile recognition, Latin scripts (836 characters). Not
+/// loaded unless [`WESTERN_REC`] names it.
+pub const LATIN_PP_OCRV5_MOBILE_REC: LineRecModel = paddle_rec(
+    "latin-pp-ocrv5-mobile-rec",
+    &[
+        PinnedFile {
+            repo: LATIN_REC_REPO,
+            revision: LATIN_REC_REVISION,
+            file: "inference.onnx",
+            sha256: "7888113072263cb471b93f66dd5e2ad70548dc526fa1ace760d0d973dd121498",
+            size: 8_042_023,
+        },
+        PinnedFile {
+            repo: LATIN_REC_REPO,
+            revision: LATIN_REC_REVISION,
+            file: "inference.yml",
+            sha256: "0bbe984570f597af3638e50bdf2e8276f3ab26a61966096538b3b0d1849f5c84",
+            size: 6_817,
+        },
+    ],
+);
+
+/// PP-OCRv6 small recognition (18,708 characters, multilingual). Not
+/// loaded unless [`WESTERN_REC`] names it.
+pub const PP_OCRV6_SMALL_REC: LineRecModel = paddle_rec(
+    "pp-ocrv6-small-rec",
+    &[
+        PinnedFile {
+            repo: V6_SMALL_REC_REPO,
+            revision: V6_SMALL_REC_REVISION,
+            file: "inference.onnx",
+            sha256: "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634",
+            size: 21_159_378,
+        },
+        PinnedFile {
+            repo: V6_SMALL_REC_REPO,
+            revision: V6_SMALL_REC_REVISION,
+            file: "inference.yml",
+            sha256: "ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1",
+            size: 150_579,
+        },
+    ],
+);
+
+/// Every line recogniser with a pin. Only [`WESTERN_REC`] is ever
+/// fetched or loaded by the server.
+pub const LINE_REC_MODELS: &[&LineRecModel] = &[
+    &EN_PP_OCRV5_MOBILE_REC,
+    &LATIN_PP_OCRV5_MOBILE_REC,
+    &PP_OCRV6_SMALL_REC,
+];
+
+/// The line recogniser the Western path of the current engine set runs.
+pub const WESTERN_REC: &LineRecModel = &EN_PP_OCRV5_MOBILE_REC;
+
+/// Every pinned file: both engine sets and every registered recogniser.
+pub fn all_pins() -> impl Iterator<Item = &'static PinnedFile> {
+    BUBBLE_DETECTOR_FILES
+        .iter()
+        .chain(LINE_FINDER_FILES)
+        .chain(LINE_REC_MODELS.iter().flat_map(|m| m.files.iter()))
+        .chain(MANGA_FILES)
+        .chain(DETECTOR_FILES)
+}
 
 /// Connect and per-read timeouts plus an overall ceiling sized for the
 /// largest file (~330 MiB) on a slow link.
@@ -202,6 +364,13 @@ pub fn hub_cache_root() -> Result<PathBuf, String> {
     std::panic::catch_unwind(hf_hub::Cache::default)
         .map(|c| c.path().clone())
         .map_err(|_| "no home directory for the OCR model cache".to_owned())
+}
+
+/// Where a pinned file sits in the default hub cache once
+/// [`ensure_pinned`] has verified it: the path the engines open.
+pub fn cached_path(file: &PinnedFile) -> anyhow::Result<PathBuf> {
+    let root = hub_cache_root().map_err(|e| file.fail(e))?;
+    Ok(file.snapshot_path(&root))
 }
 
 /// The download client. `require_https` is off only in this module's
@@ -682,7 +851,8 @@ mod tests {
 
     #[test]
     fn every_pin_is_a_commit_with_a_digest() {
-        for f in DETECTOR_FILES.iter().chain(MANGA_FILES) {
+        assert_eq!(all_pins().count(), 12);
+        for f in all_pins() {
             assert_eq!(f.revision.len(), 40, "{f:?}");
             assert!(f.revision.bytes().all(|b| b.is_ascii_hexdigit()), "{f:?}");
             assert_eq!(f.sha256.len(), 64, "{f:?}");
@@ -724,6 +894,57 @@ mod tests {
                 ("mayocream/manga-ocr-onnx", "vocab.txt"),
             ]
         );
+    }
+
+    #[test]
+    fn pins_cover_what_the_current_engines_open() {
+        let names = |files: &[PinnedFile]| -> Vec<(&str, &str)> {
+            files.iter().map(|f| (f.repo, f.file)).collect()
+        };
+        assert_eq!(
+            names(BUBBLE_DETECTOR_FILES),
+            [(
+                "ogkalu/comic-text-and-bubble-detector",
+                "detector-v4-s_int8.onnx"
+            )]
+        );
+        assert_eq!(
+            names(LINE_FINDER_FILES),
+            [("PaddlePaddle/PP-OCRv5_mobile_det_onnx", "inference.onnx")]
+        );
+        assert_eq!(
+            names(WESTERN_REC.files),
+            [
+                ("PaddlePaddle/en_PP-OCRv5_mobile_rec_onnx", "inference.onnx"),
+                ("PaddlePaddle/en_PP-OCRv5_mobile_rec_onnx", "inference.yml"),
+            ]
+        );
+    }
+
+    /// A recogniser description names files it pins, all in one
+    /// repository at one commit (the pinner fetches per repository), and
+    /// the selected one is registered.
+    #[test]
+    fn every_line_recogniser_description_is_consistent() {
+        assert!(LINE_REC_MODELS.iter().any(|m| m.id == WESTERN_REC.id));
+        let mut ids: Vec<&str> = LINE_REC_MODELS.iter().map(|m| m.id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), LINE_REC_MODELS.len(), "ids are unique");
+        for m in LINE_REC_MODELS {
+            let first = m.files.first().expect("files");
+            assert!(
+                m.files
+                    .iter()
+                    .all(|f| f.repo == first.repo && f.revision == first.revision),
+                "{}",
+                m.id
+            );
+            assert!(m.file(m.onnx).is_some(), "{}", m.id);
+            let DictSource::PaddleInferenceYml(yml) = m.dictionary;
+            assert!(m.file(yml).is_some(), "{}", m.id);
+            assert!(m.file("missing.bin").is_none());
+        }
     }
 
     #[tokio::test]
