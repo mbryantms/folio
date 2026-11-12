@@ -1093,12 +1093,13 @@ pub(crate) async fn rewrite_one_issue(
 /// invisible to every reader and to the scanner, so rewriting such an
 /// archive changes nothing anyone reads; it would only rotate the backups.
 ///
-/// The test is on the bytes, not on who wrote them, so it cannot take a
-/// different earlier rewrite for this one: an earlier rewrite with other
-/// content leaves other bytes and the rewrite runs. The XML a job carries
-/// is fixed when it is queued (the composer's "Tagged with Folio on …"
-/// note includes a timestamp), so a retry of the same job matches and a
-/// fresh apply does not. Any failure to read (a missing or unreadable
+/// The test is on the bytes, not on who wrote them: an earlier rewrite with
+/// other content leaves other bytes and the rewrite runs. The XML a job
+/// carries is fixed when it is queued, so a retry of the same job matches.
+/// A different job whose XML happens to be identical (only ComicVine and
+/// Metron composes carry a timestamp; a manual edit, drift flush, re-emit
+/// or GCD compose of unchanged data does not) is skipped too, rightly: the
+/// rewrite would change nothing. Any failure to read (a missing or unreadable
 /// archive, a link) answers `false`: the rewrite then runs and reports the
 /// problem as before. Opened through the no-follow walk, read-only.
 /// Blocking.

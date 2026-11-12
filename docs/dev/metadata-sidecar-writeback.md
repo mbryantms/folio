@@ -549,9 +549,12 @@ whether the archive already holds exactly the job's XML
 `MetronInfo.xml` byte-for-byte equal to the payload, no other Folio
 sidecar in the archive) and, if so, skips the swap and runs only the
 steps after it. Without that the retry rotated the rewritten file into
-`.bak`, which with one slot deleted the only copy of the original. A
-different apply composes different XML (the Notes line carries the
-compose time), so it never passes for a retry. See
+`.bak`, which with one slot deleted the only copy of the original. The
+check is on bytes, not on which job wrote them: a compose of other data
+never passes, and one whose bytes match (a manual edit, drift flush,
+re-emit or GCD compose of unchanged data: only ComicVine and Metron
+composes carry a timestamp in Notes) is skipped too, because a rewrite
+would change nothing. See
 [archive-writes.md](archive-writes.md#retries-after-the-swap) for every
 writer's verdict.
 

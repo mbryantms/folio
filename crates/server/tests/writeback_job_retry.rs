@@ -1218,3 +1218,87 @@ async fn a_rewrite_with_different_sidecars_still_rewrites_and_rotates() {
         "a different rewrite rotates as before"
     );
 }
+
+/// One page plus the given extra entries, stored.
+fn cbz_with_entries(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut buf = Cursor::new(Vec::new());
+    {
+        let mut zw = zip::ZipWriter::new(&mut buf);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zw.start_file("page-001.png", opts).unwrap();
+        zw.write_all(b"\x89PNG\r\n\x1a\nnested").unwrap();
+        for (name, bytes) in entries {
+            zw.start_file(*name, opts).unwrap();
+            zw.write_all(bytes).unwrap();
+        }
+        zw.finish().unwrap();
+    }
+    buf.into_inner()
+}
+
+/// The archive holds the job's exact root sidecars AND another Folio
+/// sidecar (a nested `ComicInfo.xml`, or a case-variant name) that the
+/// rewrite drops: it is not yet what the rewrite makes, so the skip must
+/// not apply and the job rewrites (one backup made, the extra gone).
+/// Control: the same archive without the extra is skipped (no backup).
+#[tokio::test]
+async fn an_archive_with_another_folio_sidecar_is_rewritten_not_skipped() {
+    let template = sidecar_job("unused", Uuid::nil());
+    let ci = template.comic_info_xml.clone();
+    let mi = template.metron_info_xml.clone();
+    let cases: [(&str, Option<&str>); 3] = [
+        ("nested", Some("Sub/ComicInfo.xml")),
+        ("case variant", Some("comicinfo.XML")),
+        ("control", None),
+    ];
+    for (label, extra) in cases {
+        let app = TestApp::spawn().await;
+        let dir = tempdir().unwrap();
+        let lib_id = LibrarySeed::new(dir.path())
+            .with_sidecar_writeback()
+            .insert(&app.state().db)
+            .await;
+        let series_id = SeriesSeed::new(lib_id, "Nested")
+            .insert(&app.state().db)
+            .await;
+        let mut entries: Vec<(&str, &[u8])> = vec![
+            ("ComicInfo.xml", ci.as_bytes()),
+            ("MetronInfo.xml", mi.as_bytes()),
+        ];
+        if let Some(name) = extra {
+            entries.push((name, b"<ComicInfo><Title>Stale</Title></ComicInfo>"));
+        }
+        let cbz = dir.path().join("nested-1.cbz");
+        let issue_id = IssueSeed::new(lib_id, series_id, &cbz, &cbz_with_entries(&entries), 1.0)
+            .insert(&app.state().db)
+            .await;
+        let run_id = seed_run(&app, "issue", &issue_id, json!({"kind": "issue"})).await;
+        let before = std::fs::read(&cbz).unwrap();
+
+        rewrite_sidecars::handle(
+            sidecar_job(&issue_id, run_id),
+            Data::new(app.state()),
+            Attempt::new_with_value(1),
+        )
+        .await
+        .unwrap();
+
+        let a = archive::open_path_unchecked(&cbz, archive::ArchiveLimits::default()).unwrap();
+        let names: Vec<String> = a.entries().iter().map(|e| e.name.clone()).collect();
+        if extra.is_some() {
+            assert_eq!(
+                backups_of(&cbz),
+                vec![(0, before)],
+                "{label}: rewritten, the original backed up"
+            );
+            assert!(
+                !names.iter().any(|n| Some(n.as_str()) == extra),
+                "{label}: the extra sidecar was dropped: {names:?}"
+            );
+        } else {
+            assert!(backups_of(&cbz).is_empty(), "{label}: skipped, no backup");
+            assert_eq!(std::fs::read(&cbz).unwrap(), before, "{label}: untouched");
+        }
+    }
+}

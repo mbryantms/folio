@@ -396,9 +396,10 @@ pub enum EditError {
     /// The archive was rewritten in place, then recording the edit (the
     /// bookkeeping transaction: anchors, the issue row) failed.
     #[error(
-        "the archive was edited (the original is kept as its .bak when the library keeps \
-         backups), but recording the edit failed: {0}. Do not repeat the edit: it would be \
-         applied again; restore the backup to undo it"
+        "the archive was edited, but recording the edit failed: {0}. Do not repeat the \
+         edit: it would be applied again. A rescan of the issue brings its row in line with \
+         the edited file; to undo the edit, restore the backup if the library keeps one (it \
+         keeps none when its backup count is 0, and the edit then cannot be undone here)"
     )]
     NotRecorded(Box<EditError>),
 }

@@ -290,7 +290,7 @@ Every writer that rewrites, per path that can run it again:
 
 | Path | Can run again after the swap? | Verdict |
 |---|---|---|
-| Sidecar job (`rewrite_sidecars::handle`): the issue-row update after the swap fails, `Err` to apalis, retried under `JOB_MAX_ATTEMPTS`; also an operator's Retry of a dead-lettered job (a fresh copy of the same payload) | yes | **Fixed (ARC-2).** Before rewriting, `rewrite_sidecars::archive_already_holds` opens the archive (no-follow, read-only) and compares: its Folio sidecars must be exactly a root `ComicInfo.xml` and a root `MetronInfo.xml` (no nested or other-case duplicate) holding byte-for-byte the XML the job carries. Then the swap is skipped (no staging file, no rotation, no new backup) and the job goes straight to the bookkeeping, the rescan and the deferred writes; the audit row and library event say `already_written: true`. The comparison is on bytes, not on who wrote them, so a different earlier rewrite cannot pass for this one: its XML differs (the composer's "Tagged with Folio on …" note carries the compose time, so even a re-apply of the same provider data differs), and the rewrite runs. Junk entries the rewrite would drop (`Thumbs.db`, dotfiles) do not block the skip: no reader or the scanner sees them. Test: `writeback_job_retry.rs::a_retry_after_a_post_swap_failure_keeps_the_original_backup` (1 and 3 slots), control `::a_rewrite_with_different_sidecars_still_rewrites_and_rotates` |
+| Sidecar job (`rewrite_sidecars::handle`): the issue-row update after the swap fails, `Err` to apalis, retried under `JOB_MAX_ATTEMPTS`; also an operator's Retry of a dead-lettered job (a fresh copy of the same payload) | yes | **Fixed (ARC-2).** Before rewriting, `rewrite_sidecars::archive_already_holds` opens the archive (no-follow, read-only) and compares: its Folio sidecars must be exactly a root `ComicInfo.xml` and a root `MetronInfo.xml` (no nested or other-case duplicate) holding byte-for-byte the XML the job carries. Then the swap is skipped (no staging file, no rotation, no new backup) and the job goes straight to the bookkeeping, the rescan and the deferred writes; the audit row and library event say `already_written: true`. The comparison is on bytes, not on who wrote them: an earlier rewrite with other XML leaves other bytes, and the rewrite runs. When an earlier rewrite (or anything else) left exactly these bytes, the skip is right too, whoever wrote them: the rewrite would change nothing anyone reads. Only ComicVine and Metron composes carry a timestamp (the "Tagged with Folio on …" Notes line, `sidecar_compose::folio_audit_line`); a manual edit, a drift flush, a re-emit or a GCD compose of unchanged data composes the same bytes again and is skipped as well, with no rotation, which is the point. Junk entries the rewrite would drop (`Thumbs.db`, dotfiles) do not block the skip: no reader or the scanner sees them. Test: `writeback_job_retry.rs::a_retry_after_a_post_swap_failure_keeps_the_original_backup` (1 and 3 slots), control `::a_rewrite_with_different_sidecars_still_rewrites_and_rotates` |
 | Sidecar job, CBR / CB7 conversion first | yes | Safe before the fix: the row is repointed at the `.cbz` before the sidecar rewrite, so a retry starts from the `.cbz` (then the row above); a retry after an unsettled conversion is refused (`DestinationExists`). The original sits at `X.cbr.bak`, a name the `.cbz`'s rotation never touches |
 | Series-scope apply, inline `rewrite_one_issue` per issue (`metadata::apply::apply_series_via_sidecar`) | not by apalis: `metadata_apply::handle_series` returns `Ok` whatever the apply outcome (only a Redis failure before any rewrite returns `Err`); an operator re-apply composes new XML (new timestamp) and is a new rewrite | not affected; `rewrite_one_issue` carries the same check anyway |
 | Page editor (`jobs::archive_edit::handle`) | no: the handler always returns `Ok` (only a Redis failure before the claim returns `Err`), so apalis never re-runs an edit after its swap. The danger was the operator repeating an edit reported as failed | see item 4 / [Refusals](#refusals-and-what-the-user-sees): a CBR edit whose commit landed is reported done; an in-place edit whose bookkeeping failed says the archive was edited and must not be edited again (`EditError::NotRecorded`) |
@@ -309,13 +309,23 @@ replaced file went; the audit row carries it too.
 - **Slots.** The restored backup leaves slot 0 and the replaced file
   takes it: the number of backups and every older slot stay as they
   were, nothing is rotated or deleted, and no slot is written that was
-  not already there, whatever `archive_backup_retain_count` says. The next
-  rewrite's rotation applies the slot count as usual.
+  not already there, whatever `archive_backup_retain_count` says. With one
+  or more slots the next rewrite's rotation applies the slot count as
+  usual.
 - **Zero slots.** The swap still happens. The `.bak` being restored
   exists anyway (left from a higher setting, or a conversion's backup,
   which always keeps one), the swap leaves one file in its place, and
   throwing the replaced archive away would make the click unrecoverable,
-  which is what restore is for. The retention days prune it later.
+  which is what restore is for. With zero slots a rewrite never rotates
+  (`rewrite_atomic` makes no backup), so the `.bak` the restore keeps
+  stays until the retention sweep removes it
+  (`archive_backup_retain_days` after the restore), and forever when
+  retention is off; a later restore swaps that same file back in, however
+  many rewrites happened since. Nothing in this package deletes it.
+- **Lock.** The restore holds the per-issue rewrite lock
+  (`EDIT_TTL_SECS`) with the same heartbeat as the rewrite job and the page
+  editor (`mutex::Heartbeat`), so a slow copy in the fallback cannot
+  outlive it.
 - **Age.** The kept file's change time is stamped at the restore (a
   `chmod` to its own mode), so the retention sweep ages it from the
   restore, not from the rewrite that made it.
@@ -326,13 +336,18 @@ replaced file went; the audit row carries it too.
   gets a second name `<file>.bak.<32 hex>.tmp` (hard link, or a copy where
   links are refused), the backup is renamed over the archive (atomic
   replace), and the second name is renamed to `.bak`. A failure before the
-  middle step removes the second name and changes nothing; a failure after
-  it leaves the restored file at the name and the replaced one under the
-  second name, which the error (and an ERROR log line) names. That name is
+  middle step removes the second name and changes nothing (the restore
+  fails). A failure of the last step is not a failure of the restore, which
+  has happened: the restored file is at the name and the replaced one under
+  the second name, and the endpoint answers success as usual (audit row,
+  cached reader dropped, rescan queued) with `kept_as` set to that second
+  name and a `warning` saying the replaced archive could not take the
+  `.bak` name and why (also logged at ERROR). That name is
   neither a staging name (`is_staging_name`: the base `<file>.bak` is not
   an archive name) nor a backup name, so the startup cleanup never
   removes it and the prune never counts it. Tests:
   `archive_restore.rs::a_restore_that_fails_half_way_leaves_the_archive_in_place`,
+  `::a_restore_whose_last_step_fails_is_reported_as_done_with_a_warning`,
   `::three_step_restore_ends_like_the_exchange`.
 - **Pre-conversion backups are listed, not restored.** Restore takes only
   the issue's own `<file>.bak`. Restoring `X.cbr.bak` for the issue now at
