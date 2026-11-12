@@ -7830,7 +7830,7 @@
             "description": "invalid region or lang (`invalid_region`, `invalid_lang`), or a `region_pct` / missing region failing validation (`validation`, with field details)"
           },
           "500": {
-            "description": "ocr pipeline failure"
+            "description": "the OCR run failed (`ocr_failed`), or a model file could not be downloaded or failed its integrity check (`ocr_model_unverified`)"
           },
           "503": {
             "description": "OCR busy (`service_unavailable`), the library's folder is offline (`library_offline`), or the file could not be read; carries Retry-After"
@@ -7886,7 +7886,7 @@
             "description": "page is not a decodable image"
           },
           "500": {
-            "description": "detector failure"
+            "description": "detection failed (`ocr_failed`), or a model file could not be downloaded or failed its integrity check (`ocr_model_unverified`)"
           },
           "503": {
             "description": "OCR busy (`service_unavailable`), the library's folder is offline (`library_offline`), or the file could not be read; carries Retry-After"
@@ -29232,7 +29232,7 @@
               "boolean",
               "null"
             ],
-            "description": "When `true`, run the page detector (or use its cached result\nfor the page) and snap the rectangle to the detected text region\nit overlaps most; the snapped box comes back as `refined_bbox`.\nWhen `false` or omitted (the default), the recognizer reads the\nrectangle as sent: the way to read a region taken from the\ntext-regions route, which is already a detected box."
+            "description": "When `true`, run the page detector (or use its cached result\nfor the page) and snap the rectangle to the detected text region\nit overlaps most; the snapped box comes back as `refined_bbox`.\nWhen `false` or omitted (the default), the rectangle is not\nsnapped: the way to read a region taken from the text-regions\nroute, which is already a detected box. (A Japanese request then\nstill reads the text box the detector found inside the region,\nwhen there is exactly one; see `refined_bbox`.)"
           },
           "lang": {
             "type": [
@@ -29269,7 +29269,7 @@
           "confidence": {
             "type": "number",
             "format": "float",
-            "description": "Confidence in `[0.0, 1.0]`. Western text: the mean over the\ntext lines read, each line scored by the mean probability of its\ncharacters (a line that could not be read counts as 0).\nmanga-ocr reports `1.0` (or `0.0` for an empty result) since its\ngreedy decoder doesn't expose per-token probabilities."
+            "description": "Confidence in `[0.0, 1.0]`. Western text: the mean over the\ntext lines that produced text, each line scored by the mean\nprobability of its characters (`0.0` when no line produced\ntext). manga-ocr reports `1.0` (or `0.0` for an empty result)\nsince its greedy decoder doesn't expose per-token probabilities."
           },
           "lang": {
             "type": "string",
@@ -29298,7 +29298,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/OcrRegion",
-                "description": "The detected box that was read, in page-pixel coords, when it\nis not the region as sent: the region a `detect: true` request\nwas snapped to. Absent when the recognizer read the user's rect\nverbatim."
+                "description": "The detected box that was read, in page-pixel coords, when it\nis not the region as sent: the region a `detect: true` request\nwas snapped to, or, for Japanese, the text box inside the region.\nAbsent when the recognizer read the user's rect verbatim."
               },
               {
                 "type": "null"
@@ -37009,7 +37009,7 @@
       },
       "TextRegionsView": {
         "type": "object",
-        "description": "Detected text regions for one page, in percent-of-page\ncoordinates (0–100 floats — the reader's native marker\nrepresentation, consumable by its SVG overlay without math).",
+        "description": "Detected text regions for one page, in percent-of-page\ncoordinates (0–100 floats — the reader's native marker\nrepresentation, consumable by its SVG overlay without math).\nThe set is final: one box per region to read, duplicates already\nremoved. A box inside a larger one is a region of its own.",
         "required": [
           "page_w",
           "page_h",

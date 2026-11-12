@@ -12600,9 +12600,11 @@ export interface components {
              * @description When `true`, run the page detector (or use its cached result
              *     for the page) and snap the rectangle to the detected text region
              *     it overlaps most; the snapped box comes back as `refined_bbox`.
-             *     When `false` or omitted (the default), the recognizer reads the
-             *     rectangle as sent: the way to read a region taken from the
-             *     text-regions route, which is already a detected box.
+             *     When `false` or omitted (the default), the rectangle is not
+             *     snapped: the way to read a region taken from the text-regions
+             *     route, which is already a detected box. (A Japanese request then
+             *     still reads the text box the detector found inside the region,
+             *     when there is exactly one; see `refined_bbox`.)
              */
             detect?: boolean | null;
             /**
@@ -12637,10 +12639,10 @@ export interface components {
             /**
              * Format: float
              * @description Confidence in `[0.0, 1.0]`. Western text: the mean over the
-             *     text lines read, each line scored by the mean probability of its
-             *     characters (a line that could not be read counts as 0).
-             *     manga-ocr reports `1.0` (or `0.0` for an empty result) since its
-             *     greedy decoder doesn't expose per-token probabilities.
+             *     text lines that produced text, each line scored by the mean
+             *     probability of its characters (`0.0` when no line produced
+             *     text). manga-ocr reports `1.0` (or `0.0` for an empty result)
+             *     since its greedy decoder doesn't expose per-token probabilities.
              */
             confidence: number;
             /**
@@ -15998,6 +16000,8 @@ export interface components {
          * @description Detected text regions for one page, in percent-of-page
          *     coordinates (0–100 floats — the reader's native marker
          *     representation, consumable by its SVG overlay without math).
+         *     The set is final: one box per region to read, duplicates already
+         *     removed. A box inside a larger one is a region of its own.
          */
         TextRegionsView: {
             /**
@@ -24376,7 +24380,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description ocr pipeline failure */
+            /** @description the OCR run failed (`ocr_failed`), or a model file could not be downloaded or failed its integrity check (`ocr_model_unverified`) */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -24442,7 +24446,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description detector failure */
+            /** @description detection failed (`ocr_failed`), or a model file could not be downloaded or failed its integrity check (`ocr_model_unverified`) */
             500: {
                 headers: {
                     [name: string]: unknown;

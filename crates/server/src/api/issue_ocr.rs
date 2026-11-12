@@ -274,10 +274,10 @@ pub struct OcrResponse {
     /// ([`crate::ocr::postprocess`]).
     pub text: String,
     /// Confidence in `[0.0, 1.0]`. Western text: the mean over the
-    /// text lines read, each line scored by the mean probability of its
-    /// characters (a line that could not be read counts as 0).
-    /// manga-ocr reports `1.0` (or `0.0` for an empty result) since its
-    /// greedy decoder doesn't expose per-token probabilities.
+    /// text lines that produced text, each line scored by the mean
+    /// probability of its characters (`0.0` when no line produced
+    /// text). manga-ocr reports `1.0` (or `0.0` for an empty result)
+    /// since its greedy decoder doesn't expose per-token probabilities.
     pub confidence: f32,
     /// The detected box that was read, in page-pixel coords, when it
     /// is not the region as sent: the region a `detect: true` request
@@ -435,7 +435,7 @@ impl TextRegionsView {
         (status = 409, description = "the issue's file is a CBR / CB7 that must be converted to CBZ first (`archive_needs_conversion`)"),
         (status = 410, description = "the issue's file is missing (`archive_missing`) or not a readable archive (`archive_unreadable`)"),
         (status = 422, description = "invalid region or lang (`invalid_region`, `invalid_lang`), or a `region_pct` / missing region failing validation (`validation`, with field details)"),
-        (status = 500, description = "ocr pipeline failure"),
+        (status = 500, description = "the OCR run failed (`ocr_failed`), or a model file could not be downloaded or failed its integrity check (`ocr_model_unverified`)"),
         (status = 503, description = "OCR busy (`service_unavailable`), the library's folder is offline (`library_offline`), or the file could not be read; carries Retry-After"),
     )
 )]
@@ -698,7 +698,7 @@ pub async fn serve(
         (status = 409, description = "the issue's file is a CBR / CB7 that must be converted to CBZ first (`archive_needs_conversion`)"),
         (status = 410, description = "the issue's file is missing (`archive_missing`) or not a readable archive (`archive_unreadable`)"),
         (status = 415, description = "page is not a decodable image"),
-        (status = 500, description = "detector failure"),
+        (status = 500, description = "detection failed (`ocr_failed`), or a model file could not be downloaded or failed its integrity check (`ocr_model_unverified`)"),
         (status = 503, description = "OCR busy (`service_unavailable`), the library's folder is offline (`library_offline`), or the file could not be read; carries Retry-After"),
     )
 )]
