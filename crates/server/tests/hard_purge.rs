@@ -1149,18 +1149,34 @@ async fn purge_deletes_at_most_the_cap_per_run() {
         page: 4,
         max_issue_deletes: 3,
     };
-    let stats = hard_purge::run_with_limits(&state, 2, Utc::now().fixed_offset(), limits)
-        .await
-        .unwrap();
+    let log = LogCapture::default();
+    let stats = {
+        let _guard = log.install();
+        hard_purge::run_with_limits(&state, 2, Utc::now().fixed_offset(), limits)
+            .await
+            .unwrap()
+    };
     assert_eq!(stats.issues, 3, "the cap: {stats:?}");
     assert_eq!(stats.kept_unknown, 2, "{stats:?}");
+    let exported = log.lines_with("hard purge: deleting confirmed-removed issue");
     for id in &gone[..3] {
         assert!(!issue_exists(db, id).await, "{id}: oldest first → purged");
+        assert_eq!(purged_events(db, id).await, 1, "{id}: one purged event");
+        assert!(
+            exported.iter().any(|l| l.contains(id.as_str())),
+            "{id}: exported before the delete: {exported:#?}"
+        );
     }
     for id in &gone[3..] {
         assert!(issue_exists(db, id).await, "{id}: past the cap → next run");
         assert!(removal_confirmed(db, id).await, "{id}: still confirmed");
+        assert_eq!(purged_events(db, id).await, 0, "{id}: no purged event");
+        assert!(
+            !exported.iter().any(|l| l.contains(id.as_str())),
+            "{id}: past the cap, so not exported: {exported:#?}"
+        );
     }
+    assert_eq!(exported.len(), 3, "{exported:#?}");
 
     let stats = hard_purge::run_with_limits(&state, 2, Utc::now().fixed_offset(), limits)
         .await
@@ -1173,4 +1189,140 @@ async fn purge_deletes_at_most_the_cap_per_run() {
         assert!(issue_exists(db, id).await, "{id}: unknown → kept");
         assert!(removal_confirmed(db, id).await, "{id}: still confirmed");
     }
+}
+
+/// `library_events` rows recording `issue_id` as purged.
+async fn purged_events(db: &impl ConnectionTrait, issue_id: &str) -> i64 {
+    count(
+        db,
+        "SELECT count(*) FROM library_events \
+         WHERE action = 'purged' AND category = 'issue' AND entity_id = $1",
+        vec![issue_id.into()],
+    )
+    .await
+}
+
+/// Captures the `folio::hard_purge` log lines written on this thread while
+/// installed (the `#[tokio::test]` runtime is single-threaded, and the
+/// export lines are written from the job's async code, not the blocking
+/// pool).
+#[derive(Clone, Default)]
+struct LogCapture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for LogCapture {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl LogCapture {
+    fn install(&self) -> tracing::subscriber::DefaultGuard {
+        let writer = self.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(move || writer.clone())
+            .finish();
+        tracing::subscriber::set_default(subscriber)
+    }
+
+    fn lines_with(&self, needle: &str) -> Vec<String> {
+        String::from_utf8_lossy(&self.0.lock().unwrap())
+            .lines()
+            .filter(|l| l.contains(needle))
+            .map(str::to_owned)
+            .collect()
+    }
+}
+
+/// Committed deletes are counted even when a later page fails. The database
+/// itself refuses to delete one row of the second page (a test-only
+/// trigger), so that page's `DELETE` errors after the first page's has
+/// committed: the run reports exactly the rows that are gone, counts the
+/// library as aborted, and has a purged event for each of them.
+#[tokio::test]
+async fn purge_counts_committed_deletes_when_a_later_page_fails() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (state, _kept, gone) = kept_front_fixture(&app, tmp.path(), 0, 4).await;
+    let db = &state.db;
+    exec(
+        db,
+        &format!(
+            "CREATE FUNCTION test_refuse_issue_delete() RETURNS trigger \
+             LANGUAGE plpgsql AS $$ BEGIN \
+               IF OLD.id = '{}' THEN RAISE EXCEPTION 'delete refused by test'; END IF; \
+               RETURN OLD; END $$",
+            gone[2]
+        ),
+        vec![],
+    )
+    .await;
+    exec(
+        db,
+        "CREATE TRIGGER test_refuse_issue_delete BEFORE DELETE ON issues \
+         FOR EACH ROW EXECUTE FUNCTION test_refuse_issue_delete()",
+        vec![],
+    )
+    .await;
+
+    let limits = hard_purge::PurgeLimits {
+        page: 2,
+        max_issue_deletes: 100,
+    };
+    let stats = hard_purge::run_with_limits(&state, 2, Utc::now().fixed_offset(), limits)
+        .await
+        .unwrap();
+    assert_eq!(stats.issues, 2, "page 1 committed: {stats:?}");
+    assert_eq!(stats.libraries, 1, "{stats:?}");
+    assert_eq!(stats.libraries_aborted, 1, "{stats:?}");
+    for id in &gone[..2] {
+        assert!(!issue_exists(db, id).await, "{id}: page 1 → purged");
+        assert_eq!(purged_events(db, id).await, 1, "{id}");
+    }
+    for id in &gone[2..] {
+        assert!(issue_exists(db, id).await, "{id}: page 2 rolled back");
+        assert!(removal_confirmed(db, id).await, "{id}: still confirmed");
+        assert_eq!(purged_events(db, id).await, 0, "{id}");
+    }
+}
+
+/// Candidates with the same `removal_confirmed_at` across a page boundary
+/// are told apart by `id`: none is skipped and none examined twice.
+#[tokio::test]
+async fn purge_pages_through_equal_confirmation_times() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (state, kept, gone) = kept_front_fixture(&app, tmp.path(), 1, 3).await;
+    let db = &state.db;
+    let at = Utc::now().fixed_offset() - Duration::days(40);
+    for id in kept.iter().chain(&gone) {
+        exec(
+            db,
+            "UPDATE issues SET removal_confirmed_at = $1 WHERE id = $2",
+            vec![at.into(), id.clone().into()],
+        )
+        .await;
+    }
+
+    // Four rows, one timestamp, pages of two: the boundary falls between
+    // equal times.
+    let limits = hard_purge::PurgeLimits {
+        page: 2,
+        max_issue_deletes: 100,
+    };
+    let stats = hard_purge::run_with_limits(&state, 2, Utc::now().fixed_offset(), limits)
+        .await
+        .unwrap();
+    assert_eq!(stats.issues, 3, "{stats:?}");
+    assert_eq!(stats.kept_unknown, 1, "examined once: {stats:?}");
+    for id in &gone {
+        assert!(!issue_exists(db, id).await, "{id}: purged");
+    }
+    assert!(issue_exists(db, &kept[0]).await);
+    assert!(removal_confirmed(db, &kept[0]).await);
 }

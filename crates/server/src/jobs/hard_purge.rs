@@ -103,14 +103,16 @@ pub const MIN_PURGE_WINDOW_DAYS: i64 = 1;
 /// after an upgrade on a high-churn library) drains over successive days
 /// instead of one unbounded run of deletes, exports and cascades.
 ///
-/// It counts deletes, not candidates examined: the candidates are read in
-/// keyset pages of [`PRESENCE_BATCH`] on `(removal_confirmed_at, id)`, and a
-/// row the run keeps (file present, or a disk that will not answer) costs
-/// one stat and no budget. So a run stops either after this many deletes or
-/// at the end of the library's candidates, and kept rows at the front of the
-/// order can no longer hold the rows behind them back: every run reaches the
-/// oldest purgeable rows, and each run that stops early has deleted this many
-/// of them.
+/// It counts rows actually deleted, not candidates examined: the candidates
+/// are read in keyset pages of [`PRESENCE_BATCH`] on
+/// `(removal_confirmed_at, id)`, and a row the run keeps (file present, or a
+/// disk that will not answer) costs one stat and no budget, as does a row
+/// the `DELETE`'s own guard rejects (restored or un-confirmed since the
+/// read). So a run stops either after this many deletes or at the end of
+/// the library's candidates, and kept rows at the front of the order can no
+/// longer hold the rows behind them back: every run reaches the oldest
+/// purgeable rows, and each run that stops early has deleted this many of
+/// them.
 pub const MAX_ISSUES_PER_LIBRARY_PER_RUN: usize = 5_000;
 
 /// Rows per `DELETE … WHERE id IN (…)` statement (one transaction each).
@@ -220,6 +222,32 @@ pub struct PurgeStats {
     pub libraries_aborted: u64,
 }
 
+impl PurgeStats {
+    /// Add one library's totals to the run's.
+    fn absorb(&mut self, lib: &PurgeStats) {
+        if lib.issues > 0 || lib.series > 0 {
+            self.libraries += 1;
+        }
+        self.issues += lib.issues;
+        self.series += lib.series;
+        self.kept_present += lib.kept_present;
+        self.kept_unknown += lib.kept_unknown;
+        self.rescans_queued += lib.rescans_queued;
+        self.library_scans_queued += lib.library_scans_queued;
+        self.rescans_throttled += lib.rescans_throttled;
+        self.libraries_skipped += lib.libraries_skipped;
+        self.libraries_aborted += lib.libraries_aborted;
+    }
+}
+
+/// Rows deleted so far in one library's run, counted as each `DELETE`
+/// transaction commits so a later failure cannot lose them.
+#[derive(Debug, Default, Clone, Copy)]
+struct Purged {
+    issues: u64,
+    series: u64,
+}
+
 /// Cron entry point: reads the multiplier from the live config.
 pub async fn run(state: &AppState) -> anyhow::Result<PurgeStats> {
     let multiplier = state.cfg().library_hard_purge_multiplier;
@@ -268,29 +296,20 @@ pub async fn run_with_limits(
             continue;
         }
         let cutoff = now - Duration::days(days);
-        match purge_library(state, &lib, days, cutoff, limits).await {
-            Ok(lib_stats) => {
-                if lib_stats.issues > 0 || lib_stats.series > 0 {
-                    stats.libraries += 1;
-                }
-                stats.issues += lib_stats.issues;
-                stats.series += lib_stats.series;
-                stats.kept_present += lib_stats.kept_present;
-                stats.kept_unknown += lib_stats.kept_unknown;
-                stats.rescans_queued += lib_stats.rescans_queued;
-                stats.library_scans_queued += lib_stats.library_scans_queued;
-                stats.rescans_throttled += lib_stats.rescans_throttled;
-                stats.libraries_aborted += lib_stats.libraries_aborted;
-            }
-            // One library failing must not stop the others being purged.
-            Err(e) => {
-                stats.libraries_aborted += 1;
-                tracing::error!(
-                    library_id = %lib.id,
-                    error = %e,
-                    "hard purge: library failed",
-                );
-            }
+        let (lib_stats, failed) = purge_library(state, &lib, days, cutoff, limits).await;
+        // Rows committed before a failure are gone: they are counted (and
+        // already have their library events) either way.
+        stats.absorb(&lib_stats);
+        // One library failing must not stop the others being purged.
+        if let Some(e) = failed {
+            stats.libraries_aborted += 1;
+            tracing::error!(
+                library_id = %lib.id,
+                issues_purged = lib_stats.issues,
+                series_purged = lib_stats.series,
+                error = %e,
+                "hard purge: library failed",
+            );
         }
     }
     if stats.issues > 0 {
@@ -343,18 +362,32 @@ async fn purge_library(
     window_days: i64,
     cutoff: DateTime<FixedOffset>,
     limits: PurgeLimits,
-) -> anyhow::Result<PurgeStats> {
+) -> (PurgeStats, Option<anyhow::Error>) {
     let probe = PresenceProbe::for_library(lib);
     let mut kept = KeptRows::default();
-    let result = purge_rows(state, lib, &probe, window_days, cutoff, limits, &mut kept).await;
+    let mut purged = Purged::default();
+    let result = purge_rows(
+        state,
+        lib,
+        &probe,
+        window_days,
+        cutoff,
+        limits,
+        &mut kept,
+        &mut purged,
+    )
+    .await;
     // Rows kept before an abort are still rescanned and reported.
     let outcome = kept
         .finish(state, lib.id, "Hard purge", MAX_SERIES_RESCANS_PER_RUN)
         .await;
-    let (issues, series, aborted) = result?;
-    Ok(PurgeStats {
-        issues,
-        series,
+    let (aborted, failed) = match result {
+        Ok(aborted) => (aborted, None),
+        Err(e) => (false, Some(e)),
+    };
+    let stats = PurgeStats {
+        issues: purged.issues,
+        series: purged.series,
         kept_present: kept.present(),
         kept_unknown: kept.unknown(),
         rescans_queued: outcome.series_scans,
@@ -362,11 +395,14 @@ async fn purge_library(
         rescans_throttled: outcome.throttled,
         libraries_aborted: u64::from(aborted),
         ..PurgeStats::default()
-    })
+    };
+    (stats, failed)
 }
 
-/// `(issues purged, series purged, aborted)`. Aborted: the library root
-/// stopped validating before a DELETE chunk, so nothing more was deleted.
+/// Purge one library's issues, then its series, adding each committed
+/// delete to `purged`. `Ok(true)`: the library root stopped validating
+/// before a DELETE chunk, so nothing more was deleted.
+#[allow(clippy::too_many_arguments)]
 async fn purge_rows(
     state: &AppState,
     lib: &library::Model,
@@ -375,14 +411,32 @@ async fn purge_rows(
     cutoff: DateTime<FixedOffset>,
     limits: PurgeLimits,
     kept: &mut KeptRows,
-) -> anyhow::Result<(u64, u64, bool)> {
-    let (issues, aborted) =
-        purge_issues(state, lib, probe, window_days, cutoff, limits, kept).await?;
+    purged: &mut Purged,
+) -> anyhow::Result<bool> {
+    let aborted = purge_issues(
+        state,
+        lib,
+        probe,
+        window_days,
+        cutoff,
+        limits,
+        kept,
+        &mut purged.issues,
+    )
+    .await?;
     if aborted {
-        return Ok((issues, 0, true));
+        return Ok(true);
     }
-    let (series, aborted) = purge_series(state, lib, probe, window_days, cutoff, kept).await?;
-    Ok((issues, series, aborted))
+    purge_series(
+        state,
+        lib,
+        probe,
+        window_days,
+        cutoff,
+        kept,
+        &mut purged.series,
+    )
+    .await
 }
 
 /// Clear `removal_confirmed_at` on the still-eligible `ids` of `table`
@@ -414,9 +468,13 @@ where
 
 /// Walk the library's candidates in keyset pages on
 /// `(removal_confirmed_at, id)`, oldest confirmation first, deleting what is
-/// really gone until [`PurgeLimits::max_issue_deletes`] rows were sent to the
-/// `DELETE` or the candidates run out. Kept rows cost no budget, so they
-/// never stop the walk from reaching the purgeable rows behind them.
+/// really gone until [`PurgeLimits::max_issue_deletes`] rows were deleted or
+/// the candidates run out. Kept rows, and rows the in-transaction guard
+/// rejects (restored or un-confirmed since the read), cost no budget, so
+/// neither stops the walk from reaching the purgeable rows behind them.
+/// Every committed delete is added to `purged` as it commits. `Ok(true)`:
+/// aborted (the root stopped validating).
+#[allow(clippy::too_many_arguments)]
 async fn purge_issues(
     state: &AppState,
     lib: &library::Model,
@@ -425,35 +483,44 @@ async fn purge_issues(
     cutoff: DateTime<FixedOffset>,
     limits: PurgeLimits,
     kept: &mut KeptRows,
-) -> anyhow::Result<(u64, bool)> {
+    purged: &mut u64,
+) -> anyhow::Result<bool> {
     let db = &state.db;
     let page_size = limits.page.max(1);
     let mut budget = limits.max_issue_deletes;
     let mut after: Option<(DateTime<FixedOffset>, String)> = None;
-    let mut purged = 0u64;
     while budget > 0 {
         let page = issue_candidate_page(db, lib.id, cutoff, after.as_ref(), page_size).await?;
         let Some(last) = page.last() else {
             break;
         };
         let full_page = page.len() == page_size;
+        // The cursor advances past the whole page whatever happens to its
+        // rows, so the walk always terminates.
         after = Some((last.removal_confirmed_at, last.id.clone()));
 
         let mut to_purge = settle_issue_page(db, lib.id, cutoff, probe, page, kept).await?;
-        // The rows past the budget stay confirmed for the next run, which
-        // reaches them first among the purgeable ones (oldest first).
-        to_purge.truncate(budget);
-        budget -= to_purge.len();
-        let (n, aborted) = delete_issues(state, lib, window_days, cutoff, to_purge).await?;
-        purged += n;
-        if aborted {
-            return Ok((purged, true));
+        // At most `budget` rows per DELETE batch; a batch the guard partly
+        // rejects leaves budget for the page's next purgeable rows. Each
+        // batch takes at least one row, so this ends. Rows still left when
+        // the budget runs out stay confirmed for the next run, which reaches
+        // them first among the purgeable ones (oldest first).
+        while budget > 0 && !to_purge.is_empty() {
+            let rest = to_purge.split_off(budget.min(to_purge.len()));
+            let before = *purged;
+            let aborted = delete_issues(state, lib, window_days, cutoff, to_purge, purged).await?;
+            let deleted = usize::try_from(*purged - before).unwrap_or(usize::MAX);
+            budget = budget.saturating_sub(deleted);
+            if aborted {
+                return Ok(true);
+            }
+            to_purge = rest;
         }
         if !full_page {
             break;
         }
     }
-    Ok((purged, false))
+    Ok(false)
 }
 
 /// One keyset page of confirmed-past-cutoff issue candidates after `after`.
@@ -538,16 +605,19 @@ async fn settle_issue_page(
 }
 
 /// Export, delete (re-checking the guard inside each transaction) and log
-/// `candidates`. `(rows deleted, aborted)`.
+/// `candidates`. Each committed chunk is added to `purged` and gets its
+/// library events at once, so a later failure cannot lose either.
+/// `Ok(true)`: aborted (the root stopped validating).
 async fn delete_issues(
     state: &AppState,
     lib: &library::Model,
     window_days: i64,
     cutoff: DateTime<FixedOffset>,
     candidates: Vec<IssueCandidate>,
-) -> anyhow::Result<(u64, bool)> {
+    purged: &mut u64,
+) -> anyhow::Result<bool> {
     if candidates.is_empty() {
-        return Ok((0, false));
+        return Ok(false);
     }
     let db = &state.db;
     let library_id = lib.id;
@@ -582,7 +652,33 @@ async fn delete_issues(
         );
     }
 
-    let mut deleted: Vec<String> = Vec::with_capacity(ids.len());
+    let by_id: HashMap<&str, &IssueCandidate> =
+        candidates.iter().map(|c| (c.id.as_str(), c)).collect();
+    let event = |c: &IssueCandidate| {
+        NewEvent::new(
+            library_id,
+            Category::Issue,
+            Action::Purged,
+            Severity::Warning,
+            format!("Purged issue {} (removal confirmed)", c.slug),
+        )
+        .entity("issue", c.id.clone(), Some(c.slug.clone()))
+        .detail(serde_json::json!({
+            "series_id": c.series_id,
+            "file_path": c.file_path,
+            "content_hash": c.content_hash,
+            "removed_at": c.removed_at.to_rfc3339(),
+            "removal_confirmed_at": c.removal_confirmed_at.to_rfc3339(),
+            "window_days": window_days,
+            "markers": get(&markers, &c.id),
+            "progress_records": get(&progress, &c.id),
+            "reading_sessions": get(&sessions, &c.id),
+            "collection_entries": get(&collection_entries, &c.id),
+            "ratings": get(&ratings, &c.id),
+        }))
+    };
+
+    let mut deleted = 0usize;
     let mut aborted = false;
     for chunk in ids.chunks(DELETE_CHUNK) {
         // The root must still validate before every delete (a share can
@@ -607,42 +703,17 @@ async fn delete_issues(
         let gone: Vec<String> = rows.into_iter().map(|r| r.id).collect();
         clean_unconstrained_refs(&txn, "issue", &gone).await?;
         txn.commit().await?;
-        deleted.extend(gone);
+        *purged += gone.len() as u64;
+        deleted += gone.len();
+        let events: Vec<NewEvent> = gone
+            .iter()
+            .filter_map(|id| by_id.get(id.as_str()))
+            .map(|c| event(c))
+            .collect();
+        event_log::record_many(db, events).await;
     }
-    log_kept(library_id, "issue", ids.len(), deleted.len());
-
-    let by_id: HashMap<&str, &IssueCandidate> =
-        candidates.iter().map(|c| (c.id.as_str(), c)).collect();
-    let events: Vec<NewEvent> = deleted
-        .iter()
-        .filter_map(|id| by_id.get(id.as_str()))
-        .map(|c| {
-            NewEvent::new(
-                library_id,
-                Category::Issue,
-                Action::Purged,
-                Severity::Warning,
-                format!("Purged issue {} (removal confirmed)", c.slug),
-            )
-            .entity("issue", c.id.clone(), Some(c.slug.clone()))
-            .detail(serde_json::json!({
-                "series_id": c.series_id,
-                "file_path": c.file_path,
-                "content_hash": c.content_hash,
-                "removed_at": c.removed_at.to_rfc3339(),
-                "removal_confirmed_at": c.removal_confirmed_at.to_rfc3339(),
-                "window_days": window_days,
-                "markers": get(&markers, &c.id),
-                "progress_records": get(&progress, &c.id),
-                "reading_sessions": get(&sessions, &c.id),
-                "collection_entries": get(&collection_entries, &c.id),
-                "ratings": get(&ratings, &c.id),
-            }))
-        })
-        .collect();
-    event_log::record_many(db, events).await;
-
-    Ok((deleted.len() as u64, aborted))
+    log_kept(library_id, "issue", ids.len(), deleted);
+    Ok(aborted)
 }
 
 async fn purge_series(
@@ -652,7 +723,8 @@ async fn purge_series(
     window_days: i64,
     cutoff: DateTime<FixedOffset>,
     kept: &mut KeptRows,
-) -> anyhow::Result<(u64, bool)> {
+    purged: &mut u64,
+) -> anyhow::Result<bool> {
     let db = &state.db;
     let library_id = lib.id;
     let candidates = SeriesCandidate::find_by_statement(Statement::from_sql_and_values(
@@ -668,7 +740,7 @@ async fn purge_series(
     .all(db)
     .await?;
     if candidates.is_empty() {
-        return Ok((0, false));
+        return Ok(false);
     }
 
     // Stat guard: a series whose folder holds an indexable archive again is
@@ -704,7 +776,7 @@ async fn purge_series(
         })
         .collect();
     if candidates.is_empty() {
-        return Ok((0, false));
+        return Ok(false);
     }
 
     let ids: Vec<Uuid> = candidates.iter().map(|c| c.id).collect();
@@ -733,7 +805,30 @@ async fn purge_series(
         );
     }
 
-    let mut deleted: Vec<String> = Vec::with_capacity(ids.len());
+    let by_id: HashMap<String, &SeriesCandidate> =
+        candidates.iter().map(|c| (c.id.to_string(), c)).collect();
+    let event = |c: &SeriesCandidate| {
+        let key = c.id.to_string();
+        NewEvent::new(
+            library_id,
+            Category::Series,
+            Action::Purged,
+            Severity::Warning,
+            format!("Purged series {} (removal confirmed)", c.name),
+        )
+        .entity("series", key.clone(), Some(c.name.clone()))
+        .detail(serde_json::json!({
+            "slug": c.slug,
+            "folder_path": c.folder_path,
+            "removed_at": c.removed_at.to_rfc3339(),
+            "removal_confirmed_at": c.removal_confirmed_at.to_rfc3339(),
+            "window_days": window_days,
+            "collection_entries": get(&collection_entries, &key),
+            "ratings": get(&ratings, &key),
+        }))
+    };
+
+    let mut deleted = 0usize;
     let mut aborted = false;
     for chunk in ids.chunks(DELETE_CHUNK) {
         if !library_ready_for_sweep(state, lib, "Hard purge").await {
@@ -757,39 +852,17 @@ async fn purge_series(
         let gone: Vec<String> = rows.into_iter().map(|r| r.id).collect();
         clean_unconstrained_refs(&txn, "series", &gone).await?;
         txn.commit().await?;
-        deleted.extend(gone);
+        *purged += gone.len() as u64;
+        deleted += gone.len();
+        let events: Vec<NewEvent> = gone
+            .iter()
+            .filter_map(|id| by_id.get(id))
+            .map(|c| event(c))
+            .collect();
+        event_log::record_many(db, events).await;
     }
-    log_kept(library_id, "series", ids.len(), deleted.len());
-
-    let by_id: HashMap<String, &SeriesCandidate> =
-        candidates.iter().map(|c| (c.id.to_string(), c)).collect();
-    let events: Vec<NewEvent> = deleted
-        .iter()
-        .filter_map(|id| by_id.get(id))
-        .map(|c| {
-            let key = c.id.to_string();
-            NewEvent::new(
-                library_id,
-                Category::Series,
-                Action::Purged,
-                Severity::Warning,
-                format!("Purged series {} (removal confirmed)", c.name),
-            )
-            .entity("series", key.clone(), Some(c.name.clone()))
-            .detail(serde_json::json!({
-                "slug": c.slug,
-                "folder_path": c.folder_path,
-                "removed_at": c.removed_at.to_rfc3339(),
-                "removal_confirmed_at": c.removal_confirmed_at.to_rfc3339(),
-                "window_days": window_days,
-                "collection_entries": get(&collection_entries, &key),
-                "ratings": get(&ratings, &key),
-            }))
-        })
-        .collect();
-    event_log::record_many(db, events).await;
-
-    Ok((deleted.len() as u64, aborted))
+    log_kept(library_id, "series", ids.len(), deleted);
+    Ok(aborted)
 }
 
 /// A candidate restored (or un-confirmed) between the SELECT and the DELETE
