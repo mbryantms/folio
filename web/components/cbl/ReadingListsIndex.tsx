@@ -1,18 +1,16 @@
 "use client";
 
 import * as React from "react";
-import { List } from "lucide-react";
-
 import { PageHeader } from "@/components/admin/PageHeader";
 import { ReadingListsBoard } from "@/components/cbl/ReadingListsBoard";
-import { splitSavedViews, ViewCard } from "@/components/saved-views/ViewsIndex";
+import { splitSavedViews } from "@/components/saved-views/ViewsIndex";
 import { useSavedViews } from "@/lib/api/queries";
-import type { SavedViewView } from "@/lib/api/types";
 
 /**
  * Reader-side reading-lists index (`/lists`) — the sidebar "Reading lists"
  * entry lands here. The caller's own imported CBL lists and the lists an
- * admin shared with everyone, each card opening the list's detail view.
+ * admin shared with everyone, as a tree table of folders and lists, each
+ * row opening the list's detail view.
  * The board is the same one Settings → Views shows on its Reading lists
  * tab (`ReadingListsBoard`), so import, updates and grouping behave the
  * same in both places.
@@ -55,7 +53,6 @@ export function ReadingListsIndex({
         <ReadingListsBoard
           views={readingLists}
           loading={!hydrated || viewsQ.isLoading}
-          renderCard={renderReadingListCard}
           canImport={canImport}
         />
       )}
@@ -64,7 +61,3 @@ export function ReadingListsIndex({
 }
 
 const noopSubscribe = () => () => {};
-
-function renderReadingListCard(view: SavedViewView) {
-  return <ViewCard view={view} Icon={List} isCollection={false} />;
-}

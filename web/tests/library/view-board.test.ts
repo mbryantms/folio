@@ -9,12 +9,15 @@ import { describe, expect, it } from "vitest";
 import type { SavedViewView, ViewGroupView } from "@/lib/api/types";
 import {
   UNGROUPED_ID,
+  boardRows,
   boardToLayout,
   buildViewBoard,
   containerOf,
   filterBoard,
   moveGroup,
   moveView,
+  rowViews,
+  sortViews,
 } from "@/lib/saved-views/view-board";
 
 function v(
@@ -186,5 +189,68 @@ describe("moveGroup / filterBoard", () => {
     expect(next.groups.map((x) => x.views.length)).toEqual([0, 0, 0]);
     expect(next.ungrouped.map((x) => x.id)).toEqual(["d"]);
     expect(filterBoard(board, "  ")).toBe(board);
+  });
+});
+
+describe("board-specific sorts", () => {
+  const byLength = (a: SavedViewView, b: SavedViewView) =>
+    b.name.length - a.name.length;
+
+  it("sorts ungrouped with the caller's comparator for an extra key", () => {
+    const board = buildViewBoard(views, [g("g1", ["a"])], [], "read", byLength);
+    // "Civil War" and "Daredevil" tie on length: the sort is stable.
+    expect(board.ungrouped.map((x) => x.id)).toEqual(["c", "d", "b"]);
+    // Groups keep their arranged order under any sort.
+    expect(board.groups[0]!.views.map((x) => x.id)).toEqual(["a"]);
+  });
+
+  it("never lets a comparator override a built-in key, and falls back to name", () => {
+    expect(sortViews(views, "name", byLength).map((x) => x.id)).toEqual([
+      "a",
+      "b",
+      "c",
+      "d",
+    ]);
+    expect(sortViews(views.slice().reverse(), "read").map((x) => x.id)).toEqual(
+      ["a", "b", "c", "d"],
+    );
+  });
+});
+
+describe("boardRows (tree row model)", () => {
+  it("lists folders in order with their views one level in, then the root", () => {
+    const board = buildViewBoard(views, [
+      g("g2", ["c"], 1),
+      g("g1", ["b", "a"], 0),
+    ]);
+    const rows = boardRows(board);
+    expect(
+      rows.map((r) =>
+        r.type === "group"
+          ? `${r.id}@${r.depth}[${r.children.map((c) => `${c.id}@${c.depth}`).join(",")}]`
+          : `${r.id}@${r.depth}`,
+      ),
+    ).toEqual(["g1@0[b@1,a@1]", "g2@0[c@1]", "d@0"]);
+    const first = rows[0]!;
+    expect(
+      first.type === "group" && first.children[0]!.type === "view"
+        ? first.children[0]!.container
+        : null,
+    ).toBe("g1");
+    const root = rows[2]!;
+    expect(root.type === "view" ? root.container : null).toBe(UNGROUPED_ID);
+  });
+
+  it("rowViews walks a folder to every view under it", () => {
+    const rows = boardRows(buildViewBoard(views, [g("g1", ["b", "a"])]));
+    expect(rowViews(rows[0]!).map((x) => x.id)).toEqual(["b", "a"]);
+    expect(rowViews(rows[1]!).map((x) => x.id)).toEqual(["c"]);
+  });
+
+  it("follows a search-filtered board, keeping empty folders", () => {
+    const board = buildViewBoard(views, [g("g1", ["b", "a"])]);
+    const rows = boardRows(filterBoard(board, "dare"));
+    expect(rows.map((r) => r.id)).toEqual(["g1", "d"]);
+    expect(rows[0]!.type === "group" ? rows[0]!.children : null).toEqual([]);
   });
 });

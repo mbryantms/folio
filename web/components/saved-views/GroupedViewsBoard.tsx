@@ -14,6 +14,13 @@
  * pointer: the card's ⋯ menu has "Move to group", group menus have Move
  * up / down, and the grip handles are keyboard-sortable.
  *
+ * Two presentations share every bit of that behaviour: cards
+ * (`renderCard`: filter views, collections) and rows (`rows`: the reading
+ * lists' tree table, one column header with folder rows and list rows on
+ * the `board-rows` grid, rendered from the `boardRows` row model). Only
+ * the section and item shells differ (`GroupSection` / `BoardCard` vs
+ * `GroupRowsSection` / `BoardRowItem`).
+ *
  * Layout logic is pure and lives in `@/lib/saved-views/view-board`;
  * this file is the dnd-kit + UI shell around it.
  */
@@ -51,10 +58,14 @@ import {
   ArrowDown,
   ArrowUp,
   ChevronRight,
+  Folder,
+  FolderOpen,
   FolderPlus,
   GripVertical,
   MoreHorizontal,
   Pencil,
+  Rows2,
+  Rows4,
   Search,
   Trash2,
   X,
@@ -90,7 +101,15 @@ import {
 import {
   BoardToolbarControlsSkeleton,
   ViewCardsSkeleton,
+  ViewRowsSkeleton,
 } from "@/components/skeletons/SettingsShapes";
+import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+  ROW_CELL,
+  ROW_GRID,
+  ROW_PAD,
+} from "@/components/saved-views/board-rows";
 import { useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -110,6 +129,7 @@ import type {
 import {
   UNGROUPED_ID,
   VIEW_SORT_OPTIONS,
+  boardRows,
   boardToLayout,
   buildViewBoard,
   containerOf,
@@ -118,9 +138,15 @@ import {
   moveGroup,
   moveView,
   type BoardGroup,
+  type BoardRow,
   type ViewBoard,
+  type ViewCompare,
   type ViewSort,
 } from "@/lib/saved-views/view-board";
+import {
+  useBoardDensity,
+  type BoardDensity,
+} from "@/lib/saved-views/board-density";
 import { cn } from "@/lib/utils";
 import {
   DRAG_LIFT_CLASS,
@@ -304,7 +330,13 @@ export type GroupedViewsBoardProps = {
   /** Noun for copy: "list", "view", "collection". */
   noun: string;
   icon: LucideIcon;
-  renderCard: (view: SavedViewView) => React.ReactNode;
+  /** Card presentation: each view as a card in a grid per section. */
+  renderCard?: (view: SavedViewView) => React.ReactNode;
+  /** Rows presentation (a tree table) instead of cards: one column
+   *  header, groups as folder rows, views as rows under them. The
+   *  grouping, drag and drop, search, sort, undo and mutations are the
+   *  same code either way; only the section and item shells differ. */
+  rows?: BoardRowsPresentation;
   /** Extra items appended to each group's ⋯ menu (e.g. "Update lists in
    *  this group" on the reading-lists tab). */
   groupMenuExtra?: (group: BoardGroup) => React.ReactNode;
@@ -314,6 +346,41 @@ export type GroupedViewsBoardProps = {
   /** Card grid density: `compact` (Settings → Views, many small cards)
    *  or `large` (the `/collections` page: fixed 15rem cards, big covers). */
   size?: "compact" | "large";
+};
+
+/** What a rows-presentation row renderer is told about its row. */
+export type BoardRowContext = {
+  /** Indent level: 0 at the root, 1 inside a group. */
+  depth: number;
+  density: BoardDensity;
+  /** Rendering the lifted copy under the pointer (no live controls). */
+  overlay: boolean;
+};
+
+export type BoardRowsPresentation = {
+  /** Header cells after Name, each placed with a `ROW_CELL` class. A
+   *  column with `sort` is a sort button for that key. */
+  columns: ReadonlyArray<{
+    key: string;
+    label: string;
+    cell: string;
+    sort?: ViewSort;
+  }>;
+  /** The cells of one item row after the board's grip cell (lead, main,
+   *  stats, flags, menu), placed with `ROW_CELL`. */
+  renderRow: (view: SavedViewView, ctx: BoardRowContext) => React.ReactNode;
+  /** The stat cells of a folder row: roll-ups over every view in it
+   *  (the unfiltered group, also while searching). */
+  renderGroupCells?: (group: BoardGroup) => React.ReactNode;
+  /** Sort keys beyond the built-in ones, with their comparators (the
+   *  views must be complete in memory). */
+  sorts?: ReadonlyArray<{
+    value: ViewSort;
+    label: string;
+    compare: ViewCompare;
+  }>;
+  /** `localStorage` key of the density choice. */
+  densityKey: string;
 };
 
 const CARD_GRID_CLASS = {
@@ -356,6 +423,7 @@ export function GroupedViewsBoard({
   noun,
   icon: Icon,
   renderCard,
+  rows,
   groupMenuExtra,
   panel,
   size = "compact",
@@ -368,6 +436,18 @@ export function GroupedViewsBoard({
 
   const [sort, setSort] = React.useState<ViewSort>("custom");
   const [query, setQuery] = React.useState("");
+  const [density, setDensity] = useBoardDensity(
+    rows?.densityKey ?? "folio.viewBoard.density",
+  );
+  const extraSorts = rows?.sorts;
+  const sortOptions = React.useMemo(
+    () => [
+      ...VIEW_SORT_OPTIONS,
+      ...(extraSorts ?? []).map(({ value, label }) => ({ value, label })),
+    ],
+    [extraSorts],
+  );
+  const compare = extraSorts?.find((s) => s.value === sort)?.compare;
   const serverBoard = React.useMemo(
     () =>
       buildViewBoard(
@@ -375,8 +455,9 @@ export function GroupedViewsBoard({
         groupsQ.data?.groups ?? [],
         groupsQ.data?.ungrouped_ids ?? [],
         sort,
+        compare,
       ),
-    [views, groupsQ.data, sort],
+    [views, groupsQ.data, sort, compare],
   );
   // While a drag is in flight (and until the commit settles) the board
   // renders from `draft`; afterwards it falls back to the query cache,
@@ -598,6 +679,26 @@ export function GroupedViewsBoard({
 
   const total = countViews(board);
   const showGroups = board.groups.length > 0;
+  const renderView = renderCard ?? renderNothing;
+
+  /** The per-group callbacks both presentations wire up the same way.
+   *  `idx` is the group's index on the (unfiltered) board. */
+  function groupHandlers(idx: number) {
+    const group = board.groups[idx]!;
+    return {
+      isFirst: idx === 0,
+      isLast: idx === board.groups.length - 1,
+      onRename: (name: string) => updateGroup.mutate({ id: group.id, name }),
+      onToggleCollapsed: () =>
+        updateGroup.mutate({ id: group.id, collapsed: !group.collapsed }),
+      onMove: (dir: -1 | 1) => {
+        const next = moveGroup(board, idx, idx + dir);
+        if (next !== board) commit(next);
+      },
+      onDelete: () => deleteGroup(group, board),
+      menuExtra: groupMenuExtra?.(group),
+    };
+  }
 
   return (
     <ViewBoardActionsContext.Provider value={actions}>
@@ -635,13 +736,16 @@ export function GroupedViewsBoard({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent align="end">
-                      {VIEW_SORT_OPTIONS.map((o) => (
+                      {sortOptions.map((o) => (
                         <SelectItem key={o.value} value={o.value}>
                           {o.label}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  {rows ? (
+                    <DensityToggle value={density} onChange={setDensity} />
+                  ) : null}
                   <Button
                     type="button"
                     variant="outline"
@@ -658,7 +762,7 @@ export function GroupedViewsBoard({
                 // Hold the controls' room while the board loads, so the
                 // primary action doesn't jump left once cards arrive.
                 <div aria-hidden className="contents">
-                  <BoardToolbarControlsSkeleton />
+                  <BoardToolbarControlsSkeleton density={rows !== undefined} />
                 </div>
               ) : null}
               {action}
@@ -668,7 +772,13 @@ export function GroupedViewsBoard({
           {panel}
 
           {loading || groupsQ.isLoading ? (
-            <BoardSkeleton />
+            rows ? (
+              <LoadingRegion label={`Loading ${plural(noun, 2)}…`}>
+                <ViewRowsSkeleton />
+              </LoadingRegion>
+            ) : (
+              <BoardSkeleton />
+            )
           ) : total === 0 ? (
             <div className="border-border/60 text-muted-foreground rounded-lg border border-dashed p-6 text-sm">
               {empty}
@@ -682,74 +792,96 @@ export function GroupedViewsBoard({
               onDragEnd={onDragEnd}
               onDragCancel={onDragCancel}
             >
-              {/* While dragging, cards under the pointer must not react
-                (hover wash, cover fan, tint): the slot and the target
-                group's ring are the only feedback. Collision detection
-                uses rects, not pointer events. */}
-              <div
-                className={cn(
-                  "space-y-4",
-                  activeId &&
-                    "select-none [&_[data-board-card]]:pointer-events-none",
-                )}
-              >
-                <SortableContext
-                  items={board.groups.map((g) => groupDndId(g.id))}
-                  strategy={verticalListSortingStrategy}
-                >
-                  {visibleBoard.groups.map((group, idx) => (
-                    <GroupSection
-                      key={group.id}
-                      group={group}
-                      totalInGroup={board.groups[idx]?.views.length ?? 0}
-                      forceOpen={searching}
-                      noun={noun}
-                      isFirst={idx === 0}
-                      isLast={idx === board.groups.length - 1}
-                      dragActive={activeId !== null}
-                      isDropTarget={dropTarget === group.id}
-                      suppressClickUntil={suppressClickUntil}
-                      renderCard={renderCard}
-                      onRename={(name) =>
-                        updateGroup.mutate({ id: group.id, name })
-                      }
-                      onToggleCollapsed={() =>
-                        updateGroup.mutate({
-                          id: group.id,
-                          collapsed: !group.collapsed,
-                        })
-                      }
-                      onMove={(dir) => {
-                        const next = moveGroup(board, idx, idx + dir);
-                        if (next !== board) commit(next);
-                      }}
-                      onDelete={() =>
-                        deleteGroup(
-                          board.groups.find((g) => g.id === group.id) ?? group,
-                          board,
-                        )
-                      }
-                      menuExtra={groupMenuExtra?.(board.groups[idx] ?? group)}
-                    />
-                  ))}
-                </SortableContext>
-
-                <UngroupedSection
-                  views={visibleBoard.ungrouped}
-                  total={board.ungrouped.length}
-                  hasGroups={showGroups}
-                  noun={noun}
-                  icon={Icon}
+              {rows ? (
+                <RowsTable
+                  presentation={rows}
+                  density={density}
+                  board={board}
+                  visibleBoard={visibleBoard}
+                  sort={sort}
+                  onSort={setSort}
                   searching={searching}
+                  noun={noun}
                   dragActive={activeId !== null}
-                  isDropTarget={dropTarget === UNGROUPED_ID}
+                  dropTarget={dropTarget}
                   suppressClickUntil={suppressClickUntil}
-                  renderCard={renderCard}
+                  groupHandlers={groupHandlers}
                 />
-              </div>
+              ) : (
+                /* While dragging, cards under the pointer must not react
+                  (hover wash, cover fan, tint): the slot and the target
+                  group's ring are the only feedback. Collision detection
+                  uses rects, not pointer events. */
+                <div
+                  className={cn(
+                    "space-y-4",
+                    activeId &&
+                      "select-none [&_[data-board-card]]:pointer-events-none",
+                  )}
+                >
+                  <SortableContext
+                    items={board.groups.map((g) => groupDndId(g.id))}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    {visibleBoard.groups.map((group, idx) => (
+                      <GroupSection
+                        key={group.id}
+                        group={group}
+                        totalInGroup={board.groups[idx]?.views.length ?? 0}
+                        forceOpen={searching}
+                        noun={noun}
+                        dragActive={activeId !== null}
+                        isDropTarget={dropTarget === group.id}
+                        suppressClickUntil={suppressClickUntil}
+                        renderCard={renderView}
+                        {...groupHandlers(idx)}
+                      />
+                    ))}
+                  </SortableContext>
+
+                  <UngroupedSection
+                    views={visibleBoard.ungrouped}
+                    total={board.ungrouped.length}
+                    hasGroups={showGroups}
+                    noun={noun}
+                    icon={Icon}
+                    searching={searching}
+                    dragActive={activeId !== null}
+                    isDropTarget={dropTarget === UNGROUPED_ID}
+                    suppressClickUntil={suppressClickUntil}
+                    renderCard={renderView}
+                  />
+                </div>
+              )}
 
               <DragOverlay dropAnimation={reduced ? null : DROP_ANIMATION}>
-                {activeView ? (
+                {activeView && rows ? (
+                  // The held row, on the table's grid at its own width.
+                  <div
+                    data-density={density}
+                    className={cn(
+                      ROW_GRID,
+                      ROW_PAD,
+                      "bg-popover text-popover-foreground border-border pointer-events-none rounded-md border shadow-xl",
+                      DRAG_LIFT_CLASS,
+                    )}
+                    style={{ transition: LIFT_TRANSITION }}
+                  >
+                    <span
+                      className={cn(
+                        ROW_CELL.grip,
+                        "text-muted-foreground inline-flex justify-center",
+                      )}
+                    >
+                      <GripVertical className="size-4" aria-hidden="true" />
+                    </span>
+                    {rows.renderRow(activeView, {
+                      depth: 0,
+                      density,
+                      overlay: true,
+                    })}
+                  </div>
+                ) : activeView ? (
                   // A lifted copy of the card itself, at its own size, so
                   // what you hold is what lands.
                   <div
@@ -759,7 +891,7 @@ export function GroupedViewsBoard({
                     )}
                     style={{ transition: LIFT_TRANSITION }}
                   >
-                    {renderCard(activeView)}
+                    {renderView(activeView)}
                   </div>
                 ) : activeGroup ? (
                   <DragGhost
@@ -791,6 +923,10 @@ export function GroupedViewsBoard({
       </CardGridClassContext.Provider>
     </ViewBoardActionsContext.Provider>
   );
+}
+
+function renderNothing(): React.ReactNode {
+  return null;
 }
 
 function plural(noun: string, n: number): string {
@@ -938,43 +1074,15 @@ function GroupSection({
             <Pencil className="size-3.5" />
           </Button>
         ) : null}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label={`Actions for group ${group.name}`}
-              className="text-muted-foreground hover:text-foreground size-8 shrink-0"
-            >
-              <MoreHorizontal className="size-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuItem onSelect={() => setEditing(true)}>
-              <Pencil className="size-4" /> Rename
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => onMove(-1)} disabled={isFirst}>
-              <ArrowUp className="size-4" /> Move up
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => onMove(1)} disabled={isLast}>
-              <ArrowDown className="size-4" /> Move down
-            </DropdownMenuItem>
-            {menuExtra ? (
-              <>
-                <DropdownMenuSeparator />
-                {menuExtra}
-              </>
-            ) : null}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onSelect={onDelete}
-              className="text-destructive focus:text-destructive"
-            >
-              <Trash2 className="size-4" /> Delete group
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <GroupMenu
+          name={group.name}
+          isFirst={isFirst}
+          isLast={isLast}
+          onRename={() => setEditing(true)}
+          onMove={onMove}
+          onDelete={onDelete}
+          menuExtra={menuExtra}
+        />
       </header>
 
       {/* The sortable context stays mounted while collapsed so a card
@@ -1006,6 +1114,67 @@ function GroupSection({
         </div>
       </SortableContext>
     </section>
+  );
+}
+
+/** A group's ⋯ menu: rename, move up / down, the board's extras (the
+ *  reading lists' "Update these lists"), delete. Shared by the card
+ *  section header and the folder row. */
+function GroupMenu({
+  name,
+  isFirst,
+  isLast,
+  onRename,
+  onMove,
+  onDelete,
+  menuExtra,
+}: {
+  name: string;
+  isFirst: boolean;
+  isLast: boolean;
+  onRename: () => void;
+  onMove: (dir: -1 | 1) => void;
+  onDelete: () => void;
+  menuExtra?: React.ReactNode;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label={`Actions for group ${name}`}
+          className="text-muted-foreground hover:text-foreground size-8 shrink-0"
+        >
+          <MoreHorizontal className="size-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuItem onSelect={onRename}>
+          <Pencil className="size-4" /> Rename
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onMove(-1)} disabled={isFirst}>
+          <ArrowUp className="size-4" /> Move up
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onMove(1)} disabled={isLast}>
+          <ArrowDown className="size-4" /> Move down
+        </DropdownMenuItem>
+        {menuExtra ? (
+          <>
+            <DropdownMenuSeparator />
+            {menuExtra}
+          </>
+        ) : null}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onSelect={onDelete}
+          className="text-destructive focus:text-destructive"
+        >
+          <Trash2 className="size-4" /> Delete group
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -1208,10 +1377,7 @@ function BoardCard({
     data: { type: "view", container },
     transition: useSpringSort(),
   });
-  const { onKeyDown, ...pointerListeners } = (listeners ?? {}) as Record<
-    string,
-    (e: React.SyntheticEvent) => void
-  >;
+  const { onKeyDown, surface } = dragSurface(listeners, suppressClickUntil);
 
   return (
     <li
@@ -1230,38 +1396,7 @@ function BoardCard({
           listeners sit on a presentational wrapper so the list item keeps
           its semantics; `contents` keeps the grip's absolute positioning
           relative to the item. */}
-      <div
-        role="presentation"
-        className="contents"
-        // Native anchor/image drag would fight the pointer sensor.
-        onDragStart={(e) => e.preventDefault()}
-        onPointerDown={(e) => {
-          // Buttons / menu items keep plain clicks; everything else starts
-          // a drag after the sensor's distance threshold.
-          const el = e.target as Element;
-          if (el.closest("button, [role=menuitem], input, select, textarea"))
-            return;
-          pointerListeners.onPointerDown?.(e);
-        }}
-        onMouseDown={(e) => {
-          const el = e.target as Element;
-          if (el.closest("button, [role=menuitem], input, select, textarea"))
-            return;
-          pointerListeners.onMouseDown?.(e);
-        }}
-        onTouchStart={(e) => {
-          const el = e.target as Element;
-          if (el.closest("button, [role=menuitem], input, select, textarea"))
-            return;
-          pointerListeners.onTouchStart?.(e);
-        }}
-        onClickCapture={(e) => {
-          if (Date.now() < suppressClickUntil.current) {
-            e.preventDefault();
-            e.stopPropagation();
-          }
-        }}
-      >
+      <div role="presentation" className="contents" {...surface}>
         <button
           type="button"
           ref={setActivatorNodeRef}
@@ -1280,6 +1415,52 @@ function BoardCard({
       </div>
     </li>
   );
+}
+
+/** Elements inside a drag surface that keep their plain clicks. A grip
+ *  marked `data-drag-handle` is a button but still starts a drag. */
+const NO_DRAG =
+  "button:not([data-drag-handle]), [role=menuitem], input, select, textarea";
+
+/**
+ * Split a sortable's listeners into the keyboard half (for the grip,
+ * which carries the sortable ARIA attributes) and pointer handlers for a
+ * presentational wrapper, so the whole card / row is a pointer drag
+ * surface except its buttons and fields. Clicks that land right after a
+ * drop are swallowed so a dropped link doesn't navigate.
+ */
+function dragSurface(
+  listeners: ReturnType<typeof useSortable>["listeners"],
+  suppressClickUntil: React.MutableRefObject<number>,
+) {
+  const { onKeyDown, ...pointer } = (listeners ?? {}) as Record<
+    string,
+    (e: React.SyntheticEvent) => void
+  >;
+  const guard =
+    (name: "onPointerDown" | "onMouseDown" | "onTouchStart") =>
+    (e: React.SyntheticEvent) => {
+      // Buttons / menu items keep plain clicks; everything else starts a
+      // drag after the sensor's distance (mouse) or delay (touch).
+      if ((e.target as Element).closest(NO_DRAG)) return;
+      pointer[name]?.(e);
+    };
+  return {
+    onKeyDown,
+    surface: {
+      // Native anchor/image drag would fight the pointer sensor.
+      onDragStart: (e: React.DragEvent) => e.preventDefault(),
+      onPointerDown: guard("onPointerDown"),
+      onMouseDown: guard("onMouseDown"),
+      onTouchStart: guard("onTouchStart"),
+      onClickCapture: (e: React.MouseEvent) => {
+        if (Date.now() < suppressClickUntil.current) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      },
+    },
+  };
 }
 
 function DragGhost({
@@ -1331,6 +1512,578 @@ function BoardSkeleton() {
         <ViewCardsSkeleton />
       )}
     </div>
+  );
+}
+
+// ──────────────────── rows presentation (tree table) ────────────────────
+
+function DensityToggle({
+  value,
+  onChange,
+}: {
+  value: BoardDensity;
+  onChange: (next: BoardDensity) => void;
+}) {
+  return (
+    // Density only changes the desktop table; below `lg` rows always use
+    // the two-line form, so the control is desktop-only.
+    <ToggleGroup
+      type="single"
+      variant="outline"
+      spacing={0}
+      value={value}
+      onValueChange={(v) => {
+        if (v === "compact" || v === "comfortable") onChange(v);
+      }}
+      aria-label="Row density"
+      className="folio-control max-lg:hidden"
+    >
+      <ToggleGroupItem
+        value="compact"
+        aria-label="Compact rows"
+        title="Compact: one line per row"
+      >
+        <Rows4 aria-hidden="true" />
+      </ToggleGroupItem>
+      <ToggleGroupItem
+        value="comfortable"
+        aria-label="Comfortable rows"
+        title="Comfortable: the description under the name"
+      >
+        <Rows2 aria-hidden="true" />
+      </ToggleGroupItem>
+    </ToggleGroup>
+  );
+}
+
+type GroupHandlers = {
+  isFirst: boolean;
+  isLast: boolean;
+  onRename: (name: string) => void;
+  onToggleCollapsed: () => void;
+  onMove: (dir: -1 | 1) => void;
+  onDelete: () => void;
+  menuExtra?: React.ReactNode;
+};
+
+/**
+ * The rows presentation: one column header, then the board's tree
+ * (`boardRows`) — folder rows with their views one level in, then the
+ * ungrouped views at the root. A list with a visual header rather than a
+ * `<table>`: rows are sortable `<li>`s that move under transforms, a
+ * folder is a `<section>` the held row can drop into, and below `sm` a
+ * row restacks onto two grid lines, none of which a table's row model
+ * allows. Each value carries its label for assistive tech in the row
+ * renderer (visually hidden where the header supplies it).
+ */
+function RowsTable({
+  presentation,
+  density,
+  board,
+  visibleBoard,
+  sort,
+  onSort,
+  searching,
+  noun,
+  dragActive,
+  dropTarget,
+  suppressClickUntil,
+  groupHandlers,
+}: {
+  presentation: BoardRowsPresentation;
+  density: BoardDensity;
+  board: ViewBoard;
+  visibleBoard: ViewBoard;
+  sort: ViewSort;
+  onSort: (sort: ViewSort) => void;
+  searching: boolean;
+  noun: string;
+  dragActive: boolean;
+  dropTarget: string | null;
+  suppressClickUntil: React.MutableRefObject<number>;
+  groupHandlers: (idx: number) => GroupHandlers;
+}) {
+  const tree = React.useMemo(() => boardRows(visibleBoard), [visibleBoard]);
+  const folders = tree.filter(
+    (r): r is Extract<BoardRow, { type: "group" }> => r.type === "group",
+  );
+  const rootViews = tree.filter(
+    (r): r is Extract<BoardRow, { type: "view" }> => r.type === "view",
+  );
+  const nothingVisible =
+    searching &&
+    rootViews.length === 0 &&
+    folders.every((f) => f.children.length === 0);
+  return (
+    <div
+      data-density={density}
+      className={cn(
+        "border-border/60 bg-card/40 rounded-lg border",
+        // While dragging, rows under the pointer must not react; the slot
+        // and the target folder's ring are the only feedback.
+        dragActive && "select-none [&_[data-board-card]]:pointer-events-none",
+      )}
+    >
+      <RowsHeader
+        columns={presentation.columns}
+        sort={sort}
+        onSort={onSort}
+        noun={noun}
+      />
+      <SortableContext
+        items={board.groups.map((g) => groupDndId(g.id))}
+        strategy={verticalListSortingStrategy}
+      >
+        {folders.map((node, idx) => {
+          const full = board.groups[idx] ?? node.group;
+          return (
+            <GroupRowsSection
+              key={node.id}
+              node={node}
+              fullGroup={full}
+              forceOpen={searching}
+              noun={noun}
+              dragActive={dragActive}
+              isDropTarget={dropTarget === node.id}
+              suppressClickUntil={suppressClickUntil}
+              presentation={presentation}
+              density={density}
+              {...groupHandlers(idx)}
+            />
+          );
+        })}
+      </SortableContext>
+      <UngroupedRows
+        rows={rootViews}
+        hasGroups={board.groups.length > 0}
+        noun={noun}
+        searching={searching}
+        nothingVisible={nothingVisible}
+        dragActive={dragActive}
+        isDropTarget={dropTarget === UNGROUPED_ID}
+        suppressClickUntil={suppressClickUntil}
+        presentation={presentation}
+        density={density}
+      />
+    </div>
+  );
+}
+
+/** The table's one column header. Labels with a sort key are buttons:
+ *  press to sort by that column, press the active one again for the
+ *  hand-arranged order. As with the sort menu, a sort orders the
+ *  ungrouped rows; groups keep their arranged order. Phones have no
+ *  header: the sort menu in the toolbar covers it. */
+function RowsHeader({
+  columns,
+  sort,
+  onSort,
+  noun,
+}: {
+  columns: BoardRowsPresentation["columns"];
+  sort: ViewSort;
+  onSort: (sort: ViewSort) => void;
+  noun: string;
+}) {
+  const cells: Array<{
+    key: string;
+    label: string;
+    cell: string;
+    sort?: ViewSort;
+  }> = [
+    {
+      key: "name",
+      label: "Name",
+      cell: "sm:col-start-2 sm:col-span-2 sm:row-start-1",
+      sort: "name",
+    },
+    ...columns,
+  ];
+  return (
+    <div
+      data-board-header=""
+      className={cn(
+        ROW_GRID,
+        "text-muted-foreground border-border/60 border-b px-2 py-1.5 text-xs font-medium max-sm:hidden sm:px-3",
+      )}
+    >
+      {cells.map((c) => {
+        const active = c.sort !== undefined && sort === c.sort;
+        return (
+          <div key={c.key} className={c.cell}>
+            {c.sort !== undefined ? (
+              <button
+                type="button"
+                aria-pressed={active}
+                onClick={() => onSort(active ? "custom" : c.sort!)}
+                title={
+                  active
+                    ? `Sorted by ${c.label.toLowerCase()}. Press again for your custom order.`
+                    : `Sort ungrouped ${plural(noun, 2)} by ${c.label.toLowerCase()}`
+                }
+                className={cn(
+                  "folio-tap hover:text-foreground focus-visible:ring-ring inline-flex items-center gap-1 rounded focus-visible:ring-2 focus-visible:outline-none",
+                  active && "text-foreground",
+                )}
+              >
+                {c.label}
+                {active ? (
+                  <ArrowDown className="size-3" aria-hidden="true" />
+                ) : null}
+              </button>
+            ) : (
+              <span>{c.label}</span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const ROW_LINE = "border-border/50 border-t";
+
+/** A folder row and, under it, its rows. The section is the group's
+ *  sortable node (and the drop target of a held row); the folder row is
+ *  its pointer drag surface, its grip the keyboard handle. */
+function GroupRowsSection({
+  node,
+  fullGroup,
+  forceOpen,
+  noun,
+  dragActive,
+  isDropTarget,
+  suppressClickUntil,
+  presentation,
+  density,
+  isFirst,
+  isLast,
+  onRename,
+  onToggleCollapsed,
+  onMove,
+  onDelete,
+  menuExtra,
+}: {
+  node: Extract<BoardRow, { type: "group" }>;
+  /** The group with every member, for the roll-ups and the count while
+   *  a search narrows `node.children`. */
+  fullGroup: BoardGroup;
+  forceOpen: boolean;
+  noun: string;
+  dragActive: boolean;
+  isDropTarget: boolean;
+  suppressClickUntil: React.MutableRefObject<number>;
+  presentation: BoardRowsPresentation;
+  density: BoardDensity;
+} & GroupHandlers) {
+  const group = node.group;
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: groupDndId(group.id),
+    data: { type: "group" },
+    transition: useSpringSort(),
+  });
+  const { onKeyDown, surface } = dragSurface(listeners, suppressClickUntil);
+  const [editing, setEditing] = React.useState(false);
+  const open = forceOpen || !group.collapsed;
+  const panelId = React.useId();
+  const count = fullGroup.views.length;
+  const FolderIcon = open ? FolderOpen : Folder;
+  return (
+    <section
+      ref={setNodeRef}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+      aria-label={`Group ${group.name}`}
+      className={cn(
+        "[&:not(:first-child)]:border-border/50 [&:not(:first-child)]:border-t",
+        isDragging && "opacity-50",
+        isDropTarget && "bg-primary/5 ring-primary/60 ring-2 ring-inset",
+      )}
+    >
+      <div
+        className={cn(ROW_GRID, ROW_PAD, "group/row bg-muted/30")}
+        style={{ "--row-depth": node.depth } as React.CSSProperties}
+      >
+        <div role="presentation" className="contents" {...surface}>
+          <button
+            type="button"
+            ref={setActivatorNodeRef}
+            {...attributes}
+            onKeyDown={onKeyDown}
+            data-drag-handle=""
+            aria-label={`Drag to reorder group ${group.name}`}
+            className={cn(ROW_CELL.grip, GRIP_CLASS)}
+          >
+            <GripVertical className="size-4" aria-hidden="true" />
+          </button>
+          <div
+            className={cn(
+              ROW_CELL.lead,
+              "max-sm:row-span-1 max-sm:self-center",
+            )}
+          >
+            <button
+              type="button"
+              onClick={onToggleCollapsed}
+              aria-expanded={open}
+              aria-controls={panelId}
+              disabled={forceOpen}
+              aria-label={
+                open ? `Collapse ${group.name}` : `Expand ${group.name}`
+              }
+              className="folio-tap text-muted-foreground hover:text-foreground focus-visible:ring-ring inline-flex size-7 shrink-0 items-center justify-center rounded focus-visible:ring-2 focus-visible:outline-none disabled:opacity-50"
+            >
+              <ChevronRight
+                aria-hidden="true"
+                className={cn(
+                  "size-4 transition-transform motion-reduce:transition-none",
+                  open && "rotate-90",
+                )}
+              />
+            </button>
+            <FolderIcon
+              className="text-muted-foreground size-4 shrink-0"
+              aria-hidden="true"
+            />
+          </div>
+          <div className={cn(ROW_CELL.main, "flex items-baseline gap-2")}>
+            {editing ? (
+              <GroupNameEditor
+                initial={group.name}
+                onCancel={() => setEditing(false)}
+                onCommit={(name) => {
+                  setEditing(false);
+                  if (name && name !== group.name) onRename(name);
+                }}
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={onToggleCollapsed}
+                disabled={forceOpen}
+                className="focus-visible:ring-ring min-w-0 rounded text-left text-sm font-semibold break-words focus-visible:ring-2 focus-visible:outline-none disabled:cursor-default"
+              >
+                {group.name}
+              </button>
+            )}
+            {editing ? null : (
+              <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
+                {count} {plural(noun, count)}
+              </span>
+            )}
+          </div>
+          {presentation.renderGroupCells?.(fullGroup)}
+          <div className={ROW_CELL.menu}>
+            <GroupMenu
+              name={group.name}
+              isFirst={isFirst}
+              isLast={isLast}
+              onRename={() => setEditing(true)}
+              onMove={onMove}
+              onDelete={onDelete}
+              menuExtra={menuExtra}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* The sortable context stays mounted while collapsed so a row
+          dropped on the folder row still has a target; only the rows
+          hide. */}
+      <SortableContext
+        items={node.children.map((c) => viewDndId(c.id))}
+        strategy={verticalListSortingStrategy}
+      >
+        <ul id={panelId} hidden={!open} role="list">
+          {node.children.length === 0 ? (
+            <li
+              className={cn(
+                ROW_LINE,
+                "text-muted-foreground py-3 pr-3 pl-12 text-sm transition-colors sm:pl-20",
+                dragActive && "text-foreground/80",
+              )}
+            >
+              {dragActive
+                ? `Drop ${plural(noun, 2)} here`
+                : forceOpen && count > 0
+                  ? `No ${plural(noun, 2)} here match your search.`
+                  : `Empty group — drag ${plural(noun, 2)} here or use a ${noun}'s menu.`}
+            </li>
+          ) : (
+            node.children.map((child) =>
+              child.type === "view" ? (
+                <BoardRowItem
+                  key={child.id}
+                  view={child.view}
+                  container={child.container}
+                  depth={child.depth}
+                  density={density}
+                  suppressClickUntil={suppressClickUntil}
+                  renderRow={presentation.renderRow}
+                />
+              ) : null,
+            )
+          )}
+        </ul>
+      </SortableContext>
+    </section>
+  );
+}
+
+/** The root rows: views in no group. Always a drop target, so a row can
+ *  be dragged out of a group; with groups present and nothing at the
+ *  root it shows a slim line saying so. */
+function UngroupedRows({
+  rows,
+  hasGroups,
+  noun,
+  searching,
+  nothingVisible,
+  dragActive,
+  isDropTarget,
+  suppressClickUntil,
+  presentation,
+  density,
+}: {
+  rows: Array<Extract<BoardRow, { type: "view" }>>;
+  hasGroups: boolean;
+  noun: string;
+  searching: boolean;
+  nothingVisible: boolean;
+  dragActive: boolean;
+  isDropTarget: boolean;
+  suppressClickUntil: React.MutableRefObject<number>;
+  presentation: BoardRowsPresentation;
+  density: BoardDensity;
+}) {
+  const { setNodeRef } = useDroppable({ id: UNGROUPED_ID });
+  const message = nothingVisible
+    ? `No ${plural(noun, 2)} match your search.`
+    : rows.length > 0 || !hasGroups || searching
+      ? null
+      : dragActive
+        ? "Drop here to ungroup"
+        : `Every ${noun} is in a group.`;
+  return (
+    <div
+      ref={setNodeRef}
+      className={cn(
+        "rounded-b-lg transition-colors",
+        isDropTarget && "bg-primary/5 ring-primary/60 ring-2 ring-inset",
+      )}
+    >
+      <SortableContext
+        items={rows.map((r) => viewDndId(r.id))}
+        strategy={verticalListSortingStrategy}
+      >
+        {rows.length > 0 ? (
+          <ul role="list" aria-label={hasGroups ? "Ungrouped" : undefined}>
+            {rows.map((r) => (
+              <BoardRowItem
+                key={r.id}
+                view={r.view}
+                container={r.container}
+                depth={r.depth}
+                density={density}
+                suppressClickUntil={suppressClickUntil}
+                renderRow={presentation.renderRow}
+              />
+            ))}
+          </ul>
+        ) : null}
+      </SortableContext>
+      {message ? (
+        <p className={cn(ROW_LINE, "text-muted-foreground px-3 py-3 text-sm")}>
+          {message}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+const GRIP_CLASS = cn(
+  "text-muted-foreground hover:text-foreground focus-visible:ring-ring inline-flex h-7 w-5 cursor-grab touch-none items-center justify-center rounded opacity-0 transition-opacity group-hover/row:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none active:cursor-grabbing",
+  // Always visible on touch: there is no hover to reveal it.
+  "[@media(pointer:coarse)]:opacity-100",
+);
+
+/** One sortable row. Like a card, the whole row is the pointer drag
+ *  surface (press and hold on touch) apart from its buttons; the grip
+ *  carries the keyboard path and the sortable ARIA attributes. */
+function BoardRowItem({
+  view,
+  container,
+  depth,
+  density,
+  suppressClickUntil,
+  renderRow,
+}: {
+  view: SavedViewView;
+  container: string;
+  depth: number;
+  density: BoardDensity;
+  suppressClickUntil: React.MutableRefObject<number>;
+  renderRow: BoardRowsPresentation["renderRow"];
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: viewDndId(view.id),
+    data: { type: "view", container },
+    transition: useSpringSort(),
+  });
+  const { onKeyDown, surface } = dragSurface(listeners, suppressClickUntil);
+  return (
+    <li
+      ref={setNodeRef}
+      style={
+        {
+          transform: CSS.Translate.toString(transform),
+          transition,
+          "--row-depth": depth,
+        } as React.CSSProperties
+      }
+      data-board-card=""
+      data-board-row=""
+      data-density={density}
+      className={cn(
+        ROW_GRID,
+        ROW_PAD,
+        ROW_LINE,
+        "group/row hover:bg-muted/40 relative transition-colors",
+        // The row's slot while it's held: an empty line the others
+        // spring around.
+        isDragging && "[&>*]:invisible",
+      )}
+    >
+      <div role="presentation" className="contents" {...surface}>
+        <button
+          type="button"
+          ref={setActivatorNodeRef}
+          {...attributes}
+          onKeyDown={onKeyDown}
+          data-drag-handle=""
+          aria-label={`Drag ${view.name}`}
+          className={cn(ROW_CELL.grip, GRIP_CLASS)}
+        >
+          <GripVertical className="size-4" aria-hidden="true" />
+        </button>
+        {renderRow(view, { depth, density, overlay: false })}
+      </div>
+    </li>
   );
 }
 

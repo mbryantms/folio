@@ -19,8 +19,14 @@ import type {
 
 /** `custom` renders the ungrouped section in its hand-arranged (server
  *  pinned) order, with never-arranged views trailing by name; the other
- *  keys ignore the pinned order and sort everything. */
-export type ViewSort = "custom" | "name" | "updated" | "created";
+ *  keys ignore the pinned order and sort everything. A board may add its
+ *  own keys (the reading lists add `read`) with a comparator; an unknown
+ *  key without one sorts by name. */
+export type ViewSort =
+  "custom" | "name" | "updated" | "created" | (string & Record<never, never>);
+
+/** Order two views for a board-specific sort key. */
+export type ViewCompare = (a: SavedViewView, b: SavedViewView) => number;
 
 export const VIEW_SORT_OPTIONS: ReadonlyArray<{
   value: ViewSort;
@@ -31,6 +37,10 @@ export const VIEW_SORT_OPTIONS: ReadonlyArray<{
   { value: "updated", label: "Recently updated" },
   { value: "created", label: "Recently added" },
 ];
+
+const BUILTIN_SORTS: ReadonlySet<string> = new Set(
+  VIEW_SORT_OPTIONS.map((o) => o.value),
+);
 
 export type BoardGroup = {
   id: string;
@@ -54,8 +64,13 @@ export const UNGROUPED_ID = "ungrouped";
 export function sortViews(
   views: readonly SavedViewView[],
   sort: ViewSort,
+  compare?: ViewCompare,
 ): SavedViewView[] {
   const out = views.slice();
+  if (compare && !BUILTIN_SORTS.has(sort)) {
+    out.sort(compare);
+    return out;
+  }
   switch (sort) {
     case "updated":
       out.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
@@ -86,6 +101,7 @@ export function buildViewBoard(
   groups: readonly ViewGroupView[],
   ungroupedIds: readonly string[] = [],
   sort: ViewSort = "custom",
+  compare?: ViewCompare,
 ): ViewBoard {
   const byId = new Map(views.map((v) => [v.id, v]));
   const placed = new Set<string>();
@@ -104,7 +120,7 @@ export function buildViewBoard(
     });
   const rest = views.filter((v) => !placed.has(v.id));
   if (sort !== "custom") {
-    return { groups: boardGroups, ungrouped: sortViews(rest, sort) };
+    return { groups: boardGroups, ungrouped: sortViews(rest, sort, compare) };
   }
   const pinned: SavedViewView[] = [];
   const seen = new Set<string>();
@@ -245,4 +261,65 @@ export function countViews(board: ViewBoard): number {
     board.ungrouped.length +
     board.groups.reduce((n, g) => n + g.views.length, 0)
   );
+}
+
+// ──────────────────── row model (tree presentation) ────────────────────
+
+/**
+ * One row of the board's tree presentation. A folder row carries its
+ * `children` (today only list rows: groups nest one level), a list row
+ * the container it lives in. `depth` is the indent level, 0 at the root.
+ *
+ * Nested folders slot in here: a `BoardGroup` that gains child groups
+ * becomes a folder row whose `children` holds folder rows as well, one
+ * level deeper; `rowViews` already walks any depth, so roll-ups follow.
+ */
+export type BoardRow =
+  | {
+      type: "group";
+      id: string;
+      group: BoardGroup;
+      depth: number;
+      children: BoardRow[];
+    }
+  | {
+      type: "view";
+      id: string;
+      view: SavedViewView;
+      depth: number;
+      /** A group id or `UNGROUPED_ID`. */
+      container: string;
+    };
+
+/** The board as a tree: folder rows in group order, each with its lists
+ *  one level in, then the ungrouped lists at the root. */
+export function boardRows(board: ViewBoard): BoardRow[] {
+  const groups: BoardRow[] = board.groups.map((g) => ({
+    type: "group",
+    id: g.id,
+    group: g,
+    depth: 0,
+    children: g.views.map((v) => ({
+      type: "view",
+      id: v.id,
+      view: v,
+      depth: 1,
+      container: g.id,
+    })),
+  }));
+  const root: BoardRow[] = board.ungrouped.map((v) => ({
+    type: "view",
+    id: v.id,
+    view: v,
+    depth: 0,
+    container: UNGROUPED_ID,
+  }));
+  return [...groups, ...root];
+}
+
+/** Every view at or under `row`, in display order (a folder's roll-up
+ *  input). */
+export function rowViews(row: BoardRow): SavedViewView[] {
+  if (row.type === "view") return [row.view];
+  return row.children.flatMap(rowViews);
 }
