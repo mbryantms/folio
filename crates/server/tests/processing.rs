@@ -718,45 +718,66 @@ async fn series_json_fills_series_metadata() {
     assert_eq!(series.age_rating.as_deref(), Some("Everyone"));
 }
 
-/// A series.json rating that is not on the ladder (and is no recognised
-/// alias) cannot be ranked, so it rates nothing: the series stays unrated,
-/// the way an unrecognised issue rating is treated by an age cap.
+/// A series.json rating that is not on the ladder is read through the
+/// declared-rating normaliser (`age_rating::declared_rung`): Mylar's
+/// `All Ages`, `All` and bare ages such as `17+` rate the series (the rung
+/// is stored as the floor), while text the normaliser cannot read still
+/// rates nothing and leaves the series unrated, the way an unrecognised
+/// issue rating is treated by an age cap.
 #[tokio::test]
-async fn series_json_rating_off_the_ladder_leaves_the_series_unrated() {
+async fn series_json_rating_off_the_ladder_rates_only_when_it_is_read() {
     let app = TestApp::spawn().await;
     let tmp = tempfile::tempdir().unwrap();
-    let folder = tmp.path().join("Series Upsilon");
-    std::fs::create_dir_all(&folder).unwrap();
-    write_cbz_with_xml(
-        &folder.join("Upsilon 001.cbz"),
-        1,
-        2,
-        Some(
-            r#"<?xml version="1.0"?><ComicInfo><Series>Upsilon</Series><Number>1</Number></ComicInfo>"#,
-        ),
-        None,
-    );
-    let series_json = r#"{
-        "metadata": {
-            "name": "Upsilon",
-            "publisher": "Upsilon Press",
-            "age_rating": "All Ages"
-        }
-    }"#;
-    std::fs::write(folder.join("series.json"), series_json).unwrap();
+    let cases: [(&str, &str, Option<&str>); 5] = [
+        ("Upsilon", "All Ages", Some("Everyone")),
+        ("Phi", "All", Some("Everyone")),
+        ("Chi", "17+", Some("Mature 17+")),
+        ("Psi", "12+", Some("Teen")),
+        ("Rho", "Sixteen and up", None),
+    ];
+    for (n, (name, declared, _)) in cases.iter().enumerate() {
+        let folder = tmp.path().join(format!("Series {name}"));
+        std::fs::create_dir_all(&folder).unwrap();
+        write_cbz_with_xml(
+            &folder.join(format!("{name} 001.cbz")),
+            n as u32 + 1,
+            2,
+            Some(&format!(
+                r#"<?xml version="1.0"?><ComicInfo><Series>{name}</Series><Number>1</Number></ComicInfo>"#
+            )),
+            None,
+        );
+        let series_json = format!(
+            r#"{{"metadata": {{"name": "{name}", "publisher": "{name} Press", "age_rating": "{declared}"}}}}"#
+        );
+        std::fs::write(folder.join("series.json"), series_json).unwrap();
+    }
 
     let lib_id = create_library(&app, tmp.path()).await;
     let state = app.state();
     scanner::scan_library(&state, lib_id).await.unwrap();
 
-    let series = SeriesEntity::find()
-        .filter(entity::series::Column::LibraryId.eq(lib_id))
-        .one(&state.db)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(series.publisher.as_deref(), Some("Upsilon Press"));
-    assert_eq!(series.age_rating, None);
+    for (name, declared, want) in cases {
+        let series = SeriesEntity::find()
+            .filter(entity::series::Column::LibraryId.eq(lib_id))
+            .filter(entity::series::Column::Name.eq(name))
+            .one(&state.db)
+            .await
+            .unwrap()
+            .unwrap_or_else(|| panic!("series {name}"));
+        assert_eq!(
+            series.publisher.as_deref(),
+            Some(format!("{name} Press").as_str())
+        );
+        assert_eq!(series.age_rating.as_deref(), want, "{declared}");
+        // The floor holds the rung when the normaliser read the text, and
+        // the text as written when it did not.
+        assert_eq!(
+            series.declared_age_rating.as_deref(),
+            Some(want.unwrap_or(declared)),
+            "{declared}"
+        );
+    }
 }
 
 #[tokio::test]

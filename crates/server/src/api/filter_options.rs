@@ -32,7 +32,7 @@ use uuid::Uuid;
 
 use super::error;
 use crate::auth::CurrentUser;
-use crate::library::access;
+use crate::library::{access, age_rating, series_rating};
 use crate::state::AppState;
 use crate::util::search::{SQL_LIKE_ESCAPE, prefix_pattern};
 use server_macros::handler;
@@ -199,19 +199,164 @@ pub async fn languages(
     fetch_distinct_series_column(&app, &user, "language_code", q).await
 }
 
+/// Which rating `/filter-options/age_ratings` lists: the series' own
+/// (`series`, the default) or the issues' own (`issues`, for the issue
+/// grid's `?age_rating=` filter, which compares the issue's rating).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgeRatingOptionsEntity {
+    #[default]
+    Series,
+    Issues,
+}
+
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct AgeRatingOptionsQuery {
+    /// Restrict to a single library. When omitted, every library the
+    /// caller can see contributes.
+    #[serde(default)]
+    #[param(value_type = Option<String>)]
+    pub library: Option<Uuid>,
+    /// Case-insensitive prefix of a stored rating or of a rung's label.
+    #[serde(default)]
+    pub q: Option<String>,
+    /// Opaque continuation token returned as `next_cursor`.
+    #[serde(default)]
+    pub cursor: Option<String>,
+    /// Page size (default 100, max 200).
+    #[serde(default)]
+    pub limit: Option<i64>,
+    /// `series` (default) lists the series' ratings; `issues` lists the
+    /// issues' own ratings.
+    #[serde(default)]
+    #[param(inline)]
+    pub entity: Option<AgeRatingOptionsEntity>,
+}
+
+// One option per ladder rung, labelled with the rung's canonical
+// spelling, standing for every stored spelling that ranks there
+// (aliases, case, surrounding whitespace: `age_rating::sql_norm`). Stored
+// text that ranks nowhere (`Unknown`, `Rating Pending`, off-ladder text)
+// stays its own option, as written, and a filter on it matches that text
+// exactly. Sorted by label like every other option list.
 #[utoipa::path(
     operation_id = "filter_options_age_ratings",    get,
     path = "/filter-options/age_ratings",
-    params(("library" = Option<String>, Query,), ("q" = Option<String>, Query,)),
+    params(AgeRatingOptionsQuery),
     responses((status = 200, body = shared::pagination::CursorPage<String>))
 )]
 #[handler]
 pub async fn age_ratings(
     State(app): State<AppState>,
     user: CurrentUser,
-    Query(q): Query<OptionsQuery>,
+    Query(q): Query<AgeRatingOptionsQuery>,
 ) -> impl IntoResponse {
-    fetch_distinct_series_column(&app, &user, "age_rating", q).await
+    let after = match parse_cursor(q.cursor.as_deref()) {
+        Ok(v) => v,
+        Err(_) => return error(StatusCode::BAD_REQUEST, "bad_cursor", "invalid cursor"),
+    };
+    let limit = parse_limit(q.limit);
+    let visible = access::for_user(&app, &user).await;
+    let entity = q.entity.unwrap_or_default();
+    // `rows`: the stored ratings in scope, one per series (or per issue),
+    // as `r.rating`. Each is folded onto its rung's canonical spelling
+    // when it ranks, and kept as written when it does not.
+    let (rating, mut rows) = match entity {
+        AgeRatingOptionsEntity::Series => (
+            "s.age_rating",
+            "SELECT s.age_rating AS rating FROM series s \
+              WHERE s.removed_at IS NULL"
+                .to_owned(),
+        ),
+        AgeRatingOptionsEntity::Issues => (
+            "i.age_rating",
+            "SELECT i.age_rating AS rating FROM issues i \
+               JOIN series s ON s.id = i.series_id \
+              WHERE s.removed_at IS NULL AND i.removed_at IS NULL \
+                AND i.state = 'active'"
+                .to_owned(),
+        ),
+    };
+    rows.push_str(&format!(" AND {rating} IS NOT NULL AND {rating} <> ''"));
+    let mut params: Vec<Value> = Vec::new();
+
+    if let Some(lib) = q.library {
+        if !visible.contains(lib) {
+            return error(StatusCode::NOT_FOUND, "not_found", "library not found");
+        }
+        params.push(Value::from(lib));
+        rows.push_str(&format!(" AND s.library_id = ${}", params.len()));
+    } else if !visible.unrestricted {
+        if visible.allowed.is_empty() {
+            return Json(CursorPage::<String>::bounded(vec![])).into_response();
+        }
+        let placeholders: Vec<String> = visible
+            .allowed
+            .iter()
+            .map(|id| {
+                params.push(Value::from(*id));
+                format!("${}", params.len())
+            })
+            .collect();
+        rows.push_str(&format!(
+            " AND s.library_id IN ({})",
+            placeholders.join(",")
+        ));
+    }
+    // WP-2.7: the age-rating cap — on the series rating, and for issues
+    // on the issue's own rating and its series'.
+    match entity {
+        AgeRatingOptionsEntity::Series => {
+            rows.push_str(&visible.raw_cap_clause("s.library_id", "s.age_rating", &mut params));
+        }
+        AgeRatingOptionsEntity::Issues => {
+            rows.push_str(&visible.issue_cap_sql_joined("i", "s", &mut params));
+        }
+    }
+
+    let mut sql = format!(
+        "WITH ladder(norm, rank, canon) AS {ladder} \
+         SELECT value FROM ( \
+           SELECT DISTINCT COALESCE(l.canon, r.rating) AS value \
+             FROM ({rows}) r \
+             LEFT JOIN ladder l ON l.norm = {norm}",
+        ladder = series_rating::ladder_values_sql(),
+        norm = age_rating::sql_norm("r.rating"),
+    );
+    if let Some(prefix) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        // A prefix of the stored text or of the rung's label (`expl`
+        // finds `X18+` through a stored `Explicit`).
+        params.push(q_prefix_param(prefix));
+        sql.push_str(&format!(
+            " WHERE (lower(r.rating) LIKE ${n}{SQL_LIKE_ESCAPE} \
+                OR lower(l.canon) LIKE ${n}{SQL_LIKE_ESCAPE})",
+            n = params.len()
+        ));
+    }
+    sql.push_str(") v");
+
+    if let Some(after) = after {
+        params.push(Value::from(after));
+        sql.push_str(&format!(" WHERE value > ${}", params.len()));
+    }
+
+    // L-4 (WP-6.3): bound, not interpolated.
+    params.push(Value::from(limit + 1));
+    sql.push_str(&format!(" ORDER BY value ASC LIMIT ${}", params.len()));
+
+    let backend = app.db.get_database_backend();
+    let stmt = Statement::from_sql_and_values(backend, sql, params);
+    match ValueRow::find_by_statement(stmt).all(&app.db).await {
+        Ok(rows) => {
+            let values: Vec<String> = rows.into_iter().map(|r| r.value).collect();
+            Json(page_from_rows(values, limit)).into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "filter_options age_ratings query failed");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "db", "internal")
+        }
+    }
 }
 
 #[utoipa::path(
@@ -523,7 +668,8 @@ async fn fetch_distinct_issue_csv(
 }
 
 /// Shared SQL builder for distinct values pulled from a single column
-/// on the `series` table (`publisher`, `language_code`, `age_rating`).
+/// on the `series` table (`publisher`, `language_code`). Age ratings
+/// have their own folded lookup ([`age_ratings`]).
 /// Excludes NULL and empty rows, applies the library-ACL gate, and
 /// honours the optional case-insensitive prefix filter.
 async fn fetch_distinct_series_column(
@@ -535,7 +681,7 @@ async fn fetch_distinct_series_column(
     // The column name is a hard-coded `'static` chosen by callers, so
     // formatting it into the SQL is safe — no user input ever reaches
     // this string. Defensive belt: only allow the known list.
-    if !matches!(column, "publisher" | "language_code" | "age_rating") {
+    if !matches!(column, "publisher" | "language_code") {
         return error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal",

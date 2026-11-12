@@ -21028,8 +21028,22 @@ export interface operations {
     filter_options_age_ratings: {
         parameters: {
             query?: {
+                /**
+                 * @description Restrict to a single library. When omitted, every library the
+                 *     caller can see contributes.
+                 */
                 library?: string;
+                /** @description Case-insensitive prefix of a stored rating or of a rung's label. */
                 q?: string;
+                /** @description Opaque continuation token returned as `next_cursor`. */
+                cursor?: string;
+                /** @description Page size (default 100, max 200). */
+                limit?: number;
+                /**
+                 * @description `series` (default) lists the series' ratings; `issues` lists the
+                 *     issues' own ratings.
+                 */
+                entity?: "series" | "issues";
             };
             header?: never;
             path?: never;

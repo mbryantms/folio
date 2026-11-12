@@ -1970,10 +1970,9 @@ fn apply_series_direct_column_filters(
     if let Some(y) = q.year_to {
         select = select.filter(series::Column::Year.lte(y));
     }
-    let direct_facets: [(Option<&str>, series::Column); 3] = [
+    let direct_facets: [(Option<&str>, series::Column); 2] = [
         (q.publisher.as_deref(), series::Column::Publisher),
         (q.language.as_deref(), series::Column::LanguageCode),
-        (q.age_rating.as_deref(), series::Column::AgeRating),
     ];
     for (raw, column) in direct_facets {
         let Some(raw) = raw else { continue };
@@ -1982,6 +1981,16 @@ fn apply_series_direct_column_filters(
             continue;
         }
         select = select.filter(column.is_in(values));
+    }
+    // A rating value stands for its whole ladder rung (aliases, case,
+    // surrounding whitespace); unranked text matches as written.
+    if let Some(cond) = q.age_rating.as_deref().and_then(|raw| {
+        crate::library::age_rating::filter_match(
+            Expr::col((series::Entity, series::Column::AgeRating)),
+            &split_csv(raw),
+        )
+    }) {
+        select = select.filter(cond);
     }
     select
 }

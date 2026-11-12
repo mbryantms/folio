@@ -2448,10 +2448,9 @@ fn apply_issue_direct_column_filters(
     if let Some(y) = q.year_to {
         select = select.filter(issue::Column::Year.lte(y));
     }
-    let direct_facets: [(Option<&str>, issue::Column); 3] = [
+    let direct_facets: [(Option<&str>, issue::Column); 2] = [
         (q.publisher.as_deref(), issue::Column::Publisher),
         (q.language.as_deref(), issue::Column::LanguageCode),
-        (q.age_rating.as_deref(), issue::Column::AgeRating),
     ];
     for (raw, column) in direct_facets {
         let Some(raw) = raw else { continue };
@@ -2460,6 +2459,16 @@ fn apply_issue_direct_column_filters(
             continue;
         }
         select = select.filter(column.is_in(v));
+    }
+    // The issue's own rating, folded onto the ladder like the series
+    // filter (`age_rating::filter_match`).
+    if let Some(cond) = q.age_rating.as_deref().and_then(|raw| {
+        crate::library::age_rating::filter_match(
+            Expr::col((issue::Entity, issue::Column::AgeRating)),
+            &super::series::split_csv(raw),
+        )
+    }) {
+        select = select.filter(cond);
     }
     select
 }

@@ -44,7 +44,10 @@ export type OptionsEndpoint =
   | { kind: "libraries" }
   | { kind: "publishers" }
   | { kind: "languages" }
-  | { kind: "age_ratings" }
+  /** `entity: "issues"` lists the issues' own ratings (the issue grid's
+   *  filter compares those); the default lists series ratings. Either
+   *  way there is one option per ladder rung. */
+  | { kind: "age_ratings"; entity?: "issues" }
   | { kind: "characters" }
   | { kind: "teams" }
   | { kind: "locations" }
