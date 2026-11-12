@@ -900,19 +900,17 @@ async fn restore_audits(app: &TestApp, id: &str) -> usize {
         .len()
 }
 
-/// Whether the per-issue rewrite lock is free (claimed and released again).
-async fn lock_free(app: &TestApp, id: &str) -> bool {
+/// Whether the per-issue rewrite lock is held, checked with `EXISTS` on
+/// the lock's key (never by claiming it, which could take the lock before
+/// a restore task does and make that task answer 409).
+async fn lock_held(app: &TestApp, id: &str) -> bool {
     let mut redis = app.state().jobs.redis.clone();
-    match mutex::try_claim(&mut redis, id, mutex::EDIT_TTL_SECS)
+    let n: i64 = redis::cmd("EXISTS")
+        .arg(mutex::mutex_key(id))
+        .query_async(&mut redis)
         .await
-        .unwrap()
-    {
-        Some(token) => {
-            mutex::release(&mut redis, id, &token).await;
-            true
-        }
-        None => false,
-    }
+        .unwrap();
+    n == 1
 }
 
 /// Waits (up to 30 s) until `done` holds.
@@ -983,16 +981,16 @@ async fn a_restore_past_the_deadline_answers_in_progress_and_finishes() {
     assert_eq!(body["status"], "in_progress", "{body}");
     assert_eq!(body["in_progress"], true, "{body}");
     assert!(body["message"].as_str().unwrap().contains("still running"));
-    assert!(
-        !lock_free(&app, &id).await,
-        "the lock is held while it runs"
-    );
+    eventually("the lock held while it runs", || lock_held(&app, &id)).await;
 
     eventually("the audit row", || async {
         restore_audits(&app, &id).await == 1
     })
     .await;
-    eventually("the lock released", || lock_free(&app, &id)).await;
+    eventually("the lock released", || async {
+        !lock_held(&app, &id).await
+    })
+    .await;
     assert!(rescan_queued(&app, &id).await, "the rescan was queued");
     assert_eq!(std::fs::read(&path).unwrap(), b"backup-0");
     assert_eq!(std::fs::read(slot(&path, 0)).unwrap(), b"current");
@@ -1041,7 +1039,10 @@ async fn a_restore_that_fails_after_the_response_records_a_library_event() {
     assert_eq!(ev.len(), 1);
     assert_eq!(ev[0].severity, "error");
     assert!(ev[0].summary.contains("restore"), "{}", ev[0].summary);
-    eventually("the lock released", || lock_free(&app, &id)).await;
+    eventually("the lock released", || async {
+        !lock_held(&app, &id).await
+    })
+    .await;
     assert_eq!(restore_audits(&app, &id).await, 0, "no restore happened");
     assert_eq!(snapshot(dir.path()), before, "the archive is unchanged");
 }
@@ -1075,7 +1076,10 @@ async fn a_dropped_request_still_records_the_restore() {
         restore_audits(&app, &id).await == 1
     })
     .await;
-    eventually("the lock released", || lock_free(&app, &id)).await;
+    eventually("the lock released", || async {
+        !lock_held(&app, &id).await
+    })
+    .await;
     assert_eq!(std::fs::read(&path).unwrap(), b"backup-0");
 }
 
@@ -1350,4 +1354,108 @@ fn startup_cleanup_reaps_a_leftover_rebuild_staging_file() {
     let removed = archive_rewrite::startup_cleanup([dir.path().to_path_buf()], Duration::ZERO);
     assert_eq!(removed, 1);
     assert_eq!(snapshot(dir.path()), before, "only the staging file went");
+}
+
+// ───────── the facts are checked again under the lock ─────────
+
+/// The row the handler's preflight saw went stale before the task claimed
+/// the lock: a page edit converted `X.cbr` to `X.cbz` in between. The task
+/// checks the row again under the lock and refuses (409
+/// `archive.issue_changed`) instead of renaming the conversion's
+/// `X.cbr.bak` back to `X.cbr` beside the `.cbz`. Nothing changes.
+#[tokio::test]
+async fn a_restore_refuses_when_the_row_changed_before_the_lock() {
+    let app = TestApp::spawn().await;
+    let _auth = register_admin(&app).await;
+    let dir = tempdir().unwrap();
+    let (id, cbz) = seed(&app, dir.path(), 1, "issue.cbz", b"converted").await;
+    // The conversion's backup of the original RAR.
+    std::fs::write(dir.path().join("issue.cbr.bak"), b"original rar").unwrap();
+    let (actor, row) = admin_and_row(&app, &id).await;
+    // What preflight saw: the row before the conversion repointed it.
+    let mut stale = row.clone();
+    stale.file_path = dir.path().join("issue.cbr").to_string_lossy().into_owned();
+    let before = snapshot(dir.path());
+
+    let resp = server::api::archive_edit::restore_issue(
+        &app.state(),
+        request(stale, actor, None),
+        server::api::archive_edit::RESTORE_RESPONSE_DEADLINE,
+        archive_rewrite::restore_latest_backup,
+    )
+    .await;
+    let (status, body) = json_of(resp).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "archive.issue_changed", "{body}");
+    assert_eq!(snapshot(dir.path()), before, "nothing changed");
+    assert!(!dir.path().join("issue.cbr").exists());
+    assert_eq!(std::fs::read(&cbz).unwrap(), b"converted");
+    assert!(!lock_held(&app, &id).await, "the lock is released");
+    assert_eq!(restore_audits(&app, &id).await, 0);
+}
+
+/// Writeback turned off between the preflight and the claim: the task
+/// refuses with the handler's own error and changes nothing.
+#[tokio::test]
+async fn a_restore_refuses_when_writeback_was_turned_off_before_the_lock() {
+    let app = TestApp::spawn().await;
+    let _auth = register_admin(&app).await;
+    let dir = tempdir().unwrap();
+    let (id, path) = seed(&app, dir.path(), 1, "issue.cbz", b"current").await;
+    std::fs::write(slot(&path, 0), b"backup-0").unwrap();
+    let (actor, row) = admin_and_row(&app, &id).await;
+    entity::library::ActiveModel {
+        id: Set(row.library_id),
+        allow_archive_writeback: Set(false),
+        ..Default::default()
+    }
+    .update(&app.state().db)
+    .await
+    .unwrap();
+    let before = snapshot(dir.path());
+
+    let resp = server::api::archive_edit::restore_issue(
+        &app.state(),
+        request(row, actor, None),
+        server::api::archive_edit::RESTORE_RESPONSE_DEADLINE,
+        archive_rewrite::restore_latest_backup,
+    )
+    .await;
+    let (status, body) = json_of(resp).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(
+        body["error"]["code"], "validation.archive_writeback_disabled",
+        "{body}"
+    );
+    assert_eq!(snapshot(dir.path()), before);
+}
+
+/// The named pre-conversion backup is gone by the time the task holds the
+/// lock: the same refusal the handler gives, nothing changes.
+#[tokio::test]
+async fn a_rebuild_refuses_when_the_backup_is_no_longer_listed() {
+    let app = TestApp::spawn().await;
+    let _auth = register_admin(&app).await;
+    let dir = tempdir().unwrap();
+    let (id, _path) = seed(&app, dir.path(), 1, "issue.cbz", b"current").await;
+    let (actor, row) = admin_and_row(&app, &id).await;
+    let before = snapshot(dir.path());
+    let resp = server::api::archive_edit::restore_issue(
+        &app.state(),
+        request(row, actor, Some("issue.cbr.bak".to_owned())),
+        server::api::archive_edit::RESTORE_RESPONSE_DEADLINE,
+        |_root: &LibraryRoot,
+         _target: &Path|
+         -> Result<archive_rewrite::RestoreOutcome, RewriteError> {
+            panic!("the swap must not run")
+        },
+    )
+    .await;
+    let (status, body) = json_of(resp).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(
+        body["error"]["code"], "archive.backup_not_restorable",
+        "{body}"
+    );
+    assert_eq!(snapshot(dir.path()), before);
 }

@@ -17,6 +17,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use futures::FutureExt;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -163,15 +164,28 @@ async fn preflight(
     app: &AppState,
     issue_id: &str,
 ) -> Result<(entity::issue::Model, entity::library::Model), Response> {
+    preflight_checked(app, issue_id)
+        .await
+        .map_err(RestoreFailure::into_response)
+}
+
+/// [`preflight`] with the refusal as data, so the restore task can run the
+/// same gates again once it holds the lock.
+async fn preflight_checked(
+    app: &AppState,
+    issue_id: &str,
+) -> Result<(entity::issue::Model, entity::library::Model), RestoreFailure> {
+    let internal =
+        || RestoreFailure::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     let Some(row) = entity::issue::Entity::find_by_id(issue_id)
         .one(&app.db)
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "archive edit: issue lookup failed");
-            error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+            internal()
         })?
     else {
-        return Err(error(
+        return Err(RestoreFailure::new(
             StatusCode::NOT_FOUND,
             "issue.not_found",
             "issue not found",
@@ -183,21 +197,17 @@ async fn preflight(
         .ok()
         .flatten()
     else {
-        return Err(error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            "internal",
-        ));
+        return Err(internal());
     };
     if !lib.allow_archive_writeback {
-        return Err(error(
+        return Err(RestoreFailure::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "validation.archive_writeback_disabled",
             "archive writeback is not enabled for this library",
         ));
     }
     if !is_editable_format(&row.file_path) {
-        return Err(error(
+        return Err(RestoreFailure::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "validation.archive_format_unsupported",
             "page editing supports CBZ, CBT, and CBR archives (CBR is converted to CBZ)",
@@ -530,6 +540,10 @@ pub struct RestoreQuery {
     pub backup: Option<String>,
 }
 
+/// The refusal for a `?backup=` the listing does not offer.
+const BACKUP_NOT_RESTORABLE: &str = "restore takes the newest backup (.bak) or a pre-conversion \
+     backup the backups listing offers for this issue";
+
 /// How long the restore handler waits for the restore before answering
 /// `in_progress`; comfortably below the `/api` route timeout
 /// (`app::JSON_ROUTE_TIMEOUT`, 60 s), which would otherwise answer 408 for
@@ -545,7 +559,7 @@ pub const RESTORE_RESPONSE_DEADLINE: std::time::Duration = std::time::Duration::
         (status = 202, body = RestoreResponse, description = "restored, or (`in_progress: true`) still running at the response deadline and finishing on its own"),
         (status = 403, description = "admin only"),
         (status = 404, description = "issue not found / no backup"),
-        (status = 409, description = "another rewrite is in progress"),
+        (status = 409, description = "another rewrite is in progress / the issue's archive changed while the restore was starting (`archive.issue_changed`)"),
         (status = 422, description = "writeback disabled / unsupported format / the named backup is not restorable / the pre-conversion backup could not be rebuilt"),
     )
 )]
@@ -594,8 +608,7 @@ pub async fn restore(
         return error(
             StatusCode::UNPROCESSABLE_ENTITY,
             "archive.backup_not_restorable",
-            "restore takes the newest backup (.bak) or a pre-conversion backup the \
-             backups listing offers for this issue",
+            BACKUP_NOT_RESTORABLE,
         );
     };
     let limits = app.cfg().archive_limits();
@@ -643,6 +656,10 @@ pub struct RestoreFailure {
 }
 
 impl RestoreFailure {
+    fn into_response(self) -> Response {
+        error(self.status, self.code, &self.message)
+    }
+
     fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
         Self {
             status,
@@ -751,7 +768,7 @@ where
             }),
         )
             .into_response(),
-        Ok(Ok(Err(failure))) => error(failure.status, failure.code, &failure.message),
+        Ok(Ok(Err(failure))) => failure.into_response(),
         Ok(Err(_)) => {
             tracing::error!(issue_id = %issue_id, "archive restore: the restore task ended without an outcome");
             error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
@@ -858,7 +875,10 @@ where
         token.clone(),
         mutex::EDIT_TTL_SECS,
     );
-    let result = restore_locked(
+    // A panic in the work after the claim still releases the lock and
+    // reaches the handler (or, once it is gone, the library events) as a
+    // failure.
+    let result = std::panic::AssertUnwindSafe(restore_locked(
         app,
         row.clone(),
         actor_id,
@@ -866,8 +886,17 @@ where
         actor_ua,
         rebuilt_from,
         swap,
-    )
-    .await;
+    ))
+    .catch_unwind()
+    .await
+    .unwrap_or_else(|_| {
+        tracing::error!(issue_id = %row.id, "archive restore: the restore task panicked");
+        Err(RestoreFailure::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            "the restore failed unexpectedly; see the server log",
+        ))
+    });
     drop(heartbeat);
     let mut redis = app.jobs.redis.clone();
     mutex::release(&mut redis, &row.id, &token).await;
@@ -892,6 +921,34 @@ where
         + Send
         + 'static,
 {
+    // The handler's preflight and backup check ran before the lock was
+    // claimed: run them again on fresh rows now that nothing else can
+    // rewrite the issue. A page edit may have converted `X.cbr` to `X.cbz`
+    // in between; restoring against the stale path would rename the
+    // conversion's `X.cbr.bak` back to `X.cbr` beside the `.cbz`.
+    let (fresh, _lib) = preflight_checked(app, &row.id).await?;
+    if fresh.file_path != row.file_path {
+        return Err(RestoreFailure::new(
+            StatusCode::CONFLICT,
+            "archive.issue_changed",
+            "the issue's archive changed while the restore was starting (it was renamed or \
+             converted); nothing was restored. Try again.",
+        ));
+    }
+    if let Some(name) = &rebuilt_from {
+        let still_listed = listed_backups(std::path::Path::new(&fresh.file_path))
+            .await
+            .iter()
+            .any(|b| b.pre_conversion && &b.name == name);
+        if !still_listed {
+            return Err(RestoreFailure::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "archive.backup_not_restorable",
+                BACKUP_NOT_RESTORABLE,
+            ));
+        }
+    }
+
     // Relative to the folder handle from the no-follow walk; a link at the
     // backup or the archive (or on the folder path) is refused. The library
     // lookup comes first, so no database connection is held while waiting

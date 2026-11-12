@@ -36,7 +36,9 @@ use uuid::Uuid;
 
 const KEY_PREFIX: &str = "archive:rewrite:";
 
-fn mutex_key(issue_id: &str) -> String {
+/// The Redis key of `issue_id`'s rewrite lock (tests check it with
+/// `EXISTS` without claiming).
+pub fn mutex_key(issue_id: &str) -> String {
     format!("{KEY_PREFIX}{issue_id}")
 }
 

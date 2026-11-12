@@ -1374,6 +1374,8 @@ export function useRestoreArchiveMutation(issueId: string) {
       // The restore runs while the request waits; past the server's
       // deadline it answers `in_progress` and finishes on its own.
       successMessage: restoreSuccessMessage,
+      // "Still running" is an app-state notice, not a completion.
+      successVariant: (data) => (data?.in_progress ? "info" : "success"),
     },
   );
 }

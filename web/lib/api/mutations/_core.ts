@@ -170,6 +170,14 @@ export function useApiMutation<TData, TInput>(
      */
     toastId?: string;
     /**
+     * The toast variant for `successMessage`: `success` (the default) for a
+     * completion, `info` for an app-state notice such as "still running".
+     */
+    successVariant?:
+      | "success"
+      | "info"
+      | ((data: TData | null, input: TInput) => "success" | "info");
+    /**
      * A link on the success toast to where the queued work can be
      * watched (e.g. "View progress" → Background work). For mutations
      * that only *start* something; the toast alone would otherwise be the
@@ -186,6 +194,7 @@ export function useApiMutation<TData, TInput>(
   const {
     successMessage,
     successAction,
+    successVariant,
     toastId,
     onSuccess,
     onError,
@@ -213,7 +222,11 @@ export function useApiMutation<TData, TInput>(
           typeof successAction === "function"
             ? successAction(data, input)
             : successAction;
-        toast.success(msg, {
+        const variant =
+          (typeof successVariant === "function"
+            ? successVariant(data, input)
+            : successVariant) ?? "success";
+        toast[variant](msg, {
           ...(toastId ? { id: toastId } : {}),
           ...(action
             ? {
