@@ -163,10 +163,16 @@ fn fetch_failure(e: &FetchBytesError) -> RefreshFailure {
         FetchBytesError::Ssrf(SsrfError::Unresolvable(_)) | FetchBytesError::Transport(_) => {
             RefreshFailure::new(K::Unreachable, None)
         }
-        // Private address, loopback, a non-https redirect, a malformed
-        // target: one kind, no detail, so the record cannot be used to
-        // tell internal addresses apart.
+        // Private address, loopback, a non-https URL, a malformed target:
+        // one kind, no detail, so the record cannot be used to tell
+        // internal addresses apart.
         FetchBytesError::Ssrf(_) => RefreshFailure::new(K::AddressRefused, None),
+        // A redirect target the guard refused *or could not resolve*: the
+        // same, so a source that redirects to a name of its choosing cannot
+        // learn from the stored state whether that name resolves inside
+        // the server's network. (Only the list's own URL not resolving
+        // reads as unreachable.)
+        FetchBytesError::RedirectRefused(_) => RefreshFailure::new(K::AddressRefused, None),
         FetchBytesError::Timeout => RefreshFailure::new(K::Unreachable, Some(NO_ANSWER.to_owned())),
         FetchBytesError::HttpStatus(status) => status_failure(*status),
         // The host name stays out: it is in the source URL already.
@@ -252,10 +258,45 @@ pub async fn refresh(
     force: bool,
     budget: FetchBudget,
 ) -> Result<ImportSummary, RefreshError> {
+    let started = tokio::time::Instant::now();
     let result = refresh_source(db, list_id, trigger, force, budget).await;
-    let failure = result.as_ref().err().map(RefreshError::failure);
-    record_outcome(db, list_id, failure.as_ref()).await;
+    match &result {
+        Ok(_) => record_outcome(db, list_id, None).await,
+        Err(e) if !e.is_source_failure(budget, started.elapsed()) => {}
+        Err(e) => record_outcome(db, list_id, Some(&e.failure())).await,
+    }
     result
+}
+
+/// Whether `budget` is shorter than the sweep's ([`SWEEP_BUDGET`]): the
+/// request paths (40 s) and `refresh-all` (at most 15 s per list, less as
+/// its deadline runs down).
+pub fn is_capped_budget(budget: FetchBudget) -> bool {
+    budget.fetch_deadline < SWEEP_BUDGET.fetch_deadline
+        || budget.list_budget < SWEEP_BUDGET.list_budget
+}
+
+impl RefreshError {
+    /// Whether this error says something about the list's *source*, and so
+    /// is recorded on the list ([`record_outcome`]). Not recorded, leaving
+    /// the refresh state as it was:
+    ///
+    /// - a timeout that ran into a budget capped below the sweep's
+    ///   ([`is_capped_budget`]) after `elapsed` reached that cap: a slow
+    ///   host the sweep would wait for is not failing (a timeout before the
+    ///   cap, e.g. a 30 s step timeout under the 40 s request budget, is
+    ///   the fetcher's own and is recorded);
+    /// - a database error, which is the server's, not the source's.
+    pub fn is_source_failure(&self, budget: FetchBudget, elapsed: std::time::Duration) -> bool {
+        match self {
+            Self::Db(_) | Self::Catalog(catalog::CatalogError::Db(_)) => false,
+            Self::Timeout => {
+                let cap = budget.fetch_deadline.min(budget.list_budget);
+                !(is_capped_budget(budget) && elapsed >= cap)
+            }
+            _ => true,
+        }
+    }
 }
 
 async fn refresh_source(
@@ -945,6 +986,34 @@ mod tests {
         assert!(is_due(failing(20, h(24)), now));
     }
 
+    #[test]
+    fn only_source_failures_are_recorded() {
+        use super::super::fetch::{CBL_REQUEST_BULK_LIST_BUDGET, REQUEST_BUDGET};
+        let s = std::time::Duration::from_secs;
+        let bulk = REQUEST_BUDGET.capped_at(CBL_REQUEST_BULK_LIST_BUDGET);
+        assert!(!is_capped_budget(SWEEP_BUDGET));
+        assert!(is_capped_budget(REQUEST_BUDGET));
+        assert!(is_capped_budget(bulk));
+        let t = RefreshError::Timeout;
+        // Ran into a capped budget: not the source's failure.
+        assert!(!t.is_source_failure(REQUEST_BUDGET, s(40)));
+        assert!(!t.is_source_failure(bulk, s(15)));
+        assert!(!t.is_source_failure(REQUEST_BUDGET.capped_at(s(6)), s(7)));
+        // Timed out before the cap (the fetcher's own step timeout): is.
+        assert!(t.is_source_failure(REQUEST_BUDGET, s(30)));
+        // Under the sweep's budget, any timeout is.
+        assert!(t.is_source_failure(SWEEP_BUDGET, s(60)));
+        assert!(t.is_source_failure(SWEEP_BUDGET, s(120)));
+        // A database error never is; other errors always are.
+        let db = || sea_orm::DbErr::Custom("x".into());
+        assert!(!RefreshError::Db(db()).is_source_failure(SWEEP_BUDGET, s(1)));
+        assert!(
+            !RefreshError::Catalog(catalog::CatalogError::Db(db()))
+                .is_source_failure(SWEEP_BUDGET, s(1))
+        );
+        assert!(RefreshError::NotCbl.is_source_failure(REQUEST_BUDGET, s(40)));
+    }
+
     /// Every failure path maps to one kind, and no detail carries remote
     /// text, a host or an address.
     #[test]
@@ -1008,6 +1077,20 @@ mod tests {
                 RefreshError::Fetch(FetchBytesError::Ssrf(SsrfError::PrivateAddress(ip(
                     "fd12::1",
                 )))),
+                K::AddressRefused,
+                None,
+            ),
+            (
+                RefreshError::Fetch(FetchBytesError::RedirectRefused(SsrfError::PrivateAddress(
+                    ip("192.168.1.1"),
+                ))),
+                K::AddressRefused,
+                None,
+            ),
+            (
+                RefreshError::Fetch(FetchBytesError::RedirectRefused(SsrfError::Unresolvable(
+                    "intranet.corp: no such host".into(),
+                ))),
                 K::AddressRefused,
                 None,
             ),

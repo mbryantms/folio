@@ -1596,7 +1596,10 @@ async fn create_from_url(
     let fetched =
         match crate::cbl::fetch::fetch_cbl_url(&url, crate::cbl::fetch::REQUEST_BUDGET).await {
             Ok(fetched) => fetched,
-            Err(crate::util::ssrf::FetchBytesError::Ssrf(e)) => {
+            Err(
+                crate::util::ssrf::FetchBytesError::Ssrf(e)
+                | crate::util::ssrf::FetchBytesError::RedirectRefused(e),
+            ) => {
                 return error(StatusCode::BAD_REQUEST, "invalid_url", &e.to_string());
             }
             Err(crate::util::ssrf::FetchBytesError::TooLarge { .. }) => {

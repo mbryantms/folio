@@ -2899,6 +2899,10 @@ async fn a_stalled_host_hits_the_request_budget_before_the_route_timeout() {
         "{took:?}"
     );
     assert_eq!(stored_state(&db, list_id).await, before);
+    // Running into the request's own (shorter than the sweep's) budget says
+    // nothing about the source: no refresh state is recorded.
+    let o = outcome(&db, list_id).await;
+    assert_eq!((o.attempt_at, o.kind, o.count), (None, None, 0));
 }
 
 // ───── refresh outcome: last attempt, failure kind, backoff ─────
@@ -3137,7 +3141,9 @@ async fn address_guard_refusals_read_the_same_and_store_no_address() {
 }
 
 /// The hourly sweep records the outcome like a manual refresh, writes no
-/// audit row, and backs off a failing list while a healthy one stays due.
+/// audit row (for SHARED lists, which an admin's manual refresh does audit:
+/// the positive control), and backs off a failing list while a healthy one
+/// stays due.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_sweep_records_failures_and_backs_off() {
     use sea_orm::sea_query::Expr;
@@ -3159,6 +3165,10 @@ async fn the_sweep_records_failures_and_backs_off() {
             cbl_list::Column::LastRefreshedAt,
             Expr::value(two_hours_ago),
         )
+        .col_expr(
+            cbl_list::Column::OwnerUserId,
+            Expr::value(Option::<Uuid>::None),
+        )
         .filter(cbl_list::Column::Id.is_in([failing, healthy]))
         .exec(&db)
         .await
@@ -3170,6 +3180,25 @@ async fn the_sweep_records_failures_and_backs_off() {
             .await
             .unwrap()
     };
+    // Positive control: the admin's manual refresh of a shared list is
+    // audited, so the count below can see a row.
+    let audits_start = audit_rows().await;
+    let (status, body) = post_refresh(&app, &auth, healthy).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        audit_rows().await,
+        audits_start + 1,
+        "manual refresh audited"
+    );
+    cbl_list::Entity::update_many()
+        .col_expr(
+            cbl_list::Column::LastRefreshedAt,
+            Expr::value(two_hours_ago),
+        )
+        .filter(cbl_list::Column::Id.eq(healthy))
+        .exec(&db)
+        .await
+        .unwrap();
     let audits_before = audit_rows().await;
 
     let mut due = server::cbl::refresh::due_lists(&db, Utc::now())
@@ -3180,7 +3209,13 @@ async fn the_sweep_records_failures_and_backs_off() {
     both.sort();
     assert_eq!(due, both);
     let before = stored_state(&db, failing).await;
-    server::cbl::refresh::run_sweep(&db, vec![failing]).await;
+    server::cbl::refresh::run_sweep(&db, vec![failing, healthy]).await;
+    assert_eq!(
+        outcome(&db, healthy).await.count,
+        0,
+        "healthy refresh succeeded"
+    );
+    assert!(outcome(&db, healthy).await.attempt_at.is_some());
     let o = outcome(&db, failing).await;
     assert_eq!(o.kind, Some(CblRefreshErrorKind::Unreachable));
     assert_eq!(o.count, 1);
@@ -3192,7 +3227,7 @@ async fn the_sweep_records_failures_and_backs_off() {
     );
 
     // One failure: the next hourly tick still tries it.
-    let next_tick = Utc::now() + chrono::Duration::hours(1);
+    let next_tick = Utc::now() + chrono::Duration::minutes(61);
     let due = server::cbl::refresh::due_lists(&db, next_tick)
         .await
         .unwrap();
@@ -3309,4 +3344,179 @@ async fn refresh_failure_is_returned_to_everyone_who_sees_the_list() {
     .await;
     assert!(view["refresh_failure"].is_null());
     assert!(view["last_refresh_attempt_at"].is_null());
+}
+
+/// A budget overrun is a failure of the source only under the sweep's own
+/// budget. Under a shorter one (a manual refresh, `refresh-all`) nothing is
+/// recorded and the sweep is not delayed; under the sweep's budget it is
+/// recorded; a timeout the fetcher reports before the cap is recorded.
+/// (Takes the sweep's 60 s fetch deadline to run.)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_budget_overrun_is_recorded_only_under_the_sweeps_budget() {
+    use sea_orm::sea_query::Expr;
+    use server::cbl::fetch::{FetchBudget, SWEEP_BUDGET};
+    use server::cbl::import::RefreshTrigger;
+    use server::cbl::refresh::{RefreshError, due_lists, refresh};
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "outcome-budget@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+
+    // A slow host under a short (capped) budget: timeout, nothing recorded.
+    let slow = upload_sample(&app, &auth).await;
+    let url = format!("https://lists.example.test/{slow}/slow.cbl");
+    make_url_list(&db, slow, &url, None).await;
+    stub_source_for_tests(&url, TestSource::Stall);
+    cbl_list::Entity::update_many()
+        .col_expr(cbl_list::Column::RefreshSchedule, Expr::value("@hourly"))
+        .col_expr(
+            cbl_list::Column::LastRefreshedAt,
+            Expr::value((Utc::now() - chrono::Duration::hours(2)).fixed_offset()),
+        )
+        .filter(cbl_list::Column::Id.eq(slow))
+        .exec(&db)
+        .await
+        .unwrap();
+    let short = FetchBudget {
+        fetch_deadline: std::time::Duration::from_secs(1),
+        list_budget: std::time::Duration::from_secs(1),
+    };
+    for _ in 0..3 {
+        let err = refresh(&db, slow, RefreshTrigger::Manual, false, short)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RefreshError::Timeout), "{err:?}");
+    }
+    let o = outcome(&db, slow).await;
+    assert_eq!((o.attempt_at, o.kind, o.count), (None, None, 0));
+    let next_tick = Utc::now() + chrono::Duration::minutes(61);
+    assert!(due_lists(&db, next_tick).await.unwrap().contains(&slow));
+
+    // A timeout the fetcher reports at once (a real connect/read timeout,
+    // well inside the cap) is recorded under the same short budget.
+    let quick = upload_sample(&app, &auth).await;
+    let quick_url = format!("https://lists.example.test/{quick}/quick.cbl");
+    make_url_list(&db, quick, &quick_url, None).await;
+    stub_source_for_tests(&quick_url, TestSource::Fail(|| FetchBytesError::Timeout));
+    refresh(&db, quick, RefreshTrigger::Manual, false, short)
+        .await
+        .unwrap_err();
+    let o = outcome(&db, quick).await;
+    assert_eq!(o.kind, Some(CblRefreshErrorKind::Unreachable));
+    assert_eq!(o.detail.as_deref(), Some("no answer in time"));
+    assert_eq!(o.count, 1);
+
+    // The same overrun under the sweep's full budget is recorded.
+    let before = stored_state(&db, slow).await;
+    let err = refresh(&db, slow, RefreshTrigger::Scheduled, false, SWEEP_BUDGET)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, RefreshError::Timeout), "{err:?}");
+    let o = outcome(&db, slow).await;
+    assert_eq!(o.kind, Some(CblRefreshErrorKind::Unreachable));
+    assert_eq!(o.count, 1);
+    assert_eq!(stored_state(&db, slow).await, before);
+}
+
+/// A redirect to a private address and a redirect to a name that does not
+/// resolve leave the identical stored state (the stand-in source returns
+/// the fetcher's redirect-hop errors; the hop wrapping itself is pinned in
+/// `util::ssrf`'s unit tests). The list's own URL not resolving stays
+/// `unreachable`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn redirect_target_failures_record_the_same_state() {
+    use server::util::ssrf::SsrfError;
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "outcome-redirect@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    type MakeErr = fn() -> FetchBytesError;
+    let cases: [(&str, MakeErr); 3] = [
+        ("private", || {
+            FetchBytesError::RedirectRefused(SsrfError::PrivateAddress("10.9.8.7".parse().unwrap()))
+        }),
+        ("unresolvable", || {
+            FetchBytesError::RedirectRefused(SsrfError::Unresolvable(
+                "failed to lookup address information: intranet.corp".into(),
+            ))
+        }),
+        ("first-hop", || {
+            FetchBytesError::Ssrf(SsrfError::Unresolvable("no addresses".into()))
+        }),
+    ];
+    let mut states = Vec::new();
+    for (name, err) in cases {
+        let id = upload_sample(&app, &auth).await;
+        let url = format!("https://lists.example.test/{id}/{name}.cbl");
+        make_url_list(&db, id, &url, None).await;
+        stub_source_for_tests(&url, TestSource::Fail(err));
+        let (status, _) = post_refresh(&app, &auth, id).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY, "{name}");
+        let o = outcome(&db, id).await;
+        states.push((o.kind, o.detail, o.count));
+    }
+    assert_eq!(
+        states[0],
+        (Some(CblRefreshErrorKind::AddressRefused), None, 1)
+    );
+    assert_eq!(states[0], states[1], "redirect targets read the same");
+    assert_eq!(
+        states[2],
+        (Some(CblRefreshErrorKind::Unreachable), None, 1),
+        "the list's own URL not resolving"
+    );
+}
+
+/// A failed write of the refresh outcome does not change the refresh's own
+/// result: a trigger refuses any change to `last_refresh_attempt_at`, and a
+/// successful refresh still answers 200 (and applies), a failing one still
+/// answers its own error.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_outcome_write_does_not_change_the_refresh_result() {
+    use sea_orm::ConnectionTrait;
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "outcome-write@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    db.execute_unprepared(
+        "CREATE FUNCTION refuse_outcome() RETURNS trigger LANGUAGE plpgsql AS $$ \
+         BEGIN \
+           IF NEW.last_refresh_attempt_at IS DISTINCT FROM OLD.last_refresh_attempt_at THEN \
+             RAISE EXCEPTION 'outcome write refused for the test'; \
+           END IF; \
+           RETURN NEW; \
+         END $$; \
+         CREATE TRIGGER refuse_outcome BEFORE UPDATE ON cbl_lists \
+         FOR EACH ROW EXECUTE FUNCTION refuse_outcome();",
+    )
+    .await
+    .unwrap();
+
+    let ok = upload_sample(&app, &auth).await;
+    let url = format!("https://lists.example.test/{ok}/fine.cbl");
+    make_url_list(&db, ok, &url, None).await;
+    stub_source_for_tests(&url, TestSource::Body(TINY_CBL.as_bytes().to_vec()));
+    let before = stored_state(&db, ok).await;
+    let (status, body) = post_refresh(&app, &auth, ok).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["upstream_changed"], true, "{body}");
+    assert_ne!(
+        stored_state(&db, ok).await.0,
+        before.0,
+        "the refresh applied"
+    );
+    assert_eq!(
+        outcome(&db, ok).await.attempt_at,
+        None,
+        "outcome not written"
+    );
+
+    let bad = upload_sample(&app, &auth).await;
+    let bad_url = format!("https://lists.example.test/{bad}/bad.cbl");
+    make_url_list(&db, bad, &bad_url, None).await;
+    stub_source_for_tests(
+        &bad_url,
+        TestSource::Fail(|| FetchBytesError::HttpStatus(reqwest::StatusCode::BAD_GATEWAY)),
+    );
+    let (status, body) = post_refresh(&app, &auth, bad).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert_eq!(body["error"]["code"], "refresh_failed");
+    assert_eq!(outcome(&db, bad).await.count, 0, "outcome not written");
 }

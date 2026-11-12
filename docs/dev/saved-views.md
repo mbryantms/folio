@@ -511,15 +511,23 @@ outcome on the list row through `cbl::refresh::record_outcome`:
 `last_refresh_error_detail`, `refresh_failing_since` and
 `refresh_failure_count` (failures in a row). A success clears the failure
 and resets the count; a failure changes neither the entries nor
-`last_refreshed_at`. A "check for updates" records nothing. Each failure
-path maps to one kind in `RefreshError::failure`:
+`last_refreshed_at`. A "check for updates" records nothing, and neither do
+two errors that say nothing about the source
+(`RefreshError::is_source_failure`): a database error, and a timeout that
+ran into a budget shorter than the sweep's (`is_capped_budget`: the 40 s
+request budget, `refresh-all`'s 15 s per list) once the elapsed time
+reached that cap. A slow host the sweep would wait for is therefore not
+marked failing by a manual refresh or "Refresh all", and its sweep is not
+delayed; the caller still gets the timeout. A timeout under the sweep's
+budget, or one the fetcher reports before the cap (a 30 s step), is
+recorded. Each failure path maps to one kind in `RefreshError::failure`:
 
 | Kind | Failure paths | Detail |
 |---|---|---|
-| `unreachable` | connection / TLS / body-read error, name that does not resolve, fetch or list budget spent, catalog transport error | `no answer in time` for a timeout, else none |
+| `unreachable` | connection / TLS / body-read error, the list's own URL not resolving, a recorded timeout (see above), catalog transport error | `no answer in time` for a timeout, else none |
 | `http_status` | non-success status other than 404 / 410, bot challenge, GitHub rate limit | `HTTP 503`, `HTTP 403, a bot challenge`, `rate limited` |
 | `missing` | HTTP 404 / 410, catalog path gone from the index, catalog blob 404 | `HTTP 404`, `not in the catalog` |
-| `address_refused` | any refusal by the address guard (private / loopback / reserved address, non-https URL or redirect, malformed or hostless URL) | none, ever |
+| `address_refused` | any refusal by the address guard of the list's URL (private / loopback / reserved address, non-https, malformed or hostless); any failure to vet or resolve a redirect target (`FetchBytesError::RedirectRefused`), including a name that does not resolve | none, ever |
 | `too_large` | body over the 4 MiB cap, catalog blob or index over its cap | `over the 4 MiB limit` |
 | `too_many_entries` | changed content over `MAX_BOOKS_PER_LIST` | `5001 entries, over the 5000 limit` |
 | `invalid_list` | body that does not parse, a content type that is not XML / `.cbl` | `not served as XML` for the content type, else none |
@@ -528,7 +536,11 @@ path maps to one kind in `RefreshError::failure`:
 The detail is composed by the server from numbers and fixed words only:
 no remote body, header, host name, resolved address or parser text is
 stored or returned, and every address-guard refusal reads the same, so
-the record cannot be used to probe which internal addresses exist. The
+the record cannot be used to probe which internal addresses exist. A
+redirect target that does not resolve is stored like one that resolves to
+a private address: otherwise a source could redirect to names of its
+choosing and read off, hourly from the sweep, which ones resolve inside
+the server's network. The manual refresh's error message is unchanged. The
 list and detail responses carry `last_refresh_attempt_at` and
 `refresh_failure` (`{kind, detail, failing_since, consecutive_failures}`)
 to everyone who may see the list; nothing in them is newly exposed (the
