@@ -3199,7 +3199,11 @@ async fn process_planned_folder(
         series_id
     } else {
         // Identity peek opens the first archive + decompresses its ComicVine /
-        // ComicInfo to infer series identity — blocking archive IO. Run it on a
+        // ComicInfo to infer series identity — blocking archive IO. The list
+        // is in `enumerate::archive_order`, so the first archive is the
+        // folder's own first file in natural order (usually its first
+        // issue, never a `Specials/` file while the folder has its own),
+        // the same one on every filesystem. Run it on a
         // blocking thread under the shared archive-work semaphore so a slow /
         // NFS-backed first scan with many new series can't stall the reactor
         // threads (PERF-7).
@@ -3233,10 +3237,12 @@ async fn process_planned_folder(
         }
 
         // Start year: the folder leaf's `(YYYY)` names the run's start and
-        // outranks the peeked archive's cover year — `archives[0]` is
-        // whatever `read_dir` listed first, and a 250-issue folder's first
-        // entry can be its 2004 issue as easily as its 1987 one. The
-        // series slug is minted from this year, so a wrong value is sticky.
+        // outranks the peeked archive's cover year — `archives[0]` is the
+        // first file by name, which in a folder of issue numbers is the
+        // run's first issue, but a folder whose first name is a later
+        // issue, a `000` or an undated reprint would give that file's
+        // year. The series slug is minted from this year, so a wrong value
+        // is sticky.
         if let Some(leaf) = folder.file_name().map(|n| n.to_string_lossy().into_owned())
             && let Some(y) = parsers::filename::folder_year_token(&leaf)
         {
@@ -3391,6 +3397,18 @@ async fn process_planned_folder(
             }
         }
     }
+
+    // Files that already have a row are persisted before new files (each
+    // group keeps `archive_order`). A changed file then always carries its
+    // new content hash before a new file is checked against it, so a
+    // byte-identical copy of that new content, appearing in the same scan,
+    // is a `DuplicateContent` finding, as it is when the copy appears one
+    // scan later; a new file whose bytes match the changed file's *old*
+    // content is its own issue, not a duplicate of a row that no longer
+    // holds them. The original keeps its row, markers and progress either
+    // way. Before this, the answer depended on which of the two the
+    // filesystem happened to list first.
+    candidates.sort_by_key(|(path, _)| !manifest.contains(path.to_string_lossy().as_ref()));
 
     // PERF-2: anything that missed the size+mtime fast path (new, changed,
     // backfill-pending, fingerprint-unreadable, or a `force` scan) lands in

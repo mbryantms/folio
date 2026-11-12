@@ -203,21 +203,21 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
         None
     };
 
+    // The library root comes from the row loaded above (no query), before
+    // the permit: a job holding a permit never waits for a pooled
+    // connection, which a scan transaction waiting for that permit may
+    // hold (cold root cache + exhausted pool used to stall both sides
+    // until the acquire timeout).
+    let root = crate::library::no_follow::library_root_of(&app, &lib).await;
     let outcome = match app.archive_work_semaphore.clone().acquire_owned().await {
         Ok(permit) => {
             // The archive is read through a handle opened by the no-follow
             // walk (`library::no_follow`): a link, a non-regular file or a
             // path outside the root fails the job like an unreadable
             // archive. Opened only once the permit is held, so queued jobs
-            // hold no descriptor while they wait.
-            let opened = crate::library::no_follow::open_issue_archive(&app, &row).await;
-            // A database fault looking up the library says nothing about
-            // the file: no thumbnail failure is stamped, and the job is
-            // returned as an error so it is retried.
-            if let Err(crate::library::no_follow::Refusal::Lookup(e)) = &opened {
-                tracing::error!(issue_id = %row.id, error = %e, "thumbs job: library lookup failed");
-                return Err(format!("thumbs job: library lookup failed: {e}").into());
-            }
+            // hold no descriptor while they wait; the open touches no
+            // database.
+            let opened = crate::library::no_follow::open_issue_archive_at(root, &row).await;
             tokio::task::spawn_blocking(move || {
                 let _permit = permit;
                 let source = opened.map_err(|r| {

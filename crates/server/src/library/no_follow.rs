@@ -569,6 +569,20 @@ pub async fn open_issue_archive(
             return Err(Refusal::Lookup(e.to_string()));
         }
     };
+    open_issue_archive_at(root, row).await
+}
+
+/// [`open_issue_archive`] under a root the caller already resolved: no
+/// database query. A job that must open the file while holding an
+/// `archive_work_semaphore` permit resolves the root first
+/// ([`library_root_of`] or [`library_root`]) and opens with this, so it
+/// never waits for a pooled connection while holding the permit (a scan
+/// transaction may be waiting for that permit with the connection).
+pub async fn open_issue_archive_at(
+    root: Arc<LibraryRoot>,
+    row: &entity::issue::Model,
+) -> Result<archive::ArchiveFile, Refusal> {
+    let issue_id = row.id.as_str();
     let path = row.file_path.clone();
     let opened = tokio::task::spawn_blocking(move || {
         let (dir, name) = open_parent_below_roots(

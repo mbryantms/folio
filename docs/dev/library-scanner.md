@@ -443,9 +443,23 @@ without per-library configuration.
      Build a `SeriesIdentityHint` by merging, in precedence order
      (lowest-first):
      - `process::peek_identity_hint(&archives[0])` — first archive's
-       ComicInfo + filename inference. `archives[0]` is whatever
-       `read_dir` listed first, so its cover year is *that issue's*
-       year, not the run's.
+       ComicInfo + filename inference. The list is in ingest order (below),
+       so `archives[0]` is the folder's own first file by name — usually
+       issue #1, never a `Specials/` file while the folder has files of
+       its own — and the same file on every filesystem. Its cover year is
+       still *that issue's* year, which is why the folder year and
+       series.json outrank it. The peek runs for every folder that
+       `known_series_by_folder` does not know, before `resolve_or_create`,
+       so it also decides where a *renamed* folder lands: its name, year
+       and volume are what step 3 below matches an existing series on
+       (or, failing that, what a new row is made from), and steps 2 and 3
+       write its ComicVine / Metron ids at the ComicInfo tier (they fill
+       or replace file-tier ids; user- and provider-set ids are kept). An
+       existing series row is never renamed, re-dated or re-slugged by
+       the peek. Since the order changed, a renamed folder whose files
+       disagree on series year or volume can re-attach to a different
+       existing row than before (the first file by name decides now,
+       rather than the first one listed).
      - folder leaf: `V<N>` fills the volume when the peek had none;
        a bare `(YYYY)` group (`parsers::filename::folder_year_token`)
        **replaces** the peeked year — the folder is named for the
@@ -471,6 +485,31 @@ without per-library configuration.
      (≤10/sec/library throttle; see §Progress events).
   3. **Per-archive ingest loop**
      ([mod.rs:1535–1616](../../crates/server/src/library/scanner/mod.rs#L1535-L1616)).
+     **Ingest order.** A scan's result must not depend on the order the
+     filesystem lists a folder (`read_dir` is newest-first on tmpfs and
+     hash order on ext4). Both walks that build a folder's list
+     (`enumerate::walk_archives_with`, `list_archives_changed_since`) sort
+     it with `enumerate::archive_order` before returning: the folder's own
+     files first, then each subfolder's, names in natural order ignoring
+     case (`natord::compare_ignore_case`, the comparator the CBZ reader
+     sorts pages with: `Issue 2` before `Issue 10`), raw bytes as the
+     tie-break so the order is total. A digit run that starts with `0` is
+     compared left-aligned (natord's rule), so `Issue 01` sorts before
+     `Issue 1` and `Issue 010` before `Issue 9`: a folder that mixes
+     padded and unpadded numbers gets a stable, but not numeric, order.
+     It compares names already in memory
+     (no extra stat). The candidates that miss the fast path are then
+     stably reordered so files that already have a row persist before new
+     files: a changed file carries its new content hash before any new
+     file is checked against it, so a byte-identical copy of the new
+     content appearing in the same scan is a `DuplicateContent` finding
+     (as it would be one scan later) and the original keeps its row,
+     markers and progress; a new file holding the changed file's *old*
+     bytes is its own issue. Two new identical files: the first in
+     `archive_order` gets the row, except on a lazy-hash first import
+     (WP-3.2), where both are inserted as pending rows and
+     `jobs::hash_backfill` decides which one is kept. Folders still run concurrently, so a
+     copy in *another* folder can meet either side first.
      Build a path → row manifest, then for each archive:
      - `file_fingerprint` (size + mtime) →
      - if not `force` and the existing row's metadata is current →
@@ -514,9 +553,24 @@ without per-library configuration.
        a hashed anchor was written between the two phases (prepare saw
        none and read no hashes), persist reopens the file through the
        no-follow walk and hashes it, but only if its size and mtime are
-       still the recorded ones; otherwise, or when a page cannot be read,
-       the anchors take the ordinal map, as for an unreadable page (a
-       later scan that sees the file change places them by hash).
+       still the recorded ones **and** its device and inode are those of
+       the handle prepare read (`PreparedIngest.identity`; for a converted
+       CBR / CB7, the new `.cbz` that was actually hashed). Size and mtime
+       alone pass a same-size replacement by rename on a filesystem with
+       2 s timestamps (FAT, SMB). Otherwise, or when a page cannot be
+       read, the anchors take the ordinal map, as for an unreadable page
+       (a later scan that sees the file change places them by hash). This
+       read takes **no** `archive_work_semaphore` permit
+       (`page_hash::hash_all_pages_without_permit`): waiting for one while
+       the transaction pins a pooled connection could deadlock against
+       jobs that hold every permit and wait for a connection. It is
+       bounded instead by the open scan transactions (a batch persists its
+       files one at a time, so at most one such read per transaction) and
+       streams page by page into a hasher (memory: the reader plus about
+       90 bytes per page). The thumbnail job, for the same reason,
+       resolves the library root from its already-loaded row before it
+       takes a permit and opens the file with
+       `no_follow::open_issue_archive_at`, which runs no query.
 
      So no connection is pinned while archives are read. The single-issue
      rescan (`scan_issue_file` → `run_issue_phase`: the "Scan issue"

@@ -6940,6 +6940,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "metrics-process",
  "migration",
+ "natord",
  "notify-debouncer-full",
  "openidconnect",
  "parsers",

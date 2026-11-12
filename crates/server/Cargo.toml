@@ -94,6 +94,9 @@ fast_image_resize = { workspace = true }
 rayon = { workspace = true }
 lru = { workspace = true }
 globset = { workspace = true }
+# Natural ("Issue 2" before "Issue 10") order for a folder's archives;
+# the same comparator the archive readers sort pages with.
+natord = { workspace = true }
 
 # Background jobs
 apalis = { workspace = true }
