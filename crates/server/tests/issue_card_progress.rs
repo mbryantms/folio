@@ -80,6 +80,17 @@ async fn http(
     auth: &Authed,
     body: Option<Value>,
 ) -> Value {
+    http_expect(app, method, path, auth, body, StatusCode::OK).await
+}
+
+async fn http_expect(
+    app: &TestApp,
+    method: Method,
+    path: &str,
+    auth: &Authed,
+    body: Option<Value>,
+    expected: StatusCode,
+) -> Value {
     let mut req = Request::builder()
         .method(method)
         .uri(path)
@@ -107,7 +118,7 @@ async fn http(
     let status = resp.status();
     let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     let json: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-    assert_eq!(status, StatusCode::OK, "{path}: {json}");
+    assert_eq!(status, expected, "{path}: {json}");
     json
 }
 
@@ -184,6 +195,7 @@ struct Fixture {
     issues: Vec<String>,
     /// The seeded series' slug (its id).
     series: String,
+    lib: Uuid,
 }
 
 /// Saga #1–#4. The admin finished #1 and is midway through #2 and #4;
@@ -239,6 +251,7 @@ async fn fixture() -> Fixture {
         reader,
         issues,
         series: series.to_string(),
+        lib,
     }
 }
 
@@ -427,4 +440,131 @@ async fn surfaces_that_do_not_load_card_progress_leave_the_field_out() {
     let item = &next["items"][0];
     assert!(item.is_object(), "{next}");
     assert!(item.get("progress").is_none(), "{item}");
+}
+
+#[tokio::test]
+async fn a_shared_reading_list_shows_each_reader_their_own_progress() {
+    let f = fixture().await;
+    let db = f.app.state().db.clone();
+    // A third reader with access and no progress at all.
+    let third = register(&f.app, "card-third@example.com").await;
+    exec(
+        &db,
+        "INSERT INTO library_user_access (user_id, library_id, created_at, updated_at) \
+         VALUES ($1, $2, now(), now())",
+        vec![third.user_id.into(), f.lib.into()],
+    )
+    .await;
+    // The admin owns the list and its saved view, then shares it.
+    let list = seed_cbl_list(&db, f.admin.user_id, "Shared order").await;
+    for (pos, id) in f.issues.iter().enumerate() {
+        seed_cbl_entry(&db, list, pos as i32, Some(id)).await;
+    }
+    let view = Uuid::now_v7();
+    exec(
+        &db,
+        "INSERT INTO saved_views (id, user_id, kind, name, custom_tags, cbl_list_id, auto_pin) \
+         VALUES ($1, $2, 'cbl', 'Shared order', ARRAY[]::text[], $3, FALSE)",
+        vec![view.into(), f.admin.user_id.into(), list.into()],
+    )
+    .await;
+    http_expect(
+        &f.app,
+        Method::POST,
+        &format!("/api/admin/saved-views/{view}/share"),
+        &f.admin,
+        None,
+        StatusCode::NO_CONTENT,
+    )
+    .await;
+    let nobody: Expect = f.issues.iter().map(|id| (id.clone(), None)).collect();
+    // Readers first, so the owner's request is not what primes anything.
+    for (who, expect) in [
+        (&f.reader, f.reader_expect()),
+        (&third, nobody),
+        (&f.admin, f.admin_expect()),
+    ] {
+        let body = get(&f.app, &format!("/api/me/cbl-lists/{list}/entries"), who).await;
+        assert_eq!(ids(&nested(&body, "issue")), f.issues);
+        assert_cards("shared cbl entries", &nested(&body, "issue"), &expect);
+    }
+}
+
+#[tokio::test]
+async fn saved_issue_view_results_and_the_collection_add_echo_carry_the_callers_progress() {
+    let f = fixture().await;
+    for (who, expect) in [(&f.admin, f.admin_expect()), (&f.reader, f.reader_expect())] {
+        let view = http_expect(
+            &f.app,
+            Method::POST,
+            "/api/me/saved-views",
+            who,
+            Some(json!({
+                "kind": "filter_issues",
+                "name": "2020",
+                "filter": {"match_mode": "all", "conditions": [
+                    {"field": "year", "op": "equals", "value": 2020}
+                ]},
+                "sort_field": "name",
+                "sort_order": "asc",
+                "result_limit": 12,
+            })),
+            StatusCode::CREATED,
+        )
+        .await;
+        let id = view["id"].as_str().unwrap();
+        let body = get(
+            &f.app,
+            &format!("/api/me/saved-views/{id}/issue-results"),
+            who,
+        )
+        .await;
+        assert_eq!(items(&body).len(), 4, "{body}");
+        assert_cards("saved-view issue-results", &items(&body), &expect);
+
+        let coll = http_expect(
+            &f.app,
+            Method::POST,
+            "/api/me/collections",
+            who,
+            Some(json!({"name": "Pile"})),
+            StatusCode::CREATED,
+        )
+        .await;
+        let coll = coll["id"].as_str().unwrap();
+        for issue in &f.issues {
+            let echo = http_expect(
+                &f.app,
+                Method::POST,
+                &format!("/api/me/collections/{coll}/entries"),
+                who,
+                Some(json!({"entry_kind": "issue", "ref_id": issue})),
+                StatusCode::CREATED,
+            )
+            .await;
+            assert_cards("collection add echo", &[&echo["issue"]], &expect);
+        }
+    }
+}
+
+#[tokio::test]
+async fn cross_library_issue_pages_keep_order_cursor_and_total() {
+    let f = fixture().await;
+    for (who, expect) in [(&f.admin, f.admin_expect()), (&f.reader, f.reader_expect())] {
+        let p1 = get(&f.app, "/api/issues?sort=number&order=asc&limit=2", who).await;
+        assert_eq!(p1["total"].as_i64(), Some(4), "{p1}");
+        assert_eq!(ids(&items(&p1)), f.issues[..2].to_vec());
+        assert_cards("/issues p1", &items(&p1), &expect);
+        let cursor = p1["next_cursor"].as_str().expect("next_cursor");
+        let p2 = get(
+            &f.app,
+            &format!("/api/issues?sort=number&order=asc&limit=2&cursor={cursor}"),
+            who,
+        )
+        .await;
+        assert!(p2.get("total").is_none_or(Value::is_null), "{p2}");
+        assert_eq!(ids(&items(&p2)), f.issues[2..].to_vec());
+        assert!(p2["next_cursor"].is_null(), "{p2}");
+        assert_cards("/issues p2", &items(&p2), &expect);
+    }
 }
