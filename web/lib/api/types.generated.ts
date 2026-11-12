@@ -8768,6 +8768,12 @@ export interface components {
         };
         CreateViewGroupReq: {
             name: string;
+            /**
+             * Format: uuid
+             * @description Optional enclosing group (same scope; groups nest at most four
+             *     levels deep). Absent or null = top level.
+             */
+            parent_id?: string | null;
             scope: string;
             /**
              * @description Optional initial members. Each must be a view visible to the
@@ -11179,8 +11185,18 @@ export interface components {
             /** Format: uuid */
             id: string;
             /**
+             * Format: uuid
+             * @description The enclosing group, which must be a group of this scope (and so
+             *     listed in the same payload). `null` = top level. **Absent = keep
+             *     the group's stored parent**, so a client that predates nesting
+             *     reorders without flattening the tree. Sibling order is the order
+             *     in which the groups of one parent appear in `groups`.
+             */
+            parent_id?: string | null;
+            /**
              * @description Member view ids in display order. A view listed under no group is
-             *     ungrouped after the write.
+             *     ungrouped after the write. Ids the caller cannot see (deleted, or
+             *     not theirs) are ignored.
              */
             view_ids: string[];
         };
@@ -14072,7 +14088,12 @@ export interface components {
             ids: string[];
         };
         ReplaceLayoutReq: {
-            /** @description Every group in the scope, exactly once, in display order. */
+            /**
+             * @description Every group in the scope, exactly once. Each group's siblings
+             *     (same parent) are ordered as they appear here; the resulting tree
+             *     — stated parents plus the stored parent of any group that states
+             *     none — must be acyclic and at most four levels deep.
+             */
             groups: components["schemas"]["LayoutGroupReq"][];
             scope: string;
             /**
@@ -16786,9 +16807,12 @@ export interface components {
             created_at: string;
             id: string;
             name: string;
+            /** @description The enclosing group, `null` for a top-level group. */
+            parent_id?: string | null;
             /**
              * Format: int32
-             * @description Ordinal within the scope (dense 0..N after any layout write).
+             * @description Ordinal among the group's siblings (same scope and parent; dense
+             *     0..N after any layout write).
              */
             position: number;
             /**
@@ -26433,6 +26457,13 @@ export interface operations {
                     "application/json": components["schemas"]["ViewGroupView"];
                 };
             };
+            /** @description invalid name or scope, an unknown or duplicate view id, or a parent that is missing, in another scope, or already at the deepest level */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     view_groups_replace_layout: {
@@ -26454,7 +26485,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description unknown scope, group set mismatch, or a view id that is duplicate, unknown, or placed twice */
+            /** @description unknown scope, group set mismatch, a parent that is not listed, a cycle, a tree deeper than four levels, or a view id placed twice */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -26474,6 +26505,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description deleted; its lists moved to its parent group (or the ungrouped section when it was top-level) after the parent's own, and its child groups took its place among its siblings */
             204: {
                 headers: {
                     [name: string]: unknown;

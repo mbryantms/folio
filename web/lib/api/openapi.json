@@ -10214,6 +10214,9 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "invalid name or scope, an unknown or duplicate view id, or a parent that is missing, in another scope, or already at the deepest level"
           }
         }
       }
@@ -10234,7 +10237,7 @@
         "responses": {
           "204": {},
           "422": {
-            "description": "unknown scope, group set mismatch, or a view id that is duplicate, unknown, or placed twice"
+            "description": "unknown scope, group set mismatch, a parent that is not listed, a cycle, a tree deeper than four levels, or a view id placed twice"
           }
         }
       }
@@ -10253,7 +10256,9 @@
           }
         ],
         "responses": {
-          "204": {}
+          "204": {
+            "description": "deleted; its lists moved to its parent group (or the ungrouped section when it was top-level) after the parent's own, and its child groups took its place among its siblings"
+          }
         }
       },
       "patch": {
@@ -20180,6 +20185,14 @@
           "name": {
             "type": "string"
           },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Optional enclosing group (same scope; groups nest at most four\nlevels deep). Absent or null = top level."
+          },
           "scope": {
             "type": "string"
           },
@@ -26430,13 +26443,21 @@
             "type": "string",
             "format": "uuid"
           },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The enclosing group, which must be a group of this scope (and so\nlisted in the same payload). `null` = top level. **Absent = keep\nthe group's stored parent**, so a client that predates nesting\nreorders without flattening the tree. Sibling order is the order\nin which the groups of one parent appear in `groups`."
+          },
           "view_ids": {
             "type": "array",
             "items": {
               "type": "string",
               "format": "uuid"
             },
-            "description": "Member view ids in display order. A view listed under no group is\nungrouped after the write."
+            "description": "Member view ids in display order. A view listed under no group is\nungrouped after the write. Ids the caller cannot see (deleted, or\nnot theirs) are ignored."
           }
         }
       },
@@ -32799,7 +32820,7 @@
             "items": {
               "$ref": "#/components/schemas/LayoutGroupReq"
             },
-            "description": "Every group in the scope, exactly once, in display order."
+            "description": "Every group in the scope, exactly once. Each group's siblings\n(same parent) are ordered as they appear here; the resulting tree\n— stated parents plus the stored parent of any group that states\nnone — must be acyclic and at most four levels deep."
           },
           "scope": {
             "type": "string"
@@ -38809,10 +38830,17 @@
           "name": {
             "type": "string"
           },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The enclosing group, `null` for a top-level group."
+          },
           "position": {
             "type": "integer",
             "format": "int32",
-            "description": "Ordinal within the scope (dense 0..N after any layout write)."
+            "description": "Ordinal among the group's siblings (same scope and parent; dense\n0..N after any layout write)."
           },
           "scope": {
             "type": "string",

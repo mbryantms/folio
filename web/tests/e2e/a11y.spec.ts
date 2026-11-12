@@ -98,6 +98,7 @@ const SWEEP_COLLECTION_NAME = "A11y sweep collection";
 const SWEEP_LIST_NAME = "A11y sweep reading list";
 const SWEEP_PAGE_NAME = "A11y sweep page";
 const SWEEP_LIST_GROUP_NAME = "A11y sweep folder";
+const SWEEP_LIST_PARENT_GROUP_NAME = "A11y sweep outer folder";
 
 /** Entity names `fixtures/make-library.mjs` writes into Relay (2011). */
 const FIXTURE_ENTITIES = {
@@ -485,12 +486,26 @@ async function resolveIds(page: Page, context: BrowserContext): Promise<Ids> {
     );
   }
 
-  // A reading-list group holding it, so the lists table shows a folder
-  // row with its roll-ups as well as a list row.
-  type GroupList = { groups: { name: string }[] };
+  // A reading-list group holding it, nested inside another group, so the
+  // lists table shows a folder row inside a folder row, with roll-ups, as
+  // well as a list row.
+  type GroupList = {
+    groups: { id: string; name: string; parent_id?: string | null }[];
+  };
   const listGroups = await json<GroupList>(
     page.request.get("/api/me/view-groups?scope=cbl"),
   );
+  let outer = listGroups.groups.find(
+    (g) => g.name === SWEEP_LIST_PARENT_GROUP_NAME,
+  );
+  if (!outer) {
+    outer = await json<{ id: string; name: string }>(
+      page.request.post("/api/me/view-groups", {
+        headers: csrf,
+        data: { scope: "cbl", name: SWEEP_LIST_PARENT_GROUP_NAME },
+      }),
+    );
+  }
   if (!listGroups.groups.some((g) => g.name === SWEEP_LIST_GROUP_NAME)) {
     await json(
       page.request.post("/api/me/view-groups", {
@@ -498,6 +513,7 @@ async function resolveIds(page: Page, context: BrowserContext): Promise<Ids> {
         data: {
           scope: "cbl",
           name: SWEEP_LIST_GROUP_NAME,
+          parent_id: outer.id,
           view_ids: [readingList.id],
         },
       }),
