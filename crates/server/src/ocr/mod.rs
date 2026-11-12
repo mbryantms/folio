@@ -10,6 +10,8 @@
 //!   the trait + a `Recognition` shape; M2 wires the impls.
 //! - [`pipeline`] — `detect → snap-to-polygon → crop → recognize`,
 //!   exposed via `POST /me/issues/{id}/ocr` (added in M3).
+//! - [`page_cache`] — in-process cache of decoded pages, so the
+//!   balloon-by-balloon requests on one page decode it once.
 //! - [`postprocess`] — pure-function cleanup of raw engine output
 //!   (confidence filtering, junk-token rules, whitespace shaping).
 //!   Runs inside the pipeline right after recognition.
@@ -23,6 +25,7 @@
 pub mod cache;
 pub mod detector;
 pub mod models;
+pub mod page_cache;
 pub mod pipeline;
 pub mod postprocess;
 pub mod recognizer;

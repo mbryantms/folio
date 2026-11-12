@@ -375,3 +375,123 @@ async fn a_recognition_that_outlives_its_request_is_cached() {
         "the retry is a cache hit"
     );
 }
+
+// ─── S2: the decoded-page cache ──────────────────────────────────
+
+fn region_body(x: u32) -> serde_json::Value {
+    serde_json::json!({
+        "page": 0, "region": { "x": x, "y": 2, "w": 10, "h": 10 }, "lang": "western",
+    })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn region_requests_on_one_page_decode_it_once() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "ocr-work-pages@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let id = seed(&app, &tmp.path().join("lib"), 104, 64).await;
+    let recognizer = slow_recognizer(0);
+    test_models::install(
+        &id,
+        test_models::Stub {
+            detector: None,
+            recognizer: Some(recognizer),
+        },
+    );
+    // Five balloons at once on a cold page (one decodes, the others wait
+    // for it), then five more one after the other.
+    let together: Vec<_> = (0..5)
+        .map(|x| send(&app, ocr_request(&admin, &id, region_body(x * 9))))
+        .collect();
+    for (status, body) in futures::future::join_all(together).await {
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    for x in 5..10 {
+        let (status, body) = send(&app, ocr_request(&admin, &id, region_body(x * 9))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    assert_eq!(recognizer.calls.load(Ordering::SeqCst), 10);
+    assert_eq!(
+        server::api::issue_ocr::ocr_page_reads_for(&id),
+        1,
+        "ten regions, one decode"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_hidden_issue_is_404_with_a_warm_page_cache() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "ocr-work-hidden-admin@example.com").await;
+    let reader = register(&app, "ocr-work-hidden-reader@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let id = seed(&app, &tmp.path().join("lib"), 105, 64).await;
+    let recognizer = slow_recognizer(0);
+    test_models::install(
+        &id,
+        test_models::Stub {
+            detector: Some(slow_detector(0)),
+            recognizer: Some(recognizer),
+        },
+    );
+    // The admin warms the page cache.
+    let (status, body) = send(&app, ocr_request(&admin, &id, region_body(0))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(server::api::issue_ocr::ocr_page_reads_for(&id), 1);
+
+    // A reader without access to the library: the unknown-issue 404, for
+    // a new region and for the warm one, on both routes.
+    for region in [region_body(30), region_body(0)] {
+        let (status, body) = send(&app, ocr_request(&reader, &id, region)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(body["error"]["code"], "not_found");
+    }
+    let (status, body) = send(&app, regions_request(&reader, &id, 0)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(
+        recognizer.calls.load(Ordering::SeqCst),
+        1,
+        "nothing ran for them"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_changed_content_hash_is_a_page_cache_miss() {
+    use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "ocr-work-rehash@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let id = seed(&app, &tmp.path().join("lib"), 106, 64).await;
+    let new_hash = format!("{id}-rescanned");
+    for hash in [&id, &new_hash] {
+        test_models::install(
+            hash,
+            test_models::Stub {
+                detector: None,
+                recognizer: Some(slow_recognizer(0)),
+            },
+        );
+    }
+    let (status, body) = send(&app, ocr_request(&admin, &id, region_body(0))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(server::api::issue_ocr::ocr_page_reads_for(&id), 1);
+
+    // A rescan retags the row with a new content hash.
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    let row = entity::issue::Entity::find_by_id(id.clone())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: entity::issue::ActiveModel = row.into();
+    am.content_hash = Set(new_hash.clone());
+    am.update(&db).await.unwrap();
+
+    let (status, body) = send(&app, ocr_request(&admin, &id, region_body(20))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        server::api::issue_ocr::ocr_page_reads_for(&new_hash),
+        1,
+        "the new hash decodes the page again"
+    );
+    assert_eq!(server::api::issue_ocr::ocr_page_reads_for(&id), 1);
+}

@@ -30,7 +30,11 @@
 //! cap: their 404 / 409 / 410 / 503 never wait, and no page bytes are
 //! read for them), the models (a first-use download is waited on
 //! *without* a permit), then the permit. The page is read and decoded
-//! only inside it. The permit moves into the blocking read, decode and
+//! only inside it, and only when the decoded-page cache
+//! ([`crate::ocr::page_cache`]) does not already hold it: the balloon-by-
+//! balloon requests on one page decode it once. The cache is consulted
+//! after every check above, so a user who cannot see the issue gets the
+//! same 404 whatever it holds. The permit moves into the blocking read, decode and
 //! inference tasks and is released when they finish, not when the
 //! request future is dropped (`ocr::pipeline`). A request that waits
 //! longer than [`OCR_PERMIT_WAIT`] for one gets 503
@@ -63,6 +67,7 @@ use crate::auth::CurrentUser;
 use crate::library::zip_lru::{CachedReader, lock_reader};
 use crate::middleware::rate_limit;
 use crate::ocr::cache::{self, CachedDetection};
+use crate::ocr::page_cache::{Claim, Lookup, PageKey, SharedPage, decoded_pages};
 use crate::ocr::pipeline::{
     OcrInput, OcrOutput, Rect, blocking_with_permit, detect_and_cache_regions, prepare_detector,
     prepare_models, run_ocr,
@@ -415,11 +420,8 @@ pub async fn serve(
         }
     };
     // ─── Decode (under the OCR permit, held by the work) ─────────
-    let permit = match ocr_permit(&OCR_PERMITS, OCR_PERMIT_WAIT).await {
-        Ok(p) => p,
-        Err(resp) => return *resp,
-    };
-    let (decoded, permit) = match read_and_decode_holding(located, permit).await {
+    let page_key = PageKey::new(&row.content_hash, req.page);
+    let (decoded, permit) = match page_image_holding(located, page_key).await {
         Ok(pair) => pair,
         Err(resp) => return *resp,
     };
@@ -515,11 +517,8 @@ pub async fn text_regions(
         }
     };
     // ─── Decode + detect (under the OCR permit, held by the work) ─
-    let permit = match ocr_permit(&OCR_PERMITS, OCR_PERMIT_WAIT).await {
-        Ok(p) => p,
-        Err(resp) => return *resp,
-    };
-    let (decoded, permit) = match read_and_decode_holding(located, permit).await {
+    let page_key = PageKey::new(&row.content_hash, page);
+    let (decoded, permit) = match page_image_holding(located, page_key).await {
         Ok(pair) => pair,
         Err(resp) => return *resp,
     };
@@ -574,6 +573,22 @@ static OCR_PAGE_READS: AtomicU64 = AtomicU64::new(0);
 /// Pages read for OCR since start (see [`OCR_PAGE_READS`]).
 pub fn ocr_page_reads() -> u64 {
     OCR_PAGE_READS.load(Ordering::Relaxed)
+}
+
+/// Page reads per content hash, debug builds only: lets tests running
+/// side by side count the reads of their own issue.
+#[cfg(debug_assertions)]
+static OCR_PAGE_READS_BY_HASH: std::sync::LazyLock<Mutex<std::collections::HashMap<String, u64>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Pages read (and decoded) for OCR since start for one content hash.
+/// Debug builds only; for tests.
+#[cfg(debug_assertions)]
+pub fn ocr_page_reads_for(content_hash: &str) -> u64 {
+    OCR_PAGE_READS_BY_HASH
+        .lock()
+        .map(|m| m.get(content_hash).copied().unwrap_or(0))
+        .unwrap_or(0)
 }
 
 /// The cheap checks that run before any OCR permit is taken, without
@@ -655,27 +670,67 @@ enum ReadDecodeError {
     Decode(String),
 }
 
+/// Take an OCR permit, then the decoded page: from the decoded-page cache,
+/// by waiting for a decode of the same page already running, or by reading
+/// and decoding it ([`read_and_decode_holding`]). The permit comes first so
+/// the pages in use are bounded by the permits, and a waiter only ever
+/// waits on a decode running under another permit. Callers run every
+/// visibility and archive check before this; `key` comes from the issue
+/// row, never from the request.
+async fn page_image_holding(
+    located: LocatedPage,
+    key: PageKey,
+) -> Result<(SharedPage, SemaphorePermit<'static>), Box<Response>> {
+    let permit = ocr_permit(&OCR_PERMITS, OCR_PERMIT_WAIT).await?;
+    let pages = decoded_pages();
+    loop {
+        match pages.lookup_or_claim(&key) {
+            Lookup::Hit(page) => return Ok((page, permit)),
+            // Woken when that decode is stored or failed; look again.
+            Lookup::Wait(mut done) => {
+                let _ = done.wait_for(|stored| *stored).await;
+            }
+            Lookup::Claimed(claim) => {
+                return read_and_decode_holding(located, permit, claim).await;
+            }
+        }
+    }
+}
+
 /// Read the located page and decode it on the blocking pool with the OCR
 /// `permit` held by the task (released when the work ends, even if the
-/// request is dropped first), and hand the permit back for the next
-/// stage. The page bytes exist only inside the permit. A read error found
-/// here answers by the same `page_source` mapping as the cheap checks.
-/// `decode_limited` (security M0) caps decoded dimensions so a malicious
-/// archive can't OOM the box via a decompression bomb.
+/// request is dropped first), store it under `claim` from inside that task,
+/// and hand the permit back for the next stage. The page bytes exist only
+/// inside the permit. A read error found here answers by the same
+/// `page_source` mapping as the cheap checks (the claim is dropped, so a
+/// request waiting for this page tries itself). `decode_limited`
+/// (security M0) caps decoded dimensions so a malicious archive can't OOM
+/// the box via a decompression bomb.
 async fn read_and_decode_holding<P: Send + 'static>(
     located: LocatedPage,
     permit: P,
-) -> Result<(image::DynamicImage, P), Box<Response>> {
+    claim: Claim,
+) -> Result<(SharedPage, P), Box<Response>> {
     let LocatedPage { reader, entry } = located;
     let work = blocking_with_permit(permit, move || {
         OCR_PAGE_READS.fetch_add(1, Ordering::Relaxed);
+        #[cfg(debug_assertions)]
+        if let Ok(mut by_hash) = OCR_PAGE_READS_BY_HASH.lock() {
+            *by_hash
+                .entry(claim.key().content_hash().to_owned())
+                .or_default() += 1;
+        }
         let bytes = {
             let mut cbz = lock_reader(&reader).map_err(ReadDecodeError::Read)?;
             cbz.read_entry_range(&entry, 0, entry.uncompressed_size)
                 .map_err(ReadDecodeError::Read)?
         };
-        crate::util::image_decode::decode_limited(&bytes)
-            .map_err(|e| ReadDecodeError::Decode(e.to_string()))
+        let page = Arc::new(
+            crate::util::image_decode::decode_limited(&bytes)
+                .map_err(|e| ReadDecodeError::Decode(e.to_string()))?,
+        );
+        claim.fulfil(Arc::clone(&page));
+        Ok(page)
     })
     .await;
     match work {

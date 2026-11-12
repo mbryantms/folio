@@ -68,6 +68,7 @@ use redis::aio::ConnectionManager;
 
 use super::cache::{self, CachedBbox, CachedDetection};
 use super::detector::Detector;
+use super::page_cache::SharedPage;
 use super::postprocess::{self, Cleaned};
 use super::recognizer::{Language, Recognizer, manga::MangaOcr, western::WesternOcr};
 use crate::api::issue_ocr::OcrResponse;
@@ -123,7 +124,9 @@ impl Rect {
 // The struct is internal to the pipeline + handler; no Debug consumer
 // loses anything by the omission.
 pub struct OcrInput {
-    pub page_image: DynamicImage,
+    /// The decoded page, shared with the decoded-page cache
+    /// ([`super::page_cache`]).
+    pub page_image: SharedPage,
     pub region: Rect,
     pub language: Language,
     /// BLAKE3 of the issue's on-disk bytes. Drives the detector-result
@@ -563,7 +566,7 @@ pub async fn detect_and_cache_regions<P: Send + 'static>(
     redis: ConnectionManager,
     content_hash: &str,
     page: u32,
-    page_image: DynamicImage,
+    page_image: SharedPage,
     detector: &'static dyn PageDetector,
     permit: P,
 ) -> anyhow::Result<CachedDetection> {
