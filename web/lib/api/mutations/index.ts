@@ -1848,14 +1848,15 @@ export function useUpdateViewGroup(scope: ViewGroupScope) {
   );
 }
 
-/** DELETE /me/view-groups/{id} — the group's views fall back to the
- *  ungrouped section (server cascade); nothing else is touched. */
+/** DELETE /me/view-groups/{id} — the group's views and child groups
+ *  move up one level (to its parent, or the ungrouped section / top
+ *  level); nothing else is touched. */
 export function useDeleteViewGroup(scope: ViewGroupScope) {
   const qc = useQueryClient();
   return useApiMutation<unknown, string>(
     (id) => ({ path: apiPath`/me/view-groups/${id}`, method: "DELETE" }),
     {
-      successMessage: "Group removed — its views are ungrouped",
+      successMessage: "Group removed — its contents moved up a level",
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.viewGroups(scope) });
       },
@@ -1864,8 +1865,8 @@ export function useDeleteViewGroup(scope: ViewGroupScope) {
 }
 
 /** PUT /me/view-groups/layout — the drag-and-drop commit. One request
- *  carries the whole scope (group order, every group's members, and the
- *  ungrouped order), so a cross-group move is atomic. The cache is
+ *  carries the whole scope (the group tree and sibling order, every
+ *  group's members, and the ungrouped order), so a cross-group move is atomic. The cache is
  *  replaced optimistically with the requested layout; on error it snaps
  *  back and the shared error toast fires. */
 export function useReplaceViewGroupLayout(scope: ViewGroupScope) {
@@ -1879,11 +1880,24 @@ export function useReplaceViewGroupLayout(scope: ViewGroupScope) {
         const snapshot = qc.getQueryData<ViewGroupListView>(key);
         if (snapshot) {
           const byId = new Map(snapshot.groups.map((g) => [g.id, g]));
+          // Positions count among siblings, in order of appearance.
+          const next = new Map<string | null, number>();
           qc.setQueryData<ViewGroupListView>(key, {
             ...snapshot,
-            groups: input.groups.flatMap((g, position) => {
+            groups: input.groups.flatMap((g) => {
               const prev = byId.get(g.id);
-              return prev ? [{ ...prev, position, view_ids: g.view_ids }] : [];
+              if (!prev) return [];
+              const parent = g.parent_id ?? null;
+              const position = next.get(parent) ?? 0;
+              next.set(parent, position + 1);
+              return [
+                {
+                  ...prev,
+                  parent_id: parent,
+                  position,
+                  view_ids: g.view_ids,
+                },
+              ];
             }),
             ungrouped_ids: input.ungrouped ?? snapshot.ungrouped_ids,
           });

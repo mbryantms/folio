@@ -41,7 +41,6 @@ import {
   type RowStats,
 } from "@/lib/cbl/list-rows";
 import { formatRelativeDate } from "@/lib/format";
-import type { BoardGroup } from "@/lib/saved-views/view-board";
 import { cn } from "@/lib/utils";
 
 /**
@@ -82,8 +81,8 @@ export function readingListRows(
     // reading lists' "Recently updated" above replaces it.
     hiddenSorts: ["updated"],
     renderRow: (view, ctx) => <ReadingListRowCells view={view} ctx={ctx} />,
-    renderGroupCells: (group) => (
-      <FolderCells group={group} statsOf={statsOf} />
+    renderGroupCells: (_group, views) => (
+      <FolderCells views={views} statsOf={statsOf} />
     ),
   };
 }
@@ -220,16 +219,17 @@ function ReadingListRowCells({
   );
 }
 
-/** A folder row's roll-ups over every list in it. */
+/** A folder row's roll-ups over every list in it and in the folders
+ *  under it. */
 function FolderCells({
-  group,
+  views,
   statsOf,
 }: {
-  group: BoardGroup;
+  views: SavedViewView[];
   statsOf: (view: SavedViewView) => RowStats | null;
 }) {
-  const known = group.views.some((v) => statsOf(v) !== null);
-  const stats = known ? rollupStats(group.views.map(statsOf)) : null;
+  const known = views.some((v) => statsOf(v) !== null);
+  const stats = known ? rollupStats(views.map(statsOf)) : null;
   return (
     <>
       <div className={ROW_CELL.stat}>

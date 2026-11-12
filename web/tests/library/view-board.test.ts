@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import type { SavedViewView, ViewGroupView } from "@/lib/api/types";
 import {
+  MAX_GROUP_DEPTH,
   UNGROUPED_ID,
   boardFromLayout,
   boardRows,
@@ -21,6 +22,18 @@ import {
   rowViews,
   sortBoard,
   sortViews,
+  canNestInside,
+  carryUnknownIds,
+  groupDepth,
+  groupMoveRefusal,
+  groupPath,
+  listWithoutGroup,
+  moveGroupAmongSiblings,
+  moveGroupTo,
+  removeGroupLiftingContents,
+  subtreeHeight,
+  subtreeViews,
+  treeOrder,
 } from "@/lib/saved-views/view-board";
 
 function v(
@@ -131,8 +144,8 @@ describe("moveView", () => {
     expect(containerOf(next, "a")).toBe("g2");
     expect(boardToLayout(next)).toEqual({
       groups: [
-        { id: "g1", view_ids: ["b"] },
-        { id: "g2", view_ids: ["a", "c"] },
+        { id: "g1", parent_id: null, view_ids: ["b"] },
+        { id: "g2", parent_id: null, view_ids: ["a", "c"] },
       ],
       ungrouped: ["d"],
     });
@@ -288,7 +301,7 @@ describe("sorted boards never pin a sorted order", () => {
     const shown = byName(custom); // g1 shows [a, b], ungrouped [c, d]
     // A folder reorder or any commit with no membership change.
     expect(layoutKeepingCustom(custom, shown)).toEqual({
-      groups: [{ id: "g1", view_ids: ["b", "a"] }],
+      groups: [{ id: "g1", parent_id: null, view_ids: ["b", "a"] }],
       ungrouped: ["d", "c"],
     });
   });
@@ -297,7 +310,7 @@ describe("sorted boards never pin a sorted order", () => {
     const shown = byName(custom);
     const moved = moveView(shown, "c", "g1", 0); // dropped at the top
     expect(layoutKeepingCustom(custom, moved)).toEqual({
-      groups: [{ id: "g1", view_ids: ["b", "a", "c"] }],
+      groups: [{ id: "g1", parent_id: null, view_ids: ["b", "a", "c"] }],
       ungrouped: ["d"],
     });
     // And the board shown after it is the stored order, sorted again.
@@ -313,14 +326,14 @@ describe("sorted boards never pin a sorted order", () => {
     const shown = sortBoard(custom, "name"); // ungrouped [c, d]
     const reordered = moveView(shown, "a", "g1", 0); // [a, b] by hand
     expect(layoutKeepingCustom(custom, reordered, { groups: false })).toEqual({
-      groups: [{ id: "g1", view_ids: ["a", "b"] }],
+      groups: [{ id: "g1", parent_id: null, view_ids: ["a", "b"] }],
       ungrouped: ["d", "c"],
     });
     const ungroupedOne = moveView(shown, "a", UNGROUPED_ID);
     expect(
       layoutKeepingCustom(custom, ungroupedOne, { groups: false }),
     ).toEqual({
-      groups: [{ id: "g1", view_ids: ["b"] }],
+      groups: [{ id: "g1", parent_id: null, view_ids: ["b"] }],
       ungrouped: ["d", "c", "a"],
     });
   });
@@ -328,8 +341,8 @@ describe("sorted boards never pin a sorted order", () => {
   it("boardFromLayout drops ids it does not know and keeps group names", () => {
     const b = boardFromLayout(custom, {
       groups: [
-        { id: "g1", view_ids: ["a", "zzz"] },
-        { id: "gone", view_ids: [] },
+        { id: "g1", parent_id: null, view_ids: ["a", "zzz"] },
+        { id: "gone", parent_id: null, view_ids: [] },
       ],
       ungrouped: ["b"],
     });
@@ -337,5 +350,243 @@ describe("sorted boards never pin a sorted order", () => {
     expect(b.groups[0]!.name).toBe("g1");
     expect(b.groups[0]!.views.map((x) => x.id)).toEqual(["a"]);
     expect(b.ungrouped.map((x) => x.id)).toEqual(["b"]);
+  });
+});
+
+// ──────────────────── nested groups ────────────────────
+
+function gp(
+  id: string,
+  view_ids: string[],
+  position: number,
+  parent_id: string | null,
+): ViewGroupView {
+  return { ...g(id, view_ids, position), parent_id };
+}
+
+const many = ["a", "b", "c", "d", "e", "f"].map((id) => v(id, id));
+
+/** R ⊃ [S (b), T ⊃ [U (c)]] (a); Q (d); ungrouped e, f. */
+const nested = () =>
+  buildViewBoard(
+    many,
+    [
+      gp("U", ["c"], 0, "T"),
+      gp("Q", ["d"], 1, null),
+      gp("T", [], 1, "R"),
+      gp("R", ["a"], 0, null),
+      gp("S", ["b"], 0, "R"),
+    ],
+    ["e", "f"],
+  );
+const ids = (b: { groups: { id: string }[] }) => b.groups.map((x) => x.id);
+const parents = (b: { groups: { id: string; parentId: string | null }[] }) =>
+  Object.fromEntries(b.groups.map((x) => [x.id, x.parentId]));
+
+describe("group tree", () => {
+  it("builds the board in tree order with each group's parent", () => {
+    const b = nested();
+    expect(ids(b)).toEqual(["R", "S", "T", "U", "Q"]);
+    expect(parents(b)).toEqual({ R: null, S: "R", T: "R", U: "T", Q: null });
+    expect(b.ungrouped.map((x) => x.id)).toEqual(["e", "f"]);
+  });
+
+  it("treats an unknown parent or a parent cycle as top-level, never dropping a group", () => {
+    const b = buildViewBoard(many, [
+      gp("A", [], 0, "gone"),
+      gp("X", [], 1, "Y"),
+      gp("Y", [], 2, "X"),
+    ]);
+    expect(ids(b).sort()).toEqual(["A", "X", "Y"]);
+    expect(b.groups.every((x) => x.parentId === null)).toBe(true);
+    expect(
+      treeOrder([
+        { id: "c", parentId: "p", position: 0 },
+        { id: "p", parentId: null, position: 0 },
+      ]).map((x) => x.id),
+    ).toEqual(["p", "c"]);
+  });
+
+  it("measures depth, height, path, and the views under a folder", () => {
+    const b = nested();
+    expect(groupDepth(b, "R")).toBe(1);
+    expect(groupDepth(b, "U")).toBe(3);
+    expect(groupDepth(b, "nope")).toBe(0);
+    expect(subtreeHeight(b, "R")).toBe(3);
+    expect(subtreeHeight(b, "U")).toBe(1);
+    expect(groupPath(b, "U")).toEqual(["R", "T", "U"]);
+    expect(subtreeViews(b, "R").map((x) => x.id)).toEqual(["a", "b", "c"]);
+    expect(canNestInside(b, "U")).toBe(true);
+  });
+
+  it("boardRows nests subfolders before lists, one level deeper each", () => {
+    const rows = boardRows(nested());
+    const show = (r: (typeof rows)[number]): string =>
+      r.type === "group"
+        ? `${r.id}@${r.depth}[${r.children.map(show).join(",")}]`
+        : `${r.id}@${r.depth}`;
+    expect(rows.map(show)).toEqual([
+      "R@0[S@1[b@2],T@1[U@2[c@3]],a@1]",
+      "Q@0[d@1]",
+      "e@0",
+      "f@0",
+    ]);
+    // A folder's roll-up covers every descendant.
+    expect(rowViews(rows[0]!).map((x) => x.id)).toEqual(["b", "c", "a"]);
+  });
+
+  it("refuses moves into the group itself, its descendants, or past four levels", () => {
+    const b = nested();
+    expect(groupMoveRefusal(b, "R", "R")).toBe("self");
+    expect(groupMoveRefusal(b, "R", "U")).toBe("self");
+    expect(groupMoveRefusal(b, "Q", "U")).toBeNull(); // Q lands on level 4
+    expect(groupMoveRefusal(b, "R", "Q")).toBeNull(); // 1 + 3 levels
+    expect(groupMoveRefusal(b, "T", "S")).toBeNull(); // 2 + 2 levels
+    expect(groupMoveRefusal(b, "T", null)).toBeNull();
+    expect(moveGroupTo(b, "R", "U")).toBe(b);
+    // A chain at the cap can't take a child.
+    const deep = moveGroupTo(b, "Q", "U");
+    expect(groupDepth(deep, "Q")).toBe(MAX_GROUP_DEPTH);
+    expect(canNestInside(deep, "Q")).toBe(false);
+    expect(groupMoveRefusal(deep, "S", "Q")).toBe("depth");
+    expect(groupMoveRefusal(b, "T", "U")).toBe("self");
+    expect(groupMoveRefusal(moveGroupTo(b, "Q", "S"), "T", "Q")).toBe(
+      "depth", // 3 + 2 levels
+    );
+    expect(moveGroupTo(deep, "S", "Q")).toBe(deep);
+  });
+
+  it("moves a folder with its subtree into a folder, between siblings, and to the top", () => {
+    const b = nested();
+    const intoQ = moveGroupTo(b, "T", "Q");
+    expect(ids(intoQ)).toEqual(["R", "S", "Q", "T", "U"]);
+    expect(parents(intoQ)).toMatchObject({ T: "Q", U: "T" });
+    const first = moveGroupTo(b, "T", "R", 0);
+    expect(ids(first)).toEqual(["R", "T", "U", "S", "Q"]);
+    const top = moveGroupTo(b, "U", null, 1);
+    expect(ids(top)).toEqual(["R", "S", "T", "U", "Q"]);
+    expect(parents(top).U).toBeNull();
+    expect(boardToLayout(top).groups.map((x) => [x.id, x.parent_id])).toEqual([
+      ["R", null],
+      ["S", "R"],
+      ["T", "R"],
+      ["U", null],
+      ["Q", null],
+    ]);
+    // Up / down only among siblings.
+    expect(ids(moveGroupAmongSiblings(b, "T", -1))).toEqual([
+      "R",
+      "T",
+      "U",
+      "S",
+      "Q",
+    ]);
+    expect(moveGroupAmongSiblings(b, "S", -1)).toBe(b);
+    expect(moveGroupAmongSiblings(b, "Q", 1)).toBe(b);
+    // Flat-index reorder (cards) trades siblings only.
+    expect(ids(moveGroup(b, 4, 0))).toEqual(["Q", "R", "S", "T", "U"]);
+    expect(moveGroup(b, 1, 4)).toBe(b);
+  });
+
+  it("deleting a folder lifts its contents one level, in its place", () => {
+    const b = nested();
+    const noT = removeGroupLiftingContents(b, "T");
+    expect(ids(noT)).toEqual(["R", "S", "U", "Q"]);
+    expect(parents(noT).U).toBe("R");
+    const noR = removeGroupLiftingContents(b, "R");
+    expect(ids(noR)).toEqual(["S", "T", "U", "Q"]);
+    expect(noR.ungrouped.map((x) => x.id)).toEqual(["e", "f", "a"]);
+    const noS = removeGroupLiftingContents(b, "S");
+    expect(
+      noS.groups.find((x) => x.id === "R")!.views.map((x) => x.id),
+    ).toEqual(["a", "b"]);
+  });
+
+  it("listWithoutGroup mirrors the server's delete on the cached list", () => {
+    const list = {
+      scope: "cbl",
+      groups: [
+        gp("R", ["a"], 0, null),
+        gp("S", ["b"], 0, "R"),
+        gp("T", ["x"], 1, "R"),
+        gp("U", ["c"], 0, "T"),
+        gp("V", [], 1, "T"),
+        gp("W", [], 2, "R"),
+      ],
+      ungrouped_ids: ["e"],
+    };
+    const out = listWithoutGroup(list, "T");
+    const by = Object.fromEntries(out.groups.map((x) => [x.id, x]));
+    expect(by.T).toBeUndefined();
+    expect([by.U!.parent_id, by.U!.position]).toEqual(["R", 1]);
+    expect([by.V!.parent_id, by.V!.position]).toEqual(["R", 2]);
+    expect(by.W!.position).toBe(3);
+    expect(by.R!.view_ids).toEqual(["a", "x"]);
+    const top = listWithoutGroup(list, "R");
+    expect(top.ungrouped_ids).toEqual(["e", "a"]);
+    expect(
+      top.groups.filter((x) => x.parent_id === null).map((x) => x.id),
+    ).toEqual(["S", "T", "W"]);
+  });
+
+  it("sorts lists inside folders at every depth; folders keep their place", () => {
+    const b = buildViewBoard(many, [
+      gp("R", ["b", "a"], 0, null),
+      gp("S", ["d", "c"], 0, "R"),
+    ]);
+    const sorted = sortBoard(b, "name", undefined, { groups: true });
+    expect(ids(sorted)).toEqual(["R", "S"]);
+    expect(sorted.groups[1]!.views.map((x) => x.id)).toEqual(["c", "d"]);
+    expect(parents(sorted)).toEqual({ R: null, S: "R" });
+    // A save while sorted: stored orders, tree from the move.
+    const moved = moveGroupTo(moveView(sorted, "e", "S", 0), "S", null);
+    expect(layoutKeepingCustom(b, moved)).toEqual({
+      groups: [
+        { id: "R", parent_id: null, view_ids: ["b", "a"] },
+        { id: "S", parent_id: null, view_ids: ["d", "c", "e"] },
+      ],
+      ungrouped: ["f"],
+    });
+  });
+
+  it("boardFromLayout rebuilds the tree from a layout", () => {
+    const b = nested();
+    const back = boardFromLayout(b, boardToLayout(moveGroupTo(b, "Q", "S")));
+    expect(ids(back)).toEqual(["R", "S", "Q", "T", "U"]);
+    expect(parents(back).Q).toBe("S");
+  });
+});
+
+describe("carryUnknownIds", () => {
+  const known = new Set(["a", "b", "c"]);
+  it("puts ids the page doesn't know back in place inside their group", () => {
+    const layout = {
+      groups: [{ id: "G", parent_id: null, view_ids: ["b", "a"] }],
+      ungrouped: ["c"],
+    };
+    const server = {
+      groups: [gp("G", ["x", "a", "y", "b"], 0, null)],
+      ungrouped_ids: ["c", "z"],
+    };
+    expect(carryUnknownIds(layout, server, known)).toEqual({
+      groups: [{ id: "G", parent_id: null, view_ids: ["x", "b", "a", "y"] }],
+      ungrouped: ["c", "z"],
+    });
+  });
+
+  it("never re-adds a known id the move took out, and skips groups not sent", () => {
+    const layout = {
+      groups: [{ id: "G", parent_id: null, view_ids: [] }],
+      ungrouped: ["a"],
+    };
+    const server = {
+      groups: [gp("G", ["a", "x"], 0, null), gp("Gone", ["q"], 1, null)],
+      ungrouped_ids: [],
+    };
+    expect(carryUnknownIds(layout, server, known)).toEqual({
+      groups: [{ id: "G", parent_id: null, view_ids: ["x"] }],
+      ungrouped: ["a"],
+    });
+    expect(carryUnknownIds(layout, undefined, known)).toBe(layout);
   });
 });
