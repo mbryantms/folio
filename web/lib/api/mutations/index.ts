@@ -7,7 +7,7 @@
  * + extracted `_core.ts` + the thumbnails cluster. Remaining clusters
  * (CBL, markers, saved-views, pages, admin) are mechanical follow-ups.
  */
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { usePathname, useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -17,7 +17,7 @@ import { showUndoToast } from "@/lib/ui/undo-toast";
 import { apiFetch } from "../auth-refresh";
 import { queryKeys, type EntityKindPath } from "../queries";
 import { apiPath } from "../path";
-import { cancelCardLists } from "../card-list-cache";
+import { cancelCardLists, resumeCardLists } from "../card-list-cache";
 import { buildQuery } from "../build-query";
 import { getCsrfToken, useApiMutation } from "./_core";
 import {
@@ -610,8 +610,7 @@ export function useBulkMarkProgress() {
             finished: input.finished,
           })),
         ),
-      onError: (_err, _input, ctx) =>
-        rollbackProgress(qc, (ctx as MarkProgressCtx | undefined)?.snap),
+      onError: (_err, _input, ctx) => markFailed(qc, ctx),
       onSuccess: (data, input, ctx) => {
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
@@ -619,9 +618,12 @@ export function useBulkMarkProgress() {
         // The reply counts refusals but doesn't name them: when any issue
         // was not written, refetch the mounted lists so their cards show
         // the server's state instead of the optimistic one.
-        invalidateIssueCards(qc, {
-          refetchActive: (data?.not_found ?? 0) + (data?.failed ?? 0) > 0,
-        });
+        const refused =
+          (data?.not_found ?? 0) + (data?.failed ?? 0) + (data?.forbidden ?? 0);
+        const mark = ctx as MarkProgressCtx | undefined;
+        if (refused === 0)
+          settleProgress(qc, mark?.snap, null, mark?.cancelled);
+        invalidateIssueCards(qc, { refetchActive: refused > 0 });
         const message = summarizeBulkProgress(data, input.finished);
         const prior = (ctx as MarkProgressCtx | undefined)?.prior;
         if (!prior || data?.updated === 0) {
@@ -1458,7 +1460,17 @@ export function useSetIssueMetadataAccepted(
 type MarkProgressCtx = {
   snap: Awaited<ReturnType<typeof applyOptimisticProgress>>;
   prior: PriorProgress | null;
+  /** Card-list fetches `beginMark` cancelled before reading the priors. */
+  cancelled: QueryKey[];
 };
+
+/** A mark failed: roll it back, then re-run the card-list fetches it
+ *  cancelled (they would otherwise stay as they were, idle). */
+function markFailed(qc: ReturnType<typeof useQueryClient>, ctx: unknown) {
+  const mark = ctx as MarkProgressCtx | undefined;
+  rollbackProgress(qc, mark?.snap);
+  resumeCardLists(qc, mark?.cancelled ?? []);
+}
 
 /** Run inside a mark's `onMutate`: cancel in-flight card-list fetches,
  *  capture each issue's prior record (for Undo) and write the new state
@@ -1472,13 +1484,13 @@ async function beginMark(
 ): Promise<MarkProgressCtx> {
   // A card-list fetch that started before the mark must not land after
   // it: cancel first, then read the priors, then patch.
-  await cancelCardLists(qc);
+  const cancelled = await cancelCardLists(qc);
   const priorP = capturePriorProgress(
     qc,
     writes.map((w) => w.issue_id),
   ).catch(() => null);
   const snap = await applyOptimisticProgress(qc, writes);
-  return { snap, prior: await priorP };
+  return { snap, prior: await priorP, cancelled };
 }
 
 /**
@@ -1505,11 +1517,10 @@ export function useUpsertIssueProgress() {
             finished: input.finished ?? false,
           },
         ]),
-      onError: (_err, _input, ctx) =>
-        rollbackProgress(qc, (ctx as MarkProgressCtx | undefined)?.snap),
+      onError: (_err, _input, ctx) => markFailed(qc, ctx),
       onSuccess: (data, input, ctx) => {
-        if (data)
-          settleProgress(qc, (ctx as MarkProgressCtx | undefined)?.snap, data);
+        const mark = ctx as MarkProgressCtx | undefined;
+        settleProgress(qc, mark?.snap, data, mark?.cancelled);
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
         invalidateSeriesProgress(qc);

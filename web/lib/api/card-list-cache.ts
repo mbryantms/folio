@@ -101,9 +101,52 @@ export type CardPatchToken = Array<{
 }>;
 
 /** Cancel in-flight card-list fetches, so one that started before a
- *  write cannot land after it and overwrite the patch. */
-export function cancelCardLists(qc: QueryClient): Promise<void> {
-  return qc.cancelQueries(cardLists);
+ *  write cannot land after it and overwrite the patch. Returns the keys it
+ *  cancelled: a cancelled fetch goes back to its earlier state and nothing
+ *  re-runs it, so the mutation hands them to [`resumeCardLists`] when it
+ *  settles (TanStack's cancel-in-onMutate, refetch-in-onSettled recipe). */
+export async function cancelCardLists(qc: QueryClient): Promise<QueryKey[]> {
+  const keys = fetchingCardLists(qc);
+  await Promise.all(
+    keys.map((queryKey) => qc.cancelQueries({ queryKey, exact: true })),
+  );
+  return keys;
+}
+
+/** Card lists with a fetch in flight right now. */
+export function fetchingCardLists(qc: QueryClient): QueryKey[] {
+  return qc
+    .getQueryCache()
+    .findAll({ ...cardLists, fetchStatus: "fetching" })
+    .map((q) => q.queryKey);
+}
+
+/** Refetch `keys` (once each) that are still mounted. Run when a mark
+ *  settles, for the fetches it cancelled and, on success, for any that
+ *  started before the server committed. */
+export function resumeCardLists(qc: QueryClient, keys: readonly QueryKey[]) {
+  const seen = new Set<string>();
+  for (const queryKey of keys) {
+    const hash = JSON.stringify(queryKey);
+    if (seen.has(hash)) continue;
+    seen.add(hash);
+    void qc.refetchQueries({ queryKey, exact: true, type: "active" });
+  }
+}
+
+/** Write a patched copy of a list without changing its age: the patch
+ *  keeps `dataUpdatedAt` (so it doesn't pass for the newest list in
+ *  [`cachedCardProgress`]) and a list marked stale stays stale (a write
+ *  dispatches "success", which would clear the flag). */
+function writeList(qc: QueryClient, queryKey: QueryKey, data: unknown) {
+  const query = qc.getQueryCache().find({ queryKey, exact: true });
+  const wasInvalidated = query?.state.isInvalidated ?? false;
+  qc.setQueryData(queryKey, data, {
+    updatedAt: query?.state.dataUpdatedAt,
+  });
+  if (wasInvalidated) {
+    void qc.invalidateQueries({ queryKey, exact: true, refetchType: "none" });
+  }
 }
 
 /** Replace the embedded progress of every cached card whose id is in
@@ -127,7 +170,7 @@ export function patchCardProgress(
       return changes.get(card.id) ?? null;
     });
     if (next !== data) {
-      qc.setQueryData(queryKey, next);
+      writeList(qc, queryKey, next);
       for (const card of embeddedCards(qc.getQueryData(queryKey))) {
         ids.get(card.id)?.wrote.add(card.progress);
       }
@@ -153,7 +196,7 @@ function replaceOwn(
       if (!own || !own.wrote.has(card.progress)) return undefined;
       return next(card.id, own.before);
     });
-    if (out !== data) qc.setQueryData(queryKey, out);
+    if (out !== data) writeList(qc, queryKey, out);
   }
 }
 
@@ -166,16 +209,6 @@ export function restoreCardProgress(
   replaceOwn(qc, token, (id, before) =>
     ids && !ids.has(id) ? undefined : before,
   );
-}
-
-/** Swap the optimistic copy for the server's reply, where it is still the
- *  patch's own. */
-export function settleCardProgress(
-  qc: QueryClient,
-  token: CardPatchToken,
-  replies: ReadonlyMap<string, CardProgress>,
-) {
-  replaceOwn(qc, token, (id) => replies.get(id));
 }
 
 /** For each of `ids` some cached card list carries: its embedded copy,

@@ -18,7 +18,7 @@
  * one failing. On success the mutation hooks raise an Undo toast that
  * puts each issue back the way it was ([`restoreProgress`]).
  */
-import type { QueryClient } from "@tanstack/react-query";
+import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { ReadState } from "@/lib/reading-state";
@@ -27,9 +27,10 @@ import { readStateFor } from "@/lib/reading-state";
 import {
   cachedCardProgress,
   cancelCardLists,
+  fetchingCardLists,
   patchCardProgress,
   restoreCardProgress,
-  settleCardProgress,
+  resumeCardLists,
   type CardPatchToken,
   type CardProgress,
 } from "../card-list-cache";
@@ -70,6 +71,8 @@ type Snapshot = {
   >;
   continueReading: ContinueReadingView | undefined;
   cards: CardPatchToken;
+  /** Card-list fetches this write cancelled; re-run when it settles. */
+  cancelled: QueryKey[];
   /** Per issue: the issue page's record before, and the one written. */
   issues: Map<
     string,
@@ -114,7 +117,7 @@ export async function applyOptimisticProgress(
   qc: QueryClient,
   writes: readonly ProgressWrite[],
 ): Promise<Snapshot> {
-  await Promise.all([
+  const [, , cancelled] = await Promise.all([
     qc.cancelQueries({ queryKey: queryKeys.userProgress }),
     qc.cancelQueries({ queryKey: queryKeys.continueReading }),
     cancelCardLists(qc),
@@ -174,7 +177,7 @@ export async function applyOptimisticProgress(
     // Read back: structural sharing may have stored a copy of `rec`.
     issues.set(id, { before, wrote: qc.getQueryData<ProgressView>(key)! });
   }
-  return { map, mapIds, continueReading, cards, issues };
+  return { map, mapIds, continueReading, cards, cancelled, issues };
 }
 
 /** Undo [`applyOptimisticProgress`] after a failed write, for the issues
@@ -203,6 +206,7 @@ export function rollbackProgress(
     qc.setQueryData(queryKeys.continueReading, snap.continueReading);
   }
   restoreCardProgress(qc, snap.cards, ids);
+  if (!ids) resumeCardLists(qc, snap.cancelled);
   for (const [id, { before, wrote }] of snap.issues) {
     const key = queryKeys.issueProgress(id);
     if (!mine(id) || qc.getQueryData(key) !== wrote) continue;
@@ -213,19 +217,38 @@ export function rollbackProgress(
   }
 }
 
-/** A single mark succeeded: put the server's record where the optimistic
- *  one still stands. */
+/**
+ * A write succeeded. Put its result into every cached card list again —
+ * the server's `reply` for a single mark, else the optimistic records —
+ * so a list that mounted and fetched while the request was in flight
+ * (pre-commit data, not in the patch token) shows it too. The issue
+ * page's record takes the reply where the optimistic one still stands.
+ * Then re-run the card-list fetches this write cancelled, and any that
+ * are in flight now (they may have started before the commit).
+ */
 export function settleProgress(
   qc: QueryClient,
   snap: Snapshot | undefined,
-  reply: ProgressView,
+  reply?: ProgressView | null,
+  extraCancelled: readonly QueryKey[] = [],
 ) {
   if (!snap) return;
-  const id = reply.issue_id;
-  settleCardProgress(qc, snap.cards, new Map([[id, cardCopy(reply)]]));
-  const own = snap.issues.get(id);
-  const key = queryKeys.issueProgress(id);
-  if (own && qc.getQueryData(key) === own.wrote) qc.setQueryData(key, reply);
+  if (reply) {
+    patchCardProgress(qc, new Map([[reply.issue_id, cardCopy(reply)]]));
+    const own = snap.issues.get(reply.issue_id);
+    const key = queryKeys.issueProgress(reply.issue_id);
+    if (own && qc.getQueryData(key) === own.wrote) qc.setQueryData(key, reply);
+  } else {
+    patchCardProgress(
+      qc,
+      new Map([...snap.issues].map(([id, { wrote }]) => [id, cardCopy(wrote)])),
+    );
+  }
+  resumeCardLists(qc, [
+    ...extraCancelled,
+    ...snap.cancelled,
+    ...fetchingCardLists(qc),
+  ]);
 }
 
 /** Per-id reads (`?issue_id=`, one row each) cover at most this many
@@ -341,6 +364,7 @@ export async function restoreProgress(
       });
     }
     ok = true;
+    settleProgress(qc, snap);
   } finally {
     if (!ok) rollbackProgress(qc, snap);
     qc.invalidateQueries({ queryKey: queryKeys.userProgress });
