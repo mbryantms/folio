@@ -540,6 +540,24 @@ error class (`FailureDisposition` in `rewrite_sidecars.rs`, audit N-M7):
 | **Busy lock budget spent** (40 requeues) | `Ok` | `archive.errored` ("rewrite lock busy") + run marked `failed` |
 | **Requeue push failed** | `Err` — apalis retries the original task | nothing dropped |
 
+**A retry never rewrites twice (ARC-2).** A transient failure can come
+*after* the swap: the archive holds the new sidecars and the original is
+in `.bak`, then the issue-row update fails and the job returns `Err`.
+The retry (or an operator's Retry of the dead-lettered job) first checks
+whether the archive already holds exactly the job's XML
+(`rewrite_sidecars::archive_already_holds`: the root `ComicInfo.xml` and
+`MetronInfo.xml` byte-for-byte equal to the payload, no other Folio
+sidecar in the archive) and, if so, skips the swap and runs only the
+steps after it. Without that the retry rotated the rewritten file into
+`.bak`, which with one slot deleted the only copy of the original. The
+check is on bytes, not on which job wrote them: a compose of other data
+never passes, and one whose bytes match (a manual edit, drift flush,
+re-emit or GCD compose of unchanged data: only ComicVine and Metron
+composes carry a timestamp in Notes) is skipped too, because a rewrite
+would change nothing. See
+[archive-writes.md](archive-writes.md#retries-after-the-swap) for every
+writer's verdict.
+
 The handler takes the task's `Attempt` for this (registered with the
 `attempt:` arm of `JobRuntime::run`'s `register!`), which is why the
 integration tests call it as `handle(job, Data(state), Attempt::new_with_value(n))`.
@@ -785,8 +803,18 @@ solicitation.)
 **2. Restore.** In order of preference:
 
 - **`.bak` restore**, where one survives next to the archive
-  (`<file>.bak`, `.bak.N`): copy it back over the archive, then
-  force-rescan the series. No provider quota. It also reverts anything
+  (`<file>.bak`, `.bak.N`): the issue menu's *Restore from backup*
+  (`POST /api/issues/{id}/archive/restore`) swaps the archive with its
+  `<file>.bak` and keeps the replaced file as the new `.bak` (restoring
+  again undoes it; [archive-writes.md](archive-writes.md#restore-keeps-the-file-it-replaces));
+  for an older slot, copy it back over the archive by hand, then
+  force-rescan the series. A converted archive's pre-conversion
+  backup (`X.cbr.bak` beside `X.cbz`, listed by
+  `GET /api/issues/{id}/archive/backups` with `pre_conversion: true`) is
+  restored by choosing it in the same dialog
+  (`…/archive/restore?backup=X.cbr.bak`): the archive is rebuilt as a CBZ
+  from it at the same path, the backup itself is left as it is. No
+  provider quota. It also reverts anything
   else that rewrite changed, so only use a backup from that rewrite.
 - **Per-issue re-fetch** — the default. Series page → ⋯ → *Fetch
   metadata* → **Only missing or partial**

@@ -16,7 +16,8 @@ use entity::library_event::{Column as EventCol, Entity as EventEntity};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use server::archive_rewrite::{self, mutex};
 use server::jobs::archive_edit::{
-    ArchiveEditJob, BulkArchiveOp, PageOp, Rot, edit_one_issue, handle, simulate_ops,
+    ArchiveEditJob, BulkArchiveOp, EditError, EditFaults, PageOp, Rot, edit_one_issue, handle,
+    handle_with_faults, simulate_ops,
 };
 use server::jobs::archive_transforms::TransformStep;
 use std::io::{Cursor, Write};
@@ -820,4 +821,155 @@ async fn startup_cleanup_removes_only_own_staging_in_writeback_libraries() {
     for p in off_files.iter().chain(on_kept.iter()) {
         assert!(p.exists(), "{} must survive", p.display());
     }
+}
+
+// ───────── ARC-2 (4): an unclear commit that did land ─────────
+
+async fn issue_events(app: &TestApp, issue_id: &str) -> Vec<entity::library_event::Model> {
+    EventEntity::find()
+        .filter(EventCol::EntityId.eq(issue_id))
+        .all(&app.state().db)
+        .await
+        .unwrap()
+}
+
+/// Seed the CBR fixture as an issue; returns the issue id, its path and
+/// the page count.
+async fn seed_cbr(app: &TestApp, dir: &Path) -> (String, std::path::PathBuf, usize) {
+    let fixture = first_cbr_fixture().expect("fixtures/synthetic-3page.cbr is committed");
+    let bytes = std::fs::read(&fixture).unwrap();
+    let (issue_id, cbr_path) = seed_issue_with_archive(app, bytes, dir, "Thanos 001.cbr").await;
+    let pages = archive::open_path_unchecked(&cbr_path, ArchiveLimits::default())
+        .unwrap()
+        .pages()
+        .len();
+    (issue_id, cbr_path, pages)
+}
+
+/// The bookkeeping transaction of a CBR edit commits, but the client sees
+/// an error (injected right after the commit). The row names the new
+/// `.cbz`, so the conversion is kept and the edit is reported **done**,
+/// once, with a warning saying what was unclear; no failure is reported,
+/// so the admin is not invited to repeat the remove on the edited archive.
+/// Pre-fix the edit was reported as failed.
+#[tokio::test]
+async fn a_cbr_edit_whose_commit_landed_despite_an_error_is_reported_done() {
+    let app = TestApp::spawn().await;
+    let dir = tempdir().unwrap();
+    let (issue_id, cbr_path, pre) = seed_cbr(&app, dir.path()).await;
+    let cbz_path = cbr_path.with_extension("cbz");
+
+    let faults = EditFaults {
+        after_commit: Some(Box::new(|| {
+            Err(EditError::Db(sea_orm::DbErr::Custom(
+                "connection reset while committing".into(),
+            )))
+        })),
+        ..Default::default()
+    };
+    handle_with_faults(
+        job(&issue_id, vec![PageOp::Remove { ordinal: 0 }]),
+        app.state(),
+        faults,
+    )
+    .await
+    .unwrap();
+
+    let row = entity::issue::Entity::find_by_id(&issue_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(Path::new(&row.file_path), cbz_path.as_path());
+    assert!(!cbr_path.exists(), "the conversion was finished");
+    assert!(archive_rewrite::backup_slot(&cbr_path, 0).exists());
+    let edited = Cbz::open_path_unchecked(&cbz_path, ArchiveLimits::default()).unwrap();
+    assert_eq!(edited.pages().len(), pre - 1, "the remove was applied once");
+
+    let events = issue_events(&app, &issue_id).await;
+    assert_eq!(events.len(), 1, "reported once: {events:?}");
+    assert_eq!(events[0].action, "updated", "reported done: {events:?}");
+    assert_eq!(events[0].severity, "warning");
+    assert!(
+        events[0].summary.contains("Do not repeat"),
+        "{}",
+        events[0].summary
+    );
+}
+
+/// Control: when the transaction really fails (a trigger rejects the row
+/// update), the row still names the `.cbr`, the conversion is undone and
+/// the edit is reported failed, with the archive as it was.
+#[tokio::test]
+async fn a_cbr_edit_whose_commit_failed_is_undone_and_reported_failed() {
+    use sea_orm::ConnectionTrait;
+    let app = TestApp::spawn().await;
+    let dir = tempdir().unwrap();
+    let (issue_id, cbr_path, _) = seed_cbr(&app, dir.path()).await;
+    let original = std::fs::read(&cbr_path).unwrap();
+    app.state()
+        .db
+        .execute_unprepared(
+            "CREATE FUNCTION test_fail_edit_stamp() RETURNS trigger AS $$ \
+             BEGIN RAISE EXCEPTION 'injected'; END $$ LANGUAGE plpgsql; \
+             CREATE TRIGGER test_fail_edit_stamp BEFORE UPDATE ON issues FOR EACH ROW \
+             WHEN (NEW.last_rewrite_kind = 'edit') EXECUTE FUNCTION test_fail_edit_stamp();",
+        )
+        .await
+        .unwrap();
+
+    handle_with_faults(
+        job(&issue_id, vec![PageOp::Remove { ordinal: 0 }]),
+        app.state(),
+        EditFaults::default(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read(&cbr_path).unwrap(),
+        original,
+        "original in place"
+    );
+    assert!(
+        !cbr_path.with_extension("cbz").exists(),
+        "conversion undone"
+    );
+    let events = issue_events(&app, &issue_id).await;
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].action, "errored");
+}
+
+/// An in-place edit whose bookkeeping fails after the swap is still a
+/// failure, but its message says the archive was edited and must not be
+/// edited again.
+#[tokio::test]
+async fn an_in_place_edit_whose_bookkeeping_failed_says_the_archive_was_edited() {
+    use sea_orm::ConnectionTrait;
+    let app = TestApp::spawn().await;
+    let dir = tempdir().unwrap();
+    let cbz = build_cbz(&[
+        ("p1.png", png_bytes(4, 4, [1, 0, 0])),
+        ("p2.png", png_bytes(4, 4, [0, 1, 0])),
+    ]);
+    let (issue_id, _) = seed_issue_with_cbz(&app, cbz, dir.path()).await;
+    app.state()
+        .db
+        .execute_unprepared(
+            "CREATE FUNCTION test_fail_edit_stamp() RETURNS trigger AS $$ \
+             BEGIN RAISE EXCEPTION 'injected'; END $$ LANGUAGE plpgsql; \
+             CREATE TRIGGER test_fail_edit_stamp BEFORE UPDATE ON issues FOR EACH ROW \
+             WHEN (NEW.last_rewrite_kind = 'edit') EXECUTE FUNCTION test_fail_edit_stamp();",
+        )
+        .await
+        .unwrap();
+    let err = edit_one_issue(
+        &app.state(),
+        &job(&issue_id, vec![PageOp::Remove { ordinal: 0 }]),
+    )
+    .await
+    .err()
+    .expect("the bookkeeping failed");
+    assert!(matches!(err, EditError::NotRecorded(_)), "{err:?}");
+    assert!(err.to_string().contains("Do not repeat the edit"), "{err}");
 }

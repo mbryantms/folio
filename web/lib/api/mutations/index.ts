@@ -17,6 +17,7 @@ import { showUndoToast } from "@/lib/ui/undo-toast";
 import { apiFetch } from "../auth-refresh";
 import { queryKeys, type EntityKindPath } from "../queries";
 import { apiPath } from "../path";
+import { buildQuery } from "../build-query";
 import { getCsrfToken, useApiMutation } from "./_core";
 import {
   applyOptimisticProgress,
@@ -1345,14 +1346,37 @@ export function useBulkArchiveEditMutation() {
   }));
 }
 
-/** Restore an issue's archive from its most recent `.bak`. */
+/**
+ * Restore an issue's archive: from its most recent `.bak` when `backup` is
+ * omitted, or from the named backup (a file name the backups listing
+ * returned; a pre-conversion backup is rebuilt as a CBZ).
+ */
+/** The success toast of a restore: what happened, where the replaced
+ *  archive went when that needs saying, or that it is still running. */
+export function restoreSuccessMessage(data: RestoreResponse | null): string {
+  if (data?.in_progress) {
+    return "Archive restore still running: the issue refreshes when it is done";
+  }
+  if (data?.warning) return `Archive restored. ${data.warning}`;
+  if (data?.rebuilt_from) return data.message;
+  return "Archive restored";
+}
+
 export function useRestoreArchiveMutation(issueId: string) {
-  return useApiMutation<RestoreResponse, void>(
-    () => ({
-      path: apiPath`/issues/${issueId}/archive/restore`,
+  return useApiMutation<RestoreResponse, { backup?: string } | void>(
+    (vars) => ({
+      path:
+        apiPath`/issues/${issueId}/archive/restore` +
+        buildQuery({ backup: vars ? vars.backup : undefined }),
       method: "POST",
     }),
-    { successMessage: "Restore queued" },
+    {
+      // The restore runs while the request waits; past the server's
+      // deadline it answers `in_progress` and finishes on its own.
+      successMessage: restoreSuccessMessage,
+      // "Still running" is an app-state notice, not a completion.
+      successVariant: (data) => (data?.in_progress ? "info" : "success"),
+    },
   );
 }
 

@@ -289,8 +289,29 @@ pub struct ArchiveEditJob {
 }
 
 pub async fn handle(job: ArchiveEditJob, state: Data<AppState>) -> Result<(), BoxDynError> {
-    let state: AppState = (*state).clone();
+    handle_with_faults(job, (*state).clone(), EditFaults::default()).await
+}
 
+/// Test seams for the edit path ([`handle_with_faults`],
+/// [`edit_one_issue_with_faults`]). Production passes the default (none).
+#[derive(Default)]
+pub struct EditFaults {
+    /// Awaited once the archive has been rewritten and swapped, before the
+    /// bookkeeping transaction: a test adds an anchor here, as a reader
+    /// would while the rewrite runs.
+    pub after_swap: Option<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
+    /// Run right after the bookkeeping transaction committed; an `Err`
+    /// stands in for a commit the server applied while the client saw an
+    /// error.
+    pub after_commit: Option<Box<dyn FnOnce() -> Result<(), EditError> + Send>>,
+}
+
+/// [`handle`] with [`EditFaults`] (tests).
+pub async fn handle_with_faults(
+    job: ArchiveEditJob,
+    state: AppState,
+    faults: EditFaults,
+) -> Result<(), BoxDynError> {
     let mut redis = state.jobs.redis.clone();
     let token = match mutex::try_claim(&mut redis, &job.issue_id, mutex::EDIT_TTL_SECS).await {
         Ok(Some(t)) => t,
@@ -311,7 +332,7 @@ pub async fn handle(job: ArchiveEditJob, state: Data<AppState>) -> Result<(), Bo
         mutex::EDIT_TTL_SECS,
     );
 
-    let outcome = edit_one_issue(&state, &job).await;
+    let outcome = edit_one_issue_with_faults(&state, &job, faults).await;
     drop(heartbeat);
     let mut redis = state.jobs.redis.clone();
     mutex::release(&mut redis, &job.issue_id, &token).await;
@@ -342,8 +363,14 @@ pub struct EditResult {
     pub moved_to: Option<PathBuf>,
     /// How many per-user anchors (markers, reading progress) followed
     /// their pages through a structural edit. All zero for non-structural
-    /// edits (rotate / replace / transform keep every ordinal).
+    /// edits (rotate / replace / transform keep every ordinal), and when
+    /// `warning` is set (the counts were lost with the reply).
     pub anchors: crate::reading::page_remap::RemapOutcome,
+    /// The edit is complete, but something about recording it was
+    /// unclear; says what. Reported with the success (audit row and a
+    /// warning-severity library event), never as a failure: the archive
+    /// holds the edit, so repeating it would apply it twice.
+    pub warning: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -366,6 +393,15 @@ pub enum EditError {
     Db(#[from] sea_orm::DbErr),
     #[error("archive: {0}")]
     Archive(#[from] ArchiveError),
+    /// The archive was rewritten in place, then recording the edit (the
+    /// bookkeeping transaction: anchors, the issue row) failed.
+    #[error(
+        "the archive was edited, but recording the edit failed: {0}. Do not repeat the \
+         edit: it would be applied again. A rescan of the issue brings its row in line with \
+         the edited file; to undo the edit, restore the backup if the library keeps one (it \
+         keeps none when its backup count is 0, and the edit then cannot be undone here)"
+    )]
+    NotRecorded(Box<EditError>),
 }
 
 impl EditError {
@@ -383,6 +419,15 @@ impl EditError {
 pub async fn edit_one_issue(
     state: &AppState,
     job: &ArchiveEditJob,
+) -> Result<EditResult, EditError> {
+    edit_one_issue_with_faults(state, job, EditFaults::default()).await
+}
+
+/// [`edit_one_issue`] with [`EditFaults`] (tests).
+pub async fn edit_one_issue_with_faults(
+    state: &AppState,
+    job: &ArchiveEditJob,
+    mut faults: EditFaults,
 ) -> Result<EditResult, EditError> {
     let Some(row) = issue::Entity::find_by_id(&job.issue_id)
         .one(&state.db)
@@ -431,6 +476,7 @@ pub async fn edit_one_issue(
     // From the library row loaded above: no second lookup that could fail
     // and be mistaken for "library gone".
     let root = crate::library::no_follow::library_root_of(state, &lib).await;
+    let root_after = std::sync::Arc::clone(&root);
 
     // A CBR converts to a new name: the result holds the original at its
     // old name too (`archive_rewrite::Converted`) until the row is
@@ -438,7 +484,9 @@ pub async fn edit_one_issue(
     //
     // The new archive's page hashes (for re-stamping anchors) are taken from
     // the staged file through its handle, before it is renamed into place,
-    // so the time between the rename and the row update stays short.
+    // so the time between the rename and the row update stays short. An
+    // anchor added while the rewrite runs is caught when the bookkeeping
+    // transaction reads the anchors again (`finish_edit`).
     use crate::reading::page_remap::issue_has_anchors;
     let has_anchors = issue_has_anchors(&state.db, &row.id).await?;
     type Edited = (
@@ -548,6 +596,10 @@ pub async fn edit_one_issue(
         .await
         .map_err(|e| EditError::Image(format!("join: {e}")))??;
 
+    if let Some(after_swap) = faults.after_swap.take() {
+        after_swap.await;
+    }
+
     // Everything from here to the commit repoints the row; a CBR
     // conversion's old name is removed only once that committed. When it
     // reports an error the row is read again (the commit may have been
@@ -563,6 +615,8 @@ pub async fn edit_one_issue(
         &dst_path,
         (before, after),
         new_hashes,
+        &root_after,
+        faults.after_commit.take(),
     )
     .await;
     match (committed, pending) {
@@ -580,14 +634,42 @@ pub async fn edit_one_issue(
                 backup_path: backup,
                 moved_to: moved,
                 anchors,
+                warning: None,
             })
         }
-        (Err(e), pending) => {
-            if let Some(c) = pending {
-                archive_rewrite::settle_unclear_repoint(&state.db, &row.id, c).await;
+        (Err(e), Some(c)) => {
+            // The bookkeeping is one transaction that also repoints the row
+            // at the new `.cbz`: a row that names the new file means it
+            // committed, whatever the client saw. The edit is then done,
+            // and reporting it as failed would invite a repeat that applies
+            // the same remove or reorder to the edited archive again.
+            match archive_rewrite::settle_unclear_repoint(&state.db, &row.id, c).await {
+                archive_rewrite::Settle::Finish => {
+                    let warning = format!(
+                        "the database reported an error while recording the edit ({e}), \
+                         but the issue already names the converted file, so the edit was \
+                         recorded; the anchor counts are unknown"
+                    );
+                    tracing::warn!(issue_id = %row.id, warning = %warning, "archive edit: finished despite an unclear commit");
+                    Ok(EditResult {
+                        library_id: row.library_id,
+                        series_id: row.series_id,
+                        archive_path: dst_path.clone(),
+                        page_count_before: before,
+                        page_count_after: after,
+                        backup_path: backup,
+                        moved_to: Some(dst_path),
+                        anchors: Default::default(),
+                        warning: Some(warning),
+                    })
+                }
+                archive_rewrite::Settle::Abandon | archive_rewrite::Settle::Leave => Err(e),
             }
-            Err(e)
         }
+        // An in-place edit: the archive already holds it, whatever the
+        // bookkeeping did. Say so, so the failure is not taken for an edit
+        // that did not happen and repeated.
+        (Err(e), None) => Err(EditError::NotRecorded(Box::new(e))),
     }
 }
 
@@ -605,6 +687,8 @@ async fn finish_edit(
     dst_path: &Path,
     (before, after): (usize, usize),
     new_hashes: Option<Vec<String>>,
+    root: &crate::library::no_follow::LibraryRoot,
+    after_commit: Option<Box<dyn FnOnce() -> Result<(), EditError> + Send>>,
 ) -> Result<crate::reading::page_remap::RemapOutcome, EditError> {
     let cfg = state.cfg();
 
@@ -687,9 +771,20 @@ async fn finish_edit(
     } else {
         Some(PageMap::truncation(before, after))
     };
-    let new_hashes = if map.is_some() { new_hashes } else { None };
+    let mut new_hashes = if map.is_some() { new_hashes } else { None };
     use sea_orm::TransactionTrait;
     let txn = state.db.begin().await?;
+    // The anchors were first looked at before the rewrite (to decide
+    // whether to hash the staged archive); one added while it ran would
+    // get no page hash. Look again here, in the transaction that reads
+    // and moves them, and hash the rewritten archive (now at `dst_path`)
+    // when that turns one up.
+    if map.is_some()
+        && new_hashes.is_none()
+        && crate::reading::page_remap::issue_has_anchors(&txn, &row.id).await?
+    {
+        new_hashes = hash_rewritten(state, root, dst_path).await;
+    }
     let anchors = match map {
         Some(map) => {
             reanchor_issue(
@@ -705,6 +800,9 @@ async fn finish_edit(
     };
     am.update(&txn).await?;
     txn.commit().await?;
+    if let Some(after_commit) = after_commit {
+        after_commit()?;
+    }
 
     // First CBR conversion in a library stamps `cbr_convert_confirmed_at`
     // so the UI stops prompting for the format change on later edits.
@@ -721,6 +819,23 @@ async fn finish_edit(
     }
 
     Ok(anchors)
+}
+
+/// Page hashes of the rewritten archive at `path`, opened through the
+/// no-follow walk (the swap is done; the caller holds the rewrite mutex).
+/// `None` when it can't be read: anchors then fall back to ordinals.
+async fn hash_rewritten(
+    state: &AppState,
+    root: &crate::library::no_follow::LibraryRoot,
+    path: &Path,
+) -> Option<Vec<String>> {
+    match root.open_archive(path) {
+        Ok(src) => crate::reading::page_hash::hash_all_pages(state, src).await,
+        Err(e) => {
+            tracing::warn!(path = %path.display(), error = %e, "archive edit: rewritten archive not hashed; anchors fall back to ordinals");
+            None
+        }
+    }
 }
 
 /// Page hashes of the staged archive, read through its handle (the same
@@ -1058,6 +1173,7 @@ async fn audit_edit(
             "page_count_before": r.page_count_before,
             "page_count_after": r.page_count_after,
             "anchors": r.anchors,
+            "warning": r.warning,
             "ops": job.ops,
             "bulk_op": job.bulk_op,
         }),
@@ -1107,16 +1223,27 @@ async fn record_edit_manifest(
                     r.library_id,
                     Category::Archive,
                     Action::Updated,
-                    Severity::Info,
+                    if r.warning.is_some() {
+                        Severity::Warning
+                    } else {
+                        Severity::Info
+                    },
                     format!(
-                        "Archive rewritten ({} → {} pages)",
-                        r.page_count_before, r.page_count_after
+                        "Archive rewritten ({} → {} pages){}",
+                        r.page_count_before,
+                        r.page_count_after,
+                        if r.warning.is_some() {
+                            "; recording it was unclear, see the detail. Do not repeat the edit"
+                        } else {
+                            ""
+                        }
                     ),
                 )
                 .entity("issue", job.issue_id.clone(), None)
                 .detail(serde_json::json!({
                     "page_count_before": r.page_count_before,
                     "page_count_after": r.page_count_after,
+                    "warning": r.warning,
                     "series_id": r.series_id,
                     "series": series,
                     "path": r.archive_path.to_string_lossy(),
