@@ -1289,3 +1289,174 @@ async fn the_legacy_switch_selects_regions_cleanup_and_cache_keys() {
     assert_eq!(default.default_keys, (true, true));
     assert_eq!(default.legacy_keys, (false, false));
 }
+
+// ─── Japanese: the text box inside the balloon ───────────────────
+
+/// A detector that finds, on a 200 × 100 page, a balloon, the text
+/// inside it, and a caption outside balloons.
+struct BalloonWithText {
+    calls: AtomicUsize,
+}
+
+impl PageDetector for BalloonWithText {
+    fn detect(&self, page: &DynamicImage) -> anyhow::Result<CachedDetection> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let bbox = |class, xmin, ymin, xmax, ymax| CachedBbox {
+            xmin,
+            ymin,
+            xmax,
+            ymax,
+            confidence: 0.9,
+            class,
+        };
+        Ok(CachedDetection {
+            page_w: page.width(),
+            page_h: page.height(),
+            bboxes: vec![
+                bbox(0, 10.0, 10.0, 110.0, 90.0),
+                bbox(1, 30.0, 20.0, 90.0, 80.0),
+                bbox(2, 130.0, 10.0, 190.0, 40.0),
+            ],
+        })
+    }
+}
+
+/// One issue with the detector above and a recognizer that answers the
+/// size of the crop it was handed.
+async fn balloon_issue(
+    app: &TestApp,
+    root: &std::path::Path,
+) -> (String, &'static BalloonWithText) {
+    let id = seed(app, root, 200, 100).await;
+    let detector: &'static BalloonWithText = Box::leak(Box::new(BalloonWithText {
+        calls: AtomicUsize::new(0),
+    }));
+    test_models::install(
+        &id,
+        test_models::Stub {
+            detector: Some(detector),
+            recognizer: Some(Box::leak(Box::new(EchoSize {
+                calls: AtomicUsize::new(0),
+            }))),
+        },
+    );
+    (id, detector)
+}
+
+const BALLOON_REGION: (u32, u32, u32, u32) = (10, 10, 100, 80);
+const CAPTION_REGION: (u32, u32, u32, u32) = (130, 10, 60, 30);
+
+fn read_body(lang: &str, (x, y, w, h): (u32, u32, u32, u32), detect: bool) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "page": 0, "lang": lang, "region": { "x": x, "y": y, "w": w, "h": h },
+    });
+    if detect {
+        body["detect"] = true.into();
+    }
+    body
+}
+
+/// A Japanese request reads the text box the detector found inside the
+/// balloon, and `refined_bbox` is that box: for a tap on the balloon
+/// (no `detect`) and for a drawn rectangle that snapped to it. A region
+/// with no text box inside is read as sent. Western text reads the
+/// balloon. Clients are still sent the balloon and the caption only.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_japanese_request_reads_the_text_box_inside_the_balloon() {
+    let _shared = ALL_PERMITS.read().await;
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "ocr-work-manga@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (id, detector) = balloon_issue(&app, &tmp.path().join("lib")).await;
+    let text_box = serde_json::json!({ "x": 30, "y": 20, "w": 60, "h": 60 });
+
+    // A Japanese tap needs the page's detection even with nothing cached.
+    let (status, tap) = send(
+        &app,
+        ocr_request(&admin, &id, read_body("manga", BALLOON_REGION, false)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{tap}");
+    assert_eq!(tap["text"], "60x60", "the text box was read: {tap}");
+    assert_eq!(tap["refined_bbox"], text_box, "{tap}");
+    assert_eq!(tap["lang"], "manga");
+    assert_eq!(detector.calls.load(Ordering::SeqCst), 1);
+
+    // The regions for clients: the balloon and the caption.
+    let (status, regions) = send(&app, regions_request(&admin, &id, 0)).await;
+    assert_eq!(status, StatusCode::OK, "{regions}");
+    let classes: Vec<u64> = regions["regions"]
+        .as_array()
+        .expect("regions")
+        .iter()
+        .map(|r| r["class"].as_u64().expect("class"))
+        .collect();
+    assert_eq!(classes, [0, 2]);
+    assert_eq!(
+        detector.calls.load(Ordering::SeqCst),
+        1,
+        "the tap's detection was cached for the page"
+    );
+
+    // The caption holds no text box: read as sent, nothing refined.
+    let (status, caption) = send(
+        &app,
+        ocr_request(&admin, &id, read_body("manga", CAPTION_REGION, false)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{caption}");
+    assert_eq!(caption["text"], "60x30");
+    assert!(caption.get("refined_bbox").is_none(), "{caption}");
+
+    // A rectangle drawn in the balloon, snapped: the balloon's text box.
+    let (status, snapped) = send(
+        &app,
+        ocr_request(&admin, &id, read_body("manga", (40, 30, 20, 20), true)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{snapped}");
+    assert_eq!(snapped["text"], "60x60");
+    assert_eq!(snapped["refined_bbox"], text_box, "{snapped}");
+
+    // Western: the balloon as sent, and the balloon for the snap.
+    let (status, western) = send(
+        &app,
+        ocr_request(&admin, &id, read_body("western", BALLOON_REGION, false)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{western}");
+    assert_eq!(western["text"], "100x80");
+    assert!(western.get("refined_bbox").is_none(), "{western}");
+    let (status, snapped) = send(
+        &app,
+        ocr_request(&admin, &id, read_body("western", (40, 30, 20, 20), true)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{snapped}");
+    assert_eq!(snapped["text"], "100x80");
+    assert_eq!(
+        snapped["refined_bbox"],
+        serde_json::json!({ "x": 10, "y": 10, "w": 100, "h": 80 })
+    );
+    assert_eq!(detector.calls.load(Ordering::SeqCst), 1, "one detection");
+}
+
+/// With the legacy engines a Japanese request reads what it always
+/// read: the rectangle as sent, without consulting the detector.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_legacy_engines_read_a_japanese_region_as_sent() {
+    let _shared = ALL_PERMITS.read().await;
+    let app = TestApp::spawn_with_legacy_ocr_engines().await;
+    let admin = register(&app, "ocr-work-manga-legacy@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (id, detector) = balloon_issue(&app, &tmp.path().join("lib")).await;
+    let (status, tap) = send(
+        &app,
+        ocr_request(&admin, &id, read_body("manga", BALLOON_REGION, false)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{tap}");
+    assert_eq!(tap["text"], "100x80");
+    assert!(tap.get("refined_bbox").is_none(), "{tap}");
+    assert_eq!(detector.calls.load(Ordering::SeqCst), 0);
+}

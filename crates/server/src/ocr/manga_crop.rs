@@ -12,10 +12,29 @@
 //! - the detector's text box inside the region, when there is exactly one
 //!   clear one, and the region otherwise.
 //!
-//! **Which one reads Japanese better has not been measured.**
-//! [`MANGA_CROP`] names the one the server uses, and is the region as is
-//! until a measurement decides. [`manga_crop`] is a pure function of the
-//! mode, the region and the page's boxes, so a tool can run both.
+//! [`MANGA_CROP`] names the one the server uses: the text box. It was
+//! chosen by a comparison, not against a reference text: on 17 pages of
+//! one manga volume, 134 balloons and captions that both the previous
+//! pipeline and this one have a box for, `manga-ocr` returned the same
+//! string as the previous pipeline for 120 with the text box, for 113
+//! with the balloon box as is, and for 116 with the balloon box inset by
+//! 6%. `docs/dev/ocr.md` has the full counts and what they do not show.
+//! [`manga_crop`] is a pure function of the mode, the region and the
+//! page's boxes, so a tool can run both.
+//!
+//! Two known weaknesses of the text-box mode:
+//!
+//! - **A balloon with no text box.** The region is read as is. For a
+//!   tiny balloon that holds only a mark the recogniser, given the
+//!   balloon, invents characters.
+//! - **A balloon with several lobes.** The detector may box the text of
+//!   the larger lobe only; that box is then the single clear one and the
+//!   other lobe's text is not read.
+//!
+//! In this mode a Japanese request always needs the page's detection,
+//! also for a tap on a region (`pipeline::uses_detection`): it comes
+//! from the detect cache the text-regions route filled, else from one
+//! detector run.
 //!
 //! Only the current engine set uses this. With the legacy set a Japanese
 //! request reads what it always read (the requested rectangle, or the
@@ -45,11 +64,11 @@ impl MangaCrop {
     }
 }
 
-/// What the server hands to `manga-ocr`. **Undecided**: the region as is
-/// until the two behaviours have been measured on Japanese pages.
-/// Changing it rolls the result-cache keys by itself (it is part of the
-/// engine fingerprint).
-pub const MANGA_CROP: MangaCrop = MangaCrop::Region;
+/// What the server hands to `manga-ocr`: the text box inside the region
+/// when exactly one is clear, else the region (see the module docs for
+/// the comparison behind the choice). Changing it rolls the result-cache
+/// keys by itself (it is part of the engine fingerprint).
+pub const MANGA_CROP: MangaCrop = MangaCrop::TextInRegion;
 
 /// A text box lies inside the region when at least this share of its
 /// area does.
@@ -162,9 +181,18 @@ mod tests {
         assert_eq!(crop(MangaCrop::Region, &[own_text()]), BALLOON);
     }
 
+    /// What the server runs: the text box when exactly one is clear,
+    /// else the region.
     #[test]
-    fn the_server_reads_the_region_until_measured() {
-        assert_eq!(MANGA_CROP, MangaCrop::Region);
+    fn the_server_reads_the_text_box_when_exactly_one_is_clear() {
+        assert_eq!(MANGA_CROP, MangaCrop::TextInRegion);
+        assert_eq!(crop(MANGA_CROP, &[own_text()]), OWN_TEXT);
+        assert_eq!(crop(MANGA_CROP, &[]), BALLOON);
+        let two = [
+            text(120.0, 120.0, 190.0, 380.0),
+            text(210.0, 120.0, 280.0, 380.0),
+        ];
+        assert_eq!(crop(MANGA_CROP, &two), BALLOON);
     }
 
     #[test]

@@ -172,9 +172,11 @@ pub struct OcrRequest {
     /// When `true`, run the page detector (or use its cached result
     /// for the page) and snap the rectangle to the detected text region
     /// it overlaps most; the snapped box comes back as `refined_bbox`.
-    /// When `false` or omitted (the default), the recognizer reads the
-    /// rectangle as sent: the way to read a region taken from the
-    /// text-regions route, which is already a detected box.
+    /// When `false` or omitted (the default), the rectangle is not
+    /// snapped: the way to read a region taken from the text-regions
+    /// route, which is already a detected box. (A Japanese request then
+    /// still reads the text box the detector found inside the region,
+    /// when there is exactly one; see `refined_bbox`.)
     #[serde(default)]
     #[garde(skip)]
     pub detect: Option<bool>,
@@ -279,8 +281,8 @@ pub struct OcrResponse {
     pub confidence: f32,
     /// The detected box that was read, in page-pixel coords, when it
     /// is not the region as sent: the region a `detect: true` request
-    /// was snapped to. Absent when the recognizer read the user's rect
-    /// verbatim.
+    /// was snapped to, or, for Japanese, the text box inside the region.
+    /// Absent when the recognizer read the user's rect verbatim.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refined_bbox: Option<OcrRegion>,
     /// Recognizer the pipeline actually ran (`"western"` |

@@ -17,9 +17,11 @@
 //!     [`postprocess::clean_for`](super::postprocess::clean_for): the
 //!     cleanup rules live there, not in the recognizers.
 //!
-//! Steps 1–3 run only for a request that needs the page's detection
-//! ([`uses_detection`]): a `detect: true` request. A tap on a region the
-//! client already has sends that region's rect and is read as is.
+//! Steps 1–2 run only for a request that needs the page's detection
+//! ([`uses_detection`]): a `detect: true` request, which also snaps
+//! (step 3), and a Japanese request, which looks for the text box inside
+//! its region. A Western tap on a region the client already has sends
+//! that region's rect and is read as is, without the detector.
 //!
 //! Which engines do the work is the [`EngineSet`] the caller passes to
 //! [`prepare_models`] / [`prepare_detector`]: nothing below reads it from
@@ -1007,8 +1009,12 @@ mod tests {
         assert!(!uses_detection(Current, Manga, false, Region));
         assert!(!uses_detection(Current, Western, false, TextInRegion));
         assert!(!uses_detection(Legacy, Manga, false, TextInRegion));
-        // As the server is configured: a tap reads without the detector.
-        assert!(!uses_detection(Current, Manga, false, MANGA_CROP));
+        // As the server is configured: a Japanese tap needs the page's
+        // detection (to find the balloon's text box), a Western one
+        // reads without it.
+        assert!(uses_detection(Current, Manga, false, MANGA_CROP));
+        assert!(!uses_detection(Current, Western, false, MANGA_CROP));
+        assert!(!uses_detection(Legacy, Manga, false, MANGA_CROP));
     }
 
     fn crop_of(
