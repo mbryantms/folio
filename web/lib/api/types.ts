@@ -189,6 +189,7 @@ export type LatestReleaseView = Schemas["LatestReleaseView"];
 export type OcrModelView = Schemas["OcrModelView"];
 export type OcrModelsView = Schemas["OcrModelsView"];
 export type OcrRegion = Schemas["OcrRegion"];
+export type OcrRegionPct = Schemas["OcrRegionPct"];
 export type OcrRequest = Schemas["OcrRequest"];
 export type OcrResponse = Schemas["OcrResponse"];
 export type OcrWord = Schemas["OcrWord"];

@@ -12572,6 +12572,29 @@ export interface components {
             /** Format: int32 */
             y: number;
         };
+        /** @description A region in percent (0–100) of the decoded page. */
+        OcrRegionPct: {
+            /**
+             * Format: double
+             * @description Height, percent of page height; above 0.
+             */
+            h: number;
+            /**
+             * Format: double
+             * @description Width, percent of page width; above 0.
+             */
+            w: number;
+            /**
+             * Format: double
+             * @description Left edge, percent of page width.
+             */
+            x: number;
+            /**
+             * Format: double
+             * @description Top edge, percent of page height.
+             */
+            y: number;
+        };
         OcrRequest: {
             /**
              * @description When `true`, run `comic-text-detector` over the page to snap
@@ -12604,11 +12627,20 @@ export interface components {
              */
             page: number;
             /**
-             * @description User's drag rectangle in page-pixel coordinates. All four
-             *     fields are unsigned pixels; w/h must be > 0 and the rect
-             *     must fit inside the decoded page bounds.
+             * @description User's drag rectangle in page-pixel coordinates of the decoded
+             *     page. All four fields are unsigned pixels; w/h must be > 0 and
+             *     the rect must fit inside the decoded page bounds. Send this or
+             *     `region_pct`; when both are present `region_pct` is used.
              */
-            region: components["schemas"]["OcrRegion"];
+            region?: components["schemas"]["OcrRegion"];
+            /**
+             * @description The same rectangle in percent (0–100) of the decoded page, the
+             *     reader's marker representation, so the client needs no page
+             *     size. Converted after the decode with the decoded width and
+             *     height, rounded to whole pixels and clamped to the page; it must
+             *     overlap the page. Wins over `region` when both are sent.
+             */
+            region_pct?: components["schemas"]["OcrRegionPct"];
         };
         OcrResponse: {
             /**
@@ -12626,6 +12658,18 @@ export interface components {
              *     before this field existed still deserialize.
              */
             lang?: string;
+            /**
+             * Format: int32
+             * @description Decoded page height in pixels.
+             */
+            page_h: number;
+            /**
+             * Format: int32
+             * @description Decoded page width in pixels, the space `refined_bbox` and
+             *     `words` are in (and `region_pct` was converted with). Always
+             *     sent; a cached payload without it is malformed (a miss).
+             */
+            page_w: number;
             /**
              * @description Engine output before cleanup. Present only when cleanup
              *     changed the text — a debugging aid, and the raw material for
@@ -24318,6 +24362,13 @@ export interface operations {
             };
             /** @description the issue's file is missing (`archive_missing`) or not a readable archive (`archive_unreadable`) */
             410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description invalid region or lang (`invalid_region`, `invalid_lang`), or a `region_pct` / missing region failing validation (`validation`, with field details) */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

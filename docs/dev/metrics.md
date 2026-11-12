@@ -93,7 +93,12 @@ failed — check the server log for `folio::audit_log_retention` errors.
 ### Subsystem counters (pre-existing)
 `folio_scan_duration_seconds`, `folio_scan_files_total`, `folio_scan_health_issues_open`,
 `folio_zip_lru_{hits,misses,evictions}_total`, `folio_zip_lru_open_fds`,
-`folio_ocr_{pipeline,recognize}_seconds`, `folio_ocr_{cache,detect_cache}_{hits,misses}_total`,
+`folio_ocr_{pipeline,recognize,detect,page_decode,permit_wait}_seconds`,
+`folio_ocr_model_{load,first_use}_seconds{model}`, `folio_ocr_busy_total`,
+`folio_ocr_detect_abandoned_total`, `folio_ocr_cache_read_timeouts_total`,
+`folio_ocr_recognizer_panics_total{model}`,
+`folio_ocr_{cache,detect_cache,page_cache}_{hits,misses}_total`
+(see [ocr.md](ocr.md#telemetry)),
 `folio_auth_lockout_total`, `folio_auth_lockout_email_total`,
 `folio_auth_lockout_app_password_total`,
 `folio_rate_limit_denied_total`, `folio_csp_violations_total` (one per logged

@@ -10,7 +10,8 @@
 //!
 //!  - Trigger native Tesseract C++ compilation on the first build
 //!    (~10 min cmake job, cached at `~/.tesseract-rs/`), OR
-//!  - Download ~80 MB of ONNX from Hugging Face on first init, OR
+//!  - Download ONNX models from Hugging Face on first init (~95 MB for
+//!    the detector, ~440 MB for manga-ocr), OR
 //!  - Run real ML inference (a few hundred ms each).
 //!
 //! Run them explicitly with `cargo test -p server --test
@@ -95,7 +96,7 @@ async fn western_word_boxes_stay_in_crop_bounds() {
 }
 
 #[tokio::test]
-#[ignore = "requires the manga-ocr ONNX models (HF download, ~80 MB)"]
+#[ignore = "requires the manga-ocr ONNX models (HF download, ~440 MB)"]
 async fn manga_recognizes_a_blank_tile_without_panicking() {
     let ocr = MangaOcr::shared()
         .await

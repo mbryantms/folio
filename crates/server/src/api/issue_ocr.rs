@@ -30,7 +30,11 @@
 //! cap: their 404 / 409 / 410 / 503 never wait, and no page bytes are
 //! read for them), the models (a first-use download is waited on
 //! *without* a permit), then the permit. The page is read and decoded
-//! only inside it. The permit moves into the blocking read, decode and
+//! only inside it, and only when the decoded-page cache
+//! ([`crate::ocr::page_cache`]) does not already hold it: the balloon-by-
+//! balloon requests on one page decode it once. The cache is consulted
+//! after every check above, so a user who cannot see the issue gets the
+//! same 404 whatever it holds. The permit moves into the blocking read, decode and
 //! inference tasks and is released when they finish, not when the
 //! request future is dropped (`ocr::pipeline`). A request that waits
 //! longer than [`OCR_PERMIT_WAIT`] for one gets 503
@@ -58,13 +62,15 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use super::error;
+use super::extractors::Validated;
 use super::page_source::{PageUnavailable, issue_not_found, no_store};
 use crate::auth::CurrentUser;
 use crate::library::zip_lru::{CachedReader, lock_reader};
 use crate::middleware::rate_limit;
 use crate::ocr::cache::{self, CachedDetection};
+use crate::ocr::page_cache::{Claim, Lookup, PageKey, SharedPage, decoded_pages};
 use crate::ocr::pipeline::{
-    OcrInput, Rect, blocking_with_permit, detect_and_cache_regions, prepare_detector,
+    OcrInput, OcrOutput, Rect, blocking_with_permit, detect_and_cache_regions, prepare_detector,
     prepare_models, run_ocr,
 };
 use crate::ocr::recognizer::Language;
@@ -97,9 +103,13 @@ async fn ocr_permit(
     permits: &Semaphore,
     wait: Duration,
 ) -> Result<SemaphorePermit<'_>, Box<Response>> {
-    match tokio::time::timeout(wait, permits.acquire()).await {
+    let started = std::time::Instant::now();
+    let acquired = tokio::time::timeout(wait, permits.acquire()).await;
+    metrics::histogram!("folio_ocr_permit_wait_seconds").record(started.elapsed().as_secs_f64());
+    match acquired {
         Ok(Ok(permit)) => Ok(permit),
         Ok(Err(_)) | Err(_) => {
+            metrics::counter!("folio_ocr_busy_total").increment(1);
             let mut resp = super::respond(
                 StatusCode::SERVICE_UNAVAILABLE,
                 shared::error::ApiErrorCode::ServiceUnavailable,
@@ -126,19 +136,34 @@ pub fn routes() -> OpenApiRouter<AppState> {
     ocr.merge(detect)
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct OcrRequest {
     /// 0-based page index, matching the reader's URL convention.
+    #[garde(skip)]
     pub page: u32,
-    /// User's drag rectangle in page-pixel coordinates. All four
-    /// fields are unsigned pixels; w/h must be > 0 and the rect
-    /// must fit inside the decoded page bounds.
-    pub region: OcrRegion,
+    /// User's drag rectangle in page-pixel coordinates of the decoded
+    /// page. All four fields are unsigned pixels; w/h must be > 0 and
+    /// the rect must fit inside the decoded page bounds. Send this or
+    /// `region_pct`; when both are present `region_pct` is used.
+    #[serde(default)]
+    #[garde(custom(|r: &Option<OcrRegion>, _: &()| region_given(r, &self.region_pct)))]
+    #[schema(nullable = false)]
+    pub region: Option<OcrRegion>,
+    /// The same rectangle in percent (0–100) of the decoded page, the
+    /// reader's marker representation, so the client needs no page
+    /// size. Converted after the decode with the decoded width and
+    /// height, rounded to whole pixels and clamped to the page; it must
+    /// overlap the page. Wins over `region` when both are sent.
+    #[serde(default)]
+    #[garde(dive, custom(pct_on_page))]
+    #[schema(nullable = false)]
+    pub region_pct: Option<OcrRegionPct>,
     /// `"western"` or `"manga"`. Omitted → the server resolves a
     /// default: `series.text_language` if set, else `manga` when the
     /// series reads right-to-left, else `western`. The response
     /// echoes the resolved value in `lang`.
     #[serde(default)]
+    #[garde(skip)]
     pub lang: Option<String>,
     /// When `true`, run `comic-text-detector` over the page to snap
     /// the user's drag rect to the tightest enclosing speech-bubble
@@ -156,7 +181,83 @@ pub struct OcrRequest {
     /// tesseract.js delivered, just better quality (real Tesseract
     /// 5 + tessdata_best, not the in-browser fast variant).
     #[serde(default)]
+    #[garde(skip)]
     pub detect: Option<bool>,
+}
+
+/// A region in percent (0–100) of the decoded page.
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, garde::Validate, utoipa::ToSchema)]
+pub struct OcrRegionPct {
+    /// Left edge, percent of page width.
+    #[garde(custom(finite))]
+    pub x: f64,
+    /// Top edge, percent of page height.
+    #[garde(custom(finite))]
+    pub y: f64,
+    /// Width, percent of page width; above 0.
+    #[garde(custom(positive))]
+    pub w: f64,
+    /// Height, percent of page height; above 0.
+    #[garde(custom(positive))]
+    pub h: f64,
+}
+
+/// One of `region` / `region_pct` must be sent.
+fn region_given(region: &Option<OcrRegion>, pct: &Option<OcrRegionPct>) -> garde::Result {
+    if region.is_none() && pct.is_none() {
+        Err(garde::Error::new("region or region_pct is required"))
+    } else {
+        Ok(())
+    }
+}
+
+fn finite(v: &f64, _: &()) -> garde::Result {
+    if v.is_finite() {
+        Ok(())
+    } else {
+        Err(garde::Error::new("must be a finite number"))
+    }
+}
+
+fn positive(v: &f64, ctx: &()) -> garde::Result {
+    finite(v, ctx)?;
+    if *v > 0.0 {
+        Ok(())
+    } else {
+        Err(garde::Error::new("must be above 0"))
+    }
+}
+
+/// The percent box must overlap the page (0–100 on both axes). Checked
+/// only once its numbers are valid; their own rules report the rest.
+fn pct_on_page(r: &Option<OcrRegionPct>, _: &()) -> garde::Result {
+    let Some(r) = r else { return Ok(()) };
+    let valid = [r.x, r.y, r.w, r.h].iter().all(|v| v.is_finite()) && r.w > 0.0 && r.h > 0.0;
+    if valid && (r.x >= 100.0 || r.y >= 100.0 || r.x + r.w <= 0.0 || r.y + r.h <= 0.0) {
+        return Err(garde::Error::new("region lies entirely outside the page"));
+    }
+    Ok(())
+}
+
+impl OcrRegionPct {
+    /// Whole-pixel rect on a `page_w × page_h` page: edges rounded, then
+    /// clamped to the page (an edge overshoot is cut, not refused).
+    /// `None` when nothing of it is left on the page.
+    pub fn to_pixels(self, page_w: u32, page_h: u32) -> Option<OcrRegion> {
+        let edge = |pct: f64, size: u32| -> u32 {
+            (pct / 100.0 * f64::from(size))
+                .round()
+                .clamp(0.0, f64::from(size)) as u32
+        };
+        let (x0, x1) = (edge(self.x, page_w), edge(self.x + self.w, page_w));
+        let (y0, y1) = (edge(self.y, page_h), edge(self.y + self.h, page_h));
+        (x1 > x0 && y1 > y0).then_some(OcrRegion {
+            x: x0,
+            y: y0,
+            w: x1 - x0,
+            h: y1 - y0,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, utoipa::ToSchema)]
@@ -201,6 +302,12 @@ pub struct OcrResponse {
     /// iterator yielded nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub words: Option<Vec<OcrWord>>,
+    /// Decoded page width in pixels, the space `refined_bbox` and
+    /// `words` are in (and `region_pct` was converted with). Always
+    /// sent; a cached payload without it is malformed (a miss).
+    pub page_w: u32,
+    /// Decoded page height in pixels.
+    pub page_h: u32,
 }
 
 /// One recognized word: cleaned text + confidence + page-pixel box.
@@ -242,6 +349,39 @@ pub struct TextRegionView {
     pub confidence: f32,
     /// Detector class index (0 = text block, 1 = text line).
     pub class: u32,
+}
+
+impl OcrResponse {
+    /// The response for one finished pipeline run (`lang` is the
+    /// recognizer that ran).
+    pub(crate) fn from_output(out: OcrOutput, lang: &str, (page_w, page_h): (u32, u32)) -> Self {
+        OcrResponse {
+            page_w,
+            page_h,
+            text: out.recognition.text,
+            confidence: out.recognition.confidence,
+            refined_bbox: out.refined_bbox.map(|r| OcrRegion {
+                x: r.x,
+                y: r.y,
+                w: r.w,
+                h: r.h,
+            }),
+            lang: lang.to_owned(),
+            raw_text: out.recognition.raw_text,
+            words: out.recognition.words.map(|ws| {
+                ws.into_iter()
+                    .map(|w| OcrWord {
+                        text: w.text,
+                        confidence: w.confidence,
+                        x: w.xmin.max(0.0).round() as u32,
+                        y: w.ymin.max(0.0).round() as u32,
+                        w: (w.xmax - w.xmin).max(0.0).round() as u32,
+                        h: (w.ymax - w.ymin).max(0.0).round() as u32,
+                    })
+                    .collect()
+            }),
+        }
+    }
 }
 
 impl From<CachedDetection> for TextRegionsView {
@@ -290,6 +430,7 @@ impl From<CachedDetection> for TextRegionsView {
         (status = 404, description = "issue or page not found"),
         (status = 409, description = "the issue's file is a CBR / CB7 that must be converted to CBZ first (`archive_needs_conversion`)"),
         (status = 410, description = "the issue's file is missing (`archive_missing`) or not a readable archive (`archive_unreadable`)"),
+        (status = 422, description = "invalid region or lang (`invalid_region`, `invalid_lang`), or a `region_pct` / missing region failing validation (`validation`, with field details)"),
         (status = 500, description = "ocr pipeline failure"),
         (status = 503, description = "OCR busy (`service_unavailable`), the library's folder is offline (`library_offline`), or the file could not be read; carries Retry-After"),
     )
@@ -299,16 +440,32 @@ pub async fn serve(
     State(app): State<AppState>,
     user: CurrentUser,
     AxPath(id): AxPath<String>,
-    Json(req): Json<OcrRequest>,
+    Validated(req): Validated<OcrRequest>,
 ) -> Response {
     // ─── Validate ────────────────────────────────────────────────
-    if req.region.w == 0 || req.region.h == 0 {
-        return error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "invalid_region",
-            "region w/h must be > 0",
-        );
-    }
+    // `region_pct` (checked by garde on extraction) wins over `region`;
+    // the pixel `region` keeps its own checks.
+    let pixel_region = match (&req.region_pct, req.region) {
+        (Some(_), _) => None,
+        (None, Some(r)) => {
+            if r.w == 0 || r.h == 0 {
+                return error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "invalid_region",
+                    "region w/h must be > 0",
+                );
+            }
+            Some(r)
+        }
+        // Refused by `region_given` on extraction; an answer, not a panic.
+        (None, None) => {
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_region",
+                "region or region_pct is required",
+            );
+        }
+    };
     let lang_override = match req.lang.as_deref() {
         None => None,
         Some("western") => Some(Language::Western),
@@ -357,15 +514,52 @@ pub async fn serve(
     // page size) but anything we hand back from the cache passed
     // bounds at write time and the content_hash binding makes that
     // promise stick.
-    let region_hash = cache::region_hash(req.region.x, req.region.y, req.region.w, req.region.h);
+    //
+    // A `region_pct` request finds its pixel rect through the stored
+    // page size (below), still before any page work; only when that size
+    // is not stored does its lookup wait for the decode. Both kinds key
+    // on the pixel rect, so they share entries.
     let lang_str = match language {
         Language::Western => "western",
         Language::Manga => "manga",
     };
-    let key = cache::cache_key(&row.content_hash, req.page, lang_str, detect, &region_hash);
-    if let Some(hit) = cache::get(&app.jobs.redis, &key).await {
+    // The keys carry the engine fingerprint (`ocr::cache`), computed once
+    // per process off the async runtime.
+    cache::warm_fingerprints().await;
+    let result_key = |r: &OcrRegion| {
+        let region_hash = cache::region_hash(r.x, r.y, r.w, r.h);
+        cache::cache_key(&row.content_hash, req.page, lang_str, detect, &region_hash)
+    };
+    if let Some(r) = &pixel_region
+        && let Some(hit) = cache::get(&app.jobs.redis, &result_key(r)).await
+    {
         return Json(hit).into_response();
     }
+    // A `region_pct` request finds its pixel rect through the stored
+    // decoded size (written on every OCR decode), so a repeat answers
+    // here too: no models, no permit, no decode. The cached payload must
+    // carry the same size, or it is not used. A miss on either key goes
+    // on to the decode, which is the authority on the size.
+    let size_key = cache::page_size_key(&row.content_hash, req.page);
+    // The result key the early lookup already read (and missed), so the
+    // lookup after the decode does not read it a second time.
+    let mut early_key: Option<String> = None;
+    let stored_size = match &req.region_pct {
+        Some(pct) => {
+            let stored = cache::get_page_size(&app.jobs.redis, &size_key).await;
+            if let Some(size) = stored
+                && let Some(r) = pct.to_pixels(size.0, size.1)
+            {
+                let key = result_key(&r);
+                if let Some(hit) = cache::get_sized(&app.jobs.redis, &key, size).await {
+                    return Json(hit).into_response();
+                }
+                early_key = Some(key);
+            }
+            stored
+        }
+        None => None,
+    };
 
     // ─── Cheap checks (no permit, no page bytes) ─────────────────
     let located = match locate_page(&app, &row, req.page).await {
@@ -373,7 +567,7 @@ pub async fn serve(
         Err(resp) => return *resp,
     };
     // ─── Models (a first-use download waits here, without a permit) ─
-    let models = match prepare_models(language, detect).await {
+    let models = match prepare_models(&row.content_hash, language, detect).await {
         Ok(m) => m,
         Err(e) => {
             tracing::error!(error = %e, "ocr: model preparation failed");
@@ -381,71 +575,97 @@ pub async fn serve(
         }
     };
     // ─── Decode (under the OCR permit, held by the work) ─────────
-    let permit = match ocr_permit(&OCR_PERMITS, OCR_PERMIT_WAIT).await {
-        Ok(p) => p,
-        Err(resp) => return *resp,
-    };
-    let (decoded, permit) = match read_and_decode_holding(located, permit).await {
-        Ok(pair) => pair,
-        Err(resp) => return *resp,
-    };
+    let page_key = PageKey::new(&row.content_hash, req.page);
+    let (decoded, permit) =
+        match page_image_holding(located, page_key, app.jobs.redis.clone()).await {
+            Ok(pair) => pair,
+            Err(resp) => return *resp,
+        };
     let (page_w, page_h) = (decoded.width(), decoded.height());
-    if req.region.x.saturating_add(req.region.w) > page_w
-        || req.region.y.saturating_add(req.region.h) > page_h
+    // The decode wins over a stored size that disagrees with it (or one
+    // that is missing because the page came from the decoded-page cache).
+    if req.region_pct.is_some() && stored_size != Some((page_w, page_h)) {
+        if let Some(stored) = stored_size {
+            tracing::warn!(
+                issue_id = %row.id,
+                page = req.page,
+                stored_w = stored.0,
+                stored_h = stored.1,
+                page_w,
+                page_h,
+                "ocr: stored page size differs from the decode; replacing it"
+            );
+        }
+        cache::put_page_size(&app.jobs.redis, &size_key, (page_w, page_h)).await;
+    }
+    let region = match (pixel_region, &req.region_pct) {
+        (Some(r), _) => {
+            if r.x.saturating_add(r.w) > page_w || r.y.saturating_add(r.h) > page_h {
+                return error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "invalid_region",
+                    "region extends outside page bounds",
+                );
+            }
+            r
+        }
+        (None, Some(pct)) => match pct.to_pixels(page_w, page_h) {
+            Some(r) => r,
+            // Overlaps the page in percent but rounds to no whole pixel.
+            None => {
+                return super::respond_with_field_errors(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    shared::error::ApiErrorCode::Validation,
+                    "region_pct: covers no whole pixel of the page",
+                    vec![shared::error::FieldError {
+                        field: "region_pct".to_owned(),
+                        message: "covers no whole pixel of the page".to_owned(),
+                    }],
+                );
+            }
+        },
+        // Refused before the ACL; kept as an answer, not a panic.
+        (None, None) => {
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_region",
+                "region or region_pct is required",
+            );
+        }
+    };
+    let key = result_key(&region);
+    // A percent request looks its result up here only when the early
+    // lookup did not already read this key (no stored size, or one that
+    // differed from the decode), and only accepts a payload computed on a
+    // page of this decoded size: anything else is a miss, the pipeline
+    // runs, and the entry is overwritten.
+    if pixel_region.is_none()
+        && early_key.as_deref() != Some(key.as_str())
+        && let Some(hit) = cache::get_sized(&app.jobs.redis, &key, (page_w, page_h)).await
     {
-        return error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "invalid_region",
-            "region extends outside page bounds",
-        );
+        return Json(hit).into_response();
     }
 
     // ─── Run OCR ─────────────────────────────────────────────────
     let input = OcrInput {
         page_image: decoded,
         region: Rect {
-            x: req.region.x,
-            y: req.region.y,
-            w: req.region.w,
-            h: req.region.h,
+            x: region.x,
+            y: region.y,
+            w: region.w,
+            h: region.h,
         },
         language,
         content_hash: row.content_hash.clone(),
         page: req.page,
         redis: app.jobs.redis.clone(),
         detect,
+        // The work writes the result cache itself, so a result that
+        // finishes after this request is gone is still cached.
+        result_key: key,
     };
     match run_ocr(input, models, permit).await {
-        Ok(out) => {
-            let response = OcrResponse {
-                text: out.recognition.text,
-                confidence: out.recognition.confidence,
-                refined_bbox: out.refined_bbox.map(|r| OcrRegion {
-                    x: r.x,
-                    y: r.y,
-                    w: r.w,
-                    h: r.h,
-                }),
-                lang: lang_str.to_owned(),
-                raw_text: out.recognition.raw_text,
-                words: out.recognition.words.map(|ws| {
-                    ws.into_iter()
-                        .map(|w| OcrWord {
-                            text: w.text,
-                            confidence: w.confidence,
-                            x: w.xmin.max(0.0).round() as u32,
-                            y: w.ymin.max(0.0).round() as u32,
-                            w: (w.xmax - w.xmin).max(0.0).round() as u32,
-                            h: (w.ymax - w.ymin).max(0.0).round() as u32,
-                        })
-                        .collect()
-                }),
-            };
-            // Best-effort cache write — failures don't fail the
-            // request; the next call will simply rerun the pipeline.
-            cache::put(&app.jobs.redis, &key, &response).await;
-            Json(response).into_response()
-        }
+        Ok(response) => Json(response).into_response(),
         Err(e) => {
             tracing::error!(error = %e, "ocr: pipeline failure");
             ocr_failure(&e, "ocr pipeline failed")
@@ -487,6 +707,7 @@ pub async fn text_regions(
     // ─── Cache lookup ────────────────────────────────────────────
     // Checked before the archive is touched: a hit skips page load
     // and decode entirely, making warm requests a Redis round-trip.
+    cache::warm_fingerprints().await;
     let key = cache::detect_cache_key(&row.content_hash, page);
     if let Some(hit) = cache::get_detect(&app.jobs.redis, &key).await {
         return Json(TextRegionsView::from(hit)).into_response();
@@ -498,7 +719,7 @@ pub async fn text_regions(
         Err(resp) => return *resp,
     };
     // ─── Detector (a first-use download waits here, no permit) ───
-    let detector = match prepare_detector().await {
+    let detector = match prepare_detector(&row.content_hash).await {
         Ok(d) => d,
         Err(e) => {
             tracing::error!(error = %e, "ocr: detector preparation failed");
@@ -506,14 +727,12 @@ pub async fn text_regions(
         }
     };
     // ─── Decode + detect (under the OCR permit, held by the work) ─
-    let permit = match ocr_permit(&OCR_PERMITS, OCR_PERMIT_WAIT).await {
-        Ok(p) => p,
-        Err(resp) => return *resp,
-    };
-    let (decoded, permit) = match read_and_decode_holding(located, permit).await {
-        Ok(pair) => pair,
-        Err(resp) => return *resp,
-    };
+    let page_key = PageKey::new(&row.content_hash, page);
+    let (decoded, permit) =
+        match page_image_holding(located, page_key, app.jobs.redis.clone()).await {
+            Ok(pair) => pair,
+            Err(resp) => return *resp,
+        };
     match detect_and_cache_regions(
         app.jobs.redis.clone(),
         &row.content_hash,
@@ -565,6 +784,24 @@ static OCR_PAGE_READS: AtomicU64 = AtomicU64::new(0);
 /// Pages read for OCR since start (see [`OCR_PAGE_READS`]).
 pub fn ocr_page_reads() -> u64 {
     OCR_PAGE_READS.load(Ordering::Relaxed)
+}
+
+/// Page reads per content hash, debug builds only: lets tests running
+/// side by side count the reads of their own issue. Only hashes a test
+/// registered stand-ins for (`ocr::pipeline::test_models`) are counted,
+/// so a debug server reading a real library does not grow it.
+#[cfg(debug_assertions)]
+static OCR_PAGE_READS_BY_HASH: std::sync::LazyLock<Mutex<std::collections::HashMap<String, u64>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Pages read (and decoded) for OCR since start for one content hash.
+/// Debug builds only; for tests.
+#[cfg(debug_assertions)]
+pub fn ocr_page_reads_for(content_hash: &str) -> u64 {
+    OCR_PAGE_READS_BY_HASH
+        .lock()
+        .map(|m| m.get(content_hash).copied().unwrap_or(0))
+        .unwrap_or(0)
 }
 
 /// The cheap checks that run before any OCR permit is taken, without
@@ -646,27 +883,87 @@ enum ReadDecodeError {
     Decode(String),
 }
 
+/// Take an OCR permit, then the decoded page: from the decoded-page cache,
+/// by waiting for a decode of the same page already running, or by reading
+/// and decoding it ([`read_and_decode_holding`]). The permit comes first so
+/// the pages in use are bounded by the permits, and a waiter only ever
+/// waits on a decode running under another permit. Callers run every
+/// visibility and archive check before this; `key` comes from the issue
+/// row, never from the request.
+async fn page_image_holding(
+    located: LocatedPage,
+    key: PageKey,
+    redis: redis::aio::ConnectionManager,
+) -> Result<(SharedPage, SemaphorePermit<'static>), Box<Response>> {
+    let permit = ocr_permit(&OCR_PERMITS, OCR_PERMIT_WAIT).await?;
+    let pages = decoded_pages();
+    loop {
+        match pages.lookup_or_claim(&key) {
+            Lookup::Hit(page) => return Ok((page, permit)),
+            // Woken when that decode is stored or failed; look again.
+            Lookup::Wait(mut done) => {
+                let _ = done.wait_for(|stored| *stored).await;
+            }
+            Lookup::Claimed(claim) => {
+                return read_and_decode_holding(located, permit, claim, redis).await;
+            }
+        }
+    }
+}
+
 /// Read the located page and decode it on the blocking pool with the OCR
 /// `permit` held by the task (released when the work ends, even if the
-/// request is dropped first), and hand the permit back for the next
-/// stage. The page bytes exist only inside the permit. A read error found
-/// here answers by the same `page_source` mapping as the cheap checks.
-/// `decode_limited` (security M0) caps decoded dimensions so a malicious
-/// archive can't OOM the box via a decompression bomb.
+/// request is dropped first), store it under `claim` from inside that task,
+/// and hand the permit back for the next stage. The page bytes exist only
+/// inside the permit. A read error found here answers by the same
+/// `page_source` mapping as the cheap checks (the claim is dropped, so a
+/// request waiting for this page tries itself). `decode_limited`
+/// (security M0) caps decoded dimensions so a malicious archive can't OOM
+/// the box via a decompression bomb. The decoded size is written to the
+/// page-size cache from the same task (`cache::put_page_size`), so it is
+/// stored even when the request is gone.
 async fn read_and_decode_holding<P: Send + 'static>(
     located: LocatedPage,
     permit: P,
-) -> Result<(image::DynamicImage, P), Box<Response>> {
+    claim: Claim,
+    redis: redis::aio::ConnectionManager,
+) -> Result<(SharedPage, P), Box<Response>> {
     let LocatedPage { reader, entry } = located;
     let work = blocking_with_permit(permit, move || {
         OCR_PAGE_READS.fetch_add(1, Ordering::Relaxed);
+        #[cfg(debug_assertions)]
+        if crate::ocr::pipeline::test_models::is_installed(claim.key().content_hash())
+            && let Ok(mut by_hash) = OCR_PAGE_READS_BY_HASH.lock()
+        {
+            *by_hash
+                .entry(claim.key().content_hash().to_owned())
+                .or_default() += 1;
+        }
+        let started = std::time::Instant::now();
         let bytes = {
             let mut cbz = lock_reader(&reader).map_err(ReadDecodeError::Read)?;
             cbz.read_entry_range(&entry, 0, entry.uncompressed_size)
                 .map_err(ReadDecodeError::Read)?
         };
-        crate::util::image_decode::decode_limited(&bytes)
-            .map_err(|e| ReadDecodeError::Decode(e.to_string()))
+        let page = Arc::new(
+            crate::util::image_decode::decode_limited(&bytes)
+                .map_err(|e| ReadDecodeError::Decode(e.to_string()))?,
+        );
+        metrics::histogram!("folio_ocr_page_decode_seconds")
+            .record(started.elapsed().as_secs_f64());
+        let size_key = cache::page_size_key(claim.key().content_hash(), claim.key().page());
+        let size = (page.width(), page.height());
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn(async move { cache::put_page_size(&redis, &size_key, size).await });
+            }
+            Err(_) => tracing::debug!(
+                key = %size_key,
+                "ocr: no runtime handle in the decode; page size not stored"
+            ),
+        }
+        claim.fulfil(Arc::clone(&page));
+        Ok(page)
     })
     .await;
     match work {
@@ -714,6 +1011,41 @@ async fn resolve_series_language(app: &AppState, series_id: uuid::Uuid) -> Langu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use garde::Validate;
+
+    fn pct(x: f64, y: f64, w: f64, h: f64) -> OcrRegionPct {
+        OcrRegionPct { x, y, w, h }
+    }
+
+    #[test]
+    fn region_pct_rules() {
+        for bad in [
+            pct(f64::NAN, 0.0, 5.0, 5.0),
+            pct(0.0, f64::INFINITY, 5.0, 5.0),
+            pct(0.0, 0.0, f64::NEG_INFINITY, 5.0),
+            pct(0.0, 0.0, 5.0, 0.0),
+            pct(0.0, 0.0, -1.0, 5.0),
+        ] {
+            assert!(bad.validate().is_err(), "{bad:?}");
+        }
+        assert!(pct(0.0, 0.0, 5.0, 5.0).validate().is_ok());
+        assert!(pct_on_page(&Some(pct(100.0, 0.0, 5.0, 5.0)), &()).is_err());
+        assert!(pct_on_page(&Some(pct(-5.0, 0.0, 5.0, 5.0)), &()).is_err());
+        assert!(pct_on_page(&Some(pct(-5.0, 0.0, 6.0, 5.0)), &()).is_ok());
+        assert!(pct_on_page(&None, &()).is_ok());
+    }
+
+    #[test]
+    fn region_pct_converts_rounds_and_clamps() {
+        let r = pct(10.0, 10.0, 25.0, 30.0).to_pixels(200, 100).unwrap();
+        assert_eq!((r.x, r.y, r.w, r.h), (20, 10, 50, 30));
+        let r = pct(90.0, 80.0, 20.0, 30.0).to_pixels(200, 100).unwrap();
+        assert_eq!((r.x, r.y, r.w, r.h), (180, 80, 20, 20));
+        let r = pct(-5.0, -5.0, 10.0, 10.0).to_pixels(200, 100).unwrap();
+        assert_eq!((r.x, r.y, r.w, r.h), (0, 0, 10, 5));
+        // Less than half a pixel: nothing left.
+        assert!(pct(50.0, 50.0, 0.1, 0.1).to_pixels(200, 100).is_none());
+    }
 
     /// Over the limit a request waits, then gets 503 + Retry-After, not a
     /// 500; a permit freed in time is taken.

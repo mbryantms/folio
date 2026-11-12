@@ -692,6 +692,7 @@ async fn cache_hit_short_circuits_pipeline() {
     let payload = serde_json::json!({
         "text": "sentinel-cached-text",
         "confidence": 0.42_f64,
+        "page_w": 100, "page_h": 100,
     })
     .to_string();
     let mut redis = app.state().jobs.redis.clone();
@@ -782,7 +783,8 @@ async fn cache_lookup_keyed_by_lang() {
     let (_lib, issue_id) = seed_issue(&app, "/nonexistent/lang.cbz").await;
     let region_hash = server::ocr::cache::region_hash(0, 0, 50, 50);
     let western_key = server::ocr::cache::cache_key(&issue_id, 0, "western", false, &region_hash);
-    let payload = serde_json::json!({ "text": "western-only", "confidence": 0.9_f64 }).to_string();
+    let payload = serde_json::json!({ "text": "western-only", "confidence": 0.9_f64, "page_w": 50, "page_h": 50 })
+            .to_string();
     let mut redis = app.state().jobs.redis.clone();
     let _: () = redis.set_ex(&western_key, payload, 60).await.unwrap();
 

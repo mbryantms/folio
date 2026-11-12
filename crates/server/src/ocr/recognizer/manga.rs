@@ -30,6 +30,7 @@ use super::{Recognition, Recognizer};
 
 pub struct MangaOcr {
     inner: Mutex<MangaOCR>,
+    first_use: crate::ocr::FirstUse,
 }
 
 impl MangaOcr {
@@ -38,14 +39,17 @@ impl MangaOcr {
     pub async fn shared() -> anyhow::Result<&'static Self> {
         static CELL: OnceCell<MangaOcr> = OnceCell::const_new();
         CELL.get_or_try_init(|| async {
+            let started = std::time::Instant::now();
             // Pinned + digest-verified before the upstream constructor
             // reads the cache (`crate::ocr::models`).
             crate::ocr::models::ensure_pinned(crate::ocr::models::MANGA_FILES).await?;
             let inner = tokio::task::spawn_blocking(MangaOCR::new)
                 .await
                 .map_err(|e| anyhow::anyhow!("manga-ocr init task panicked: {e}"))??;
+            crate::ocr::record_model_load("manga", started.elapsed());
             Ok(MangaOcr {
                 inner: Mutex::new(inner),
+                first_use: crate::ocr::FirstUse::new(),
             })
         })
         .await
@@ -58,7 +62,9 @@ impl Recognizer for MangaOcr {
             .inner
             .lock()
             .map_err(|_| anyhow::anyhow!("manga-ocr mutex poisoned"))?;
+        let started = std::time::Instant::now();
         let text = guard.inference(image)?;
+        self.first_use.record("manga", started.elapsed());
         let trimmed = text.trim().to_owned();
         let confidence = if trimmed.is_empty() { 0.0 } else { 1.0 };
         Ok(Recognition {

@@ -38,14 +38,56 @@
 //! work finishes, not when the request future is dropped. A client that
 //! fires and aborts requests cannot start more concurrent decodes or
 //! inferences than there are permits.
+//!
+//! ## Finished work always reaches the cache
+//!
+//! [`run_ocr`] and [`detect_and_cache_regions`] run their work in a
+//! detached task (`tokio::spawn`) that owns the permit: the blocking
+//! inference, then (after the permit is released) the Redis writes of the
+//! detection and the recognition. The request future only waits for that
+//! task. When the 60 s route timeout or a client abort drops the request,
+//! the task carries on, so a detection that took 50 s is cached and the
+//! retry is a cache hit instead of a second full detection.
+//!
+//! Abandoned work cannot pile up: the inference runs only inside a task
+//! that holds one of the [`OCR_MAX_CONCURRENT`] permits, and a new request
+//! must take a permit before it starts any (waiting at most
+//! [`OCR_PERMIT_WAIT`], then 503). So at most `OCR_MAX_CONCURRENT`
+//! detections or recognitions, abandoned or not, run at any moment. What
+//! outlives the permit is one Redis write per finished result, each
+//! bounded by [`cache::CACHE_WRITE_TIMEOUT`].
+//!
+//! [`OCR_MAX_CONCURRENT`]: crate::api::issue_ocr::OCR_MAX_CONCURRENT
+//! [`OCR_PERMIT_WAIT`]: crate::api::issue_ocr::OCR_PERMIT_WAIT
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use image::DynamicImage;
 use redis::aio::ConnectionManager;
 
 use super::cache::{self, CachedBbox, CachedDetection};
 use super::detector::Detector;
+use super::page_cache::SharedPage;
 use super::postprocess::{self, Cleaned};
 use super::recognizer::{Language, Recognizer, manga::MangaOcr, western::WesternOcr};
+use crate::api::issue_ocr::OcrResponse;
+
+/// Full-page text detection. The real one is [`Detector`]; debug builds
+/// let a test stand in for it per content hash ([`test_models`]).
+pub trait PageDetector: Send + Sync {
+    /// Detect the text regions of a whole page. Blocking.
+    fn detect(&self, page: &DynamicImage) -> anyhow::Result<CachedDetection>;
+}
+
+impl PageDetector for Detector {
+    fn detect(&self, page: &DynamicImage) -> anyhow::Result<CachedDetection> {
+        let started = std::time::Instant::now();
+        let detection = run_detector_blocking(self, page)?;
+        self.note_inference(started.elapsed());
+        Ok(detection)
+    }
+}
 
 /// Pixel rectangle in page coordinates. All four fields are
 /// unsigned because callers must reject negatives at the API
@@ -85,7 +127,9 @@ impl Rect {
 // The struct is internal to the pipeline + handler; no Debug consumer
 // loses anything by the omission.
 pub struct OcrInput {
-    pub page_image: DynamicImage,
+    /// The decoded page, shared with the decoded-page cache
+    /// ([`super::page_cache`]).
+    pub page_image: SharedPage,
     pub region: Rect,
     pub language: Language,
     /// BLAKE3 of the issue's on-disk bytes. Drives the detector-result
@@ -102,6 +146,9 @@ pub struct OcrInput {
     /// entirely and the recognizer runs on the user's rect verbatim —
     /// see [`crate::api::issue_ocr::OcrRequest::detect`].
     pub detect: bool,
+    /// Result-cache key the finished response is written under
+    /// ([`cache::cache_key`]), by the work itself.
+    pub result_key: String,
 }
 
 #[derive(Debug)]
@@ -124,37 +171,117 @@ const DETECTOR_NMS: f32 = 0.5;
 
 /// The initialised singletons one OCR run uses.
 pub struct OcrModels {
-    detector: Option<&'static Detector>,
+    detector: Option<&'static dyn PageDetector>,
     recognizer: &'static dyn Recognizer,
 }
 
 /// Wait for the models a run needs: the recognizer for `language`, and the
 /// detector when `detect` is set. The first call per model waits on its
 /// verified download (`ocr::models`) and builds the session; later calls
-/// return at once. Call this before taking an OCR permit.
-pub async fn prepare_models(language: Language, detect: bool) -> anyhow::Result<OcrModels> {
+/// return at once. Call this before taking an OCR permit. `content_hash`
+/// only selects a test stand-in in debug builds ([`test_models`]).
+pub async fn prepare_models(
+    content_hash: &str,
+    language: Language,
+    detect: bool,
+) -> anyhow::Result<OcrModels> {
+    #[cfg(debug_assertions)]
+    let stub = test_models::get(content_hash);
+    #[cfg(not(debug_assertions))]
+    let _ = content_hash;
     // Only initialize the detector singleton when we're actually
     // going to use it. The first-call cost includes a HF download +
     // ort session build — skipping that on the no-detect path means
     // operators with detection disabled never pay it.
-    let detector = if detect {
+    let detector: Option<&'static dyn PageDetector> = if detect {
+        #[cfg(debug_assertions)]
+        if let Some(d) = stub.and_then(|s| s.detector) {
+            return Ok(OcrModels {
+                detector: Some(d),
+                recognizer: match stub.and_then(|s| s.recognizer) {
+                    Some(r) => r,
+                    None => real_recognizer(language).await?,
+                },
+            });
+        }
         Some(Detector::shared().await?)
     } else {
         None
     };
-    let recognizer: &'static dyn Recognizer = match language {
-        Language::Western => WesternOcr::shared().await?,
-        Language::Manga => MangaOcr::shared().await?,
-    };
+    #[cfg(debug_assertions)]
+    if let Some(r) = stub.and_then(|s| s.recognizer) {
+        return Ok(OcrModels {
+            detector,
+            recognizer: r,
+        });
+    }
     Ok(OcrModels {
         detector,
-        recognizer,
+        recognizer: real_recognizer(language).await?,
+    })
+}
+
+async fn real_recognizer(language: Language) -> anyhow::Result<&'static dyn Recognizer> {
+    Ok(match language {
+        Language::Western => WesternOcr::shared().await?,
+        Language::Manga => MangaOcr::shared().await?,
     })
 }
 
 /// [`prepare_models`] for the detector alone (the text-regions route).
-pub async fn prepare_detector() -> anyhow::Result<&'static Detector> {
-    Detector::shared().await
+pub async fn prepare_detector(content_hash: &str) -> anyhow::Result<&'static dyn PageDetector> {
+    #[cfg(debug_assertions)]
+    if let Some(d) = test_models::get(content_hash).and_then(|s| s.detector) {
+        return Ok(d);
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = content_hash;
+    Ok(Detector::shared().await?)
+}
+
+/// Debug-build stand-ins for the models, per content hash, so the
+/// integration tests can drive the routes (timing, cancellation, caching)
+/// without the real detector and recognizers, which download hundreds of
+/// MB on first use. Keyed by content hash so tests running side by side
+/// do not see each other's stand-ins. Not compiled into release builds.
+#[cfg(debug_assertions)]
+pub mod test_models {
+    use std::collections::HashMap;
+    use std::sync::{LazyLock, Mutex};
+
+    use super::PageDetector;
+    use crate::ocr::recognizer::Recognizer;
+
+    /// What to use instead of the real models for one content hash; a
+    /// `None` field keeps the real model.
+    #[derive(Clone, Copy, Default)]
+    pub struct Stub {
+        pub detector: Option<&'static dyn PageDetector>,
+        pub recognizer: Option<&'static dyn Recognizer>,
+    }
+
+    static STUBS: LazyLock<Mutex<HashMap<String, Stub>>> = LazyLock::new(Default::default);
+
+    /// Use `stub` for every request on an issue with this content hash.
+    pub fn install(content_hash: &str, stub: Stub) {
+        STUBS
+            .lock()
+            .expect("test model lock")
+            .insert(content_hash.to_owned(), stub);
+    }
+
+    /// Whether a test installed stand-ins for this content hash.
+    pub fn is_installed(content_hash: &str) -> bool {
+        get(content_hash).is_some()
+    }
+
+    pub(super) fn get(content_hash: &str) -> Option<Stub> {
+        STUBS
+            .lock()
+            .expect("test model lock")
+            .get(content_hash)
+            .copied()
+    }
 }
 
 /// Run `f` on the blocking pool with `permit` moved into the task: the
@@ -172,11 +299,14 @@ where
         .map_err(|e| anyhow::anyhow!("blocking task failed: {e}"))
 }
 
-/// Driver: returns the recognized text + a refined bubble outline.
+/// Driver: runs the OCR work and returns the response the handler sends.
 ///
 /// `models` come from [`prepare_models`] (the async download and session
 /// build cannot run inside `spawn_blocking`). `permit` is held by the
-/// blocking task until it finishes (see the module docs).
+/// blocking work until it finishes (see the module docs). The work runs in
+/// a detached task that also writes the detect cache (when the detector
+/// ran) and the result cache (under [`OcrInput::result_key`]); both writes
+/// happen even when this future is dropped first.
 ///
 /// Records two Prometheus histograms (units: seconds, matching
 /// `folio_reader_next_up_latency_seconds` and friends):
@@ -192,14 +322,15 @@ pub async fn run_ocr<P: Send + 'static>(
     input: OcrInput,
     models: OcrModels,
     permit: P,
-) -> anyhow::Result<OcrOutput> {
-    // Cancellation (OCR-1 / PERF-9): a `spawn_blocking` task keeps running
-    // detached if this future is dropped (client disconnected / aborted). The
-    // drop guard flips this flag, and the blocking body checks it after the
-    // detector run — bailing before the expensive recognize step so the
-    // recognizer singleton is freed for the next request instead of being
-    // pinned for the full pipeline on work nobody is waiting for.
-    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+) -> anyhow::Result<OcrResponse> {
+    // Cancellation (OCR-1 / PERF-9): the work below keeps running when
+    // this future is dropped (client disconnected / aborted / route
+    // timeout). The drop guard flips this flag, and the blocking body
+    // checks it after the detector run — skipping the recognize step so
+    // the recognizer singleton is freed for the next request instead of
+    // being pinned for work nobody is waiting for. The detection itself
+    // is still cached.
+    let cancel = Arc::new(AtomicBool::new(false));
     let _cancel_on_drop = CancelGuard(cancel.clone());
 
     let lang_label = match input.language {
@@ -229,55 +360,131 @@ pub async fn run_ocr<P: Send + 'static>(
         (None, None)
     };
 
-    let redis_for_put = input.redis.clone();
-    let detect_key_for_put = detect_key.clone();
-    let cancel_for_task = cancel.clone();
-    let ((output, detection_to_cache), _permit) = blocking_with_permit(permit, move || {
-        run_blocking(
-            detector,
-            recognizer,
-            input,
-            lang_label,
-            cached_detection,
-            &cancel_for_task,
-        )
-    })
-    .await
-    .map_err(|e| anyhow::anyhow!("ocr task panicked: {e}"))
-    .and_then(|(r, p)| r.map(|v| (v, p)))?;
+    let redis = input.redis.clone();
+    let result_key = input.result_key.clone();
+    let page_size = (input.page_image.width(), input.page_image.height());
+    let gone = cancel.clone();
+    let work = tokio::spawn(async move {
+        let result = async move {
+            let ((detection_to_cache, output), permit) = blocking_with_permit(permit, move || {
+                run_blocking(
+                    detector,
+                    recognizer,
+                    input,
+                    lang_label,
+                    cached_detection,
+                    &cancel,
+                )
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("ocr task panicked: {e}"))?;
+            // The permit covers the inference only; the cache writes below do
+            // not hold it.
+            drop(permit);
+            if let (Some(key), Some(detection)) = (detect_key, detection_to_cache) {
+                cache::put_detect(&redis, &key, &detection).await;
+            }
+            let response = OcrResponse::from_output(output?, lang_label, page_size);
+            // Best-effort: a failed write only means the next call reruns.
+            cache::put(&redis, &result_key, &response).await;
+            metrics::histogram!("folio_ocr_pipeline_seconds", "lang" => lang_label)
+                .record(start.elapsed().as_secs_f64());
+            Ok(response)
+        }
+        .await;
+        log_if_unheard(&result, &gone, "ocr");
+        result
+    });
+    work.await
+        .map_err(|e| anyhow::anyhow!("ocr task failed: {e}"))?
+}
 
-    if let (Some(key), Some(detection)) = (detect_key_for_put, detection_to_cache) {
-        cache::put_detect(&redis_for_put, &key, &detection).await;
+/// The error [`recognize_blocking`] returns when it skips recognition because
+/// the request was abandoned (not a failure, so not logged).
+#[derive(Debug)]
+struct CancelledBeforeRecognize;
+
+impl std::fmt::Display for CancelledBeforeRecognize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ocr request cancelled before recognize")
     }
+}
 
-    metrics::histogram!("folio_ocr_pipeline_seconds", "lang" => lang_label)
-        .record(start.elapsed().as_secs_f64());
-    Ok(output)
+impl std::error::Error for CancelledBeforeRecognize {}
+
+/// Logs, once at warn, an error from detached OCR work whose request is gone:
+/// nobody else receives it. Skipping recognition because the request was gone
+/// is not a failure and is not logged.
+fn log_if_unheard<T>(result: &anyhow::Result<T>, gone: &AtomicBool, work: &str) {
+    if let Err(e) = result
+        && gone.load(Ordering::Relaxed)
+        && !e.is::<CancelledBeforeRecognize>()
+    {
+        tracing::warn!(error = %e, work, "ocr: detached work failed after the request was gone");
+    }
+}
+
+/// The longest panic message logged from a caught recognizer panic.
+const PANIC_MESSAGE_MAX_CHARS: usize = 200;
+
+/// The message of a caught panic when its payload is a string, cut to
+/// [`PANIC_MESSAGE_MAX_CHARS`].
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    let message = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("<non-string panic payload>");
+    message.chars().take(PANIC_MESSAGE_MAX_CHARS).collect()
 }
 
 /// Sets its flag when dropped — used by [`run_ocr`] to signal the detached
 /// blocking task that the request was abandoned.
-struct CancelGuard(std::sync::Arc<std::sync::atomic::AtomicBool>);
+struct CancelGuard(Arc<AtomicBool>);
 
 impl Drop for CancelGuard {
     fn drop(&mut self) {
-        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.0.store(true, Ordering::Relaxed);
     }
 }
 
 /// Blocking body of [`run_ocr`]: runs the detector (if not cached),
 /// picks the bbox overlapping the user's rect, crops, and recognizes.
-/// Returns `(output, detection_to_cache)` — `detection_to_cache` is
-/// `Some` only when the detector ran inline (cache miss), telling
-/// the async caller to schedule a Redis PUT.
+/// Returns `(detection_to_cache, output)` — `detection_to_cache` is
+/// `Some` whenever the detector ran inline (cache miss) and succeeded,
+/// even when the recognition then failed or was skipped because the
+/// request was gone, so the caller always caches a finished detection.
 fn run_blocking(
-    detector: Option<&Detector>,
+    detector: Option<&dyn PageDetector>,
     recognizer: &dyn Recognizer,
     input: OcrInput,
     lang_label: &'static str,
     cached_detection: Option<CachedDetection>,
-    cancel: &std::sync::atomic::AtomicBool,
-) -> anyhow::Result<(OcrOutput, Option<CachedDetection>)> {
+    cancel: &AtomicBool,
+) -> (Option<CachedDetection>, anyhow::Result<OcrOutput>) {
+    match recognize_blocking(
+        detector,
+        recognizer,
+        input,
+        lang_label,
+        cached_detection,
+        cancel,
+    ) {
+        Ok((detection, output)) => (detection, output),
+        Err(e) => (None, Err(e)),
+    }
+}
+
+/// [`run_blocking`] with the detector's own failures as the outer error.
+#[allow(clippy::type_complexity)]
+fn recognize_blocking(
+    detector: Option<&dyn PageDetector>,
+    recognizer: &dyn Recognizer,
+    input: OcrInput,
+    lang_label: &'static str,
+    cached_detection: Option<CachedDetection>,
+    cancel: &AtomicBool,
+) -> anyhow::Result<(Option<CachedDetection>, anyhow::Result<OcrOutput>)> {
     let (page_w, page_h) = (input.page_image.width(), input.page_image.height());
     // Clamp the user's region into page bounds defensively — the
     // handler already validated this, but we don't want a panic in
@@ -303,7 +510,10 @@ fn run_blocking(
             None,
         ),
         (Some(det), None) => {
-            let detection = run_detector_blocking(det, &input.page_image)?;
+            let detection = det.detect(&input.page_image)?;
+            if cancel.load(Ordering::Relaxed) {
+                metrics::counter!("folio_ocr_detect_abandoned_total").increment(1);
+            }
             let picked = pick_bbox_page(&detection.bboxes, &clamped, page_w, page_h);
             (picked, Some(detection))
         }
@@ -311,11 +521,13 @@ fn run_blocking(
     };
 
     // The detector run above can take seconds; if the request was abandoned in
-    // the meantime, bail before recognize (which also holds the recognizer
-    // singleton's lock). The returned Err is discarded — the caller's future is
-    // already gone.
-    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-        return Err(anyhow::anyhow!("ocr request cancelled before recognize"));
+    // the meantime, skip recognize (which also holds the recognizer
+    // singleton's lock). The detection is still handed back for the cache.
+    if cancel.load(Ordering::Relaxed) {
+        return Ok((
+            detection_to_cache,
+            Err(anyhow::Error::new(CancelledBeforeRecognize)),
+        ));
     }
 
     // ─── Pick crop, recognize ────────────────────────────────────
@@ -331,7 +543,30 @@ fn run_blocking(
     };
 
     let recognize_start = std::time::Instant::now();
-    let recognition = recognizer.recognize(&final_img)?;
+    // A failed recognition (an error, or a panic from the engine) must not
+    // lose a detection that already finished: it is handed back for the
+    // cache either way. A panic is caught here for that reason only; the
+    // engine's own mutex may be poisoned by it, as before.
+    let recognized = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        recognizer.recognize(&final_img)
+    }));
+    let recognition = match recognized {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => return Ok((detection_to_cache, Err(e))),
+        Err(payload) => {
+            tracing::error!(
+                lang = lang_label,
+                panic = %panic_message(payload.as_ref()),
+                "ocr: the recognizer panicked; its engine is unusable until restart"
+            );
+            metrics::counter!("folio_ocr_recognizer_panics_total", "model" => lang_label)
+                .increment(1);
+            return Ok((
+                detection_to_cache,
+                Err(anyhow::anyhow!("the recognizer panicked")),
+            ));
+        }
+    };
     metrics::histogram!("folio_ocr_recognize_seconds", "lang" => lang_label)
         .record(recognize_start.elapsed().as_secs_f64());
 
@@ -350,11 +585,11 @@ fn run_blocking(
     }
 
     Ok((
-        OcrOutput {
+        detection_to_cache,
+        Ok(OcrOutput {
             recognition: cleaned,
             refined_bbox,
-        },
-        detection_to_cache,
+        }),
     ))
 }
 
@@ -393,6 +628,11 @@ fn run_detector_blocking(
 /// regions fetch makes every subsequent OCR on that page
 /// recognize-only.
 ///
+/// The detection and the cache write run in a detached task that owns
+/// `permit` (see the module docs): a detection that finishes after this
+/// future was dropped is still cached, and counted in
+/// `folio_ocr_detect_abandoned_total`.
+///
 /// Callers are expected to have checked [`cache::get_detect`] first;
 /// the lookup happening before this call is what lets the hit path
 /// skip the archive load + page decode entirely.
@@ -400,20 +640,38 @@ pub async fn detect_and_cache_regions<P: Send + 'static>(
     redis: ConnectionManager,
     content_hash: &str,
     page: u32,
-    page_image: DynamicImage,
-    detector: &'static Detector,
+    page_image: SharedPage,
+    detector: &'static dyn PageDetector,
     permit: P,
 ) -> anyhow::Result<CachedDetection> {
-    let start = std::time::Instant::now();
-    let (detection, _permit) =
-        blocking_with_permit(permit, move || run_detector_blocking(detector, &page_image))
+    let cancel = Arc::new(AtomicBool::new(false));
+    let _cancel_on_drop = CancelGuard(cancel.clone());
+    let key = cache::detect_cache_key(content_hash, page);
+    let gone = cancel.clone();
+    let work = tokio::spawn(async move {
+        let result = async move {
+            let start = std::time::Instant::now();
+            let (detection, permit) = blocking_with_permit(permit, move || {
+                let detection = detector.detect(&page_image);
+                if detection.is_ok() && cancel.load(Ordering::Relaxed) {
+                    metrics::counter!("folio_ocr_detect_abandoned_total").increment(1);
+                }
+                detection
+            })
             .await
             .map_err(|e| anyhow::anyhow!("detect task panicked: {e}"))?;
-    let detection = detection?;
-    metrics::histogram!("folio_ocr_detect_seconds").record(start.elapsed().as_secs_f64());
-    let key = cache::detect_cache_key(content_hash, page);
-    cache::put_detect(&redis, &key, &detection).await;
-    Ok(detection)
+            drop(permit);
+            let detection = detection?;
+            metrics::histogram!("folio_ocr_detect_seconds").record(start.elapsed().as_secs_f64());
+            cache::put_detect(&redis, &key, &detection).await;
+            Ok(detection)
+        }
+        .await;
+        log_if_unheard(&result, &gone, "page detection");
+        result
+    });
+    work.await
+        .map_err(|e| anyhow::anyhow!("detect task failed: {e}"))?
 }
 
 /// Pick the cached bbox with the largest intersection area against
