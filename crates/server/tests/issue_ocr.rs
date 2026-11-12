@@ -9,9 +9,11 @@
 //!
 //! A few tests here do reach the real pipeline. They pass when it
 //! answers 200 (the pinned Western models, 24 MB, are in the hub cache
-//! or can be fetched) and equally when the models cannot be had on this
-//! box ([`pipeline_unavailable`]): what they pin is that the request got
-//! that far.
+//! or can be fetched) and equally when a model file cannot be fetched on
+//! this box ([`pipeline_unavailable`]): what they pin is that the request
+//! got that far. An engine that loads and then fails is a failure of the
+//! test. With `COMIC_TEST_OCR_STRICT=1` only a 200 passes, for a run
+//! that is known to have the models or the network for them.
 
 mod common;
 
@@ -36,16 +38,20 @@ use uuid::Uuid;
 
 // ─── Test plumbing ───────────────────────────────────────────────
 
-/// The error codes of a request that reached the OCR pipeline and could
-/// not be served by it on this box: the engines failed (`ocr_failed`),
-/// or a pinned model file could not be fetched or verified
-/// (`ocr_model_unverified`, e.g. no network). Anything else on a
-/// non-200 means the request stopped earlier.
+/// Set to make the pipeline-reach tests require a 200: the models must
+/// load and the engines must answer.
+const STRICT_ENV: &str = "COMIC_TEST_OCR_STRICT";
+
+/// Whether a non-200 answer means "the request reached the OCR pipeline,
+/// which has no models on this box": a pinned model file could not be
+/// fetched or verified (`ocr_model_unverified`: no network, the hub is
+/// down). Nothing else qualifies. `ocr_failed` in particular is a broken
+/// engine (the models loaded, or were refused at load, and the run
+/// failed), and any other code means the request stopped earlier. In
+/// strict mode ([`STRICT_ENV`]) nothing qualifies at all.
 fn pipeline_unavailable(body: &serde_json::Value) -> bool {
-    matches!(
-        body["error"]["code"].as_str(),
-        Some("ocr_failed" | "ocr_model_unverified")
-    )
+    std::env::var_os(STRICT_ENV).is_none()
+        && body["error"]["code"].as_str() == Some("ocr_model_unverified")
 }
 
 async fn body_json(b: Body) -> serde_json::Value {
@@ -989,10 +995,18 @@ async fn text_regions_cache_hit_converts_to_percent_without_archive() {
                 "confidence": 0.9_f64, "class": 0_u32,
             },
             {
-                // Collapsed after clamping → must be filtered out.
+                // A region class like the first, so only its position
+                // can drop it: collapsed after clamping → filtered out.
                 "xmin": 1200.0_f64, "ymin": 100.0_f64,
                 "xmax": 1300.0_f64, "ymax": 200.0_f64,
-                "confidence": 0.8_f64, "class": 1_u32,
+                "confidence": 0.8_f64, "class": 0_u32,
+            },
+            {
+                // The text inside a balloon: kept in the detection, not
+                // a region for clients.
+                "xmin": 120.0_f64, "ymin": 420.0_f64,
+                "xmax": 330.0_f64, "ymax": 580.0_f64,
+                "confidence": 0.95_f64, "class": 1_u32,
             },
         ],
     })
@@ -1005,7 +1019,11 @@ async fn text_regions_cache_hit_converts_to_percent_without_archive() {
     assert_eq!(body["page_w"], 1000);
     assert_eq!(body["page_h"], 2000);
     let regions = body["regions"].as_array().unwrap();
-    assert_eq!(regions.len(), 1, "off-page bbox must be dropped: {body}");
+    assert_eq!(
+        regions.len(),
+        1,
+        "the off-page box and the text box must be dropped: {body}"
+    );
     let r = &regions[0];
     assert!((r["x"].as_f64().unwrap() - 10.0).abs() < 1e-4);
     assert!((r["y"].as_f64().unwrap() - 20.0).abs() < 1e-4);

@@ -899,14 +899,18 @@ pub enum Provenance {
 
 impl Config {
     pub fn load() -> anyhow::Result<Self> {
-        // Env > config.toml > defaults.
-        let mut cfg: Config = Figment::new()
-            .merge(Toml::file("config.toml"))
-            .merge(Env::prefixed("COMIC_"))
-            .extract()?;
+        let mut cfg: Config = Self::sources().extract()?;
         cfg.resolve_auth()?;
         cfg.validate()?;
         Ok(cfg)
+    }
+
+    /// Where the boot configuration comes from: env > config.toml >
+    /// defaults.
+    fn sources() -> Figment {
+        Figment::new()
+            .merge(Toml::file("config.toml"))
+            .merge(Env::prefixed("COMIC_"))
     }
 
     /// Set the effective [`Config::auth_mode`] from the chosen mode and
@@ -2255,32 +2259,66 @@ mod tests {
         cfg.validate().expect("defaults validate");
     }
 
-    /// The OCR engine switch is off unless asked for, and the key
-    /// `Env::prefixed("COMIC_")` yields for `COMIC_OCR_LEGACY_ENGINES`
-    /// (`ocr_legacy_engines`, its `true` parsed to a boolean like every
-    /// other env flag) selects the previous engines.
+    const OCR_SWITCH_CHILD_ENV: &str = "FOLIO_CONFIG_OCR_SWITCH_CHILD";
+
+    /// `COMIC_OCR_LEGACY_ENGINES` selects the OCR engine set, through
+    /// the same sources `Config::load` reads: unset or `false` is the
+    /// current set, `true` the legacy one. The variables are set only on
+    /// a child test process (this binary, running the ignored test below
+    /// alone), so no other test sees them.
     #[test]
-    fn ocr_legacy_engines_default_off_and_selectable() {
-        const BASE: &str = "database_url = 'postgres://x'\nredis_url = 'redis://x'\n\
-                            library_path = '/l'\ndata_path = '/d'\npublic_url = 'http://localhost'\n";
-        let cfg: Config = Figment::new()
-            .merge(Toml::string(BASE))
+    fn the_ocr_engine_switch_is_read_from_the_environment() {
+        for (value, expected) in [
+            (None, "current"),
+            (Some("false"), "current"),
+            (Some("true"), "legacy"),
+        ] {
+            let mut cmd = std::process::Command::new(std::env::current_exe().unwrap());
+            cmd.args([
+                "--exact",
+                "config::tests::ocr_engine_switch_child",
+                "--ignored",
+                "--test-threads=1",
+            ]);
+            // Nothing of this process's own configuration leaks in.
+            for (key, _) in std::env::vars_os() {
+                if key.to_string_lossy().starts_with("COMIC_") {
+                    cmd.env_remove(key);
+                }
+            }
+            cmd.env(OCR_SWITCH_CHILD_ENV, expected)
+                .env("COMIC_DATABASE_URL", "postgres://x")
+                .env("COMIC_REDIS_URL", "redis://x")
+                .env("COMIC_LIBRARY_PATH", "/l")
+                .env("COMIC_DATA_PATH", "/d")
+                .env("COMIC_PUBLIC_URL", "http://localhost");
+            if let Some(value) = value {
+                cmd.env("COMIC_OCR_LEGACY_ENGINES", value);
+            }
+            let out = cmd.output().unwrap();
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                out.status.success() && stdout.contains("1 passed"),
+                "COMIC_OCR_LEGACY_ENGINES={value:?}: child failed:\n{stdout}\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "run by the_ocr_engine_switch_is_read_from_the_environment in a child process"]
+    fn ocr_engine_switch_child() {
+        let Ok(expected) = std::env::var(OCR_SWITCH_CHILD_ENV) else {
+            // Only meaningful in the child process the parent test starts.
+            return;
+        };
+        let cfg: Config = Config::sources()
             .extract()
-            .expect("defaults extract");
-        assert!(!cfg.ocr_legacy_engines);
+            .expect("the environment extracts");
+        assert_eq!(cfg.ocr_legacy_engines, expected == "legacy");
         assert_eq!(
-            crate::ocr::EngineSet::from_config(&cfg),
-            crate::ocr::EngineSet::Current
-        );
-        let cfg: Config = Figment::new()
-            .merge(Toml::string(BASE))
-            .merge(("ocr_legacy_engines", true))
-            .extract()
-            .expect("the switch extracts");
-        assert!(cfg.ocr_legacy_engines);
-        assert_eq!(
-            crate::ocr::EngineSet::from_config(&cfg),
-            crate::ocr::EngineSet::Legacy
+            crate::ocr::EngineSet::from_config(&cfg).label(),
+            expected.as_str()
         );
     }
 

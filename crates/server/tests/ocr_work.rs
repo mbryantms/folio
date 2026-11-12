@@ -1132,3 +1132,160 @@ async fn identical_bytes_in_a_hidden_library_stay_hidden() {
     assert_eq!(echo.calls.load(Ordering::SeqCst), recognized);
     assert_eq!(detector.calls.load(Ordering::SeqCst), detected);
 }
+
+// ─── The rollback switch ─────────────────────────────────────────
+
+/// A detector that finds three boxes side by side, one of each class
+/// index (0, 1 and 2).
+struct ThreeClassDetector;
+
+impl PageDetector for ThreeClassDetector {
+    fn detect(&self, page: &DynamicImage) -> anyhow::Result<CachedDetection> {
+        Ok(CachedDetection {
+            page_w: page.width(),
+            page_h: page.height(),
+            bboxes: [(0, 4.0), (1, 34.0), (2, 64.0)]
+                .into_iter()
+                .map(|(class, x)| CachedBbox {
+                    xmin: x,
+                    ymin: 4.0,
+                    xmax: x + 24.0,
+                    ymax: 40.0,
+                    confidence: 0.9,
+                    class,
+                })
+                .collect(),
+        })
+    }
+}
+
+/// A recognizer that reads a word between two bars, the way a balloon's
+/// borders come back from Tesseract.
+struct BarsRecognizer;
+
+impl Recognizer for BarsRecognizer {
+    fn recognize(&self, _image: &DynamicImage) -> anyhow::Result<Recognition> {
+        Ok(Recognition {
+            text: "| HELLO |".to_owned(),
+            confidence: 0.9,
+            words: None,
+        })
+    }
+}
+
+/// What the two routes answer for one issue with the stand-ins above,
+/// and which of the four cache keys (legacy / default, detection /
+/// result) then exist.
+struct SwitchOutcome {
+    region_classes: Vec<u64>,
+    text: String,
+    legacy_keys: (bool, bool),
+    default_keys: (bool, bool),
+}
+
+async fn outcome_with_the_three_class_stand_ins(app: &TestApp, email: &str) -> SwitchOutcome {
+    use server::ocr::{EngineSet, cache};
+    let admin = register(app, email).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let id = seed(app, &tmp.path().join("lib"), 100, 64).await;
+    test_models::install(
+        &id,
+        test_models::Stub {
+            detector: Some(Box::leak(Box::new(ThreeClassDetector))),
+            recognizer: Some(Box::leak(Box::new(BarsRecognizer))),
+        },
+    );
+
+    let (status, regions) = send(app, regions_request(&admin, &id, 0)).await;
+    assert_eq!(status, StatusCode::OK, "{regions}");
+    let region_classes = regions["regions"]
+        .as_array()
+        .expect("regions")
+        .iter()
+        .map(|r| r["class"].as_u64().expect("class"))
+        .collect();
+
+    let body = serde_json::json!({
+        "page": 0, "region": { "x": 4, "y": 4, "w": 24, "h": 36 }, "lang": "western",
+    });
+    let (status, read) = send(app, ocr_request(&admin, &id, body)).await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert_eq!(
+        read["raw_text"].as_str().unwrap_or("| HELLO |"),
+        "| HELLO |"
+    );
+
+    cache::warm_fingerprints_for(EngineSet::Legacy).await;
+    cache::warm_fingerprints_for(EngineSet::Current).await;
+    let region_hash = cache::region_hash(4, 4, 24, 36);
+    let legacy = (
+        cache::detect_cache_key_for(EngineSet::Legacy, &id, 0),
+        cache::cache_key_for(EngineSet::Legacy, &id, 0, "western", false, &region_hash),
+    );
+    let default = (
+        cache::detect_cache_key(&id, 0),
+        cache::cache_key(&id, 0, "western", false, &region_hash),
+    );
+    assert_ne!(legacy.0, default.0);
+    assert_ne!(legacy.1, default.1);
+    // Both routes answered, so both writes were started; give the
+    // detached tasks a moment to land them before looking for absences.
+    for _ in 0..200 {
+        let written = (redis_has(app, &legacy.0).await || redis_has(app, &default.0).await)
+            && (redis_has(app, &legacy.1).await || redis_has(app, &default.1).await);
+        if written {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    SwitchOutcome {
+        region_classes,
+        text: read["text"].as_str().expect("text").to_owned(),
+        legacy_keys: (
+            redis_has(app, &legacy.0).await,
+            redis_has(app, &legacy.1).await,
+        ),
+        default_keys: (
+            redis_has(app, &default.0).await,
+            redis_has(app, &default.1).await,
+        ),
+    }
+}
+
+/// `COMIC_OCR_LEGACY_ENGINES` through the routes, with stand-ins for the
+/// models: the legacy set offers every class of its detector as a region,
+/// cleans the text with the Tesseract rules, and keeps its detections and
+/// results under its own cache keys. The same stand-ins on a server
+/// without the switch show the other side of each.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_legacy_switch_selects_regions_cleanup_and_cache_keys() {
+    let _shared = ALL_PERMITS.read().await;
+
+    let legacy_app = TestApp::spawn_with_legacy_ocr_engines().await;
+    let legacy =
+        outcome_with_the_three_class_stand_ins(&legacy_app, "ocr-work-legacy@example.com").await;
+    // Blocks and lines alike are regions of the legacy detector.
+    assert_eq!(legacy.region_classes, [0, 1, 2]);
+    // The Tesseract chain drops the bars at the line's edges.
+    assert_eq!(legacy.text, "HELLO");
+    assert_eq!(
+        legacy.legacy_keys,
+        (true, true),
+        "written under the legacy keys"
+    );
+    assert_eq!(
+        legacy.default_keys,
+        (false, false),
+        "nothing under the default keys"
+    );
+
+    let default_app = TestApp::spawn().await;
+    let default =
+        outcome_with_the_three_class_stand_ins(&default_app, "ocr-work-default@example.com").await;
+    // Balloons and free text; the text inside a balloon is not offered.
+    assert_eq!(default.region_classes, [0, 2]);
+    // The line recogniser's cleanup keeps what was read.
+    assert_eq!(default.text, "| HELLO |");
+    assert_eq!(default.default_keys, (true, true));
+    assert_eq!(default.legacy_keys, (false, false));
+}

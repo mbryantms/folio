@@ -190,11 +190,13 @@ async fn only_the_work_takes_an_ocr_permit() {
     let t = Instant::now();
     let (status, headers, body) = post_ocr(&app, &admin, &good, 0).await;
     if status == StatusCode::INTERNAL_SERVER_ERROR {
-        // This host cannot load the recognizer; model preparation runs
-        // before the permit and failed there.
-        let code = body["error"]["code"].as_str().unwrap_or_default();
+        // This host cannot fetch the recognizer's model files; model
+        // preparation runs before the permit and failed there. Only that
+        // is tolerated (`ocr_failed` would be an engine that does not
+        // load), and not at all with COMIC_TEST_OCR_STRICT set.
         assert!(
-            code == "ocr_failed" || code == "ocr_model_unverified",
+            std::env::var_os("COMIC_TEST_OCR_STRICT").is_none()
+                && body["error"]["code"].as_str() == Some("ocr_model_unverified"),
             "{body}"
         );
     } else {
