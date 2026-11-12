@@ -324,10 +324,27 @@ replaced file went; the audit row carries it too.
   (`archive_backup_retain_days` after the restore), and forever when
   retention is off; a later restore swaps that same file back in, however
   many rewrites happened since. Nothing in this package deletes it.
-- **Lock.** The restore holds the per-issue rewrite lock
-  (`EDIT_TTL_SECS`) with the same heartbeat as the rewrite job and the page
-  editor (`mutex::Heartbeat`), so a slow copy in the fallback cannot
-  outlive it.
+- **Lock and the response deadline.** The restore runs in a task of its
+  own (`api::archive_edit::restore_issue` spawns `run_restore`), never in
+  the request: the task claims the per-issue rewrite lock
+  (`EDIT_TTL_SECS`), keeps it alive with the same heartbeat as the rewrite
+  job and the page editor (`mutex::Heartbeat`) and holds it through the
+  swap and everything that follows it (cached reader dropped, row stamped,
+  scoped rescan queued, audit row written), then releases it. The heartbeat
+  renews the lock for as long as the task runs, however slow the copy or
+  the rebuild. The handler waits up to `RESTORE_RESPONSE_DEADLINE` (45 s,
+  below the `/api` route timeout of 60 s) for the outcome; past it, it
+  answers 202 with `status: "in_progress"`, `in_progress: true` and a
+  message, and the task finishes alone. A dropped request (the route
+  timeout, a client that went away) is the same: nothing after the swap
+  depends on the request. A failure after the response is gone is logged at
+  ERROR and recorded as an `archive` / `errored` library event on the issue
+  (`event_log::record`), since no response is left to carry it. The web
+  dialog says the restore is still running and refreshes the issue again
+  after 20 s. Tests:
+  `archive_restore.rs::a_restore_past_the_deadline_answers_in_progress_and_finishes`,
+  `::a_restore_that_fails_after_the_response_records_a_library_event`,
+  `::a_dropped_request_still_records_the_restore`.
 - **Age.** The kept file's change time is stamped at the restore (a
   `chmod` to its own mode), so the retention sweep ages it from the
   restore, not from the rewrite that made it.
@@ -361,10 +378,32 @@ replaced file went; the audit row carries it too.
   puts it in place with the swap rules above
   (`archive_rewrite::restore_rebuilt`): exchange, or the three-step
   fallback, and the "kept under this name" warning when the last step
-  fails. The replaced `X.cbz` becomes `X.cbz.bak`; an existing `.bak` is
-  moved up a slot first (`free_newest_slot`, which never deletes; with all
-  six slots taken the replaced file stays under the second name with a
-  warning). The pre-conversion backup is never written, renamed or
+  fails. The replaced `X.cbz` becomes `X.cbz.bak`.
+  - **Slots.** Unlike the ordinary restore (a swap, which never changes
+    the backup count), a rebuild adds a file, so the archive's own backups
+    rotate first exactly as a rewrite's do (`rotate_backups` with the
+    library's `archive_backup_retain_count`): `.bak` → `.bak.1` …, the slot
+    past the count is deleted, so the count never grows past the library's.
+    With zero slots it rotates as if one were configured: the one `.bak` a
+    restore always keeps (the replaced archive) stays until the retention
+    sweep, as for an ordinary restore. The rotation names only
+    `X.cbz.bak[.n]`; the pre-conversion backup is never among them.
+  - **Staging and crashes.** The rebuild is written under a staging name
+    of the archive (`X.cbz.<32 hex>.tmp`, `is_staging_name`), so a crash
+    mid-rebuild leaves a file the startup cleanup reaps (after
+    `STARTUP_CLEANUP_TTL`). Just before the swap it is renamed to the
+    restore's second name (`X.cbz.bak.<32 hex>.tmp`), which after an
+    exchange holds the replaced archive and is never reaped. A crash in
+    that short window (between the rename and the swap, or between the
+    two halves of the three-step fallback) leaves the rebuilt CBZ, or the
+    replaced archive, under that second name; nothing removes it, and the
+    archive's own name always holds a file. Neither name is a comic to the
+    scanner (`.tmp` is not an archive extension: `ignore::is_recognized_archive_ext`,
+    used by `scanner::enumerate`) or a backup to the prune
+    (`archive_rewrite::is_backup_name` needs a `.bak` / `.bak.<1-5>` ending).
+  - **Permit.** The rebuild takes an archive-work permit
+    (`archive_work_semaphore`, like the scan-time conversion), taken after
+    the library lookup so no database connection is held while waiting. The pre-conversion backup is never written, renamed or
   deleted, so the original bytes stay available. `file_path` does not
   change, so the row keeps its id, progress and markers. Restoring the RAR
   as `X.cbr` was rejected: the scanner would either convert it again into
@@ -380,9 +419,14 @@ replaced file went; the audit row carries it too.
     `auto_convert_cb7_on_scan` say; it still requires admin, writeback on
     and the per-issue lock with its heartbeat.
   - A backup that cannot be rebuilt (corrupt, not RAR / 7z / ZIP, over a
-    limit, no pages) is 422 `archive.restore_conversion_failed` with the
-    reader's reason. Every failure before the swap removes the staging
-    file and leaves the archive and every backup as they were.
+    limit, no pages) is 422 `archive.restore_conversion_failed`. The
+    message names the error kind and a short fixed reason
+    (`rebuild_failure_reason`): the reader's own text can carry entry names
+    from the archive, so it reaches neither the response nor the log
+    unbounded, and no control character does. Every failure the process
+    survives before the swap removes the staging file and leaves the
+    archive and every backup as they were; after a crash, the startup
+    cleanup removes it (above).
   - The response carries `rebuilt_from` (the backup's name) and a
     `message` saying the archive was rebuilt as a CBZ from that backup,
     that the original bytes stay available in it, and where the replaced
@@ -398,7 +442,13 @@ replaced file went; the audit row carries it too.
   `::a_corrupt_pre_conversion_backup_is_refused_and_nothing_changes`,
   `::restore_refuses_a_backup_the_listing_does_not_offer`,
   `::rebuild_restore_without_exchange_ends_like_the_exchange`,
-  `::a_rebuild_restore_that_fails_before_the_swap_changes_nothing`.
+  `::a_rebuild_restore_that_fails_before_the_swap_changes_nothing`,
+  `::rebuild_restores_keep_the_library_slot_count`,
+  `::rebuild_restore_with_every_slot_taken_rotates_like_a_rewrite`,
+  `::rebuild_restore_whose_last_step_fails_reports_where_the_replaced_archive_is`,
+  `::a_rebuild_over_a_limit_or_without_pages_changes_nothing`,
+  `::a_pre_conversion_backup_without_pages_is_refused`,
+  `::startup_cleanup_reaps_a_leftover_rebuild_staging_file`.
 
 ### Never over another file
 
