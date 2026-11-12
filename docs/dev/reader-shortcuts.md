@@ -17,54 +17,54 @@ are reflected.
 
 Default bindings — reader scope:
 
-| Default | Action               | Notes                                         |
-|---------|----------------------|-----------------------------------------------|
-| `→`     | Next page            | Direction-aware (swaps with `←` in RTL)       |
-| `←`     | Previous page        | Direction-aware                               |
-| `Home`  | First page           | Lands on first spread-group in double-page    |
-| `End`   | Last page            | Lands on last spread-group in double-page     |
-| `t`     | Toggle controls      | Show/hide chrome (top bar)                    |
-| `f`     | Cycle fit mode       | `width` → `height` → `original` → `contain` (fit screen) |
-| `d`     | Cycle view mode      | `single` → `double` → `webtoon`               |
-| `+`     | Zoom in              | Ladder 1× → 1.5× → 2× → 3×, re-centered; single + double view |
-| `-`     | Zoom out             | Walks the same ladder down                    |
-| `0`     | Reset zoom           | Back to 1×                                    |
-| `m`     | Toggle page strip    | Show/hide the minimap at the bottom           |
-| `Esc`   | Exit reader          | Returns to where reading started (see [Leaving the reader](#leaving-the-reader)) |
-| `b`     | Bookmark this page   | Toggles a page-0 marker on the current page   |
-| `n`     | Add note             | Opens the marker editor for a page note       |
-| `h`     | Start highlight      | Begins region selection                       |
-| `x`     | Capture text (OCR)   | Text mode: detected bubbles light up — tap one to OCR it, or drag a box |
-| `r`     | Show page text       | Opens the page-text panel: the visible page's OCR text in reading order (see [Accessibility](#accessibility)) |
-| `l`     | Show markers in this issue | Opens the marker drawer: every marker on the issue in page order (see [Accessibility](#accessibility)) |
-| `s`     | Favorite this page   | Toggles the star/favorite flag                |
-| `o`     | Show / hide markers  | Hides every overlay without deleting data     |
-| `]`     | Next bookmark        | Jumps to the next bookmark-kind marker        |
-| `[`     | Previous bookmark    | Jumps to the previous bookmark-kind marker    |
-| `Shift+N` | Next issue         | Navigates to the resolver's pick (CBL > series); toasts when caught up |
-| `Shift+P` | Previous issue     | Sequential back-nav (pure sort-order; ignores read state); toasts at first issue |
+| Default   | Action                     | Notes                                                                                                         |
+| --------- | -------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `→`       | Next page                  | Direction-aware (swaps with `←` in RTL)                                                                       |
+| `←`       | Previous page              | Direction-aware                                                                                               |
+| `Home`    | First page                 | Lands on first spread-group in double-page                                                                    |
+| `End`     | Last page                  | Lands on last spread-group in double-page                                                                     |
+| `t`       | Toggle controls            | Show/hide chrome (top bar)                                                                                    |
+| `f`       | Cycle fit mode             | `width` → `height` → `original` → `contain` (fit screen)                                                      |
+| `d`       | Cycle view mode            | `single` → `double` → `webtoon`                                                                               |
+| `+`       | Zoom in                    | Ladder 1× → 1.5× → 2× → 3×, re-centered; single + double view                                                 |
+| `-`       | Zoom out                   | Walks the same ladder down                                                                                    |
+| `0`       | Reset zoom                 | Back to 1×                                                                                                    |
+| `m`       | Toggle page strip          | Show/hide the minimap at the bottom                                                                           |
+| `Esc`     | Exit reader                | Returns to where reading started (see [Leaving the reader](#leaving-the-reader))                              |
+| `b`       | Bookmark this page         | Toggles a page-0 marker on the current page                                                                   |
+| `n`       | Add note                   | Opens the marker editor for a page note                                                                       |
+| `h`       | Start highlight            | Begins region selection                                                                                       |
+| `x`       | Capture text (OCR)         | Text mode: detected bubbles light up — tap one to OCR it, or drag a box                                       |
+| `r`       | Show page text             | Opens the page-text panel: the visible page's OCR text in reading order (see [Accessibility](#accessibility)) |
+| `l`       | Show markers in this issue | Opens the marker drawer: every marker on the issue in page order (see [Accessibility](#accessibility))        |
+| `s`       | Favorite this page         | Toggles the star/favorite flag                                                                                |
+| `o`       | Show / hide markers        | Hides every overlay without deleting data                                                                     |
+| `]`       | Next bookmark              | Jumps to the next bookmark-kind marker                                                                        |
+| `[`       | Previous bookmark          | Jumps to the previous bookmark-kind marker                                                                    |
+| `Shift+N` | Next issue                 | Navigates to the resolver's pick (CBL > series); toasts when caught up                                        |
+| `Shift+P` | Previous issue             | Sequential back-nav (pure sort-order; ignores read state); toasts at first issue                              |
 
 Default bindings — global scope (work outside the reader too):
 
-| Default | Action               | Notes                                         |
-|---------|----------------------|-----------------------------------------------|
-| `Mod+K` | Open search          | `Mod` = `⌘` on macOS, `Ctrl` elsewhere        |
-| `Mod+,` | Open settings        |                                               |
-| `Mod+B` | Toggle sidebar       | Hidden when typing in an input                |
-| `/`     | Open search (alias)  | Common web convention; not user-rebindable    |
-| `Alt+T` | Focus latest toast   | Then Tab to action, Enter to fire             |
+| Default | Action              | Notes                                      |
+| ------- | ------------------- | ------------------------------------------ |
+| `Mod+K` | Open search         | `Mod` = `⌘` on macOS, `Ctrl` elsewhere     |
+| `Mod+,` | Open settings       |                                            |
+| `Mod+B` | Toggle sidebar      | Hidden when typing in an input             |
+| `/`     | Open search (alias) | Common web convention; not user-rebindable |
+| `Alt+T` | Focus latest toast  | Then Tab to action, Enter to fire          |
 
 ### Always-on (hard-coded, not rebindable)
 
-| Key       | Action                                | Source                                                                 |
-|-----------|---------------------------------------|------------------------------------------------------------------------|
-| `Space`   | Next page (regardless of binding)     | OS already claims it for buttons; hard-coded for consistency           |
-| `?`       | Toggle the keyboard-shortcuts sheet   | Help-overlay convention                                                |
-| `g g`     | First page (alias for `Home`)         | Vim-flavored leader sequence (500 ms window)                           |
-| `Shift+G` | Last page (alias for `End`)           | Vim convention                                                         |
-| `1`–`5`   | Rate the finished issue               | Only while the end-of-issue card is open; a second press on the current value clears. `0` stays zoom-reset. Not while typing in the closing note |
-| `Ctrl` + scroll | Zoom at the pointer             | Continuous, 1×–3×; also a desktop trackpad pinch. Single + double view (see [Zoom](#zoom)) |
-| Double-click | Toggle 2× zoom at the pointer      | Center tap zone; single + double view                                  |
+| Key             | Action                              | Source                                                                                                                                           |
+| --------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Space`         | Next page (regardless of binding)   | OS already claims it for buttons; hard-coded for consistency                                                                                     |
+| `?`             | Toggle the keyboard-shortcuts sheet | Help-overlay convention                                                                                                                          |
+| `g g`           | First page (alias for `Home`)       | Vim-flavored leader sequence (500 ms window)                                                                                                     |
+| `Shift+G`       | Last page (alias for `End`)         | Vim convention                                                                                                                                   |
+| `1`–`5`         | Rate the finished issue             | Only while the end-of-issue card is open; a second press on the current value clears. `0` stays zoom-reset. Not while typing in the closing note |
+| `Ctrl` + scroll | Zoom at the pointer                 | Continuous, 1×–3×; also a desktop trackpad pinch. Single + double view (see [Zoom](#zoom))                                                       |
+| Double-click    | Toggle 2× zoom at the pointer       | Center tap zone; single + double view                                                                                                            |
 
 ### While drawing a region (mouse held)
 
@@ -77,11 +77,11 @@ nudge a saved marker either).
 The marker overlay listens in capture-phase so it sees these keystrokes
 before the reader's page-nav handler does:
 
-| Key                 | Action                                    |
-|---------------------|-------------------------------------------|
-| `Esc`               | Cancel the in-progress drag               |
-| `←` `→` `↑` `↓`     | Nudge the in-flight rect by 1 %           |
-| `Shift` + arrows    | Nudge by 5 %                              |
+| Key              | Action                          |
+| ---------------- | ------------------------------- |
+| `Esc`            | Cancel the in-progress drag     |
+| `←` `→` `↑` `↓`  | Nudge the in-flight rect by 1 % |
+| `Shift` + arrows | Nudge by 5 %                    |
 
 The rect is bounds-clamped to `[0, 100]` so a nudge never pushes it off-page.
 
@@ -90,8 +90,8 @@ The rect is bounds-clamped to `[0, 100]` so a nudge never pushes it off-page.
 WP-4.8 (audit AC-2..AC-5) — what a keyboard or screen-reader user gets:
 
 - **Skip links.** The first two Tab stops in the reader are visually hidden
-  until focused: *Show reader controls (T)* reveals the chrome and moves
-  focus onto its first button; *Show page text (R)* opens the page-text
+  until focused: _Show reader controls (T)_ reveals the chrome and moves
+  focus onto its first button; _Show page text (R)_ opens the page-text
   panel. On a fine pointer the chrome starts hidden and `inert`, so these
   are the discoverable way in. On a coarse pointer (phone / tablet, no
   `t` key, invisible tap zones) the chrome starts **shown** the first
@@ -103,16 +103,25 @@ WP-4.8 (audit AC-2..AC-5) — what a keyboard or screen-reader user gets:
   double-tap's optimistic toggle are not choices and persist nothing.
   The first-run overlay also says, in words, that `t` (or a tap in the
   center) shows or hides the controls.
-- **Page-text panel** (`r`, or the chrome's *Show page text* button). A
+- **Page-text panel** (`r`, or the chrome's _Show page text_ button). A
   non-modal side sheet listing the visible page's text in reading order
   (rows top to bottom; within a row left-to-right, or right-to-left for
   RTL). It reuses the server OCR surface in
   [`ocr.md`](ocr.md): `GET …/pages/{n}/text-regions` for the detected
   bubbles, then one `POST …/ocr` (`detect: false`) per bubble, two in
   flight at a time, nested line-inside-block boxes collapsed so nothing is
-  read twice. Nothing runs until the panel opens — the component is a lazy
-  chunk mounted on first open — and results are cached per page and
-  region, so flipping back is instant. Because it is non-modal the reader
+  read twice (the same de-duplicated boxes text capture draws and taps,
+  `lib/reader/text-regions.ts`). Nothing runs until the panel opens — the
+  component is a lazy chunk mounted on first open — and results are cached
+  per page and region for 30 minutes after the page is left
+  (`PAGE_TEXT_GC_MS`), so flipping back during a session is instant
+  without a long session keeping every page. In webtoon view a page is
+  only read once it has stayed the current page for 0.6 s, and a page
+  turned away from has its detection request aborted (client side only;
+  the server still finishes the detection). A failed read is
+  never cached as "no text": busy / rate-limited / timed-out reads retry
+  on their own (bounded, honouring `Retry-After`), and the panel says how
+  many regions failed and why, with Try again. Because it is non-modal the reader
   keymap keeps working with focus inside it: `←` / `→` turn the page and
   the text follows; `Esc` closes the panel without leaving the reader.
   Manga-recognizer text carries `lang="ja"` so screen readers switch voice.
@@ -127,7 +136,7 @@ WP-4.8 (audit AC-2..AC-5) — what a keyboard or screen-reader user gets:
   region 3 of 7"); Enter runs the same tap-to-OCR capture a pointer tap
   does. The buttons ignore pointer input so drag-select is unaffected.
   Saved region markers already had equivalent proxies (audit E4).
-- **Marker drawer** (`l`, or the chrome's *Show markers in this issue*
+- **Marker drawer** (`l`, or the chrome's _Show markers in this issue_
   button; WP-5.2). A non-modal side sheet listing every bookmark, note,
   favorite and highlight on the issue in page order, with the note body or
   captured text under each. The list is a single Tab stop with roving
@@ -148,12 +157,12 @@ Powered by `@use-gesture/react` (drag) plus
 trackpad pinch). Swipe is disabled in webtoon mode (vertical scroll
 owns the interaction there).
 
-| Gesture                        | Action                                                        |
-|--------------------------------|---------------------------------------------------------------|
-| Swipe left / right             | Next / previous page (direction-aware)                        |
-| Drag while zoomed              | Pan the zoomed page / spread (clamped to its edges)           |
-| Double-tap / double-click      | Toggle 2× reader zoom at the tap point (single + double view) |
-| `Ctrl` + wheel, trackpad pinch | Reader zoom anchored at the pointer (desktop)                 |
+| Gesture                        | Action                                                                                                                           |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| Swipe left / right             | Next / previous page (direction-aware)                                                                                           |
+| Drag while zoomed              | Pan the zoomed page / spread (clamped to its edges)                                                                              |
+| Double-tap / double-click      | Toggle 2× reader zoom at the tap point (single + double view)                                                                    |
+| `Ctrl` + wheel, trackpad pinch | Reader zoom anchored at the pointer (desktop)                                                                                    |
 | Touch pinch (phone / tablet)   | Reader zoom about the fingers' midpoint, 1×–3×; both fingers together pan (single + double view; native browser zoom in webtoon) |
 
 Threshold for swipe = 30 px horizontal movement. The `prefers-reduced-motion`
@@ -180,7 +189,7 @@ construction; ctrl+wheel falls through to the browser there).
 - **Desktop pinch / ctrl+wheel (WP-4.2, audit UX-3).** Chromium,
   Firefox and Edge report a trackpad pinch as a `wheel` event with
   `ctrlKey`; macOS Safari reports it as `gesture*` events. Both are
-  claimed (`preventDefault`) so they no longer trigger *browser* page
+  claimed (`preventDefault`) so they no longer trigger _browser_ page
   zoom — which used to scale the fixed chrome and page strip along
   with the art — and instead zoom the page continuously (1×–3×,
   exponential in the wheel delta, one mouse notch ≈ ×1.28) keeping
@@ -197,7 +206,7 @@ construction; ctrl+wheel falls through to the browser there).
   `touchstart` / `touchmove`, snapshots the zoom, the surface box and
   the fingers' midpoint + distance, and on every move applies
   `applyPinch`: `zoomAboutPoint` to `startScale × dist / startDist`
-  about the *starting* midpoint, then the midpoint's travel as a pan,
+  about the _starting_ midpoint, then the midpoint's travel as a pan,
   clamped by `clampZoomPan`. The gesture is cumulative from its start
   so the 1× snap can't swallow a slow zoom-in. Lifting leaves the page
   at the final scale; pinching in past 1× lands on the exact identity.
@@ -224,7 +233,7 @@ construction; ctrl+wheel falls through to the browser there).
   every page turn. With **Reader settings → Display → Keep zoom
   between pages** on (cached in localStorage as
   `reader.v1:zoomPersist:_default` and following the account as
-  `reader_zoom_persist` — see *Colour filters* below for the sync
+  `reader_zoom_persist` — see _Colour filters_ below for the sync
   rules), a page turn keeps the zoom level and lands on the new page's
   reading-order start corner — top-left in LTR, top-right in RTL.
   Changing fit mode, view mode, or entering a marker-selection mode
@@ -240,14 +249,14 @@ remediation F6 + F7). No keyboard shortcuts: the reader keymap has no
 free, consistent slot for six analogue controls, and the sheet is one
 `t` + gear away.
 
-| Control | Range | CSS |
-|---|---|---|
-| Night mode | on / off | `invert(1)` |
-| Brightness | 50–150 % (step 5) | `brightness(x)` |
-| Contrast | 50–150 % (step 5) | `contrast(x)` |
-| Grayscale | 0–100 % (step 5) | `grayscale(x)` |
-| Sepia | 0–100 % (step 5) | `sepia(x)` |
-| Warmth | −50 (cool) … +50 (warm) | warm: `sepia(w)`; cool: `invert(1) sepia(w) invert(1)` |
+| Control    | Range                   | CSS                                                    |
+| ---------- | ----------------------- | ------------------------------------------------------ |
+| Night mode | on / off                | `invert(1)`                                            |
+| Brightness | 50–150 % (step 5)       | `brightness(x)`                                        |
+| Contrast   | 50–150 % (step 5)       | `contrast(x)`                                          |
+| Grayscale  | 0–100 % (step 5)        | `grayscale(x)`                                         |
+| Sepia      | 0–100 % (step 5)        | `sepia(x)`                                             |
+| Warmth     | −50 (cool) … +50 (warm) | warm: `sepia(w)`; cool: `invert(1) sepia(w) invert(1)` |
 
 - One composed `filter` is published by the view wrapper as the
   `--reader-filter` custom property and read by the page `<img>`s
@@ -264,7 +273,7 @@ free, consistent slot for six analogue controls, and the sheet is one
   leaving every other hue in place (`hue-rotate` would turn reds green).
 - **Reset filters** (shown only when something is off the default) puts
   all six back in one write.
-- **They follow the account** together with *Keep zoom between pages*
+- **They follow the account** together with _Keep zoom between pages_
   ([`account-prefs-sync.ts`](../../web/lib/reader/account-prefs-sync.ts),
   `reader_brightness` / `reader_sepia` / `reader_grayscale` /
   `reader_invert` / `reader_warmth` / `reader_contrast` /
@@ -302,12 +311,12 @@ installed) and Android / desktop PWAs are unaffected. Implementation:
 
 ## Fit modes
 
-| Mode       | Behavior                                                                 |
-|------------|--------------------------------------------------------------------------|
-| `width`    | Page fills the viewport width (scales up if narrower); may scroll down   |
-| `height`   | Page fills the safe viewport height; may overflow (and pan) sideways     |
-| `original` | Intrinsic pixel size                                                     |
-| `contain`  | **Fit screen** — the whole page visible, scaled up or down (audit UX-4)  |
+| Mode       | Behavior                                                                |
+| ---------- | ----------------------------------------------------------------------- |
+| `width`    | Page fills the viewport width (scales up if narrower); may scroll down  |
+| `height`   | Page fills the safe viewport height; may overflow (and pan) sideways    |
+| `original` | Intrinsic pixel size                                                    |
+| `contain`  | **Fit screen** — the whole page visible, scaled up or down (audit UX-4) |
 
 `contain` sizes the image to `min(available width, safe viewport height ×
 aspect)` using a `--page-ar` custom property PageImage sets from the
@@ -371,7 +380,7 @@ User toggles always win and persist per series under
 
 ## Double-page pairing and manual spread controls
 
-In double-page view the reader walks the issue into *spread groups*
+In double-page view the reader walks the issue into _spread groups_
 (`web/lib/reader/spreads.ts::computeSpreadGroups`): the cover solo
 (when "First page is cover" is on), a page that reads as a spread solo,
 everything else in left/right pairs. A page reads as a spread when
@@ -381,11 +390,11 @@ Offset scans and unflagged spreads defeat both signals, so each user can
 correct the pairing per issue (WP-4.3). Overrides **win over** the
 `DoublePage` flag and the aspect heuristic:
 
-| Control | Where | Effect |
-|---|---|---|
-| Per-page mode pill (`Auto` → `Spread` → `Single`) | Page strip, double view only; always shown on overridden and on-screen pages and on every page on a touch (coarse-pointer) device, on hover or focus elsewhere | `Spread`: the page always renders alone. `Single`: the page pairs like an ordinary page even when flagged or landscape. |
-| "Shift pairing by one" | Settings popover → Spreads | The first page that would start a pair renders solo instead, so every later pair moves by one page (fixes an offset scan). A page that is solo anyway (next to a spread) doesn't consume the shift. |
-| "Reset spread overrides for this issue" | Settings popover → Spreads | Back to automatic pairing. |
+| Control                                           | Where                                                                                                                                                          | Effect                                                                                                                                                                                              |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Per-page mode pill (`Auto` → `Spread` → `Single`) | Page strip, double view only; always shown on overridden and on-screen pages and on every page on a touch (coarse-pointer) device, on hover or focus elsewhere | `Spread`: the page always renders alone. `Single`: the page pairs like an ordinary page even when flagged or landscape.                                                                             |
+| "Shift pairing by one"                            | Settings popover → Spreads                                                                                                                                     | The first page that would start a pair renders solo instead, so every later pair moves by one page (fixes an offset scan). A page that is solo anyway (next to a spread) doesn't consume the shift. |
+| "Reset spread overrides for this issue"           | Settings popover → Spreads                                                                                                                                     | Back to automatic pairing.                                                                                                                                                                          |
 
 Overrides are stored server-side per `(user, issue)` in
 `issue_page_overrides` (`GET`/`PUT`/`DELETE
@@ -482,7 +491,7 @@ so the reader resets to series-only context. The end-of-issue card and
 the webtoon footer show "Issue N of M in {list}" for either context
 (`nextUpListSubtitle`).
 
-When the param is *stale* (the list exists but the current issue isn't
+When the param is _stale_ (the list exists but the current issue isn't
 in it — e.g., the entry was deleted, or the collection was edited
 mid-read), the server returns `cbl_param_was_stale: true` /
 `collection_param_was_stale: true` and the web layer strips the param
@@ -513,12 +522,12 @@ Resolver, helpers, and tests live in
 
 Two Prometheus metrics exposed at `/metrics`:
 
-| Metric | Type | Labels | What it measures |
-|---|---|---|---|
-| `folio_reader_next_up_resolved_total` | counter | `source` ∈ {`cbl`, `series`, `none`} | One increment per resolution; lets you see the CBL/series/caught-up mix per user activity. |
-| `folio_reader_next_up_latency_seconds` | histogram | none | End-to-end handler latency on every return path (Drop-on-exit timer in [`next_up.rs`](../../crates/server/src/api/next_up.rs)). Default Prometheus buckets cover 5 ms → 10 s — the series-walk worst case (large libraries) lives at the upper end. |
-| `folio_reader_prev_up_resolved_total` | counter | `source` ∈ {`cbl`, `series`, `none`} | Sibling of the next-up counter; lets you compare nav direction usage. |
-| `folio_reader_prev_up_latency_seconds` | histogram | none | Same shape as the next-up histogram; same `LatencyTimer` instrumentation pattern. |
+| Metric                                 | Type      | Labels                               | What it measures                                                                                                                                                                                                                                    |
+| -------------------------------------- | --------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `folio_reader_next_up_resolved_total`  | counter   | `source` ∈ {`cbl`, `series`, `none`} | One increment per resolution; lets you see the CBL/series/caught-up mix per user activity.                                                                                                                                                          |
+| `folio_reader_next_up_latency_seconds` | histogram | none                                 | End-to-end handler latency on every return path (Drop-on-exit timer in [`next_up.rs`](../../crates/server/src/api/next_up.rs)). Default Prometheus buckets cover 5 ms → 10 s — the series-walk worst case (large libraries) lives at the upper end. |
+| `folio_reader_prev_up_resolved_total`  | counter   | `source` ∈ {`cbl`, `series`, `none`} | Sibling of the next-up counter; lets you compare nav direction usage.                                                                                                                                                                               |
+| `folio_reader_prev_up_latency_seconds` | histogram | none                                 | Same shape as the next-up histogram; same `LatencyTimer` instrumentation pattern.                                                                                                                                                                   |
 
 ## Leaving the reader
 
