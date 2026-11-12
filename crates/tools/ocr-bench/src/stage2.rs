@@ -898,6 +898,11 @@ fn taps(
             )),
         }
     }
+    // A PP combination needs the `--best-pp` recogniser loaded; without it
+    // only its taps on no box would be recorded, which reads as a result.
+    if best_pp.is_none() {
+        combos.retain(|c| c.3 == "tess-today");
+    }
     for (name, d, unit, recn, sp) in combos {
         let boxes = &det_boxes[d];
         let line_boxes: Vec<[f64; 4]> = boxes.iter().map(det_box).collect();
@@ -1947,6 +1952,15 @@ fn markdown(r: &Stage2, args: &Args) -> String {
         );
         for (k, g) in &r.c_taps {
             agg_line(&mut o, k, &g.overall, None);
+        }
+        let _ = writeln!(
+            o,
+            "\n### C, tap targets only (balloons and captions)\n\n`missed` is a tap with no box under it; `mean CER, missed=1` caps each error at 100% and counts such a tap as 100%.\n\n{AGG_HEAD}"
+        );
+        for (k, g) in &r.c_taps {
+            if let Some(a) = g.by_use.get(crate::TAP_TARGETS) {
+                agg_line(&mut o, k, a, None);
+            }
         }
     }
     if !r.timing_summary.is_empty() {

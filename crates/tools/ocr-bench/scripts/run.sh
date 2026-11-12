@@ -1,23 +1,40 @@
 #!/usr/bin/env bash
-# Run the OCR bench in the configurations the report compares.
+# Run the OCR bench in the configurations the README describes.
 #
 #   run.sh BIN PAGES_DIR TRUTH_DIR OUT_DIR STEP [extra ocr-bench args]
 #
-# MODELS (candidate model directory) is required by every step but `full`
-# and `omp`. BEST_DET / BEST_PP / BEST_SPLIT name the chosen pair
-# (default ogk-s + pp-v6-small on ppdet2x lines), ALT_DET the other
-# detector timed with the same recogniser (default ogk-m).
+# Environment:
+#   MODELS      candidate model directory (see reference/models.json);
+#               required by every step but `full` and `omp`
+#   BEST_DET    detector of the chosen pair            (default ogk-s)
+#   BEST_PP     PP-OCR recogniser of the chosen pair   (default pp-v6-small)
+#   BEST_SPLIT  line split used with it                (default ppdet2x)
+#   ALT_DET     second detector timed with BEST_PP     (default ogk-m)
+#   TAP_RECS    recognisers the `tap` step compares
+#               (default "pp-v5-en pp-v5-latin pp-v6-small")
+#   CPU4, CPU8  CPU lists for `taskset` in the pinned steps (defaults
+#               0,2,4,6 and 0,2,...,14: one hardware thread per core on a
+#               machine whose sibling threads are numbered in pairs; set
+#               them for the machine at hand, see `lscpu -e`)
+#   LOAD_MAX    1-minute load average a timed run may start at (default 2)
+#   LOAD_WAIT   seconds to wait for it before giving up    (default 300)
+#   SKIP_TODAY  set to skip today's pipeline in time4/time8/timefree
 #
 # STEP is one of:
 #   full     unconstrained baseline: timings, accuracy, Tesseract variants,
 #            contact sheets
-#   cand     candidate accuracy (sections A, B, C)
-#   time4    4 pinned cores (taskset -c 0,2,4,6, OMP_NUM_THREADS=4,
-#            4 intra-op threads): today's pipeline, the chosen pair, the
+#   cand     candidate accuracy (sections A, B, C), every detector and
+#            recogniser the binary knows
+#   tap      accuracy only: section C for BEST_DET with each recogniser
+#            in TAP_RECS on BEST_SPLIT lines (plus the A and B rows for
+#            that pair). Does not run today's detector and does not wait
+#            for a quiet machine; ignore its time columns.
+#   time4    4 pinned cores (CPU4, OMP_NUM_THREADS=4, 4 intra-op
+#            threads): today's pipeline, the chosen pair, the
 #            alternative detector, then the recogniser thread sweep
 #            (1/2/4) for BEST_PP and pp-v6-medium
-#   time8    8 pinned cores (0,2,...,14, 8 threads): today's pipeline and
-#            the chosen pair
+#   time8    8 pinned cores (CPU8, 8 threads): today's pipeline and the
+#            chosen pair
 #   timefree unconstrained, ORT default threads: today's pipeline and
 #            the chosen pair
 #   workers  throughput of the chosen pair as W parallel processes x T
@@ -26,18 +43,24 @@
 #   omp      today's detector only on 4 pinned cores with OMP_NUM_THREADS
 #            = 1, 4, 8 (does ONNX Runtime read it?)
 #
-# Each run waits for the 1-minute load average to fall to LOAD_MAX
-# (default 2). Run the release binary, never under `nice`.
+# Each timed run waits for the 1-minute load average to fall to LOAD_MAX.
+# Run the release binary, never under `nice`.
 set -euo pipefail
 BIN=$1 PAGES=$2 TRUTH=$3 OUT=$4 STEP=$5
 shift 5
 LOAD_MAX=${LOAD_MAX:-2}
-CPU4=0,2,4,6
-CPU8=0,2,4,6,8,10,12,14
+CPU4=${CPU4:-0,2,4,6}
+CPU8=${CPU8:-0,2,4,6,8,10,12,14}
 BEST_DET=${BEST_DET:-ogk-s}
 ALT_DET=${ALT_DET:-ogk-m}
 BEST_PP=${BEST_PP:-pp-v6-small}
 BEST_SPLIT=${BEST_SPLIT:-ppdet2x}
+TAP_RECS=${TAP_RECS:-pp-v5-en pp-v5-latin pp-v6-small}
+
+case $STEP in
+full | omp) ;;
+*) : "${MODELS:?set MODELS to the candidate model directory}" ;;
+esac
 
 # Waits up to LOAD_WAIT seconds (default 300) for the 1-minute load
 # average to fall to LOAD_MAX (the previous run's own threads keep it up
@@ -90,7 +113,16 @@ full)
 cand)
   check_load
   "$BIN" --pages "$PAGES" --truth "$TRUTH" --out "$OUT" --models "$MODELS" \
-    --cand --threads 4 --label cand-accuracy "$@"
+    --cand --threads 4 --best-pp "$BEST_PP" --best-split "$BEST_SPLIT" \
+    --label cand-accuracy "$@"
+  ;;
+tap)
+  for rec in $TAP_RECS; do
+    "$BIN" --pages "$PAGES" --truth "$TRUTH" --out "$OUT" --models "$MODELS" \
+      --cand --threads 4 --dets "$BEST_DET" --recs "$rec" --best-pp "$rec" \
+      --splits "$BEST_SPLIT" --tap-splits "$BEST_SPLIT" \
+      --best-split "$BEST_SPLIT" --label "tap-$BEST_DET-$rec" "$@"
+  done
   ;;
 time4)
   pair_runs cpu4 "$CPU4" 4

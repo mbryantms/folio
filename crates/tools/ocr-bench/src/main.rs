@@ -16,6 +16,11 @@
 //! `<out>/<label>-worst/`. Run the release build, and run it pinned
 //! (`taskset`) for the CPU-limited configuration; the tool records the
 //! CPUs it was allowed, `OMP_NUM_THREADS` and the load average.
+//!
+//! `--cand`, `--cand-timing` and `--throughput` (with `--models DIR`)
+//! compare candidate engines instead: see `stage2.rs` and the crate's
+//! `README.md`, which also covers the data, `scripts/run.sh` and what
+//! the figures leave out.
 
 mod cand;
 mod draw;
@@ -153,7 +158,9 @@ struct Args {
 
 /// Margins tried for recognition alone, as a fraction of the box size.
 const MARGINS: [f64; 3] = [0.0, 0.04, 0.08];
-/// The web panel's nested-box rule (`web/lib/reader/page-text.ts`).
+/// The reader's nested-box rule (`pageTextBoxes` in
+/// `web/lib/reader/text-regions.ts`): a box lying this much inside a
+/// larger one is dropped, for the page-text panel and for taps alike.
 const NESTED_OVERLAP: f64 = 0.8;
 /// Worst regions listed.
 const WORST_N: usize = 25;
@@ -475,10 +482,13 @@ fn aggregate<'a>(items: impl Iterator<Item = (Option<f64>, Option<f64>)> + 'a) -
     a
 }
 
+/// The `by_use` group a reader taps: balloons and captions.
+const TAP_TARGETS: &str = "tap targets (balloon, caption)";
+
 /// Which use a region kind belongs to.
 fn use_group(kind: &str) -> &'static str {
     match kind {
-        "balloon" | "caption" => "tap targets (balloon, caption)",
+        "balloon" | "caption" => TAP_TARGETS,
         _ => "display lettering (sfx, sign, title, other)",
     }
 }
@@ -1383,15 +1393,16 @@ fn summarize_timing(
                 + r.postprocess.first.unwrap_or(0.0)
         });
         composed.push(Composed {
-            name: "(b) tap one balloon, page decoded per request (today)".into(),
-            definition: "decode + crop + recognise + clean, per region".into(),
+            name: "(b) tap one balloon, first request on a page".into(),
+            definition: "decode + crop + recognise + clean, per region (page not in the server's decoded-page cache)".into(),
             cold_ms: cold_r
                 .map(|r| r + first_page.decode.first.unwrap_or(0.0) + rec_init.unwrap_or(0.0)),
             warm: summarize(&with_decode),
         });
         composed.push(Composed {
             name: "(b') tap one balloon, page already decoded".into(),
-            definition: "crop + recognise + clean, per region".into(),
+            definition: "crop + recognise + clean, per region (page in the decoded-page cache)"
+                .into(),
             cold_ms: cold_r.map(|r| r + rec_init.unwrap_or(0.0)),
             warm: summarize(&without),
         });
@@ -1406,14 +1417,14 @@ fn summarize_timing(
             single.push(d + det + rs);
         }
         composed.push(Composed {
-            name: "(c) read the whole page, serial, decode per region (today)".into(),
-            definition: "decode + detect + sum over panel-set regions of (decode + recognise)"
+            name: "(c) read the whole page, serial, decode per region".into(),
+            definition: "decode + detect + sum over panel-set regions of (decode + recognise): the server before its decoded-page cache"
                 .into(),
             cold_ms: None,
             warm: summarize(&today),
         });
         composed.push(Composed {
-            name: "(c') read the whole page, serial, one decode".into(),
+            name: "(c') read the whole page, serial, one decode (today)".into(),
             definition: "decode + detect + sum over panel-set regions of recognise".into(),
             cold_ms: None,
             warm: summarize(&single),

@@ -6,10 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
-# Benchmark harness for the OCR pipeline (text detection + recognition):
-# per-stage timings and text accuracy against hand-written reference
+# Development-only benchmark harness for the OCR pipeline (text detection
+# + recognition): per-stage timings and text accuracy against reference
 # transcriptions. Drives `server::ocr` directly; never starts the HTTP
-# server, Postgres or Redis. See `src/main.rs`.
+# server, Postgres or Redis. Nothing depends on it and the image build
+# (`--bin server --bin migration`) does not compile it. See README.md.
 
 [[bin]]
 name = "ocr-bench"

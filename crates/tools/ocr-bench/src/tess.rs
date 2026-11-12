@@ -76,7 +76,7 @@ impl TessConfig {
             what_changed: "Folio today: grey, 3x, Otsu, polarity, pad 24, PSM 6, tessdata_best eng"
                 .into(),
             tessdata: tessdata.to_path_buf(),
-            lang: "eng".into(),
+            lang: server::ocr::recognizer::western::TESS_LANG.into(),
             oem: 3,
             psm: Psm::Block,
             binarize: true,

@@ -13,6 +13,7 @@ use image::DynamicImage;
 use serde::Serialize;
 use server::ocr::detector::Detector;
 use server::ocr::models;
+use server::ocr::pipeline::PageDetector as ServerPageDetector;
 use server::ocr::recognizer::{Recognition, Recognizer, western::WesternOcr};
 use sha2::{Digest, Sha256};
 
@@ -47,11 +48,6 @@ pub(crate) trait CropRecognizer {
     fn name(&self) -> String;
     fn recognize(&mut self, crop: &DynamicImage) -> anyhow::Result<RecOutput>;
 }
-
-/// The pipeline's detector thresholds (`ocr::pipeline`, private consts
-/// `DETECTOR_CONF` and `DETECTOR_NMS`, both 0.5).
-const DETECTOR_CONF: f32 = 0.5;
-const DETECTOR_NMS: f32 = 0.5;
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct DetectorLoad {
@@ -144,15 +140,16 @@ impl FolioDetector {
 
 impl PageDetector for FolioDetector {
     fn name(&self) -> String {
-        "comic-text-detector 0.5.1 (Folio pipeline thresholds 0.5/0.5)".into()
+        "comic-text-detector 0.5.1 (server::ocr::pipeline full-page detection)".into()
     }
 
+    /// The server's own full-page detection
+    /// (`server::ocr::pipeline::PageDetector` on the singleton): the call
+    /// both OCR routes make on a detect-cache miss, with the pipeline's
+    /// thresholds, returning the boxes it would cache.
     fn detect(&mut self, page: &DynamicImage) -> anyhow::Result<Vec<DetBox>> {
-        let out = {
-            let mut d = self.det.lock()?;
-            d.inference(page, DETECTOR_CONF, DETECTOR_NMS)?
-        };
-        Ok(out
+        let detection = ServerPageDetector::detect(self.det, page)?;
+        Ok(detection
             .bboxes
             .iter()
             .map(|b| DetBox {
@@ -161,7 +158,7 @@ impl PageDetector for FolioDetector {
                 x1: b.xmax,
                 y1: b.ymax,
                 confidence: b.confidence,
-                class: b.class as u32,
+                class: b.class,
             })
             .collect())
     }
