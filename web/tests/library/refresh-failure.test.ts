@@ -57,6 +57,18 @@ describe("refresh failure words", () => {
     expect(manager).not.toBe(reader);
   });
 
+  it("reads an unknown kind from a newer server as other", () => {
+    const kind = "brand_new_kind" as CblRefreshErrorKind;
+    expect(refreshFailureReason({ kind, detail: null })).toBe(EXPECTED.other);
+    expect(refreshFailureLabel(failure({ kind }), NOW)).toMatch(
+      /: something went wrong while refreshing it$/,
+    );
+    expect(refreshFailureAdvice(kind, true)).toBe(
+      refreshFailureAdvice("other", true),
+    );
+    expect(refreshFailureAdvice(kind, false)).toMatch(/last good copy/);
+  });
+
   it("adds the server's detail in brackets", () => {
     expect(
       refreshFailureReason({ kind: "http_status", detail: "HTTP 503" }),

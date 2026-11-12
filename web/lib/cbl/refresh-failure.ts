@@ -29,7 +29,8 @@ const REASONS: Record<CblRefreshErrorKind, string> = {
 export function refreshFailureReason(
   failure: Pick<CblRefreshFailureView, "kind" | "detail">,
 ): string {
-  const reason = REASONS[failure.kind];
+  // `??`: a kind a newer server sends to an older bundle reads as "other".
+  const reason = REASONS[failure.kind] ?? REASONS.other;
   return failure.detail ? `${reason} (${failure.detail})` : reason;
 }
 
@@ -76,6 +77,8 @@ export function refreshFailureAdvice(
     case "invalid_list":
       return "Check that the source address still points at a .cbl file, then try Refresh now.";
     case "other":
+    default:
+      // `default`: a kind a newer server sends to an older bundle.
       return "Try Refresh now. If it keeps failing, check the source address.";
   }
 }
