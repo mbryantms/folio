@@ -1459,16 +1459,20 @@ export function useWatchers(opts?: { intervalMs?: number }) {
  *  Read-only; the response shape is stable across requests so we
  *  poll lightly — operators look at this on demand, not in
  *  real-time. */
-export function useOcrModels(opts?: { enabled?: boolean }) {
-  const { enabled = true } = opts ?? {};
+export function useOcrModels(opts?: {
+  enabled?: boolean;
+  /** Poll interval (the admin server page's OCR card polls so a model
+   *  download shows its progress). Omitted → no polling. */
+  intervalMs?: number;
+}) {
+  const { enabled = true, intervalMs } = opts ?? {};
   return useQuery({
     queryKey: queryKeys.ocrModels,
     queryFn: () => jsonFetch<OcrModelsView>("/admin/ocr/models"),
     enabled,
-    // Models almost never change after first download; keep stale
-    // for 30 s so an operator polling the page sees fresh-enough
-    // data without polling.
+    // Models almost never change after first download; stale after 30 s.
     staleTime: 30_000,
+    refetchInterval: intervalMs ?? false,
   });
 }
 
@@ -2255,31 +2259,45 @@ export function useMarkerTags() {
   });
 }
 
-/** Detected speech-bubble regions for one page, percent coords
- *  (OCR rework 1.0). Drives the tappable bubble outlines the reader
- *  shows in text-capture mode.
+/** Detected speech-bubble regions for one page, percent coords, plus the
+ *  decoded page's pixel size (OCR rework 1.0). Drives the tappable box
+ *  outlines in text-capture mode and the page-text panel.
  *
  *  - `staleTime: Infinity` — the server caches detections per
  *    content-hash; within a session a page's regions never change,
  *    and each fetch warms the server-side cache that makes every
- *    subsequent bubble OCR on the page recognize-only.
- *  - `retry: false` — a cache miss costs a full detector inference
- *    server-side (seconds, tens of seconds on weak hosts);
- *    auto-retry would stack more runs onto a struggling box. The
- *    overlay treats errors as "no outlines" and drag still works. */
+ *    subsequent box OCR on the page recognize-only.
+ *  - `gcTime` — kept while nothing shows it for `opts.gcTime` (the reader
+ *    passes `PAGE_TEXT_GC_MS`), so flipping back is instant without a
+ *    long session holding every page.
+ *  - The query `signal` reaches the fetch: a detection whose last observer
+ *    goes away (the page was turned, the panel closed) is aborted
+ *    client-side. The server finishes its own work regardless.
+ *  - `retry` — none by default: a cache miss costs a full detector
+ *    inference server-side, and auto-retry would stack runs onto a
+ *    struggling box. A caller may pass a predicate that retries only
+ *    transient failures (503 / 429 / 408), with its own `retryDelay`. */
 export function useIssuePageTextRegions(
   issueId: string,
   page: number,
   enabled: boolean,
+  opts: {
+    gcTime?: number;
+    retry?: (failureCount: number, error: unknown) => boolean;
+    retryDelay?: (attempt: number, error: unknown) => number;
+  } = {},
 ) {
   return useQuery({
     queryKey: queryKeys.issuePageTextRegions(issueId, page),
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       jsonFetch<TextRegionsView>(
         apiPath`/me/issues/${issueId}/pages/${page}/text-regions`,
+        { signal },
       ),
     staleTime: Infinity,
-    retry: false,
+    ...(opts.gcTime != null ? { gcTime: opts.gcTime } : {}),
+    retry: opts.retry ?? false,
+    ...(opts.retryDelay ? { retryDelay: opts.retryDelay } : {}),
     enabled: enabled && !!issueId,
   });
 }
