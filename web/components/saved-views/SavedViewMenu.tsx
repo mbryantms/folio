@@ -11,12 +11,13 @@ import {
   Pin,
   Trash2,
   type LucideIcon,
+  PanelLeft,
+  PanelLeftClose,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -103,6 +104,7 @@ export function SavedViewMenu({
   const [deleting, setDeleting] = React.useState(false);
 
   const isBuiltIn = isBuiltInView(view, isCollection);
+  const pinnedCount = (view.pinned_on_pages ?? []).length;
   const currentGroup = board?.containerOf(view.id) ?? null;
 
   async function handleDelete() {
@@ -182,15 +184,29 @@ export function SavedViewMenu({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
+          {/* Same wording as the list's own page (`ViewActionsMenu`), so
+              the menu also says where the view is pinned. */}
           <DropdownMenuItem onSelect={() => setPinOpen(true)}>
-            <Pin className="size-4" /> Pin to pages…
+            <Pin className="size-4" />
+            {pinnedCount === 0
+              ? "Pin to pages…"
+              : pinnedCount === 1
+                ? "Pinned to 1 page"
+                : `Pinned to ${pinnedCount} pages`}
           </DropdownMenuItem>
-          <DropdownMenuCheckboxItem
-            checked={view.show_in_sidebar}
-            onCheckedChange={(next) => toggleSidebar(next === true)}
+          <DropdownMenuItem
+            onSelect={() => toggleSidebar(!view.show_in_sidebar)}
           >
-            Show in sidebar
-          </DropdownMenuCheckboxItem>
+            {view.show_in_sidebar ? (
+              <>
+                <PanelLeftClose className="size-4" /> Hide from sidebar
+              </>
+            ) : (
+              <>
+                <PanelLeft className="size-4" /> Show in sidebar
+              </>
+            )}
+          </DropdownMenuItem>
           {board ? (
             <>
               <DropdownMenuSeparator />
