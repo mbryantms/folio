@@ -2,7 +2,7 @@
 
 import { apiFetch, getCsrfToken } from "@/lib/api/auth-refresh";
 import { queryKeys } from "@/lib/api/query-keys";
-import type { MarkerRegion } from "@/lib/api/types";
+import type { MarkerRegion, OcrRequest, OcrResponse } from "@/lib/api/types";
 import {
   NETWORK_FAILURE,
   OcrRequestError,
@@ -13,6 +13,25 @@ import {
   type PageSize,
   type PercentBox,
 } from "@/lib/reader/page-size";
+
+/** The OCR request and response with the fields the server change that
+ *  adds percent regions brings (`region_pct` on the request, the decoded
+ *  `page_w` / `page_h` on every response). Local until that change is
+ *  merged and `just openapi` regenerates the types; then drop these and
+ *  use `OcrRequest` / `OcrResponse` directly. */
+type OcrRequestWithPct = Omit<OcrRequest, "region"> & {
+  /** Percent of the decoded page (0–100 floats); wins over `region`. The
+   *  server clamps it to the page and shares the result cache with the
+   *  equivalent pixel rectangle. */
+  region_pct: PercentBox;
+  /** Pixel rectangle against the original page, for a server that does
+   *  not know `region_pct` yet. Sent only when the client knows a size. */
+  region?: OcrRequest["region"];
+};
+type OcrResponseWithSize = Partial<OcrResponse> & {
+  page_w?: number;
+  page_h?: number;
+};
 import { PAGE_TEXT_GC_MS, textBoxKey } from "@/lib/reader/text-regions";
 
 /** Promise-cached Image so concurrent overlays don't re-decode. Used
@@ -84,16 +103,21 @@ export type OcrResult = {
   /** Recognizer the server resolved (`western` / `manga`) — the page-text
    *  panel maps it to a `lang` attribute for screen readers. */
   lang: string | null;
+  /** The decoded page's size the server reported with this answer —
+   *  the size to convert `refinedBbox` back to percent with. `null` from
+   *  a server that does not send it yet. */
+  pageSize: PageSize | null;
 };
 
 export type OcrInput = {
   issueId: string;
   pageIndex: number;
   region: MarkerRegion | PercentBox;
-  /** The page's real pixel size (`resolvePageSize`): the region is sent
-   *  as a pixel rectangle against it, because the server crops the
-   *  original decoded page. */
-  pageSize: PageSize;
+  /** The page's pixel size when the client knows one
+   *  (`resolvePageSize`). The region always goes as `region_pct`, which
+   *  the server maps onto the page it decodes; the size only adds the
+   *  equivalent pixel `region` for a server that predates `region_pct`. */
+  pageSize: PageSize | null;
 };
 
 /** Read the text in one region on the server (`POST /me/issues/{id}/ocr`).
@@ -111,7 +135,16 @@ export async function ocrCroppedRegion(
   input: OcrInput,
   opts: OcrOptions = {},
 ): Promise<OcrResult | null> {
-  const region = regionToPagePixels(input.region, input.pageSize);
+  const { x, y, w, h } = input.region;
+  const body: OcrRequestWithPct = {
+    page: input.pageIndex,
+    region_pct: { x, y, w, h },
+    ...(input.pageSize
+      ? { region: regionToPagePixels(input.region, input.pageSize) }
+      : {}),
+    ...(opts.lang ? { lang: opts.lang } : {}),
+    ...(opts.detect ? { detect: true } : {}),
+  };
   const csrf = getCsrfToken();
   let res: Response;
   try {
@@ -122,12 +155,7 @@ export async function ocrCroppedRegion(
         "Content-Type": "application/json",
         ...(csrf ? { "X-CSRF-Token": csrf } : {}),
       },
-      body: JSON.stringify({
-        page: input.pageIndex,
-        region,
-        ...(opts.lang ? { lang: opts.lang } : {}),
-        ...(opts.detect ? { detect: true } : {}),
-      }),
+      body: JSON.stringify(body),
       signal: opts.signal,
     });
   } catch (err) {
@@ -136,12 +164,7 @@ export async function ocrCroppedRegion(
     throw new OcrRequestError(NETWORK_FAILURE, null);
   }
   if (!res.ok) throw await ocrErrorFromResponse(res);
-  let payload: {
-    text?: string;
-    confidence?: number;
-    refined_bbox?: { x: number; y: number; w: number; h: number } | null;
-    lang?: string;
-  };
+  let payload: OcrResponseWithSize;
   try {
     payload = (await res.json()) as typeof payload;
   } catch {
@@ -155,19 +178,25 @@ export async function ocrCroppedRegion(
     confidence,
     refinedBbox: payload.refined_bbox ?? null,
     lang: payload.lang ?? null,
+    pageSize:
+      payload.page_w && payload.page_h
+        ? { width: payload.page_w, height: payload.page_h }
+        : null,
   };
 }
 
 /** The query that reads one detected box with the default recognizer and
  *  no detector snap — shared by the page-text panel and a capture tap /
  *  key press, so reading a box the panel already read is instant and both
- *  hit one cache entry (client and server). Failures are errors, never
- *  cached as a result. */
+ *  hit one cache entry (client and server). Keyed by the percent box
+ *  (`textBoxKey`), never by a pixel rectangle, so callers that knew
+ *  different page sizes still share it. Failures are errors, never cached
+ *  as a result. */
 export function boxTextQueryOptions(
   issueId: string,
   pageIndex: number,
   box: PercentBox,
-  pageSize: PageSize,
+  pageSize: PageSize | null,
 ) {
   return {
     queryKey: queryKeys.issuePageRegionText(
@@ -177,7 +206,12 @@ export function boxTextQueryOptions(
     ),
     queryFn: ({ signal }: { signal?: AbortSignal }) =>
       ocrCroppedRegion(
-        { issueId, pageIndex, region: { ...box }, pageSize },
+        {
+          issueId,
+          pageIndex,
+          region: { x: box.x, y: box.y, w: box.w, h: box.h },
+          pageSize,
+        },
         { signal },
       ),
     staleTime: Infinity,

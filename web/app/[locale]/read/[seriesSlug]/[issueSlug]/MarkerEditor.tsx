@@ -34,13 +34,14 @@ import { showUndoToast } from "@/lib/ui/undo-toast";
 import {
   useCreateMarker,
   useDeleteMarker,
+  usePatchMarkerSelection,
   useRestoreMarkers,
   useUpdateMarker,
 } from "@/lib/api/mutations/markers";
 import type { MarkerSelection, TextRegionsView } from "@/lib/api/types";
 import { toOcrRequestError } from "@/lib/reader/ocr-errors";
 import { resolvePageSize, type PageSize } from "@/lib/reader/page-size";
-import { useReaderStore } from "@/lib/reader/store";
+import { useReaderStore, type PendingMarker } from "@/lib/reader/store";
 import { statusToneText } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
 
@@ -93,6 +94,10 @@ export function MarkerEditor({
   // request and gives Undo the persisted row (id, colour, page hash).
   const issueMarkers = useIssueMarkers(issueId);
   const update = useUpdateMarker(editingMarkerId ?? "", issueId);
+  // Detect text / Clear patch the marker they were started on, by id —
+  // never the hook-bound id above, which follows whatever marker the
+  // editor shows by the time a slow read lands.
+  const patchSelection = usePatchMarkerSelection(issueId);
   const del = useDeleteMarker(editingMarkerId ?? "", issueId, {
     silent: true,
   });
@@ -122,6 +127,13 @@ export function MarkerEditor({
   const [confirmReplace, setConfirmReplace] = React.useState<
     "detect" | "clear" | null
   >(null);
+  // The marker a Detect text read belongs to. Opening another marker, or
+  // closing the editor, drops it, and a read that lands after that is
+  // ignored: it must not fill another marker's field or patch it.
+  const detectForRef = React.useRef<{
+    pending: PendingMarker;
+    markerId: string | null;
+  } | null>(null);
   // Whether the editable captured-text field is shown: on open when the
   // marker already carries text, after an OCR pass, or when the user
   // chooses to type the text by hand (WP-5.3).
@@ -133,6 +145,7 @@ export function MarkerEditor({
   // typing doesn't churn the network.
   const tagSuggestionsQuery = useMarkerTags();
   React.useEffect(() => {
+    detectForRef.current = null;
     if (pendingMarker) {
       // Snapshot the incoming marker into local form state once. React
       // Compiler can't see this is bounded by `if (pendingMarker)` and
@@ -370,14 +383,22 @@ export function MarkerEditor({
       toast.error("Detect text needs a region — try Highlight a region first.");
       return;
     }
+    // The region goes as percent; a known size only adds the pixel
+    // fallback for a server that predates percent regions.
     const size = pageSizeFor(pendingMarker.page_index);
-    if (!size) {
-      toast.error(
-        "The page's size isn't known yet, so its text can't be read. Try again once the page has loaded.",
-      );
-      return;
-    }
     const opened = pendingMarker;
+    const forMarker = { pending: opened, markerId: editingMarkerId };
+    detectForRef.current = forMarker;
+    // Same marker still in the editor (checked again when the patch lands,
+    // after this read has finished).
+    const sameMarker = () => {
+      const st = useReaderStore.getState();
+      return (
+        st.pendingMarker === forMarker.pending &&
+        st.editingMarkerId === forMarker.markerId
+      );
+    };
+    const stillOpen = () => detectForRef.current === forMarker && sameMarker();
     setOcrPending(true);
     const toastId = toast.loading("Reading text…");
     try {
@@ -394,6 +415,8 @@ export function MarkerEditor({
         },
       );
       toast.dismiss(toastId);
+      // The editor moved on (another marker, or closed): drop the result.
+      if (!stillOpen()) return;
       if (!ocr) {
         toast.message("No text found in that area.");
         return;
@@ -402,25 +425,35 @@ export function MarkerEditor({
       setDetectedConfidence(ocr.confidence);
       setRecognizedText(ocr.text);
       setCapturedOpen(true);
-      if (editingMarkerId) {
+      if (forMarker.markerId) {
         // The hook toasts "Text captured" for a selection-only patch.
-        update.mutate(
+        patchSelection.mutate(
           {
+            id: forMarker.markerId,
             selection: withCapturedText(
               opened.selection,
               ocr.text,
               ocr.confidence,
             ),
           },
-          { onSuccess: () => setBaselineText(ocr.text) },
+          {
+            onSuccess: () => {
+              if (sameMarker()) setBaselineText(ocr.text);
+            },
+          },
         );
       } else {
         toast.success("Text captured — save the marker to keep it.");
       }
     } catch (err) {
       toast.dismiss(toastId);
-      toast.error(`Couldn't read the text. ${toOcrRequestError(err).message}`);
+      if (stillOpen()) {
+        toast.error(
+          `Couldn't read the text. ${toOcrRequestError(err).message}`,
+        );
+      }
     } finally {
+      if (detectForRef.current === forMarker) detectForRef.current = null;
       setOcrPending(false);
     }
   }
@@ -434,11 +467,19 @@ export function MarkerEditor({
     setDetectedConfidence(null);
     setRecognizedText(null);
     setCapturedOpen(false);
-    if (editingMarkerId) {
+    if (editingMarkerId && pendingMarker) {
+      const opened = pendingMarker;
+      const markerId = editingMarkerId;
       // The hook toasts "Detected text cleared" for this patch.
-      update.mutate(
-        { selection: selectionWithoutText(pendingMarker?.selection) },
-        { onSuccess: () => setBaselineText("") },
+      patchSelection.mutate(
+        { id: markerId, selection: selectionWithoutText(opened.selection) },
+        {
+          onSuccess: () => {
+            const st = useReaderStore.getState();
+            if (st.pendingMarker === opened && st.editingMarkerId === markerId)
+              setBaselineText("");
+          },
+        },
       );
     }
   }
@@ -542,7 +583,7 @@ export function MarkerEditor({
                   <button
                     type="button"
                     onClick={() => replaceCapturedText("clear")}
-                    disabled={ocrPending || update.isPending}
+                    disabled={ocrPending || patchSelection.isPending}
                     className="folio-tap text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs disabled:opacity-50"
                   >
                     <X className="size-3" />
@@ -607,7 +648,7 @@ export function MarkerEditor({
                 onChange={setOcrLang}
                 options={[
                   { value: "", label: "Auto" },
-                  { value: "western", label: "Western (English)" },
+                  { value: "western", label: "Western (English text)" },
                   { value: "manga", label: "Japanese" },
                 ]}
               />

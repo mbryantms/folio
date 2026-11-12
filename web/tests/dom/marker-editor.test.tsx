@@ -37,6 +37,7 @@ const {
   toast,
   createMutate,
   updateMutate,
+  patchMutate,
   deleteMutate,
   restoreMutate,
   apiFetch,
@@ -52,6 +53,7 @@ const {
   }),
   createMutate: vi.fn(),
   updateMutate: vi.fn(),
+  patchMutate: vi.fn(),
   deleteMutate: vi.fn(),
   restoreMutate: vi.fn(),
   apiFetch: vi.fn(),
@@ -79,6 +81,7 @@ vi.mock("@/lib/api/mutations/markers", async (importOriginal) => ({
     isPending: false,
   }),
   useUpdateMarker: () => ({ mutate: updateMutate, isPending: false }),
+  usePatchMarkerSelection: () => ({ mutate: patchMutate, isPending: false }),
   useDeleteMarker: () => ({ mutate: deleteMutate, isPending: false }),
   useRestoreMarkers: () => ({
     mutate: restoreMutate,
@@ -147,6 +150,7 @@ afterEach(() => {
   restoreMutate.mockReset();
   createMutate.mockReset();
   updateMutate.mockReset();
+  patchMutate.mockReset();
   toast.mockReset();
   toast.error.mockReset();
   toast.success.mockReset();
@@ -369,6 +373,7 @@ describe("MarkerEditor (jsdom)", () => {
       // 1% / 20% / 10% of 1988 x 3056 — not of a variant's natural size.
       expect(ocrBodies()[0]).toEqual({
         page: 2,
+        region_pct: { x: 1, y: 1, w: 20, h: 10 },
         region: { x: 20, y: 31, w: 398, h: 306 },
       });
     });
@@ -383,9 +388,11 @@ describe("MarkerEditor (jsdom)", () => {
       fireEvent.click(
         await screen.findByRole("button", { name: /re-detect text/i }),
       );
-      await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
-      // Saved at once, keeping the other selection fields.
-      expect(updateMutate.mock.calls[0]?.[0]).toEqual({
+      await waitFor(() => expect(patchMutate).toHaveBeenCalledTimes(1));
+      // Saved at once, on this marker's id, keeping the other selection
+      // fields.
+      expect(patchMutate.mock.calls[0]?.[0]).toEqual({
+        id: "m-5",
         selection: {
           text: "FRESH TEXT",
           ocr_confidence: 0.95,
@@ -393,15 +400,15 @@ describe("MarkerEditor (jsdom)", () => {
         },
       });
       // The patch lands.
-      React.act(() => updateMutate.mock.calls[0]?.[1]?.onSuccess?.());
+      React.act(() => patchMutate.mock.calls[0]?.[1]?.onSuccess?.());
       expect(
         (screen.getByLabelText("Captured text") as HTMLTextAreaElement).value,
       ).toBe("FRESH TEXT");
 
       // Save does not send the saved text again …
       fireEvent.click(screen.getByRole("button", { name: "Save" }));
-      await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(2));
-      expect(updateMutate.mock.calls[1]?.[0]).not.toHaveProperty("selection");
+      await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
+      expect(updateMutate.mock.calls[0]?.[0]).not.toHaveProperty("selection");
     });
 
     it("Cancel after a Re-detect that saved closes without 'Discarded unsaved changes' (D7)", async () => {
@@ -411,8 +418,8 @@ describe("MarkerEditor (jsdom)", () => {
       fireEvent.click(
         await screen.findByRole("button", { name: /re-detect text/i }),
       );
-      await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
-      React.act(() => updateMutate.mock.calls[0]?.[1]?.onSuccess?.());
+      await waitFor(() => expect(patchMutate).toHaveBeenCalledTimes(1));
+      React.act(() => patchMutate.mock.calls[0]?.[1]?.onSuccess?.());
       fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
       expect(useReaderStore.getState().pendingMarker).toBeNull();
       expect(toast).not.toHaveBeenCalledWith(
@@ -479,6 +486,94 @@ describe("MarkerEditor (jsdom)", () => {
         "Couldn't read the text. This issue's file has to be converted to CBZ before its text can be read.",
       );
       expect(updateMutate).not.toHaveBeenCalled();
+      expect(patchMutate).not.toHaveBeenCalled();
+    });
+
+    describe("a late Detect text result stays with its marker", () => {
+      function slowOcr() {
+        let resolve!: (r: Response) => void;
+        apiFetch.mockReturnValueOnce(
+          new Promise<Response>((r) => (resolve = r)),
+        );
+        return (text: string) =>
+          resolve(json(200, { text, confidence: 0.9, image_hash: "A" }));
+      }
+
+      it("opening marker B meanwhile: nothing is patched and B's field keeps B's text", async () => {
+        const land = slowOcr();
+        openHighlight(
+          { text: "A TEXT", ocr_confidence: 0.9, image_hash: "a" },
+          "m-A",
+        );
+        renderEditor();
+        fireEvent.click(
+          await screen.findByRole("button", { name: /re-detect text/i }),
+        );
+        await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
+        React.act(() =>
+          useReaderStore.getState().beginMarkerEdit(
+            {
+              kind: "highlight",
+              page_index: 2,
+              region: { x: 50, y: 50, w: 10, h: 10, shape: "text" },
+              selection: { text: "B TEXT", ocr_confidence: 0.9 },
+              body: "",
+              is_favorite: false,
+              tags: [],
+            },
+            "m-B",
+          ),
+        );
+        await React.act(async () => {
+          land("A READ AGAIN");
+          await new Promise((r) => setTimeout(r, 10));
+        });
+        expect(patchMutate).not.toHaveBeenCalled();
+        expect(updateMutate).not.toHaveBeenCalled();
+        expect(
+          (screen.getByLabelText("Captured text") as HTMLTextAreaElement).value,
+        ).toBe("B TEXT");
+      });
+
+      it("closing the editor meanwhile: nothing is patched", async () => {
+        const land = slowOcr();
+        openHighlight({ text: "A TEXT", ocr_confidence: 0.9 }, "m-A");
+        renderEditor();
+        fireEvent.click(
+          await screen.findByRole("button", { name: /re-detect text/i }),
+        );
+        await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
+        React.act(() => useReaderStore.getState().beginMarkerEdit(null, null));
+        await React.act(async () => {
+          land("A READ AGAIN");
+          await new Promise((r) => setTimeout(r, 10));
+        });
+        expect(patchMutate).not.toHaveBeenCalled();
+        expect(updateMutate).not.toHaveBeenCalled();
+        expect(toast.success).not.toHaveBeenCalled();
+      });
+
+      it("with no page size known, Detect text still sends the percent region", async () => {
+        ocrReplies(json(200, { text: "ANY", confidence: 0.9 }));
+        openHighlight(null, null);
+        const qc = new QueryClient();
+        render(
+          <QueryClientProvider client={qc}>
+            <MarkerEditor
+              issueId="issue-1"
+              pageSizeSources={() => ({ server: null, measured: null })}
+            />
+          </QueryClientProvider>,
+        );
+        fireEvent.click(
+          await screen.findByRole("button", { name: /detect text/i }),
+        );
+        await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
+        expect(ocrBodies()[0]).toEqual({
+          page: 2,
+          region_pct: { x: 1, y: 1, w: 20, h: 10 },
+        });
+      });
     });
   });
 });

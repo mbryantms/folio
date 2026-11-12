@@ -67,6 +67,7 @@ describe("ocrCroppedRegion — server-side OCR", () => {
       confidence: 0.91,
       refinedBbox: null,
       lang: null,
+      pageSize: null,
     });
     expect(mockedFetch).toHaveBeenCalledOnce();
     const [path, init] = mockedFetch.mock.calls[0]!;
@@ -90,8 +91,35 @@ describe("ocrCroppedRegion — server-side OCR", () => {
     // detector only runs when the caller knows the cache is warm.
     expect(body.lang).toBeUndefined();
     expect(body.detect).toBeUndefined();
-    // 25% of 1000 = 250; 30% = 300; 10% = 100; 8% = 80.
+    // The percent region always goes (the server maps it onto the page it
+    // decodes) …
+    expect((body as { region_pct?: unknown }).region_pct).toEqual({
+      x: 25,
+      y: 30,
+      w: 10,
+      h: 8,
+    });
+    // … plus the pixel rectangle for an older server: 25% of 1000 = 250;
+    // 30% = 300; 10% = 100; 8% = 80.
     expect(body.region).toEqual({ x: 250, y: 300, w: 100, h: 80 });
+  });
+
+  it("sends only region_pct when no page size is known, and reports the response's page size", async () => {
+    mockedFetch.mockResolvedValueOnce(
+      jsonResponse(200, {
+        text: "HI",
+        confidence: 0.9,
+        page_w: 1988,
+        page_h: 3056,
+      }),
+    );
+    const result = await ocrCroppedRegion(input({ pageSize: null }));
+    const [, init] = mockedFetch.mock.calls[0]!;
+    expect(JSON.parse(init?.body as string)).toEqual({
+      page: 2,
+      region_pct: { x: 25, y: 30, w: 10, h: 8 },
+    });
+    expect(result?.pageSize).toEqual({ width: 1988, height: 3056 });
   });
 
   it("forwards lang + detect options when set", async () => {

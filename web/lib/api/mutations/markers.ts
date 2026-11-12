@@ -111,6 +111,34 @@ export function useUpdateMarker(id: string, issueId: string) {
   );
 }
 
+/** Replace one marker's `selection` (the editor's Detect text / Clear).
+ *  The marker id travels with each call instead of being bound to the
+ *  hook: the editor can switch markers while a slow OCR read is in flight,
+ *  and the patch must go to the marker the read was for. */
+export function usePatchMarkerSelection(issueId: string) {
+  const qc = useQueryClient();
+  return useApiMutation<
+    MarkerView,
+    { id: string; selection: UpdateMarkerReq["selection"] }
+  >(
+    ({ id, selection }) => ({
+      path: apiPath`/me/markers/${id}`,
+      method: "PATCH",
+      body: { selection },
+    }),
+    {
+      successMessage: (_data, input) =>
+        (input.selection as { text?: string | null } | null)?.text
+          ? "Text captured"
+          : "Detected text cleared",
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: ["markers", "issue", issueId] });
+        qc.invalidateQueries({ queryKey: ["markers", "list"] });
+      },
+    },
+  );
+}
+
 /** `silent: true` suppresses the default "Removed" toast for callers
  *  that compose their own (a) Reader keybinds emit kind-specific
  *  labels like "Removed bookmark on page X"; (b) every delete surface
