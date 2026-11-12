@@ -159,3 +159,40 @@ describe("patch / restore / read", () => {
     expect(got.has("z")).toBe(false);
   });
 });
+
+describe("a patch does not change a list's age", () => {
+  it("keeps dataUpdatedAt and a stale list's invalidated flag, through patch and restore", async () => {
+    const qc = new QueryClient();
+    const key = ["rails", "recent-issues"];
+    qc.setQueryData(
+      key,
+      { items: [card("a"), card("b", READ)] },
+      {
+        updatedAt: 1000,
+      },
+    );
+    await qc.invalidateQueries({ queryKey: key, refetchType: "none" });
+    const state = () => qc.getQueryCache().find({ queryKey: key })!.state;
+    expect(state().isInvalidated).toBe(true);
+
+    const token = patchCardProgress(qc, new Map([["a", READ]]));
+    expect(state().dataUpdatedAt).toBe(1000);
+    expect(state().isInvalidated).toBe(true);
+    expect(embeddedCards(state().data)[0]!.progress).toEqual(READ);
+
+    restoreCardProgress(qc, token);
+    expect(state().dataUpdatedAt).toBe(1000);
+    expect(state().isInvalidated).toBe(true);
+    expect(embeddedCards(state().data)[0]!.progress).toBeNull();
+  });
+
+  it("leaves a fresh list fresh", () => {
+    const qc = new QueryClient();
+    const key = ["rails", "recent-issues"];
+    qc.setQueryData(key, { items: [card("a")] }, { updatedAt: 1000 });
+    patchCardProgress(qc, new Map([["a", READ]]));
+    const state = qc.getQueryCache().find({ queryKey: key })!.state;
+    expect(state.dataUpdatedAt).toBe(1000);
+    expect(state.isInvalidated).toBe(false);
+  });
+});
