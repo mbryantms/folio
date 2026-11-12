@@ -121,7 +121,10 @@ struct Args {
     #[arg(long, default_value = "ctd,ogk-s,ogk-m,ppdet960,ppdet1600")]
     dets: String,
     /// Line splits for the PP recognisers.
-    #[arg(long, default_value = "ppdet,profile,ctd-lines,none")]
+    #[arg(
+        long,
+        default_value = "ppdet,ppdet2x,page-lines,profile,ctd-lines,none"
+    )]
     splits: String,
     /// Tesseract variant used as "best Tesseract".
     #[arg(long, default_value = "current")]
@@ -129,9 +132,12 @@ struct Args {
     /// PP recogniser used in the tap combinations and timings.
     #[arg(long, default_value = "pp-v6-small")]
     best_pp: String,
-    /// Line split used with it.
-    #[arg(long, default_value = "profile")]
+    /// Line split used with it in the timing and throughput runs.
+    #[arg(long, default_value = "ppdet")]
     best_split: String,
+    /// Line splits tried in the tap simulation (C).
+    #[arg(long, default_value = "ppdet,ppdet2x,page-lines")]
+    tap_splits: String,
     /// Whole-page throughput: every page once per repeat (decode, detect,
     /// recognise every unit), one worker; run several processes for
     /// parallel workers.

@@ -9,8 +9,14 @@ use crate::cand::{DetResize, PaddleDet, reading_order};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub(crate) enum Split {
-    /// PP-OCRv5 mobile det on the crop (size kept, rounded to 32).
+    /// PP-OCRv5 mobile det on the crop (size kept, rounded to 32); the
+    /// whole crop as one line when it finds none.
     PpDet,
+    /// The same on the crop enlarged 2x (long side capped at 1600).
+    PpDet2x,
+    /// Lines from PP-OCRv5 det run once on the full page (long side 960)
+    /// that lie at least half inside the crop; whole crop when none.
+    PageLines,
     /// Row projection profile on a binarised copy.
     Profile,
     /// comic-text-detector's class-1 (line) boxes inside the crop; the
@@ -24,12 +30,21 @@ impl Split {
     pub(crate) fn name(self) -> &'static str {
         match self {
             Split::PpDet => "ppdet",
+            Split::PpDet2x => "ppdet2x",
+            Split::PageLines => "page-lines",
             Split::Profile => "profile",
             Split::CtdLines => "ctd-lines",
             Split::None => "none",
         }
     }
-    pub(crate) const ALL: [Split; 4] = [Split::PpDet, Split::Profile, Split::CtdLines, Split::None];
+    pub(crate) const ALL: [Split; 6] = [
+        Split::PpDet,
+        Split::PpDet2x,
+        Split::PageLines,
+        Split::Profile,
+        Split::CtdLines,
+        Split::None,
+    ];
 }
 
 pub(crate) type Rect = (u32, u32, u32, u32);
@@ -38,15 +53,26 @@ fn whole(crop: &DynamicImage) -> Vec<Rect> {
     vec![(0, 0, crop.width(), crop.height())]
 }
 
-/// Lines from the PP det on the crop.
-pub(crate) fn ppdet_lines(det: &mut PaddleDet, crop: &DynamicImage) -> anyhow::Result<Vec<Rect>> {
+/// Lines from the PP det on the crop (scaled by `scale` first when
+/// given), in reading order; the whole crop when it finds none. Returns
+/// whether it fell back.
+pub(crate) fn ppdet_lines(
+    det: &mut PaddleDet,
+    crop: &DynamicImage,
+    scale: Option<f64>,
+) -> anyhow::Result<(Vec<Rect>, bool)> {
+    let resize = scale.map_or(DetResize::Keep, DetResize::Scale);
     let mut boxes: Vec<[f32; 4]> = det
-        .detect_lines(crop, DetResize::Keep)?
+        .detect_lines(crop, resize)?
         .into_iter()
         .map(|b| [b.x0, b.y0, b.x1, b.y1])
         .collect();
     reading_order(&mut boxes);
-    Ok(to_rects(&boxes, crop))
+    let rects = to_rects(&boxes, crop);
+    if rects.is_empty() {
+        return Ok((whole(crop), true));
+    }
+    Ok((rects, false))
 }
 
 /// comic-text-detector line boxes (already in crop coordinates) at least
@@ -123,6 +149,8 @@ pub(crate) fn profile_lines(crop: &DynamicImage) -> Vec<Rect> {
         Luma([0u8]),
     );
     let mut drop = std::collections::HashSet::new();
+    let mut edge = std::collections::HashSet::new();
+    let mut extent: std::collections::HashMap<u32, [u32; 4]> = std::collections::HashMap::new();
     let mut sizes: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
     for (x, y, l) in labels.enumerate_pixels() {
         let l = l.0[0];
@@ -131,7 +159,21 @@ pub(crate) fn profile_lines(crop: &DynamicImage) -> Vec<Rect> {
         }
         *sizes.entry(l).or_default() += 1;
         if x == 0 || y == 0 || x == w - 1 || y == h - 1 {
-            drop.insert(l);
+            edge.insert(l);
+        }
+        let e = extent.entry(l).or_insert([x, y, x, y]);
+        e[0] = e[0].min(x);
+        e[1] = e[1].min(y);
+        e[2] = e[2].max(x);
+        e[3] = e[3].max(y);
+    }
+    // An edge-touching component is dropped only when it is long (a
+    // balloon outline or panel border); a letter cut by a rough crop
+    // stays.
+    for l in &edge {
+        let e = extent[l];
+        if e[2] - e[0] > w * 3 / 10 || e[3] - e[1] > h * 3 / 10 {
+            drop.insert(*l);
         }
     }
     let big = u64::from(w) * u64::from(h) / 20;

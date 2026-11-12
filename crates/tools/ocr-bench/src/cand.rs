@@ -248,6 +248,8 @@ pub(crate) enum DetResize {
     Long(u32),
     /// Keep the size (rounded to 32, short side at least 64): for crops.
     Keep,
+    /// Scale by this factor (rounded to 32, long side capped at 1600).
+    Scale(f64),
 }
 
 pub(crate) struct PaddleDet {
@@ -317,6 +319,10 @@ impl PaddleDet {
             }
             DetResize::Keep => {
                 let s = (64.0 / f64::from(w.min(h).max(1))).max(1.0);
+                (round32(f64::from(w) * s), round32(f64::from(h) * s))
+            }
+            DetResize::Scale(f) => {
+                let s = f.min(1600.0 / f64::from(w.max(h).max(1)));
                 (round32(f64::from(w) * s), round32(f64::from(h) * s))
             }
         };

@@ -476,6 +476,8 @@ struct PageOut {
     det_ms: BTreeMap<String, f64>,
     det_boxes: BTreeMap<String, Vec<DetBox>>,
     split_ms: BTreeMap<String, Vec<f64>>,
+    /// Per split: (crops where it found no lines and used the whole crop, crops).
+    split_fallbacks: BTreeMap<String, (usize, usize)>,
     ctd_line_fallbacks: usize,
     ctd_line_uses: usize,
     recog: Vec<Rec>,
@@ -583,28 +585,34 @@ fn split_rects(
     crop_img: &DynamicImage,
     rect: (u32, u32, u32, u32),
     ctd_page_lines: &[[f64; 4]],
+    pp_page_lines: &[[f64; 4]],
 ) -> anyhow::Result<(Vec<split::Rect>, bool)> {
+    let local = |lines: &[[f64; 4]]| -> Vec<[f32; 4]> {
+        lines
+            .iter()
+            .map(|b| {
+                [
+                    (b[0] - f64::from(rect.0)) as f32,
+                    (b[1] - f64::from(rect.1)) as f32,
+                    (b[2] - f64::from(rect.0)) as f32,
+                    (b[3] - f64::from(rect.1)) as f32,
+                ]
+            })
+            .collect()
+    };
     Ok(match s {
-        Split::PpDet => (
-            split::ppdet_lines(eng.ppdet.as_mut().expect("pp det loaded"), crop_img)?,
-            false,
-        ),
+        Split::PpDet => {
+            split::ppdet_lines(eng.ppdet.as_mut().expect("pp det loaded"), crop_img, None)?
+        }
+        Split::PpDet2x => split::ppdet_lines(
+            eng.ppdet.as_mut().expect("pp det loaded"),
+            crop_img,
+            Some(2.0),
+        )?,
         Split::Profile => (split::profile_lines(crop_img), false),
         Split::None => (split::none_lines(crop_img), false),
-        Split::CtdLines => {
-            let local: Vec<[f32; 4]> = ctd_page_lines
-                .iter()
-                .map(|b| {
-                    [
-                        (b[0] - f64::from(rect.0)) as f32,
-                        (b[1] - f64::from(rect.1)) as f32,
-                        (b[2] - f64::from(rect.0)) as f32,
-                        (b[3] - f64::from(rect.1)) as f32,
-                    ]
-                })
-                .collect();
-            split::ctd_lines(&local, crop_img)
-        }
+        Split::CtdLines => split::ctd_lines(&local(ctd_page_lines), crop_img),
+        Split::PageLines => split::ctd_lines(&local(pp_page_lines), crop_img),
     })
 }
 
@@ -673,6 +681,11 @@ fn accuracy_page(
         .get("ctd")
         .map(|b| b.iter().filter(|x| x.class == 1).map(det_box).collect())
         .unwrap_or_default();
+    let pp_page_lines: Vec<[f64; 4]> = out
+        .det_boxes
+        .get("ppdet960")
+        .map(|b| b.iter().map(det_box).collect())
+        .unwrap_or_default();
     let ref_px: Vec<[f64; 4]> = refs.iter().map(|r| r.bbox_px(pw, ph)).collect();
     let refs_norm: Vec<String> = refs
         .iter()
@@ -684,10 +697,38 @@ fn accuracy_page(
         .into_iter()
         .filter(|s| list(&args.splits).iter().any(|n| n == s.name()))
         .collect();
-    for (ri, r) in refs.iter().enumerate() {
-        let Some(rect) = to_rect(grow(ref_px[ri], args.variant_margin), pw, ph) else {
-            continue;
-        };
+    // Two crops per reference: its rough box + margin, and ("@tight") the
+    // ogkalu-medium text box that covers it best, when one covers at
+    // least 30% of it and lies mostly (50%+) inside it grown by 25%: a
+    // tight crop as a detector would give, without the rough box's art.
+    let tight_src: Vec<[f64; 4]> = out
+        .det_boxes
+        .get("ogk-m")
+        .map(|b| {
+            b.iter()
+                .filter(|x| x.class == 1 || x.class == 2)
+                .map(det_box)
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut jobs: Vec<(usize, split::Rect, &'static str)> = Vec::new();
+    for (ri, rp) in ref_px.iter().enumerate() {
+        if let Some(rect) = to_rect(grow(*rp, args.variant_margin), pw, ph) {
+            jobs.push((ri, rect, ""));
+        }
+        let g = grow(*rp, 0.25);
+        let ra = area(*rp).max(1.0);
+        let best = tight_src
+            .iter()
+            .filter(|b| inter(g, **b) / area(**b).max(1.0) >= 0.5)
+            .max_by(|a, b| inter(*rp, **a).total_cmp(&inter(*rp, **b)))
+            .filter(|b| inter(*rp, **b) / ra >= 0.3);
+        if let Some(rect) = best.and_then(|b| to_rect(*b, pw, ph)) {
+            jobs.push((ri, rect, "@tight"));
+        }
+    }
+    for (ri, rect, sfx) in jobs {
+        let r = &refs[ri];
         let c = crop(&page, rect);
         if let Some(t) = eng.tess_today.as_mut() {
             let (o, ms) = timed(|| t.recognize(&c));
@@ -695,7 +736,7 @@ fn accuracy_page(
                 &pf.key,
                 r,
                 &refs_norm[ri],
-                "tess-today".into(),
+                format!("tess-today{sfx}"),
                 &o?.rec,
                 0,
                 ms,
@@ -709,7 +750,7 @@ fn accuracy_page(
                 &pf.key,
                 r,
                 &refs_norm[ri],
-                format!("tess-best ({})", t.cfg.name),
+                format!("tess-best ({}){sfx}", t.cfg.name),
                 &o?.rec,
                 0,
                 ms,
@@ -720,16 +761,19 @@ fn accuracy_page(
         for &s in &splits {
             let ((rects, fell_back), ms) = {
                 let t = Instant::now();
-                let v = split_rects(s, eng, &c, rect, &ctd_page_lines)?;
+                let v = split_rects(s, eng, &c, rect, &ctd_page_lines, &pp_page_lines)?;
                 (v, ms_since(t))
             };
             out.split_ms.entry(s.name().into()).or_default().push(ms);
+            let fb = out.split_fallbacks.entry(s.name().into()).or_insert((0, 0));
+            fb.1 += 1;
+            fb.0 += usize::from(fell_back);
             if s == Split::CtdLines {
                 out.ctd_line_uses += 1;
                 out.ctd_line_fallbacks += usize::from(fell_back);
             }
             let note = if fell_back {
-                "ctd had no line boxes: whole crop".to_owned()
+                "no line boxes: whole crop".to_owned()
             } else {
                 String::new()
             };
@@ -741,7 +785,7 @@ fn accuracy_page(
                     &pf.key,
                     r,
                     &refs_norm[ri],
-                    format!("{}/{}", rec.name, s.name()),
+                    format!("{}/{}{sfx}", rec.name, s.name()),
                     &recog,
                     n,
                     ms_r,
@@ -794,30 +838,51 @@ fn taps(
         .get("ctd")
         .map(|b| b.iter().filter(|x| x.class == 1).map(det_box).collect())
         .unwrap_or_default();
-    // (combo name, detector, unit, recogniser)
-    let mut combos: Vec<(String, &str, &str, &str)> = Vec::new();
+    let pp_page_lines: Vec<[f64; 4]> = det_boxes
+        .get("ppdet960")
+        .map(|b| b.iter().map(det_box).collect())
+        .unwrap_or_default();
+    let tap_splits: Vec<Split> = Split::ALL
+        .into_iter()
+        .filter(|s| list(&args.tap_splits).iter().any(|n| n == s.name()))
+        .collect();
+    let _ = best_split;
+    // (combo name, detector, unit, recogniser, split)
+    let mut combos: Vec<(String, &str, &str, &str, Split)> = Vec::new();
     for d in det_boxes.keys() {
         let d = d.as_str();
         match d {
             "ctd" | "ctd-crate" => {
                 if eng.tess_today.is_some() {
-                    combos.push((format!("{d}(panel) + tess-today"), d, "panel", "tess-today"));
+                    combos.push((
+                        format!("{d}(panel) + tess-today"),
+                        d,
+                        "panel",
+                        "tess-today",
+                        Split::None,
+                    ));
                 }
-                combos.push((
-                    format!("{d}(panel) + {}/{}", args.best_pp, best_split.name()),
-                    d,
-                    "panel",
-                    "pp",
-                ));
+                for &sp in &tap_splits {
+                    combos.push((
+                        format!("{d}(panel) + {}/{}", args.best_pp, sp.name()),
+                        d,
+                        "panel",
+                        "pp",
+                        sp,
+                    ));
+                }
             }
             "ogk-s" | "ogk-m" => {
                 for u in ["text_bubble", "bubble"] {
-                    combos.push((
-                        format!("{d}({u}) + {}/{}", args.best_pp, best_split.name()),
-                        d,
-                        u,
-                        "pp",
-                    ));
+                    for &sp in &tap_splits {
+                        combos.push((
+                            format!("{d}({u}) + {}/{}", args.best_pp, sp.name()),
+                            d,
+                            u,
+                            "pp",
+                            sp,
+                        ));
+                    }
                 }
                 if eng.tess_today.is_some() {
                     combos.push((
@@ -825,6 +890,7 @@ fn taps(
                         d,
                         "text_bubble",
                         "tess-today",
+                        Split::None,
                     ));
                 }
             }
@@ -833,10 +899,11 @@ fn taps(
                 d,
                 "blocks",
                 "pp-lines",
+                Split::None,
             )),
         }
     }
-    for (name, d, unit, recn) in combos {
+    for (name, d, unit, recn, sp) in combos {
         let boxes = &det_boxes[d];
         let line_boxes: Vec<[f64; 4]> = boxes.iter().map(det_box).collect();
         let blks = if unit == "blocks" {
@@ -885,7 +952,8 @@ fn taps(
                 ),
                 "pp" => {
                     let Some(bi) = best_pp else { continue };
-                    let (rects, _) = split_rects(best_split, eng, &c, rect, &ctd_page_lines)?;
+                    let (rects, _) =
+                        split_rects(sp, eng, &c, rect, &ctd_page_lines, &pp_page_lines)?;
                     pp_balloon(&mut eng.recs[bi], &c, &rects, true)?
                 }
                 _ => {
@@ -1148,7 +1216,7 @@ fn timing_page(
                                 })
                                 .collect()
                         } else {
-                            split_rects(best_split, eng, &c, rect, &ctd_lines)?.0
+                            split_rects(best_split, eng, &c, rect, &ctd_lines, &[])?.0
                         };
                         pp_balloon(&mut eng.recs[bi], &c, &rects, true)?;
                     }
@@ -1323,7 +1391,7 @@ fn run_throughput(
                         })
                         .collect()
                 } else {
-                    split_rects(best_split, &mut eng, &c, rect, &ctd_lines)?.0
+                    split_rects(best_split, &mut eng, &c, rect, &ctd_lines, &[])?.0
                 };
                 let bi = pp.expect("checked");
                 pp_balloon(&mut eng.recs[bi], &c, &rects, true)?;
@@ -1531,7 +1599,9 @@ pub(crate) fn run(
     if args.cand {
         let dir = args.out.join(format!("{}-worst", args.label));
         for (k, v) in &groups {
-            let keep = k.starts_with("tess") || k.ends_with(&format!("/{}", args.best_split));
+            let keep = k.starts_with("tess")
+                || k.ends_with(&format!("/{}", args.best_split))
+                || k.ends_with(&format!("/{}@tight", args.best_split));
             if !keep {
                 continue;
             }
@@ -1775,9 +1845,21 @@ fn markdown(r: &Stage2, args: &Args) -> String {
         }
         let _ = writeln!(
             o,
-            "\ncomic-text-detector line boxes: none inside the crop (whole crop used) in {} of {} crops.\n\nSplit time per crop: {}\n",
-            r.ctd_line_fallbacks.0,
-            r.ctd_line_fallbacks.1,
+            "\nCrops where a split found no lines and the whole crop was read as one line: {}\n\nSplit time per crop: {}\n",
+            {
+                let mut fb: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+                for p in &r.pages {
+                    for (k, v) in &p.split_fallbacks {
+                        let e = fb.entry(k.clone()).or_default();
+                        e.0 += v.0;
+                        e.1 += v.1;
+                    }
+                }
+                fb.iter()
+                    .map(|(k, v)| format!("{k} {} of {}", v.0, v.1))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            },
             r.split_time
                 .iter()
                 .map(|(k, s)| format!("{k} median {} p90 {}", fms(s.median_ms), fms(s.p90_ms)))

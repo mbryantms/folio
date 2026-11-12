@@ -47,8 +47,8 @@ pub(crate) fn normalize(s: &str, is_reference: bool) -> String {
 }
 
 /// The reference's spacing convention, applied to both sides: no space
-/// before `. , ! ? ; :`, none around `--`, and one space after `, ! ? ; :`
-/// (and after `.` before a letter) when a word follows directly.
+/// before `. , ! ? ; :`, none around `--`, and one space after `! ?`
+/// before a letter or digit and after `. , ; :` before a letter.
 fn punctuation_spacing(s: &str) -> String {
     let c: Vec<char> = s.chars().collect();
     let mut out: Vec<char> = Vec::with_capacity(c.len());
@@ -70,8 +70,8 @@ fn punctuation_spacing(s: &str) -> String {
         out.push(ch);
         let next = c.get(i + 1).copied();
         let wants_space = match ch {
-            ',' | '!' | '?' | ';' | ':' => next.is_some_and(char::is_alphanumeric),
-            '.' => next.is_some_and(char::is_alphabetic),
+            '!' | '?' => next.is_some_and(char::is_alphanumeric),
+            ',' | ';' | ':' | '.' => next.is_some_and(char::is_alphabetic),
             _ => false,
         };
         if wants_space {
@@ -281,6 +281,7 @@ mod tests {
         assert_eq!(normalize("AROUND ,RESET", false), "AROUND, RESET");
         assert_eq!(normalize("3.5 \u{2019}EM", false), "3.5 'EM");
         assert_eq!(normalize("OH...WELL", true), "OH... WELL");
+        assert_eq!(normalize("500,000", true), "500,000");
     }
 
     #[test]
