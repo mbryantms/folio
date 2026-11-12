@@ -144,6 +144,32 @@ resume position just falls back to its ordinal.
 **Not affected:** the OCR cache key stays `content_hash` + ordinal
 (`ocr::cache::cache_key`). A content change already invalidates it.
 
+## Issue card badges
+
+Every issue card's read check and progress bar come from the card itself.
+The issue-card lists embed the viewer's own record as
+`IssueSummaryView.progress` (`{finished, page, percent, updated_at}`, or
+`null` when there is none), filled by
+[`issue_card::attach_progress`](../../crates/server/src/api/issue_card.rs):
+one `progress_records` lookup on its `(user_id, issue_id)` primary key per
+page, always for the authenticated caller, after the page is built (it
+never changes which cards, their order, cursors or totals). Covered: the
+series issue list (both modes), `/issues`, `/issues/search`, the New
+issues, On this day and New in series rails, saved-view issue results and
+previews, collection and reading-list entries, entity issue grids and
+insights. Elsewhere the field is **absent**, and the web card falls back
+to the all-records map (`GET /progress`, `useUserProgress`), which a page
+whose lists all embed progress therefore never requests.
+
+On the web, [`useCardProgress`](../../web/lib/api/card-progress.ts) shows
+the newer (by `updated_at`) of the card's copy and this tab's last write
+for the issue, `queryKeys.issueProgress(id)`, which the optimistic mark,
+the mark's reply and the reader's per-page write reply all set. A badge
+therefore follows a read without refetching the list; the lists are only
+marked stale (`invalidateIssueCards`) and refetch on their next mount. A
+write that names no issues (mark a whole series, "select all matching",
+an outbox replay) refetches the mounted lists instead.
+
 ## What this deliberately changes
 
 Before WP-1.3 the last write won. A jump back through the page strip used
