@@ -2365,9 +2365,9 @@ async fn duplicate_removal_is_confirmed_and_purged_without_a_stat() {
 }
 
 /// Keyset paging: rows kept at the head of the queue do not block the rest.
-/// Page 2, at most 4 rows a run: the two oldest (present) rows are kept,
-/// the next two (gone) are confirmed across the page boundary, the fifth
-/// waits for the next run, which confirms it.
+/// Page 2, at most 2 confirmations a run: the two oldest (present) rows are
+/// kept at no cost to the budget, the next two (gone) are confirmed across
+/// the page boundary, the fifth waits for the next run, which confirms it.
 #[tokio::test]
 async fn auto_confirm_pages_past_kept_rows() {
     let app = TestApp::spawn().await;
@@ -2390,7 +2390,7 @@ async fn auto_confirm_pages_past_kept_rows() {
     }
     let limits = reconcile::SweepLimits {
         page: 2,
-        max_issue_rows: 4,
+        max_issue_confirms: 2,
         ..reconcile::SweepLimits::default()
     };
 
@@ -2414,6 +2414,376 @@ async fn auto_confirm_pages_past_kept_rows() {
         .unwrap();
     assert_eq!(stats.confirmed, 1, "the fifth row next run: {stats:?}");
     assert!(confirmed(&issue_row(&app, &rows[4].id).await));
+}
+
+// ───── Confirm sweep paging: rows it cannot confirm do not starve the rest ─────
+
+/// A library for the confirm-paging tests: one live folder (so the root
+/// validates) holding the live series `Holder`, and a folder link `Loop`
+/// that points at itself. Every stat through `Loop` fails with `ELOOP`,
+/// which is not the not-found class, so a row stored under it is unknown
+/// (never confirmed); unlike a chmod-ed folder this holds when the tests run
+/// as root. Returns `(library id, Holder's id)`.
+async fn confirm_paging_fixture(app: &TestApp, root: &Path) -> (Uuid, Uuid) {
+    let holder = root.join("Holder (2020)");
+    write_old_folder(&holder, "Holder", 1, 1700);
+    let lib_id = create_library(app, root, 1).await;
+    scanner::scan_library(&app.state(), lib_id).await.unwrap();
+    std::os::unix::fs::symlink("Loop", root.join("Loop")).unwrap();
+    let holder = series_named(app, "Holder").await;
+    (lib_id, holder.id)
+}
+
+/// `n` fresh ids in ascending order, so a test can place rows that share a
+/// `removed_at` on either side of a page boundary.
+fn sorted_ids(n: usize) -> Vec<Uuid> {
+    let mut ids: Vec<Uuid> = (0..n).map(|_| Uuid::new_v4()).collect();
+    ids.sort();
+    ids
+}
+
+/// Insert an issue of `series_id` stored at `path`, soft-removed at `at`
+/// and unconfirmed. Returns its id.
+async fn insert_removed_issue(
+    app: &TestApp,
+    lib_id: Uuid,
+    series_id: Uuid,
+    id: Uuid,
+    path: &Path,
+    at: chrono::DateTime<chrono::FixedOffset>,
+) -> String {
+    let id = id.to_string();
+    sql(
+        app,
+        "INSERT INTO issues (id, library_id, series_id, file_path, file_size, file_mtime, \
+                             content_hash, slug, removed_at) \
+         VALUES ($1, $2, $3, $4, 1, now(), $1, $1, $5)",
+        vec![
+            id.clone().into(),
+            lib_id.into(),
+            series_id.into(),
+            path.to_string_lossy().into_owned().into(),
+            at.into(),
+        ],
+    )
+    .await;
+    id
+}
+
+/// Insert a series with folder `folder`, soft-removed at `at` and
+/// unconfirmed.
+async fn insert_removed_series(
+    app: &TestApp,
+    lib_id: Uuid,
+    id: Uuid,
+    folder: &Path,
+    at: chrono::DateTime<chrono::FixedOffset>,
+) -> Uuid {
+    sql(
+        app,
+        "INSERT INTO series (id, library_id, name, normalized_name, slug, folder_path, removed_at) \
+         VALUES ($1, $2, $3, $3, $3, $4, $5)",
+        vec![
+            id.into(),
+            lib_id.into(),
+            format!("Paging {id}").into(),
+            folder.to_string_lossy().into_owned().into(),
+            at.into(),
+        ],
+    )
+    .await;
+    id
+}
+
+/// Issues for the paging tests: `unknown` rows (stored under `Loop`)
+/// removed 100, 99, … days ago, ahead of `gone` rows (their folder does not
+/// exist) removed 50, 49, … days ago; or, with `same_time`, all removed at
+/// one instant, unknown rows first in `id` order. Returns `(unknown, gone)`.
+async fn paging_issues(
+    app: &TestApp,
+    root: &Path,
+    unknown: usize,
+    gone: usize,
+    same_time: bool,
+) -> (Vec<String>, Vec<String>) {
+    let (lib_id, holder) = confirm_paging_fixture(app, root).await;
+    let now = Utc::now().fixed_offset();
+    let at = |days: usize| {
+        if same_time {
+            now - chrono::Duration::days(40)
+        } else {
+            now - chrono::Duration::days(days as i64)
+        }
+    };
+    let ids = sorted_ids(unknown + gone);
+    let mut unknown_ids = Vec::new();
+    for (k, id) in ids[..unknown].iter().enumerate() {
+        let path = root.join("Loop").join(format!("Unknown {k:03}.cbz"));
+        unknown_ids.push(insert_removed_issue(app, lib_id, holder, *id, &path, at(100 - k)).await);
+    }
+    let mut gone_ids = Vec::new();
+    for (k, id) in ids[unknown..].iter().enumerate() {
+        let path = root.join("Gone (2021)").join(format!("Gone {k:03}.cbz"));
+        gone_ids.push(insert_removed_issue(app, lib_id, holder, *id, &path, at(50 - k)).await);
+    }
+    (unknown_ids, gone_ids)
+}
+
+/// The same for series: unknown series have their folder under `Loop`,
+/// gone series a folder that does not exist.
+async fn paging_series(
+    app: &TestApp,
+    root: &Path,
+    unknown: usize,
+    gone: usize,
+    same_time: bool,
+) -> (Vec<Uuid>, Vec<Uuid>) {
+    let (lib_id, _) = confirm_paging_fixture(app, root).await;
+    let now = Utc::now().fixed_offset();
+    let at = |days: usize| {
+        if same_time {
+            now - chrono::Duration::days(40)
+        } else {
+            now - chrono::Duration::days(days as i64)
+        }
+    };
+    let ids = sorted_ids(unknown + gone);
+    let mut unknown_ids = Vec::new();
+    for (k, id) in ids[..unknown].iter().enumerate() {
+        let folder = root.join("Loop").join(format!("Unknown Series {k:03}"));
+        unknown_ids.push(insert_removed_series(app, lib_id, *id, &folder, at(100 - k)).await);
+    }
+    let mut gone_ids = Vec::new();
+    for (k, id) in ids[unknown..].iter().enumerate() {
+        let folder = root.join(format!("Gone Series {k:03}"));
+        gone_ids.push(insert_removed_series(app, lib_id, *id, &folder, at(50 - k)).await);
+    }
+    (unknown_ids, gone_ids)
+}
+
+async fn issue_confirmed(app: &TestApp, id: &str) -> bool {
+    let row = issue_row(app, id).await;
+    assert!(row.removed_at.is_some(), "{id}: still removed");
+    row.removal_confirmed_at.is_some()
+}
+
+async fn series_confirmed(app: &TestApp, id: Uuid) -> bool {
+    let row = SeriesEntity::find_by_id(id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(row.removed_at.is_some(), "{id}: still removed");
+    row.removal_confirmed_at.is_some()
+}
+
+/// More rows the sweep cannot confirm (unknown) at the front of the order
+/// than fit in one page, and more than the per-run cap, must not hide the
+/// confirmable rows behind them: one run pages past them, confirms every
+/// gone row, and leaves the unknown rows untouched.
+#[tokio::test]
+async fn auto_confirm_pages_past_unknown_rows_at_the_front() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (unknown, gone) = paging_issues(&app, tmp.path(), 7, 4, false).await;
+    let state = app.state();
+    let limits = reconcile::SweepLimits {
+        page: 3,
+        max_issue_confirms: 5,
+        ..reconcile::SweepLimits::default()
+    };
+
+    let stats = reconcile::auto_confirm_sweep_with(&state, limits)
+        .await
+        .unwrap();
+    assert_eq!(stats.confirmed, 4, "every gone row behind: {stats:?}");
+    assert_eq!(stats.kept_unknown, 7, "{stats:?}");
+    assert_eq!(stats.libraries_aborted, 0, "{stats:?}");
+    for id in &gone {
+        assert!(issue_confirmed(&app, id).await, "{id}: gone → confirmed");
+    }
+    for id in &unknown {
+        assert!(
+            !issue_confirmed(&app, id).await,
+            "{id}: unknown → untouched"
+        );
+    }
+
+    // The next run only re-examines the unknown rows.
+    let stats = reconcile::auto_confirm_sweep_with(&state, limits)
+        .await
+        .unwrap();
+    assert_eq!(stats.confirmed, 0, "{stats:?}");
+    assert_eq!(stats.kept_unknown, 7, "{stats:?}");
+}
+
+/// The per-run cap counts confirmations, oldest removal first, and holds
+/// when it falls inside a page; unknown rows do not count against it, and
+/// the rest go on the next run.
+#[tokio::test]
+async fn auto_confirm_confirms_at_most_the_cap_per_run() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (unknown, gone) = paging_issues(&app, tmp.path(), 2, 5, false).await;
+    let state = app.state();
+    // Page 1: two unknown + gone[0..2]; page 2: gone[2..5], cut after one.
+    let limits = reconcile::SweepLimits {
+        page: 4,
+        max_issue_confirms: 3,
+        ..reconcile::SweepLimits::default()
+    };
+
+    let stats = reconcile::auto_confirm_sweep_with(&state, limits)
+        .await
+        .unwrap();
+    assert_eq!(stats.confirmed, 3, "the cap: {stats:?}");
+    assert_eq!(stats.kept_unknown, 2, "{stats:?}");
+    for id in &gone[..3] {
+        assert!(issue_confirmed(&app, id).await, "{id}: oldest first");
+    }
+    for id in &gone[3..] {
+        assert!(!issue_confirmed(&app, id).await, "{id}: past the cap");
+    }
+
+    let stats = reconcile::auto_confirm_sweep_with(&state, limits)
+        .await
+        .unwrap();
+    assert_eq!(stats.confirmed, 2, "the rest: {stats:?}");
+    for id in &gone {
+        assert!(issue_confirmed(&app, id).await, "{id}: confirmed by now");
+    }
+    for id in &unknown {
+        assert!(
+            !issue_confirmed(&app, id).await,
+            "{id}: unknown → untouched"
+        );
+    }
+}
+
+/// Rows with the same `removed_at` across a page boundary are told apart
+/// by `id`: none is skipped and none examined twice. (A reconcile stamps
+/// every row it removes in one run with the same instant.)
+#[tokio::test]
+async fn auto_confirm_pages_through_equal_removal_times() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (unknown, gone) = paging_issues(&app, tmp.path(), 1, 3, true).await;
+    let state = app.state();
+    // Four rows, one instant, pages of two.
+    let limits = reconcile::SweepLimits {
+        page: 2,
+        ..reconcile::SweepLimits::default()
+    };
+
+    let stats = reconcile::auto_confirm_sweep_with(&state, limits)
+        .await
+        .unwrap();
+    assert_eq!(stats.confirmed, 3, "{stats:?}");
+    assert_eq!(stats.kept_unknown, 1, "examined once: {stats:?}");
+    for id in &gone {
+        assert!(issue_confirmed(&app, id).await, "{id}");
+    }
+    assert!(!issue_confirmed(&app, &unknown[0]).await);
+}
+
+/// [`auto_confirm_pages_past_unknown_rows_at_the_front`] for series.
+#[tokio::test]
+async fn auto_confirm_series_pages_past_unknown_series_at_the_front() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (unknown, gone) = paging_series(&app, tmp.path(), 7, 4, false).await;
+    let state = app.state();
+    let limits = reconcile::SweepLimits {
+        page: 3,
+        max_series_confirms: 5,
+        ..reconcile::SweepLimits::default()
+    };
+
+    let stats = reconcile::auto_confirm_sweep_with(&state, limits)
+        .await
+        .unwrap();
+    assert_eq!(stats.confirmed, 4, "every gone series behind: {stats:?}");
+    assert_eq!(stats.kept_unknown, 7, "{stats:?}");
+    for id in &gone {
+        assert!(series_confirmed(&app, *id).await, "{id}: gone → confirmed");
+    }
+    for id in &unknown {
+        assert!(
+            !series_confirmed(&app, *id).await,
+            "{id}: unknown → untouched"
+        );
+    }
+
+    let stats = reconcile::auto_confirm_sweep_with(&state, limits)
+        .await
+        .unwrap();
+    assert_eq!(stats.confirmed, 0, "{stats:?}");
+    assert_eq!(stats.kept_unknown, 7, "{stats:?}");
+}
+
+/// [`auto_confirm_confirms_at_most_the_cap_per_run`] for series.
+#[tokio::test]
+async fn auto_confirm_series_confirms_at_most_the_cap_per_run() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (unknown, gone) = paging_series(&app, tmp.path(), 2, 5, false).await;
+    let state = app.state();
+    let limits = reconcile::SweepLimits {
+        page: 4,
+        max_series_confirms: 3,
+        ..reconcile::SweepLimits::default()
+    };
+
+    let stats = reconcile::auto_confirm_sweep_with(&state, limits)
+        .await
+        .unwrap();
+    assert_eq!(stats.confirmed, 3, "the cap: {stats:?}");
+    assert_eq!(stats.kept_unknown, 2, "{stats:?}");
+    for id in &gone[..3] {
+        assert!(series_confirmed(&app, *id).await, "{id}: oldest first");
+    }
+    for id in &gone[3..] {
+        assert!(!series_confirmed(&app, *id).await, "{id}: past the cap");
+    }
+
+    let stats = reconcile::auto_confirm_sweep_with(&state, limits)
+        .await
+        .unwrap();
+    assert_eq!(stats.confirmed, 2, "the rest: {stats:?}");
+    for id in &gone {
+        assert!(series_confirmed(&app, *id).await, "{id}: confirmed by now");
+    }
+    for id in &unknown {
+        assert!(
+            !series_confirmed(&app, *id).await,
+            "{id}: unknown → untouched"
+        );
+    }
+}
+
+/// [`auto_confirm_pages_through_equal_removal_times`] for series: none is
+/// skipped. (Kept series are a set, so a second look at the unknown one
+/// would not show in `kept_unknown`; the issue test covers that.)
+#[tokio::test]
+async fn auto_confirm_series_pages_through_equal_removal_times() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (unknown, gone) = paging_series(&app, tmp.path(), 1, 3, true).await;
+    let state = app.state();
+    let limits = reconcile::SweepLimits {
+        page: 2,
+        ..reconcile::SweepLimits::default()
+    };
+
+    let stats = reconcile::auto_confirm_sweep_with(&state, limits)
+        .await
+        .unwrap();
+    assert_eq!(stats.confirmed, 3, "{stats:?}");
+    assert_eq!(stats.kept_unknown, 1, "{stats:?}");
+    for id in &gone {
+        assert!(series_confirmed(&app, *id).await, "{id}");
+    }
+    assert!(!series_confirmed(&app, unknown[0]).await);
 }
 
 /// Over the per-run series cap, one library scan is queued instead of a

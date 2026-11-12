@@ -322,6 +322,18 @@ docker compose -f compose.prod.yml up -d --no-deps app
     a denial. On SELinux hosts a bind mount still needs its usual `:z` /
     `:Z` suffix.
 
+### Unreleased — the removal confirmation no longer stalls behind rows it leaves alone
+
+- Migration `m20271116_000001_confirm_sweep_keyset_idx` adds two partial
+  indexes on removed, unconfirmed issues and series. Nothing to do.
+- The daily removal confirmation (04:00 UTC) caps each library at 20,000
+  confirmed issues and 20,000 confirmed series per run (it used to stop
+  after looking at 20,000 rows). Rows it leaves alone because their file
+  is back or their folder cannot be read no longer stop it from reaching
+  the removed rows behind them. It now checks the path of every waiting
+  row each night, so on a library with many such rows the job can run
+  longer than before.
+
 ### Unreleased — the removed-file purge no longer stalls behind rows it keeps
 
 - Migration `m20271114_000001_issues_purge_keyset_idx` adds a partial

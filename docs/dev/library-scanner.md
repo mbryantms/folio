@@ -1556,13 +1556,26 @@ deletion:
   root), so that row stays removed but unconfirmed, like a folder whose
   archives never ingest.
 - **Confirm sweep.** Candidates (soft-removed past the window,
-  unconfirmed) are read oldest first in keyset pages of 500, at most
-  20 000 issue rows and 20 000 series rows per library per run
+  unconfirmed) are read oldest removal first in keyset pages of 500 on
+  `(removed_at, id)`, and at most 20 000 issue rows and 20 000 series rows
+  are confirmed per library per run
   (`CONFIRM_MAX_ISSUE_ROWS_PER_LIBRARY_PER_RUN`,
-  `CONFIRM_MAX_SERIES_ROWS_PER_LIBRARY_PER_RUN`). Rows kept as present or
-  unknown are re-examined every run; past the bound the sweep simply makes
-  no further progress that run (the safe direction) and continues the next
-  day. A present file is **not** confirmed and its series is rescanned;
+  `CONFIRM_MAX_SERIES_ROWS_PER_LIBRARY_PER_RUN`, which count rows actually
+  confirmed, not rows examined). A row left alone (present or unknown)
+  costs one stat and none of that budget, and so does a row the `UPDATE`'s
+  own guard rejects (restored or confirmed since the read); a series held
+  back by one of its kept issues costs no stat at all. So the walk goes on
+  past them: a run ends after 20 000 confirmations or at the end of the
+  library's candidates, and rows left alone, which stay unconfirmed at the
+  front of the order and are re-examined every run, no longer hold the
+  confirmable rows behind them back. No position is kept between runs; a
+  backlog of confirmable rows drains 20 000 a day, oldest first. Each page
+  is one range scan of the partial indexes `issues_confirm_keyset_idx` /
+  `series_confirm_keyset_idx (library_id, removed_at, id) WHERE removed_at
+  IS NOT NULL AND removal_confirmed_at IS NULL` (a reconcile stamps every
+  row it removes in one run with the same `removed_at`, so without `id` in
+  the index every page inside a large removal re-read all of it). A
+  present file is **not** confirmed and its series is rescanned;
   an absent file is confirmed as before. A removed series is not
   confirmed while one of its issues was just kept, or while its folder
   holds (or may hold) an indexable archive, its Duplicates-page removals
@@ -1612,7 +1625,11 @@ deletion:
   (only malformed or encrypted archives, say) keeps its series removed
   but unconfirmed, with at most one rescan every six days: the guards fail
   safe.
-  Guards: `tests/reconcile.rs::auto_confirm_*`,
+  Guards: `tests/reconcile.rs::auto_confirm_*` (paging:
+  `::auto_confirm_pages_past_unknown_rows_at_the_front`,
+  `::auto_confirm_confirms_at_most_the_cap_per_run`,
+  `::auto_confirm_pages_through_equal_removal_times` and their
+  `auto_confirm_series_*` twins),
   `::probe_batch_refuses_an_empty_root`,
   `::many_series_to_rescan_queue_one_library_scan`,
   `::recently_scanned_series_is_not_rescanned`,
