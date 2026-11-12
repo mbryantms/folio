@@ -21646,7 +21646,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description another rewrite is in progress */
+            /** @description another rewrite is in progress / the issue's archive changed while the restore was starting (`archive.issue_changed`) */
             409: {
                 headers: {
                     [name: string]: unknown;

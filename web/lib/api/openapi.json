@@ -4999,7 +4999,7 @@
             "description": "issue not found / no backup"
           },
           "409": {
-            "description": "another rewrite is in progress"
+            "description": "another rewrite is in progress / the issue's archive changed while the restore was starting (`archive.issue_changed`)"
           },
           "422": {
             "description": "writeback disabled / unsupported format / the named backup is not restorable / the pre-conversion backup could not be rebuilt"
