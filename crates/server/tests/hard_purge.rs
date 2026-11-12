@@ -1149,16 +1149,21 @@ async fn purge_deletes_at_most_the_cap_per_run() {
         page: 4,
         max_issue_deletes: 3,
     };
-    let log = LogCapture::default();
-    let stats = {
-        let _guard = log.install();
-        hard_purge::run_with_limits(&state, 2, Utc::now().fixed_offset(), limits)
-            .await
-            .unwrap()
-    };
+    let log = hard_purge_log();
+    let stats = hard_purge::run_with_limits(&state, 2, Utc::now().fixed_offset(), limits)
+        .await
+        .unwrap();
     assert_eq!(stats.issues, 3, "the cap: {stats:?}");
     assert_eq!(stats.kept_unknown, 2, "{stats:?}");
-    let exported = log.lines_with("hard purge: deleting confirmed-removed issue");
+    // Issue ids are content hashes, shared with other tests' fixtures; the
+    // library id (a fresh UUID) picks out this test's own export lines.
+    let lib_id = library_of_issue(db, &kept[0]).await;
+    let exported = log.lines_with(&[
+        "hard purge: deleting confirmed-removed issue",
+        &format!("library_id={lib_id}"),
+    ]);
+    // Positive first, so the negative checks below can never pass because
+    // the capture saw nothing.
     for id in &gone[..3] {
         assert!(!issue_exists(db, id).await, "{id}: oldest first → purged");
         assert_eq!(purged_events(db, id).await, 1, "{id}: one purged event");
@@ -1202,10 +1207,49 @@ async fn purged_events(db: &impl ConnectionTrait, issue_id: &str) -> i64 {
     .await
 }
 
-/// Captures the `folio::hard_purge` log lines written on this thread while
-/// installed (the `#[tokio::test]` runtime is single-threaded, and the
-/// export lines are written from the job's async code, not the blocking
-/// pool).
+async fn library_of_issue(db: &impl ConnectionTrait, issue_id: &str) -> Uuid {
+    let row = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT library_id FROM issues WHERE id = $1",
+            [issue_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    row.try_get_by_index::<Uuid>(0).unwrap()
+}
+
+/// Every `folio::hard_purge` WARN line any test in this binary writes,
+/// collected by one **process-wide** subscriber installed on first use.
+///
+/// Global, not a thread-local `set_default`: tracing caches each callsite's
+/// interest the first time any thread reaches it, and while a single
+/// dispatcher is registered it computes that interest from the *reaching
+/// thread's* default (tracing-core `Dispatchers::has_just_one`). A parallel
+/// test's thread with no subscriber could get to the export callsite first
+/// and cache "never" for everyone. A global default is what every thread
+/// sees, so the cached interest is right whoever gets there first.
+///
+/// If something else had already installed a global subscriber this one is
+/// not set and the capture stays empty; the callers' positive assertions
+/// then fail loudly rather than the negative ones passing vacuously.
+fn hard_purge_log() -> &'static LogCapture {
+    static LOG: std::sync::OnceLock<LogCapture> = std::sync::OnceLock::new();
+    LOG.get_or_init(|| {
+        let capture = LogCapture::default();
+        let writer = capture.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_env_filter(tracing_subscriber::EnvFilter::new("folio::hard_purge=warn"))
+            .with_writer(move || writer.clone())
+            .finish();
+        let _ = tracing::subscriber::set_global_default(subscriber);
+        capture
+    })
+}
+
+/// A shared in-memory log sink (one `write` per formatted event).
 #[derive(Clone, Default)]
 struct LogCapture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
 
@@ -1220,20 +1264,11 @@ impl std::io::Write for LogCapture {
 }
 
 impl LogCapture {
-    fn install(&self) -> tracing::subscriber::DefaultGuard {
-        let writer = self.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .with_ansi(false)
-            .with_max_level(tracing::Level::WARN)
-            .with_writer(move || writer.clone())
-            .finish();
-        tracing::subscriber::set_default(subscriber)
-    }
-
-    fn lines_with(&self, needle: &str) -> Vec<String> {
+    /// Captured lines containing every one of `needles`.
+    fn lines_with(&self, needles: &[&str]) -> Vec<String> {
         String::from_utf8_lossy(&self.0.lock().unwrap())
             .lines()
-            .filter(|l| l.contains(needle))
+            .filter(|l| needles.iter().all(|n| l.contains(n)))
             .map(str::to_owned)
             .collect()
     }
