@@ -12569,8 +12569,21 @@ export interface components {
              * @description 0-based page index, matching the reader's URL convention.
              */
             page: number;
-            region?: components["schemas"]["OcrRegion"] | null;
-            region_pct?: components["schemas"]["OcrRegionPct"] | null;
+            /**
+             * @description User's drag rectangle in page-pixel coordinates of the decoded
+             *     page. All four fields are unsigned pixels; w/h must be > 0 and
+             *     the rect must fit inside the decoded page bounds. Send this or
+             *     `region_pct`; when both are present `region_pct` is used.
+             */
+            region?: components["schemas"]["OcrRegion"];
+            /**
+             * @description The same rectangle in percent (0–100) of the decoded page, the
+             *     reader's marker representation, so the client needs no page
+             *     size. Converted after the decode with the decoded width and
+             *     height, rounded to whole pixels and clamped to the page; it must
+             *     overlap the page. Wins over `region` when both are sent.
+             */
+            region_pct?: components["schemas"]["OcrRegionPct"];
         };
         OcrResponse: {
             /**
@@ -12597,7 +12610,7 @@ export interface components {
              * Format: int32
              * @description Decoded page width in pixels, the space `refined_bbox` and
              *     `words` are in (and `region_pct` was converted with). Always
-             *     sent; `default` only so older cached payloads still deserialize.
+             *     sent; a cached payload without it is malformed (a miss).
              */
             page_w: number;
             /**

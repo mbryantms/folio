@@ -6,6 +6,10 @@
 //! - Finished work reaches the cache even when the request that started
 //!   it is gone (route timeout, client abort): the work owns the permit
 //!   and writes the cache itself, so a retry is a cache hit.
+//!
+//! The stand-ins only exist in debug builds, so this binary does too.
+
+#![cfg(debug_assertions)]
 
 mod common;
 
@@ -31,16 +35,42 @@ static ALL_PERMITS: tokio::sync::RwLock<()> = tokio::sync::RwLock::const_new(())
 
 // ─── Stand-ins ───────────────────────────────────────────────────
 
-/// A detector that takes `delay` and finds one box.
+/// A latch a stand-in waits on until the test opens it, so a test can
+/// observe "still running" without depending on wall time.
+#[derive(Default)]
+struct Gate {
+    open: std::sync::Mutex<bool>,
+    opened: std::sync::Condvar,
+}
+
+impl Gate {
+    fn open(&self) {
+        *self.open.lock().unwrap() = true;
+        self.opened.notify_all();
+    }
+
+    fn wait(&self) {
+        let mut open = self.open.lock().unwrap();
+        while !*open {
+            open = self.opened.wait(open).unwrap();
+        }
+    }
+}
+
+/// A detector that takes `delay` (or waits for `gate`) and finds one box.
 struct SlowDetector {
     delay: Duration,
+    gate: Option<&'static Gate>,
     calls: AtomicUsize,
 }
 
 impl PageDetector for SlowDetector {
     fn detect(&self, page: &DynamicImage) -> anyhow::Result<CachedDetection> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        std::thread::sleep(self.delay);
+        match self.gate {
+            Some(gate) => gate.wait(),
+            None => std::thread::sleep(self.delay),
+        }
         Ok(CachedDetection {
             page_w: page.width(),
             page_h: page.height(),
@@ -77,8 +107,33 @@ impl Recognizer for SlowRecognizer {
 fn slow_detector(ms: u64) -> &'static SlowDetector {
     Box::leak(Box::new(SlowDetector {
         delay: Duration::from_millis(ms),
+        gate: None,
         calls: AtomicUsize::new(0),
     }))
+}
+
+fn gated_detector(gate: &'static Gate) -> &'static SlowDetector {
+    Box::leak(Box::new(SlowDetector {
+        delay: Duration::ZERO,
+        gate: Some(gate),
+        calls: AtomicUsize::new(0),
+    }))
+}
+
+/// A recognizer that fails: with an error, or by panicking.
+struct FailingRecognizer {
+    panic: bool,
+    calls: AtomicUsize,
+}
+
+impl Recognizer for FailingRecognizer {
+    fn recognize(&self, _image: &DynamicImage) -> anyhow::Result<Recognition> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.panic {
+            panic!("stand-in recognizer panics on purpose");
+        }
+        anyhow::bail!("stand-in recognizer fails on purpose")
+    }
 }
 
 fn slow_recognizer(ms: u64) -> &'static SlowRecognizer {
@@ -93,6 +148,7 @@ fn slow_recognizer(ms: u64) -> &'static SlowRecognizer {
 struct Authed {
     session: String,
     csrf: String,
+    user_id: uuid::Uuid,
 }
 
 async fn register(app: &TestApp, email: &str) -> Authed {
@@ -125,9 +181,14 @@ async fn register(app: &TestApp, email: &str) -> Authed {
             .trim_start_matches(&format!("{name}="))
             .to_owned()
     };
+    let session = cookie("__Host-comic_session");
+    let csrf = cookie("__Host-comic_csrf");
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     Authed {
-        session: cookie("__Host-comic_session"),
-        csrf: cookie("__Host-comic_csrf"),
+        session,
+        csrf,
+        user_id: json["user"]["id"].as_str().unwrap().parse().unwrap(),
     }
 }
 
@@ -193,8 +254,13 @@ async fn send_and_abandon(app: &TestApp, req: Request<Body>, started: impl Fn() 
     );
 }
 
-fn png(w: u32, h: u32) -> Vec<u8> {
-    let img = image::RgbImage::from_pixel(w, h, image::Rgb([250, 250, 250]));
+/// A `w × h` near-white PNG whose first pixel is set from `salt`, so two
+/// fixtures with different salts never have the same bytes.
+fn png(w: u32, h: u32, salt: &[u8]) -> Vec<u8> {
+    let mut img = image::RgbImage::from_pixel(w, h, image::Rgb([250, 250, 250]));
+    let s = blake3::hash(salt);
+    let s = s.as_bytes();
+    img.put_pixel(0, 0, image::Rgb([s[0], s[1], s[2]]));
     let mut out = Vec::new();
     DynamicImage::ImageRgb8(img)
         .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
@@ -211,9 +277,10 @@ fn cbz(page: &[u8]) -> Vec<u8> {
     zw.finish().unwrap().into_inner()
 }
 
-/// One issue whose only page is a `w × h` PNG. Every test picks its own
-/// size, so its content hash (= the issue id) is its own and the
-/// stand-ins it installs reach only its requests.
+/// One issue whose only page is a `w × h` PNG. The stand-ins are keyed by
+/// content hash (= the issue id here) and never removed, so every fixture
+/// is salted with its library folder (a fresh temporary directory per
+/// test): no two tests share bytes, whatever sizes they pick.
 async fn seed(app: &TestApp, root: &std::path::Path, w: u32, h: u32) -> String {
     std::fs::create_dir_all(root).unwrap();
     let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
@@ -223,7 +290,7 @@ async fn seed(app: &TestApp, root: &std::path::Path, w: u32, h: u32) -> String {
         lib_id,
         series_id,
         &root.join("issue.cbz"),
-        &cbz(&png(w, h)),
+        &cbz(&png(w, h, root.as_os_str().as_encoded_bytes())),
         1.0,
     )
     .insert(&db)
@@ -256,7 +323,8 @@ async fn a_detection_that_outlives_its_request_is_cached() {
     let admin = register(&app, "ocr-work-detect@example.com").await;
     let tmp = tempfile::tempdir().unwrap();
     let id = seed(&app, &tmp.path().join("lib"), 101, 64).await;
-    let detector = slow_detector(1_500);
+    let gate: &'static Gate = Box::leak(Box::default());
+    let detector = gated_detector(gate);
     test_models::install(
         &id,
         test_models::Stub {
@@ -276,6 +344,7 @@ async fn a_detection_that_outlives_its_request_is_cached() {
     );
 
     // The detection finishes on its own and is cached.
+    gate.open();
     assert!(
         wait_for_key(&app, &key).await,
         "a finished detection reaches the cache"
@@ -671,6 +740,12 @@ async fn bad_percent_regions_are_422_with_field_details() {
             serde_json::json!({ "x": 10.0, "y": 100.0, "w": 5.0, "h": 5.0 }),
             "region_pct",
         ),
+        // On the page, but less than half a pixel wide once converted
+        // (checked after the decode).
+        (
+            serde_json::json!({ "x": 50.0, "y": 50.0, "w": 0.1, "h": 0.1 }),
+            "region_pct",
+        ),
     ] {
         let (status, body) = send(
             &app,
@@ -856,4 +931,143 @@ async fn a_stored_size_that_disagrees_with_the_decode_is_replaced() {
     assert_eq!(body["text"], "54x30");
     let stored: Option<String> = redis.get(&size_key).await.unwrap();
     assert_eq!(stored.as_deref(), Some("213x100"), "the decode replaced it");
+}
+
+// ─── Review follow-ups ───────────────────────────────────────────
+
+/// A recognition that fails (an error or a panic from the engine) still
+/// leaves the detection it followed in the cache.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_failed_recognition_keeps_its_detection() {
+    let _shared = ALL_PERMITS.read().await;
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "ocr-work-fail-recognize@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    for (n, panic) in [(0, false), (1, true)] {
+        let id = seed(&app, &tmp.path().join(format!("lib{n}")), 120, 64).await;
+        let detector = slow_detector(0);
+        let recognizer: &'static FailingRecognizer = Box::leak(Box::new(FailingRecognizer {
+            panic,
+            calls: AtomicUsize::new(0),
+        }));
+        test_models::install(
+            &id,
+            test_models::Stub {
+                detector: Some(detector),
+                recognizer: Some(recognizer),
+            },
+        );
+        let body = serde_json::json!({
+            "page": 0, "region": { "x": 0, "y": 0, "w": 40, "h": 30 },
+            "lang": "western", "detect": true,
+        });
+        let (status, resp) = send(&app, ocr_request(&admin, &id, body)).await;
+        assert_eq!(
+            status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "panic={panic}: {resp}"
+        );
+        assert_eq!(resp["error"]["code"], "ocr_failed");
+        assert_eq!(recognizer.calls.load(Ordering::SeqCst), 1);
+        assert!(
+            wait_for_key(&app, &server::ocr::cache::detect_cache_key(&id, 0)).await,
+            "panic={panic}: the detection is cached"
+        );
+        // The text-regions route now answers from it.
+        let (status, regions) = send(&app, regions_request(&admin, &id, 0)).await;
+        assert_eq!(status, StatusCode::OK, "{regions}");
+        assert_eq!(
+            detector.calls.load(Ordering::SeqCst),
+            1,
+            "no second detection"
+        );
+    }
+}
+
+/// Two issues with identical bytes (one content hash) in two libraries, a
+/// user who can see only one: with the decoded page, the page size, the
+/// result and the detection all cached from the visible one, the hidden
+/// one is still the unknown-issue 404 on both routes, and nothing runs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn identical_bytes_in_a_hidden_library_stay_hidden() {
+    use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+    let _shared = ALL_PERMITS.read().await;
+    let app = TestApp::spawn().await;
+    let _admin = register(&app, "ocr-work-twin-admin@example.com").await;
+    let reader = register(&app, "ocr-work-twin-reader@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (root_a, root_b) = (tmp.path().join("a"), tmp.path().join("b"));
+    std::fs::create_dir_all(&root_b).unwrap();
+    // Library A, visible to the reader.
+    let hash = seed(&app, &root_a, 215, 100).await;
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    let visible = entity::issue::Entity::find_by_id(hash.clone())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    entity::library_user_access::ActiveModel {
+        library_id: Set(visible.library_id),
+        user_id: Set(reader.user_id),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+    // Library B holds the same bytes under another issue id.
+    let lib_b = LibrarySeed::new(&root_b).insert(&db).await;
+    let series_b = SeriesSeed::new(lib_b, "Twin").insert(&db).await;
+    let twin_path = root_b.join("issue.cbz");
+    std::fs::copy(root_a.join("issue.cbz"), &twin_path).unwrap();
+    let hidden_id = uuid::Uuid::now_v7().to_string();
+    let mut twin: entity::issue::ActiveModel = visible.clone().into();
+    twin.id = Set(hidden_id.clone());
+    twin.slug = Set(uuid::Uuid::now_v7().to_string());
+    twin.library_id = Set(lib_b);
+    twin.series_id = Set(series_b);
+    twin.file_path = Set(twin_path.to_string_lossy().into_owned());
+    twin.insert(&db).await.unwrap();
+
+    let detector = slow_detector(0);
+    let echo: &'static EchoSize = Box::leak(Box::new(EchoSize {
+        calls: AtomicUsize::new(0),
+    }));
+    test_models::install(
+        &hash,
+        test_models::Stub {
+            detector: Some(detector),
+            recognizer: Some(echo),
+        },
+    );
+    let pixel = serde_json::json!({ "page": 0, "lang": "western",
+        "region": { "x": 4, "y": 4, "w": 20, "h": 20 } });
+
+    // Warm everything through the visible issue.
+    for req in [
+        ocr_request(&reader, &hash, pct_body()),
+        ocr_request(&reader, &hash, pixel.clone()),
+        regions_request(&reader, &hash, 0),
+    ] {
+        let (status, body) = send(&app, req).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    assert!(wait_for_key(&app, &server::ocr::cache::page_size_key(&hash, 0)).await);
+    let reads = server::api::issue_ocr::ocr_page_reads_for(&hash);
+    let (recognized, detected) = (
+        echo.calls.load(Ordering::SeqCst),
+        detector.calls.load(Ordering::SeqCst),
+    );
+
+    for req in [
+        ocr_request(&reader, &hidden_id, pct_body()),
+        ocr_request(&reader, &hidden_id, pixel.clone()),
+        regions_request(&reader, &hidden_id, 0),
+    ] {
+        let (status, body) = send(&app, req).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(body["error"]["code"], "not_found");
+    }
+    assert_eq!(server::api::issue_ocr::ocr_page_reads_for(&hash), reads);
+    assert_eq!(echo.calls.load(Ordering::SeqCst), recognized);
+    assert_eq!(detector.calls.load(Ordering::SeqCst), detected);
 }

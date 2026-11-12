@@ -435,10 +435,12 @@ mod tests {
 
     #[test]
     fn an_idle_page_expires() {
-        let cache = DecodedPages::new(10_000, Duration::from_millis(30));
+        // 300 ms idle: the hit right after the insert has ample margin on a
+        // loaded runner.
+        let cache = DecodedPages::new(10_000, Duration::from_millis(300));
         claim(&cache, &key(0)).fulfil(rgb(10, 10));
         assert!(is_hit(&cache, &key(0)));
-        std::thread::sleep(Duration::from_millis(60));
+        std::thread::sleep(Duration::from_millis(400));
         assert!(!is_hit(&cache, &key(0)), "expired");
     }
 
@@ -470,12 +472,18 @@ mod tests {
         assert!(is_hit(&cache, &key(0)));
     }
 
-    #[tokio::test]
+    /// The page is fulfilled from a blocking-pool thread, as the OCR decode
+    /// does, so the sweep is started the way production starts it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn idle_pages_are_released_without_further_requests() {
-        let cache = DecodedPages::new(10_000, Duration::from_millis(40));
-        claim(&cache, &key(0)).fulfil(rgb(10, 10));
+        let cache = DecodedPages::new(10_000, Duration::from_millis(300));
+        let c = claim(&cache, &key(0));
+        tokio::task::spawn_blocking(move || c.fulfil(rgb(10, 10)))
+            .await
+            .unwrap();
         assert_eq!(cache.usage(), (1, 300));
-        for _ in 0..100 {
+        assert!(cache.lock().sweeping, "the sweep started");
+        for _ in 0..300 {
             if cache.usage() == (0, 0) {
                 // The sweep stops once the cache is empty.
                 assert!(!cache.lock().sweeping);

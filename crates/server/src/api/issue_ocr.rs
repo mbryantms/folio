@@ -146,7 +146,8 @@ pub struct OcrRequest {
     /// the rect must fit inside the decoded page bounds. Send this or
     /// `region_pct`; when both are present `region_pct` is used.
     #[serde(default)]
-    #[garde(skip)]
+    #[garde(custom(|r: &Option<OcrRegion>, _: &()| region_given(r, &self.region_pct)))]
+    #[schema(nullable = false)]
     pub region: Option<OcrRegion>,
     /// The same rectangle in percent (0–100) of the decoded page, the
     /// reader's marker representation, so the client needs no page
@@ -155,6 +156,7 @@ pub struct OcrRequest {
     /// overlap the page. Wins over `region` when both are sent.
     #[serde(default)]
     #[garde(dive, custom(pct_on_page))]
+    #[schema(nullable = false)]
     pub region_pct: Option<OcrRegionPct>,
     /// `"western"` or `"manga"`. Omitted → the server resolves a
     /// default: `series.text_language` if set, else `manga` when the
@@ -198,6 +200,15 @@ pub struct OcrRegionPct {
     /// Height, percent of page height; above 0.
     #[garde(custom(positive))]
     pub h: f64,
+}
+
+/// One of `region` / `region_pct` must be sent.
+fn region_given(region: &Option<OcrRegion>, pct: &Option<OcrRegionPct>) -> garde::Result {
+    if region.is_none() && pct.is_none() {
+        Err(garde::Error::new("region or region_pct is required"))
+    } else {
+        Ok(())
+    }
 }
 
 fn finite(v: &f64, _: &()) -> garde::Result {
@@ -293,13 +304,9 @@ pub struct OcrResponse {
     pub words: Option<Vec<OcrWord>>,
     /// Decoded page width in pixels, the space `refined_bbox` and
     /// `words` are in (and `region_pct` was converted with). Always
-    /// sent; `default` only so older cached payloads still deserialize.
-    #[serde(default)]
-    #[schema(required = true)]
+    /// sent; a cached payload without it is malformed (a miss).
     pub page_w: u32,
     /// Decoded page height in pixels.
-    #[serde(default)]
-    #[schema(required = true)]
     pub page_h: u32,
 }
 
@@ -450,15 +457,12 @@ pub async fn serve(
             }
             Some(r)
         }
+        // Refused by `region_given` on extraction; an answer, not a panic.
         (None, None) => {
-            return super::respond_with_field_errors(
+            return error(
                 StatusCode::UNPROCESSABLE_ENTITY,
-                shared::error::ApiErrorCode::Validation,
-                "region: region or region_pct is required",
-                vec![shared::error::FieldError {
-                    field: "region".to_owned(),
-                    message: "region or region_pct is required".to_owned(),
-                }],
+                "invalid_region",
+                "region or region_pct is required",
             );
         }
     };
@@ -511,10 +515,10 @@ pub async fn serve(
     // bounds at write time and the content_hash binding makes that
     // promise stick.
     //
-    // A `region_pct` request only knows its pixel rect after the
-    // decode, so its lookup happens below, under the permit (with the
-    // decoded-page cache that costs a map lookup). Both kinds key on
-    // the pixel rect, so they share entries.
+    // A `region_pct` request finds its pixel rect through the stored
+    // page size (below), still before any page work; only when that size
+    // is not stored does its lookup wait for the decode. Both kinds key
+    // on the pixel rect, so they share entries.
     let lang_str = match language {
         Language::Western => "western",
         Language::Manga => "manga",
@@ -604,10 +608,14 @@ pub async fn serve(
             Some(r) => r,
             // Overlaps the page in percent but rounds to no whole pixel.
             None => {
-                return error(
+                return super::respond_with_field_errors(
                     StatusCode::UNPROCESSABLE_ENTITY,
-                    "invalid_region",
-                    "region_pct covers no whole pixel of the page",
+                    shared::error::ApiErrorCode::Validation,
+                    "region_pct: covers no whole pixel of the page",
+                    vec![shared::error::FieldError {
+                        field: "region_pct".to_owned(),
+                        message: "covers no whole pixel of the page".to_owned(),
+                    }],
                 );
             }
         },
@@ -768,7 +776,9 @@ pub fn ocr_page_reads() -> u64 {
 }
 
 /// Page reads per content hash, debug builds only: lets tests running
-/// side by side count the reads of their own issue.
+/// side by side count the reads of their own issue. Only hashes a test
+/// registered stand-ins for (`ocr::pipeline::test_models`) are counted,
+/// so a debug server reading a real library does not grow it.
 #[cfg(debug_assertions)]
 static OCR_PAGE_READS_BY_HASH: std::sync::LazyLock<Mutex<std::collections::HashMap<String, u64>>> =
     std::sync::LazyLock::new(Default::default);
@@ -911,7 +921,9 @@ async fn read_and_decode_holding<P: Send + 'static>(
     let work = blocking_with_permit(permit, move || {
         OCR_PAGE_READS.fetch_add(1, Ordering::Relaxed);
         #[cfg(debug_assertions)]
-        if let Ok(mut by_hash) = OCR_PAGE_READS_BY_HASH.lock() {
+        if crate::ocr::pipeline::test_models::is_installed(claim.key().content_hash())
+            && let Ok(mut by_hash) = OCR_PAGE_READS_BY_HASH.lock()
+        {
             *by_hash
                 .entry(claim.key().content_hash().to_owned())
                 .or_default() += 1;

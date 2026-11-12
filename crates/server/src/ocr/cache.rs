@@ -180,34 +180,76 @@ pub struct Fingerprints {
 
 static FINGERPRINTS: std::sync::OnceLock<Fingerprints> = std::sync::OnceLock::new();
 
-/// This process's fingerprints, computed on first use. The first call
-/// hashes the Tesseract language data (blocking, tens of ms); the
-/// handlers call [`warm_fingerprints`] first so that happens off the
-/// async runtime.
-pub fn fingerprints() -> &'static Fingerprints {
-    FINGERPRINTS.get_or_init(|| {
-        let inputs = EngineInputs::current();
-        let fp = Fingerprints {
-            result: inputs.result_fingerprint(),
-            detect: inputs.detect_fingerprint(),
-        };
-        tracing::info!(
-            result = %fp.result,
-            detect = %fp.detect,
-            western = %inputs.western,
-            "ocr cache: engine fingerprints"
-        );
-        fp
-    })
+/// This process's fingerprints. The first complete computation is kept
+/// for the life of the process; it hashes the Tesseract language data
+/// (blocking, tens of ms), so the handlers call [`warm_fingerprints`]
+/// first to do that off the async runtime. While the language data is
+/// missing or unreadable the result is *not* kept: it is computed again
+/// on every call (a failed `open`, cheap), so data staged later is
+/// picked up without a restart.
+pub fn fingerprints() -> Fingerprints {
+    if let Some(fp) = FINGERPRINTS.get() {
+        return fp.clone();
+    }
+    let inputs = EngineInputs::current();
+    let fp = Fingerprints {
+        result: inputs.result_fingerprint(),
+        detect: inputs.detect_fingerprint(),
+    };
+    if western_identity_complete(&inputs.western) {
+        let kept = FINGERPRINTS.get_or_init(|| {
+            tracing::info!(
+                result = %fp.result,
+                detect = %fp.detect,
+                western = %inputs.western,
+                "ocr cache: engine fingerprints"
+            );
+            fp
+        });
+        return kept.clone();
+    }
+    tracing::debug!(western = %inputs.western, "ocr cache: Tesseract language data not readable yet");
+    fp
 }
 
-/// Compute [`fingerprints`] on the blocking pool if no one has yet.
+/// `false` when the language data could not be hashed (see
+/// [`super::recognizer::western::engine_identity`]).
+fn western_identity_complete(western: &str) -> bool {
+    !["=missing", "=unreadable", "=no-tessdata-dir"]
+        .iter()
+        .any(|m| western.contains(m))
+}
+
+/// Compute [`fingerprints`] on the blocking pool if none is kept yet.
 pub async fn warm_fingerprints() {
     if FINGERPRINTS.get().is_none() {
-        let _ = tokio::task::spawn_blocking(|| {
-            fingerprints();
-        })
-        .await;
+        let _ = tokio::task::spawn_blocking(fingerprints).await;
+    }
+}
+
+/// Longest a cache read may take. The connection's own response timeout
+/// (500 ms, the redis crate's default, which `apalis_redis::connect`
+/// keeps) already bounds a command; this is the OCR code's own bound,
+/// so a hung Redis can never hold a permit or a request for longer,
+/// whatever the connection is configured with.
+pub const CACHE_READ_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// `GET key`, bounded by [`CACHE_READ_TIMEOUT`]. `None` on a miss, an
+/// error or a timeout (fail-open); a timeout counts
+/// `folio_ocr_cache_read_timeouts_total` and logs at warn.
+async fn get_bounded(redis: &ConnectionManager, key: &str, what: &str) -> Option<String> {
+    let mut conn = redis.clone();
+    match tokio::time::timeout(CACHE_READ_TIMEOUT, conn.get::<_, Option<String>>(key)).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, key, "{what}: GET failed; treating as miss");
+            None
+        }
+        Err(_) => {
+            metrics::counter!("folio_ocr_cache_read_timeouts_total").increment(1);
+            tracing::warn!(key, "{what}: GET timed out; treating as miss");
+            None
+        }
     }
 }
 
@@ -268,26 +310,19 @@ pub fn region_hash(x: u32, y: u32, w: u32, h: u32) -> String {
 /// Look up a cached response. Returns `Some` on hit, `None` on miss
 /// or Redis error (fail-open).
 pub async fn get(redis: &ConnectionManager, key: &str) -> Option<OcrResponse> {
-    let mut conn = redis.clone();
-    match conn.get::<_, Option<String>>(key).await {
-        Ok(Some(raw)) => match serde_json::from_str::<OcrResponse>(&raw) {
-            Ok(resp) => {
-                metrics::counter!("folio_ocr_cache_hits_total").increment(1);
-                Some(resp)
-            }
-            Err(e) => {
-                // Stale payload format (e.g. shape change across versions).
-                // Treat as a miss so the pipeline reruns and overwrites it.
-                tracing::warn!(error = %e, key, "ocr cache: malformed payload; treating as miss");
-                None
-            }
-        },
-        Ok(None) => {
-            metrics::counter!("folio_ocr_cache_misses_total").increment(1);
-            None
+    let Some(raw) = get_bounded(redis, key, "ocr cache").await else {
+        metrics::counter!("folio_ocr_cache_misses_total").increment(1);
+        return None;
+    };
+    match serde_json::from_str::<OcrResponse>(&raw) {
+        Ok(resp) => {
+            metrics::counter!("folio_ocr_cache_hits_total").increment(1);
+            Some(resp)
         }
         Err(e) => {
-            tracing::warn!(error = %e, key, "ocr cache: GET failed; treating as miss");
+            // Stale payload format (e.g. shape change across versions).
+            // Treat as a miss so the pipeline reruns and overwrites it.
+            tracing::warn!(error = %e, key, "ocr cache: malformed payload; treating as miss");
             None
         }
     }
@@ -357,24 +392,17 @@ fn detect_key_with(fingerprint: &str, content_hash: &str, page: u32) -> String {
 /// Look up cached detector output for a page. `Some` on hit, `None`
 /// on miss or Redis error (fail-open).
 pub async fn get_detect(redis: &ConnectionManager, key: &str) -> Option<CachedDetection> {
-    let mut conn = redis.clone();
-    match conn.get::<_, Option<String>>(key).await {
-        Ok(Some(raw)) => match serde_json::from_str::<CachedDetection>(&raw) {
-            Ok(detection) => {
-                metrics::counter!("folio_ocr_detect_cache_hits_total").increment(1);
-                Some(detection)
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, key, "ocr detect cache: malformed payload; treating as miss");
-                None
-            }
-        },
-        Ok(None) => {
-            metrics::counter!("folio_ocr_detect_cache_misses_total").increment(1);
-            None
+    let Some(raw) = get_bounded(redis, key, "ocr detect cache").await else {
+        metrics::counter!("folio_ocr_detect_cache_misses_total").increment(1);
+        return None;
+    };
+    match serde_json::from_str::<CachedDetection>(&raw) {
+        Ok(detection) => {
+            metrics::counter!("folio_ocr_detect_cache_hits_total").increment(1);
+            Some(detection)
         }
         Err(e) => {
-            tracing::warn!(error = %e, key, "ocr detect cache: GET failed; treating as miss");
+            tracing::warn!(error = %e, key, "ocr detect cache: malformed payload; treating as miss");
             None
         }
     }
@@ -709,20 +737,11 @@ pub fn page_size_key(content_hash: &str, page: u32) -> String {
 /// The stored decoded size `(width, height)`, or `None` on a miss, a
 /// malformed value or a Redis error (fail-open).
 pub async fn get_page_size(redis: &ConnectionManager, key: &str) -> Option<(u32, u32)> {
-    let mut conn = redis.clone();
-    match conn.get::<_, Option<String>>(key).await {
-        Ok(Some(raw)) => {
-            let (w, h) = raw.split_once('x')?;
-            match (w.parse::<u32>(), h.parse::<u32>()) {
-                (Ok(w), Ok(h)) if w > 0 && h > 0 => Some((w, h)),
-                _ => None,
-            }
-        }
-        Ok(None) => None,
-        Err(e) => {
-            tracing::warn!(error = %e, key, "ocr page size: GET failed; treating as miss");
-            None
-        }
+    let raw = get_bounded(redis, key, "ocr page size").await?;
+    let (w, h) = raw.split_once('x')?;
+    match (w.parse::<u32>(), h.parse::<u32>()) {
+        (Ok(w), Ok(h)) if w > 0 && h > 0 => Some((w, h)),
+        _ => None,
     }
 }
 
@@ -755,5 +774,26 @@ mod page_size_tests {
         assert_eq!(parts[4..], ["hashA", "7"]);
         assert_ne!(page_size_key("hashA", 7), page_size_key("hashB", 7));
         assert_ne!(page_size_key("hashA", 7), page_size_key("hashA", 8));
+    }
+}
+
+#[cfg(test)]
+mod fingerprint_memo_tests {
+    use super::*;
+
+    /// Only a fingerprint with hashed language data is kept for the life
+    /// of the process; one computed while the data is missing is not.
+    #[test]
+    fn only_a_complete_western_identity_is_kept() {
+        assert!(western_identity_complete(
+            "tesseract=5.5.0;eng.traineddata=0123abcd"
+        ));
+        for incomplete in [
+            "tesseract=5.5.0;eng.traineddata=missing",
+            "tesseract=5.5.0;eng.traineddata=unreadable:PermissionDenied",
+            "tesseract=5.5.0;eng.traineddata=no-tessdata-dir",
+        ] {
+            assert!(!western_identity_complete(incomplete), "{incomplete}");
+        }
     }
 }

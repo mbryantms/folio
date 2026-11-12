@@ -270,6 +270,11 @@ pub mod test_models {
             .insert(content_hash.to_owned(), stub);
     }
 
+    /// Whether a test installed stand-ins for this content hash.
+    pub fn is_installed(content_hash: &str) -> bool {
+        get(content_hash).is_some()
+    }
+
     pub(super) fn get(content_hash: &str) -> Option<Stub> {
         STUBS
             .lock()
@@ -493,9 +498,22 @@ fn recognize_blocking(
     };
 
     let recognize_start = std::time::Instant::now();
-    let recognition = match recognizer.recognize(&final_img) {
-        Ok(r) => r,
-        Err(e) => return Ok((detection_to_cache, Err(e))),
+    // A failed recognition (an error, or a panic from the engine) must not
+    // lose a detection that already finished: it is handed back for the
+    // cache either way. A panic is caught here for that reason only; the
+    // engine's own mutex may be poisoned by it, as before.
+    let recognized = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        recognizer.recognize(&final_img)
+    }));
+    let recognition = match recognized {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => return Ok((detection_to_cache, Err(e))),
+        Err(_) => {
+            return Ok((
+                detection_to_cache,
+                Err(anyhow::anyhow!("the recognizer panicked")),
+            ));
+        }
     };
     metrics::histogram!("folio_ocr_recognize_seconds", "lang" => lang_label)
         .record(recognize_start.elapsed().as_secs_f64());

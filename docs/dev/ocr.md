@@ -46,7 +46,8 @@ postprocess pipeline that ships with the Rust binary.
   `region_pct` (the overlap rule). After the decode it is converted with
   the decoded width and height, each edge rounded to a whole pixel and
   **clamped** to the page (an overshoot at any edge is cut, not
-  refused); a box that rounds to no whole pixel is 422 `invalid_region`.
+  refused); a box that rounds to no whole pixel is 422 `validation`
+  with a `region_pct` field detail.
   The client never needs the page size, which the page list cannot
   always give right (ComicInfo-declared sizes that are stale, EXIF
   rotations).
@@ -123,8 +124,8 @@ Error codes (envelope `{ "error": { "code", "message" } }`):
 
 | Status | code | When |
 |---|---|---|
-| 422 | `invalid_region` | `region`: `w`/`h` is 0 OR rect extends outside the decoded page; `region_pct`: rounds to no whole pixel (POST only) |
-| 422 | `validation` | `region_pct` not finite, `w`/`h` ≤ 0, or wholly off the page; or no region at all; field-level `error.details` (POST only) |
+| 422 | `invalid_region` | `region`: `w`/`h` is 0 OR rect extends outside the decoded page (POST only) |
+| 422 | `validation` | `region_pct` not finite, `w`/`h` ≤ 0, wholly off the page, or rounding to no whole pixel; or no region at all; field-level `error.details` (POST only) |
 | 422 | `invalid_lang` | `lang` not in `western`/`manga` (POST only) |
 | 401 / 403 | (CSRF / auth) | Standard CSRF + session guards |
 | 404 | `not_found` | Issue missing or user lacks library access |
@@ -166,7 +167,20 @@ Redis write per finished result, each bounded by
 `ocr::cache::CACHE_WRITE_TIMEOUT` (5 s). A detection whose request was
 gone before it finished is counted in `folio_ocr_detect_abandoned_total`;
 on the POST the recognition that would follow it is skipped (nobody is
-waiting), the detection is still cached.
+waiting), and the detection is written to the cache like any other
+(fail-open: a write that errors or exceeds the 5 s bound is dropped and
+logged, and the next request detects again). A recognition that fails,
+with an error or a panic from the engine, still hands its finished
+detection to the cache.
+
+Every OCR cache read is bounded too (`CACHE_READ_TIMEOUT`, 2 s, on top
+of the Redis connection's own 500 ms response timeout); a timed-out read
+is a miss, counted in `folio_ocr_cache_read_timeouts_total` and logged
+at warn, so a hung Redis cannot hold a permit.
+
+At shutdown the runtime drops the detached tasks: a cache write still
+pending then is lost (harmless; the next request recomputes it), while
+blocking inference already running goes on to its end, as before.
 
 ## Pipeline stages
 
@@ -437,9 +451,12 @@ is read from the archive and decoded once, not once per balloon.
   then find the page. The claim is filled from inside the blocking
   decode, so it completes even when the claiming request is gone; a
   failed decode wakes the waiters and the next one decodes.
-- **Order**: visibility, the result cache and the archive checks run on
-  every request before this cache is consulted, and it is consulted
-  only with an OCR permit held. Memory is the bound plus at most one
+- **Order**: visibility, the result cache (for a `region_pct` request:
+  through the stored page size, when there is one) and the archive
+  checks run on every request before this cache is consulted, and it is
+  consulted only with an OCR permit held. A `region_pct` request whose
+  page size is not stored yet looks the result cache up once more after
+  the decode, still under the permit. Memory is the bound plus at most one
   in-flight page per permit; a waiter (holding a permit) waits only on
   a decode that runs under the other permit and ends. The map's lock
   is held for map updates only, never with the Tesseract or detector
@@ -506,7 +523,8 @@ Denied requests increment
 | `folio_ocr_page_decode_seconds` | histogram | — | Archive read + decode of one page (decoded-page cache misses only) |
 | `folio_ocr_permit_wait_seconds` | histogram | — | Time a request waited for an OCR permit (also recorded when it gave up) |
 | `folio_ocr_busy_total` | counter | — | Requests refused with 503 `service_unavailable` after waiting `OCR_PERMIT_WAIT` (10 s) for a permit |
-| `folio_ocr_detect_abandoned_total` | counter | — | Detections that finished after their request was gone (timeout, abort); each is still cached |
+| `folio_ocr_detect_abandoned_total` | counter | — | Detections that finished after their request was gone (timeout, abort); each is written to the cache like any other (a write that fails or exceeds 5 s is dropped) |
+| `folio_ocr_cache_read_timeouts_total` | counter | — | OCR cache reads (result, detect, page size) that exceeded `CACHE_READ_TIMEOUT` (2 s) and were treated as misses |
 | `folio_ocr_model_load_seconds` | histogram | `model` | Once per process per model (`detector`, `western`, `manga`): verified download (if needed) + session build |
 | `folio_ocr_model_first_use_seconds` | histogram | `model` | Once per process per model: the first inference after load (session warm-up included) |
 | `folio_ocr_page_cache_hits_total` / `folio_ocr_page_cache_misses_total` | counter | — | Decoded-page cache effectiveness |

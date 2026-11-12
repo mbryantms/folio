@@ -95,7 +95,8 @@ failed — check the server log for `folio::audit_log_retention` errors.
 `folio_zip_lru_{hits,misses,evictions}_total`, `folio_zip_lru_open_fds`,
 `folio_ocr_{pipeline,recognize,detect,page_decode,permit_wait}_seconds`,
 `folio_ocr_model_{load,first_use}_seconds{model}`, `folio_ocr_busy_total`,
-`folio_ocr_detect_abandoned_total`, `folio_ocr_{cache,detect_cache,page_cache}_{hits,misses}_total`
+`folio_ocr_detect_abandoned_total`, `folio_ocr_cache_read_timeouts_total`,
+`folio_ocr_{cache,detect_cache,page_cache}_{hits,misses}_total`
 (see [ocr.md](ocr.md#telemetry)),
 `folio_auth_lockout_total`, `folio_auth_lockout_email_total`,
 `folio_auth_lockout_app_password_total`,

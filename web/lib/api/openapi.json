@@ -29146,26 +29146,12 @@
             "minimum": 0
           },
           "region": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/OcrRegion",
-                "description": "User's drag rectangle in page-pixel coordinates of the decoded\npage. All four fields are unsigned pixels; w/h must be > 0 and\nthe rect must fit inside the decoded page bounds. Send this or\n`region_pct`; when both are present `region_pct` is used."
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "$ref": "#/components/schemas/OcrRegion",
+            "description": "User's drag rectangle in page-pixel coordinates of the decoded\npage. All four fields are unsigned pixels; w/h must be > 0 and\nthe rect must fit inside the decoded page bounds. Send this or\n`region_pct`; when both are present `region_pct` is used."
           },
           "region_pct": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/OcrRegionPct",
-                "description": "The same rectangle in percent (0–100) of the decoded page, the\nreader's marker representation, so the client needs no page\nsize. Converted after the decode with the decoded width and\nheight, rounded to whole pixels and clamped to the page; it must\noverlap the page. Wins over `region` when both are sent."
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "$ref": "#/components/schemas/OcrRegionPct",
+            "description": "The same rectangle in percent (0–100) of the decoded page, the\nreader's marker representation, so the client needs no page\nsize. Converted after the decode with the decoded width and\nheight, rounded to whole pixels and clamped to the page; it must\noverlap the page. Wins over `region` when both are sent."
           }
         }
       },
@@ -29196,7 +29182,7 @@
           "page_w": {
             "type": "integer",
             "format": "int32",
-            "description": "Decoded page width in pixels, the space `refined_bbox` and\n`words` are in (and `region_pct` was converted with). Always\nsent; `default` only so older cached payloads still deserialize.",
+            "description": "Decoded page width in pixels, the space `refined_bbox` and\n`words` are in (and `region_pct` was converted with). Always\nsent; a cached payload without it is malformed (a miss).",
             "minimum": 0
           },
           "raw_text": {
