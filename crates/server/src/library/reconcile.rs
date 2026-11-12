@@ -1396,14 +1396,52 @@ pub(crate) async fn duplicate_removed_paths(
     Ok(out)
 }
 
+/// Ids listed per kind in a sweep's kept-rows summary event; the counts
+/// are always complete.
+const KEPT_ID_SAMPLE: usize = 50;
+
+/// Kept issue ids of one library run: how many, and the first
+/// [`KEPT_ID_SAMPLE`] of them (all the summary needs). A sweep walks every
+/// candidate, so keeping every id would grow with the rows it leaves alone.
+#[derive(Debug, Default)]
+pub(crate) struct KeptIds {
+    count: usize,
+    sample: Vec<String>,
+}
+
+impl KeptIds {
+    pub(crate) fn push(&mut self, id: String) {
+        self.count += 1;
+        if self.sample.len() < KEPT_ID_SAMPLE {
+            self.sample.push(id);
+        }
+    }
+
+    pub(crate) fn extend(&mut self, ids: impl IntoIterator<Item = String>) {
+        for id in ids {
+            self.push(id);
+        }
+    }
+
+    /// Ids pushed so far (all of them, not just the sample).
+    pub(crate) fn len(&self) -> usize {
+        self.count
+    }
+
+    /// The first ids pushed, at most [`KEPT_ID_SAMPLE`].
+    pub(crate) fn sample(&self) -> &[String] {
+        &self.sample
+    }
+}
+
 /// Rows a removal sweep left alone in one library run.
 #[derive(Debug, Default)]
 pub(crate) struct KeptRows {
     /// Present again: kept, and their series rescanned.
-    pub present_issues: Vec<String>,
+    pub present_issues: KeptIds,
     pub present_series: HashSet<Uuid>,
     /// The disk would not say: kept, not rescanned.
-    pub unknown_issues: Vec<String>,
+    pub unknown_issues: KeptIds,
     pub unknown_series: HashSet<Uuid>,
     /// Series to rescan (those of present issues plus present series).
     pub rescan: BTreeSet<Uuid>,
@@ -1457,8 +1495,6 @@ impl KeptRows {
             );
         }
         if self.present() > 0 || self.unknown() > 0 {
-            /// Ids listed in the event detail; the counts are always complete.
-            const SAMPLE: usize = 50;
             event_log::record(
                 &state.db,
                 NewEvent::new(
@@ -1484,10 +1520,10 @@ impl KeptRows {
                     "series_scans": outcome.series_scans,
                     "library_scans": outcome.library_scans,
                     "rescans_throttled": outcome.throttled,
-                    "present_issue_ids": self.present_issues.iter().take(SAMPLE).collect::<Vec<_>>(),
-                    "present_series_ids": self.present_series.iter().take(SAMPLE).collect::<Vec<_>>(),
-                    "unknown_issue_ids": self.unknown_issues.iter().take(SAMPLE).collect::<Vec<_>>(),
-                    "unknown_series_ids": self.unknown_series.iter().take(SAMPLE).collect::<Vec<_>>(),
+                    "present_issue_ids": self.present_issues.sample(),
+                    "present_series_ids": self.present_series.iter().take(KEPT_ID_SAMPLE).collect::<Vec<_>>(),
+                    "unknown_issue_ids": self.unknown_issues.sample(),
+                    "unknown_series_ids": self.unknown_series.iter().take(KEPT_ID_SAMPLE).collect::<Vec<_>>(),
                 })),
             )
             .await;
@@ -1883,4 +1919,26 @@ async fn confirm_series_page(
     Ok(ConfirmSeriesCandidate::find_by_statement(stmt)
         .all(db)
         .await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kept_ids_count_everything_and_sample_the_first() {
+        let mut ids = KeptIds::default();
+        assert_eq!(ids.len(), 0);
+        assert!(ids.sample().is_empty());
+        ids.extend((0..KEPT_ID_SAMPLE).map(|n| n.to_string()));
+        assert_eq!(ids.len(), KEPT_ID_SAMPLE);
+        assert_eq!(ids.sample().len(), KEPT_ID_SAMPLE);
+        for n in 0..10 {
+            ids.push(format!("late-{n}"));
+        }
+        assert_eq!(ids.len(), KEPT_ID_SAMPLE + 10, "the count is complete");
+        assert_eq!(ids.sample().len(), KEPT_ID_SAMPLE, "the sample is capped");
+        assert_eq!(ids.sample()[0], "0", "first pushed first");
+        assert!(ids.sample().iter().all(|id| !id.starts_with("late-")));
+    }
 }
