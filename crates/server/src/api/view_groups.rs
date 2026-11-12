@@ -152,8 +152,8 @@ pub struct CreateViewGroupReq {
     #[serde(default)]
     #[garde(skip)]
     pub view_ids: Vec<Uuid>,
-    /// Optional enclosing group (same scope, at most
-    /// `MAX_GROUP_DEPTH` levels in all). Absent or null = top level.
+    /// Optional enclosing group (same scope; groups nest at most four
+    /// levels deep). Absent or null = top level.
     #[serde(default)]
     #[garde(skip)]
     pub parent_id: Option<Uuid>,
@@ -180,12 +180,15 @@ const MAX_LAYOUT_GROUPS: usize = MAX_GROUPS_PER_SCOPE as usize;
 pub struct LayoutGroupReq {
     #[garde(skip)]
     pub id: Uuid,
-    /// The enclosing group, which must itself be listed in the same
-    /// payload. Absent or null = top level. Sibling order is the order
+    /// The enclosing group, which must be a group of this scope (and so
+    /// listed in the same payload). `null` = top level. **Absent = keep
+    /// the group's stored parent**, so a client that predates nesting
+    /// reorders without flattening the tree. Sibling order is the order
     /// in which the groups of one parent appear in `groups`.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_some")]
     #[garde(skip)]
-    pub parent_id: Option<Uuid>,
+    #[schema(value_type = Option<Uuid>)]
+    pub parent_id: Option<Option<Uuid>>,
     /// Member view ids in display order. A view listed under no group is
     /// ungrouped after the write. Ids the caller cannot see (deleted, or
     /// not theirs) are ignored.
@@ -199,8 +202,9 @@ pub struct ReplaceLayoutReq {
     #[garde(skip)]
     pub scope: String,
     /// Every group in the scope, exactly once. Each group's siblings
-    /// (same `parent_id`) are ordered as they appear here; the tree must
-    /// be acyclic and at most `MAX_GROUP_DEPTH` levels deep.
+    /// (same parent) are ordered as they appear here; the resulting tree
+    /// — stated parents plus the stored parent of any group that states
+    /// none — must be acyclic and at most four levels deep.
     // A scope holds at most `MAX_GROUPS_PER_SCOPE` groups, so a longer
     // list can never be valid.
     #[garde(length(max = MAX_LAYOUT_GROUPS), dive)]
@@ -210,6 +214,16 @@ pub struct ReplaceLayoutReq {
     #[serde(default)]
     #[garde(length(max = MAX_LAYOUT_VIEW_IDS))]
     pub ungrouped: Vec<Uuid>,
+}
+
+/// Tri-state field: absent → `None`, JSON `null` → `Some(None)`, a value
+/// → `Some(Some(_))`.
+fn deserialize_some<'de, T, D>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
 }
 
 fn valid_scope(value: &str, _: &()) -> garde::Result {
@@ -797,14 +811,17 @@ pub async fn replace_layout(
     }
 }
 
-/// Check the tree a layout payload describes: every parent is listed in
-/// the payload, no cycles, at most [`MAX_GROUP_DEPTH`] levels.
-fn validate_layout_tree(groups: &[LayoutGroupReq]) -> Result<(), Response> {
-    let parents: HashMap<Uuid, Option<Uuid>> = groups.iter().map(|g| (g.id, g.parent_id)).collect();
-    let order: Vec<Uuid> = groups.iter().map(|g| g.id).collect();
+/// Check the tree a layout write produces: `parents` gives every
+/// group's parent after the write (stated, or kept from the stored
+/// tree), `order` the payload order. Every parent is a group of the
+/// scope, no cycles, at most [`MAX_GROUP_DEPTH`] levels.
+fn validate_layout_tree(
+    parents: &HashMap<Uuid, Option<Uuid>>,
+    order: &[Uuid],
+) -> Result<(), Response> {
     let index_of = |id: Uuid| order.iter().position(|g| *g == id).unwrap_or(0);
     let field = |id: Uuid| format!("groups[{}].parent_id", index_of(id));
-    match tree_depths(&parents, &order) {
+    match tree_depths(parents, order) {
         Ok(_) => Ok(()),
         Err(TreeError::MissingParent(id)) => Err(field_error(field(id), PARENT_NOT_FOUND)),
         Err(TreeError::Cycle(id)) => Err(field_error(field(id), PARENT_CYCLE)),
@@ -835,7 +852,6 @@ async fn replace_layout_inner(
     if all_views.iter().collect::<HashSet<_>>().len() != all_views.len() {
         return Err(duplicate_views());
     }
-    validate_layout_tree(&req.groups)?;
 
     let txn = app.db.begin().await.map_err(db_fail("begin"))?;
     lock_scope(&txn, user_id, &req.scope).await?;
@@ -853,6 +869,19 @@ async fn replace_layout_inner(
             "groups must list every group in this scope exactly once",
         ));
     }
+    // The tree after the write: a stated parent (`null` = top level), or
+    // the stored one when the payload states none. Checked only now, with
+    // the set known to be complete, so a stale payload that leaves a
+    // group out hears that rather than "parent not found"; and under the
+    // lock, so the kept parents can't change before the write.
+    let stored: HashMap<Uuid, Option<Uuid>> = owned.iter().map(|g| (g.id, g.parent_id)).collect();
+    let parents: HashMap<Uuid, Option<Uuid>> = req
+        .groups
+        .iter()
+        .map(|g| (g.id, g.parent_id.unwrap_or_else(|| stored[&g.id])))
+        .collect();
+    let order: Vec<Uuid> = req.groups.iter().map(|g| g.id).collect();
+    validate_layout_tree(&parents, &order)?;
     // View ids the caller cannot see — deleted elsewhere, or someone
     // else's — are dropped from the write, never added, and answered
     // exactly like a visible id: nothing tells the two apart.
@@ -878,12 +907,13 @@ async fn replace_layout_inner(
     let now = Utc::now().fixed_offset();
     let mut next_position: HashMap<Option<Uuid>, i32> = HashMap::new();
     for g in &req.groups {
-        let slot = next_position.entry(g.parent_id).or_insert(0);
+        let parent = parents[&g.id];
+        let slot = next_position.entry(parent).or_insert(0);
         let position = *slot;
         *slot += 1;
         saved_view_group::ActiveModel {
             id: Unchanged(g.id),
-            parent_id: Set(g.parent_id),
+            parent_id: Set(parent),
             position: Set(position),
             updated_at: Set(now),
             ..Default::default()

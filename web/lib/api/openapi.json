@@ -20163,7 +20163,7 @@
               "null"
             ],
             "format": "uuid",
-            "description": "Optional enclosing group (same scope, at most\n`MAX_GROUP_DEPTH` levels in all). Absent or null = top level."
+            "description": "Optional enclosing group (same scope; groups nest at most four\nlevels deep). Absent or null = top level."
           },
           "scope": {
             "type": "string"
@@ -26421,7 +26421,7 @@
               "null"
             ],
             "format": "uuid",
-            "description": "The enclosing group, which must itself be listed in the same\npayload. Absent or null = top level. Sibling order is the order\nin which the groups of one parent appear in `groups`."
+            "description": "The enclosing group, which must be a group of this scope (and so\nlisted in the same payload). `null` = top level. **Absent = keep\nthe group's stored parent**, so a client that predates nesting\nreorders without flattening the tree. Sibling order is the order\nin which the groups of one parent appear in `groups`."
           },
           "view_ids": {
             "type": "array",
@@ -32792,7 +32792,7 @@
             "items": {
               "$ref": "#/components/schemas/LayoutGroupReq"
             },
-            "description": "Every group in the scope, exactly once. Each group's siblings\n(same `parent_id`) are ordered as they appear here; the tree must\nbe acyclic and at most `MAX_GROUP_DEPTH` levels deep."
+            "description": "Every group in the scope, exactly once. Each group's siblings\n(same parent) are ordered as they appear here; the resulting tree\n— stated parents plus the stored parent of any group that states\nnone — must be acyclic and at most four levels deep."
           },
           "scope": {
             "type": "string"

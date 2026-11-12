@@ -898,16 +898,15 @@ async fn layout_round_trips_a_three_level_tree() {
     let again = Tree::from(&list_scope(&app, &user, "cbl").await);
     assert_eq!(again.by_id, tree.by_id);
 
-    // Moving a folder to the top level is a layout write too; a layout
-    // without `parent_id` (an old client) flattens nothing it doesn't
-    // name: absent = top level.
+    // Moving a folder to the top level is a layout write too: an
+    // explicit `null` parent.
     let (status, _) = put_layout(
         &app,
         &user,
         serde_json::json!({ "scope": "cbl", "groups": [
-            { "id": g2["id"], "view_ids": [a] },
+            { "id": g2["id"], "parent_id": null, "view_ids": [a] },
             { "id": g4["id"], "parent_id": g2["id"], "view_ids": [] },
-            { "id": g1["id"], "view_ids": [] },
+            { "id": g1["id"], "parent_id": null, "view_ids": [] },
             { "id": g3["id"], "parent_id": g1["id"], "view_ids": [c, b] },
         ] }),
     )
@@ -1156,22 +1155,26 @@ async fn layout_drops_unknown_and_foreign_view_ids_alike() {
     assert_eq!(theirs_body["ungrouped_ids"].as_array().unwrap().len(), 0);
 }
 
+/// Two tree rewrites that list the same groups in opposite orders, at
+/// once: without the scope lock their row updates interleave and
+/// deadlock (one answers 500). With it both succeed, one after the
+/// other, and the tree is whichever came last — never a mix.
 #[tokio::test]
-async fn concurrent_layouts_cannot_build_a_cycle() {
+async fn concurrent_opposite_order_layouts_both_succeed() {
     let app = TestApp::spawn().await;
     let user = register(&app, "nest-race@example.com").await;
     let x = create_group(&app, &user, "cbl", "X", &[]).await;
     let y = create_group(&app, &user, "cbl", "Y", &[]).await;
     for _ in 0..15 {
-        // Each payload is a valid tree on its own; listed in opposite
-        // orders so their row writes interleave.
+        // Each payload states the whole tree; listed in opposite orders
+        // so their row writes would interleave.
         let x_in_y = serde_json::json!({ "scope": "cbl", "groups": [
             { "id": x["id"], "parent_id": y["id"], "view_ids": [] },
-            { "id": y["id"], "view_ids": [] },
+            { "id": y["id"], "parent_id": null, "view_ids": [] },
         ] });
         let y_in_x = serde_json::json!({ "scope": "cbl", "groups": [
             { "id": y["id"], "parent_id": x["id"], "view_ids": [] },
-            { "id": x["id"], "view_ids": [] },
+            { "id": x["id"], "parent_id": null, "view_ids": [] },
         ] });
         let (r1, r2) = tokio::join!(
             put_layout(&app, &user, x_in_y),
@@ -1267,4 +1270,196 @@ async fn deleting_the_user_removes_a_nested_tree() {
     assert_eq!(left, 0);
     let body = list_scope(&app, &keep, "cbl").await;
     assert_eq!(body["groups"][0]["id"], kept["id"]);
+}
+
+// ───── absent vs null parent (clients that predate nesting) ─────
+
+/// L1 ⊃ L2 ⊃ L3, plus a top-level T; views a, b.
+async fn three_levels(
+    app: &TestApp,
+    user: &Authed,
+) -> (
+    serde_json::Value,
+    serde_json::Value,
+    serde_json::Value,
+    serde_json::Value,
+) {
+    let l1 = create_group(app, user, "cbl", "L1", &[]).await;
+    let l2 = create_child(app, user, "cbl", "L2", &l1, &[]).await;
+    let l3 = create_child(app, user, "cbl", "L3", &l2, &[]).await;
+    let t = create_group(app, user, "cbl", "T", &[]).await;
+    (l1, l2, l3, t)
+}
+
+#[tokio::test]
+async fn an_old_style_layout_keeps_the_tree_and_applies_order_and_members() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "nest-old-client@example.com").await;
+    let a = seed_view(&app, &user, "A").await;
+    let b = seed_view(&app, &user, "B").await;
+    let (l1, l2, l3, t) = three_levels(&app, &user).await;
+    // What a pre-nesting page sends: no `parent_id` anywhere, T moved
+    // first, members changed.
+    let (status, resp) = put_layout(
+        &app,
+        &user,
+        serde_json::json!({ "scope": "cbl", "groups": [
+            { "id": t["id"], "view_ids": [b] },
+            { "id": l3["id"], "view_ids": [a] },
+            { "id": l1["id"], "view_ids": [] },
+            { "id": l2["id"], "view_ids": [] },
+        ] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{resp}");
+    let tree = Tree::from(&list_scope(&app, &user, "cbl").await);
+    assert_eq!(tree.children(None), vec![sid(&t), sid(&l1)]);
+    assert_eq!(tree.parent(&l2), Some(sid(&l1)));
+    assert_eq!(tree.parent(&l3), Some(sid(&l2)));
+    assert_eq!(tree.max_depth(), 3);
+    assert_eq!(tree.views(&t), vec![b.to_string()]);
+    assert_eq!(tree.views(&l3), vec![a.to_string()]);
+}
+
+#[tokio::test]
+async fn a_stated_null_moves_to_the_top_and_mixes_with_kept_parents() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "nest-null@example.com").await;
+    let (l1, l2, l3, t) = three_levels(&app, &user).await;
+    // L3 to the top (stated null), L2 into T (stated), L1 and T kept.
+    let (status, resp) = put_layout(
+        &app,
+        &user,
+        serde_json::json!({ "scope": "cbl", "groups": [
+            { "id": l1["id"], "view_ids": [] },
+            { "id": l3["id"], "parent_id": null, "view_ids": [] },
+            { "id": t["id"], "view_ids": [] },
+            { "id": l2["id"], "parent_id": t["id"], "view_ids": [] },
+        ] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{resp}");
+    let tree = Tree::from(&list_scope(&app, &user, "cbl").await);
+    assert_eq!(tree.children(None), vec![sid(&l1), sid(&l3), sid(&t)]);
+    assert_eq!(tree.parent(&l2), Some(sid(&t)));
+    assert_eq!(tree.children(Some(&l1)), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn a_kept_parent_the_payload_makes_illegal_is_refused() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "nest-kept-cycle@example.com").await;
+    let (l1, l2, l3, t) = three_levels(&app, &user).await;
+    let before = Tree::from(&list_scope(&app, &user, "cbl").await);
+    for (body, why, field) in [
+        (
+            // L1 stated under L3, whose kept chain leads back to L1.
+            serde_json::json!({ "scope": "cbl", "groups": [
+                { "id": l1["id"], "parent_id": l3["id"], "view_ids": [] },
+                { "id": l2["id"], "view_ids": [] },
+                { "id": l3["id"], "view_ids": [] },
+                { "id": t["id"], "view_ids": [] },
+            ] }),
+            "cycle through a stated parent",
+            "groups[0].parent_id",
+        ),
+        (
+            // L1 stated under T; its kept subtree comes along: T ⊃ L1 ⊃
+            // L2 ⊃ L3 is exactly four levels, so this one is accepted.
+            serde_json::json!({ "scope": "cbl", "groups": [
+                { "id": t["id"], "view_ids": [] },
+                { "id": l1["id"], "parent_id": t["id"], "view_ids": [] },
+                { "id": l2["id"], "view_ids": [] },
+                { "id": l3["id"], "view_ids": [] },
+            ] }),
+            "kept parents under a stated one: depth 4 is fine",
+            "",
+        ),
+    ] {
+        let (status, resp) = put_layout(&app, &user, body).await;
+        if field.is_empty() {
+            assert_eq!(status, StatusCode::NO_CONTENT, "{why}: {resp}");
+            continue;
+        }
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{why}: {resp}");
+        assert_eq!(resp["error"]["details"][0]["field"], field, "{why}");
+        assert_eq!(
+            Tree::from(&list_scope(&app, &user, "cbl").await).by_id,
+            before.by_id,
+            "nothing applied: {why}"
+        );
+    }
+    // Now T ⊃ L1 ⊃ L2 ⊃ L3. A new group under L3 would be level 5 via the
+    // kept chain: refused, nothing applied.
+    let extra = create_group(&app, &user, "cbl", "Extra", &[]).await;
+    let snapshot = Tree::from(&list_scope(&app, &user, "cbl").await);
+    let (status, resp) = put_layout(
+        &app,
+        &user,
+        serde_json::json!({ "scope": "cbl", "groups": [
+            { "id": t["id"], "view_ids": [] },
+            { "id": l1["id"], "view_ids": [] },
+            { "id": l2["id"], "view_ids": [] },
+            { "id": l3["id"], "view_ids": [] },
+            { "id": extra["id"], "parent_id": l3["id"], "view_ids": [] },
+        ] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{resp}");
+    assert_eq!(resp["error"]["details"][0]["field"], "groups[4].parent_id");
+    assert_eq!(
+        Tree::from(&list_scope(&app, &user, "cbl").await).by_id,
+        snapshot.by_id
+    );
+}
+
+#[tokio::test]
+async fn a_payload_missing_a_parent_group_hears_that_a_group_is_missing() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "nest-missing@example.com").await;
+    let (l1, l2, l3, t) = three_levels(&app, &user).await;
+    // Stale: no L1, though L2 (listed) sits in it.
+    let (status, resp) = put_layout(
+        &app,
+        &user,
+        serde_json::json!({ "scope": "cbl", "groups": [
+            { "id": l2["id"], "parent_id": l1["id"], "view_ids": [] },
+            { "id": l3["id"], "view_ids": [] },
+            { "id": t["id"], "view_ids": [] },
+        ] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{resp}");
+    assert_eq!(
+        resp["error"]["message"],
+        "groups must list every group in this scope exactly once"
+    );
+}
+
+#[tokio::test]
+async fn renaming_or_collapsing_a_nested_group_keeps_its_place() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "nest-patch@example.com").await;
+    let (l1, l2, _l3, _t) = three_levels(&app, &user).await;
+    let sibling = create_child(&app, &user, "cbl", "Sibling", &l1, &[]).await;
+    let before = Tree::from(&list_scope(&app, &user, "cbl").await);
+    for body in [
+        serde_json::json!({ "name": "Renamed" }),
+        serde_json::json!({ "collapsed": true }),
+    ] {
+        let (status, resp) = http(
+            &app,
+            Method::PATCH,
+            &format!("/api/me/view-groups/{}", sid(&l2)),
+            Some(&user),
+            Some(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{resp}");
+        assert_eq!(resp["parent_id"], l1["id"]);
+        assert_eq!(resp["position"], 0);
+    }
+    let after = Tree::from(&list_scope(&app, &user, "cbl").await);
+    assert_eq!(after.by_id, before.by_id);
+    assert_eq!(after.children(Some(&l1)), vec![sid(&l2), sid(&sibling)]);
 }

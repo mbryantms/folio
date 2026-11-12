@@ -8751,8 +8751,8 @@ export interface components {
             name: string;
             /**
              * Format: uuid
-             * @description Optional enclosing group (same scope, at most
-             *     `MAX_GROUP_DEPTH` levels in all). Absent or null = top level.
+             * @description Optional enclosing group (same scope; groups nest at most four
+             *     levels deep). Absent or null = top level.
              */
             parent_id?: string | null;
             scope: string;
@@ -11167,8 +11167,10 @@ export interface components {
             id: string;
             /**
              * Format: uuid
-             * @description The enclosing group, which must itself be listed in the same
-             *     payload. Absent or null = top level. Sibling order is the order
+             * @description The enclosing group, which must be a group of this scope (and so
+             *     listed in the same payload). `null` = top level. **Absent = keep
+             *     the group's stored parent**, so a client that predates nesting
+             *     reorders without flattening the tree. Sibling order is the order
              *     in which the groups of one parent appear in `groups`.
              */
             parent_id?: string | null;
@@ -14069,8 +14071,9 @@ export interface components {
         ReplaceLayoutReq: {
             /**
              * @description Every group in the scope, exactly once. Each group's siblings
-             *     (same `parent_id`) are ordered as they appear here; the tree must
-             *     be acyclic and at most `MAX_GROUP_DEPTH` levels deep.
+             *     (same parent) are ordered as they appear here; the resulting tree
+             *     — stated parents plus the stored parent of any group that states
+             *     none — must be acyclic and at most four levels deep.
              */
             groups: components["schemas"]["LayoutGroupReq"][];
             scope: string;

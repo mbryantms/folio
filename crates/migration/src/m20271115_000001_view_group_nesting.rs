@@ -99,8 +99,10 @@ impl MigrationTrait for Migration {
         .await?;
         // Flattening loses the nesting, not the groups: every group
         // survives as a top-level one, numbered in tree order (a parent,
-        // then its subtree) so the flat board reads as the tree did.
-        db.execute_unprepared(
+        // then its subtree) so the flat board reads as the tree did. Only
+        // while the column is there, so a re-run is a no-op.
+        if manager.has_column("saved_view_groups", "parent_id").await? {
+            db.execute_unprepared(
             "WITH RECURSIVE t AS ( \
                  SELECT id, user_id, scope, \
                         lpad(position::text, 10, '0') || id::text AS path \
@@ -115,8 +117,9 @@ impl MigrationTrait for Migration {
              ) \
              UPDATE saved_view_groups s SET position = numbered.pos \
              FROM numbered WHERE s.id = numbered.id",
-        )
-        .await?;
+            )
+            .await?;
+        }
         db.execute_unprepared("ALTER TABLE saved_view_groups DROP COLUMN IF EXISTS parent_id")
             .await?;
         Ok(())
