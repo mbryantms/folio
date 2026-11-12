@@ -132,6 +132,14 @@ struct Args {
     /// Line split used with it.
     #[arg(long, default_value = "profile")]
     best_split: String,
+    /// Whole-page throughput: every page once per repeat (decode, detect,
+    /// recognise every unit), one worker; run several processes for
+    /// parallel workers.
+    #[arg(long)]
+    throughput: bool,
+    /// Passes over the page list in --throughput mode.
+    #[arg(long, default_value_t = 1)]
+    repeat: usize,
     /// Score threshold for ogkalu's detector.
     #[arg(long, default_value_t = 0.5)]
     ogk_threshold: f32,
@@ -612,7 +620,7 @@ fn main() -> anyhow::Result<()> {
             .ok_or_else(|| anyhow::anyhow!("--probe needs --models"))?;
         return stage2::probe(&m, args.threads);
     }
-    if args.cand || args.cand_timing {
+    if args.cand || args.cand_timing || args.throughput {
         std::fs::create_dir_all(&args.out)?;
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()

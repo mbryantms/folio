@@ -1216,12 +1216,186 @@ fn rec_metric(r: &Rec, clean: bool) -> (Option<f64>, Option<f64>) {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct Throughput {
+    label: String,
+    env: crate::Env,
+    threads: usize,
+    detector: String,
+    recogniser: String,
+    split: String,
+    pages: usize,
+    page_ms: Vec<f64>,
+    page_summary: Summary,
+    units: usize,
+    wall_start_unix_ms: u128,
+    wall_end_unix_ms: u128,
+    pages_per_minute: f64,
+    vm_hwm_mb: Option<f64>,
+    loads: Vec<LoadInfo>,
+}
+
+fn unix_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
+
+/// One worker: every page `repeat` times, decode + detect + recognise
+/// every unit, serially. Parallel workers are separate processes, each
+/// with its own sessions; the wall-clock bounds let a caller add them up.
+fn run_throughput(
+    args: &Args,
+    rt: &tokio::runtime::Runtime,
+    pages: &[PageFile],
+) -> anyhow::Result<()> {
+    let loadavg_start = crate::loadavg();
+    let mut eng = load_engines(args, rt)?;
+    let d = list(&args.dets)
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("--dets needs one detector"))?;
+    let unit = match d.as_str() {
+        "ctd" | "ctd-crate" => "panel",
+        "ogk-s" | "ogk-m" => "text_bubble",
+        _ => "blocks",
+    };
+    let best_split = Split::ALL
+        .into_iter()
+        .find(|s| s.name() == args.best_split)
+        .unwrap_or(Split::Profile);
+    let pp = eng.recs.iter().position(|r| r.name == args.best_pp);
+    let use_tess = pp.is_none();
+    let bytes: Vec<Vec<u8>> = pages
+        .iter()
+        .map(|p| std::fs::read(&p.path))
+        .collect::<Result<_, _>>()?;
+    let start = unix_ms();
+    let mut page_ms = Vec::new();
+    let mut n_units = 0;
+    for _ in 0..args.repeat {
+        for b in &bytes {
+            let t0 = Instant::now();
+            let page = decode_limited(b)?;
+            let (pw, ph) = (page.width(), page.height());
+            let mut po = PageOut::default();
+            run_detectors(&mut eng, &page, std::slice::from_ref(&d), &mut po)?;
+            let boxes = po.det_boxes.remove(&d).unwrap_or_default();
+            let line_boxes: Vec<[f64; 4]> = boxes.iter().map(det_box).collect();
+            let blks = if unit == "blocks" {
+                blocks(&line_boxes)
+            } else {
+                Vec::new()
+            };
+            let us = units(&d, unit, &boxes);
+            let ctd_lines: Vec<[f64; 4]> =
+                boxes.iter().filter(|x| x.class == 1).map(det_box).collect();
+            for (ui, u) in us.iter().enumerate() {
+                let Some(rect) = to_rect(*u, pw, ph) else {
+                    continue;
+                };
+                let c = crop(&page, rect);
+                n_units += 1;
+                if use_tess {
+                    eng.tess_today
+                        .as_mut()
+                        .ok_or_else(|| anyhow::anyhow!("no recogniser loaded"))?
+                        .recognize(&c)?;
+                    continue;
+                }
+                let rects = if unit == "blocks" {
+                    blks[ui]
+                        .1
+                        .iter()
+                        .filter_map(|&li| {
+                            let l = line_boxes[li];
+                            to_rect(
+                                [
+                                    l[0] - f64::from(rect.0),
+                                    l[1] - f64::from(rect.1),
+                                    l[2] - f64::from(rect.0),
+                                    l[3] - f64::from(rect.1),
+                                ],
+                                rect.2,
+                                rect.3,
+                            )
+                        })
+                        .collect()
+                } else {
+                    split_rects(best_split, &mut eng, &c, rect, &ctd_lines)?.0
+                };
+                let bi = pp.expect("checked");
+                pp_balloon(&mut eng.recs[bi], &c, &rects, true)?;
+            }
+            page_ms.push(ms_since(t0));
+        }
+    }
+    let end = unix_ms();
+    let env = crate::Env {
+        profile: if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        },
+        cpu_model: crate::cpu_model(),
+        cpus_allowed: crate::read_status_field("Cpus_allowed_list:").unwrap_or_default(),
+        available_parallelism: std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(0),
+        omp_num_threads: std::env::var("OMP_NUM_THREADS").ok(),
+        loadavg_start,
+        loadavg_end: crate::loadavg(),
+        threads_after_detect: crate::read_status_field("Threads:").and_then(|v| v.parse().ok()),
+        tesseract_version: tesseract_rs::TesseractAPI::version(),
+        tessdata: String::new(),
+    };
+    let wall = (end - start) as f64;
+    let res = Throughput {
+        label: args.label.clone(),
+        env,
+        threads: args.threads,
+        detector: d.clone(),
+        recogniser: if use_tess {
+            "tess-today".into()
+        } else {
+            args.best_pp.clone()
+        },
+        split: if unit == "blocks" {
+            "own lines".into()
+        } else {
+            best_split.name().into()
+        },
+        pages: page_ms.len(),
+        page_summary: summarize(&page_ms),
+        page_ms,
+        units: n_units,
+        wall_start_unix_ms: start,
+        wall_end_unix_ms: end,
+        pages_per_minute: if wall > 0.0 {
+            60000.0 * (bytes.len() * args.repeat) as f64 / wall
+        } else {
+            0.0
+        },
+        vm_hwm_mb: status_kb("VmHWM:").map(|k| k as f64 / 1024.0),
+        loads: eng.loads.clone(),
+    };
+    std::fs::write(
+        args.out.join(format!("{}.json", args.label)),
+        serde_json::to_string_pretty(&res)?,
+    )?;
+    Ok(())
+}
+
 #[expect(clippy::print_stderr, reason = "command-line progress output")]
 pub(crate) fn run(
     args: &Args,
     rt: &tokio::runtime::Runtime,
     pages: &[PageFile],
 ) -> anyhow::Result<()> {
+    if args.throughput {
+        return run_throughput(args, rt, pages);
+    }
     let loadavg_start = crate::loadavg();
     let mut eng = load_engines(args, rt)?;
     let mut outs = Vec::new();

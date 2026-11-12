@@ -60,12 +60,18 @@ candtime)
   BEST_PP=${BEST_PP:-pp-v6-small}
   for cfg in free cpu4; do
     if [ "$cfg" = cpu4 ]; then pin=(taskset -c "$CPUS"); else pin=(); fi
-    for combo in "ctd-crate:tess-today" "ctd:$BEST_PP" "ogk-s:$BEST_PP" "ogk-m:$BEST_PP" "ppdet960:$BEST_PP"; do
+    # comic-text-detector takes tens of seconds a page: its combination
+    # runs on SLOW_PAGES (default: PAGES) with one warm repeat; today's
+    # path (crate detector + Tesseract) is timed by the `full` / `cpu4`
+    # steps.
+    for combo in "ctd:$BEST_PP" "ogk-s:$BEST_PP" "ogk-m:$BEST_PP" "ppdet960:$BEST_PP"; do
       det=${combo%%:*} rec=${combo#*:}
+      pages=$PAGES extra=()
+      if [ "$det" = ctd ]; then pages=${SLOW_PAGES:-$PAGES} extra=(--warm 1); fi
       check_load
-      "${pin[@]}" "$BIN" --pages "$PAGES" --truth "$TRUTH" --out "$OUT" --models "$MODELS" \
+      "${pin[@]}" "$BIN" --pages "$pages" --truth "$TRUTH" --out "$OUT" --models "$MODELS" \
         --cand-timing --dets "$det" --recs "$rec" --best-pp "$BEST_PP" --threads 4 \
-        --label "time-$cfg-$det-$rec" "$@"
+        --label "time-$cfg-$det-$rec" "$@" "${extra[@]}"
     done
     for th in 1 2 4; do
       check_load
