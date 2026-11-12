@@ -17,10 +17,13 @@
 //! (`taskset`) for the CPU-limited configuration; the tool records the
 //! CPUs it was allowed, `OMP_NUM_THREADS` and the load average.
 
+mod cand;
 mod draw;
 mod engines;
 mod report;
 mod score;
+mod split;
+mod stage2;
 mod stats;
 mod tess;
 mod truth;
@@ -91,6 +94,47 @@ struct Args {
     /// Other language data to compare against `tessdata_best`.
     #[arg(long, default_value = "/usr/share/tessdata")]
     system_tessdata: PathBuf,
+
+    // ─── candidate engines (stage 2) ───
+    /// Directory holding the candidate ONNX models (never downloaded).
+    #[arg(long)]
+    models: Option<PathBuf>,
+    /// Print each candidate model's inputs/outputs and exit.
+    #[arg(long)]
+    probe: bool,
+    /// Candidate accuracy: recognition alone (A), detection (B), tap (C).
+    #[arg(long)]
+    cand: bool,
+    /// Candidate timings (D, E).
+    #[arg(long)]
+    cand_timing: bool,
+    /// ONNX Runtime intra-op threads for the candidate sessions (0 = default).
+    #[arg(long, default_value_t = 4)]
+    threads: usize,
+    /// Recognisers, comma separated.
+    #[arg(
+        long,
+        default_value = "tess-today,tess-best,pp-v5-en,pp-v5-latin,pp-v6-tiny,pp-v6-small,pp-v6-medium"
+    )]
+    recs: String,
+    /// Detectors, comma separated (ctd, ctd-crate, ogk-s, ogk-m, ppdetN).
+    #[arg(long, default_value = "ctd,ogk-s,ogk-m,ppdet960,ppdet1600")]
+    dets: String,
+    /// Line splits for the PP recognisers.
+    #[arg(long, default_value = "ppdet,profile,ctd-lines,none")]
+    splits: String,
+    /// Tesseract variant used as "best Tesseract".
+    #[arg(long, default_value = "current")]
+    best_tess: String,
+    /// PP recogniser used in the tap combinations and timings.
+    #[arg(long, default_value = "pp-v6-small")]
+    best_pp: String,
+    /// Line split used with it.
+    #[arg(long, default_value = "profile")]
+    best_split: String,
+    /// Score threshold for ogkalu's detector.
+    #[arg(long, default_value_t = 0.5)]
+    ogk_threshold: f32,
 }
 
 /// Margins tried for recognition alone, as a fraction of the box size.
@@ -273,8 +317,10 @@ struct RefOutcome {
     kind: String,
     colour_case: String,
     reference: String,
-    /// Index into the produced list it was matched to.
+    /// Index into the produced list it was matched to (the first part).
     matched: Option<usize>,
+    /// Produced regions joined for it (more than one: many-to-one).
+    parts: usize,
     produced: Option<String>,
     cer: Option<f64>,
     wer: Option<f64>,
@@ -415,9 +461,20 @@ fn aggregate<'a>(items: impl Iterator<Item = (Option<f64>, Option<f64>)> + 'a) -
     a
 }
 
+/// Which use a region kind belongs to.
+fn use_group(kind: &str) -> &'static str {
+    match kind {
+        "balloon" | "caption" => "tap targets (balloon, caption)",
+        _ => "display lettering (sfx, sign, title, other)",
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct Grouped {
     overall: Agg,
+    /// Tap targets (balloon, caption) apart from display lettering
+    /// (sound effects, signs, titles).
+    by_use: BTreeMap<String, Agg>,
     by_kind: BTreeMap<String, Agg>,
     by_colour_case: BTreeMap<String, Agg>,
 }
@@ -430,12 +487,21 @@ fn grouped<T>(
 ) -> Grouped {
     let mut by_kind: BTreeMap<String, Vec<&T>> = BTreeMap::new();
     let mut by_colour: BTreeMap<String, Vec<&T>> = BTreeMap::new();
+    let mut by_use: BTreeMap<String, Vec<&T>> = BTreeMap::new();
     for it in items {
+        by_use
+            .entry(use_group(kind(it)).to_owned())
+            .or_default()
+            .push(it);
         by_kind.entry(kind(it).to_owned()).or_default().push(it);
         by_colour.entry(colour(it).to_owned()).or_default().push(it);
     }
     Grouped {
         overall: aggregate(items.iter().map(&key)),
+        by_use: by_use
+            .into_iter()
+            .map(|(k, v)| (k, aggregate(v.into_iter().map(&key))))
+            .collect(),
         by_kind: by_kind
             .into_iter()
             .map(|(k, v)| (k, aggregate(v.into_iter().map(&key))))
@@ -539,6 +605,27 @@ struct Ctx {
 #[expect(clippy::print_stderr, reason = "command-line progress output")]
 fn main() -> anyhow::Result<()> {
     let mut args = Args::parse();
+    if args.probe {
+        let m = args
+            .models
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("--probe needs --models"))?;
+        return stage2::probe(&m, args.threads);
+    }
+    if args.cand || args.cand_timing {
+        std::fs::create_dir_all(&args.out)?;
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let mut pages = truth::list_pages(&args.pages)?;
+        if let Some(f) = &args.only {
+            pages.retain(|p| p.key.contains(f.as_str()));
+        }
+        if let Some(n) = args.max_pages {
+            pages.truncate(n);
+        }
+        return stage2::run(&args, &rt, &pages);
+    }
     if !(args.timing || args.accuracy || args.variants || args.sheets || args.detector_only) {
         args.timing = true;
         args.accuracy = true;
@@ -977,6 +1064,7 @@ fn match_page(
             colour_case: r.colour_case.clone(),
             reference: score::display(&refs_norm[ri]),
             matched: None,
+            parts: 0,
             produced: None,
             cer: None,
             wer: None,
@@ -986,6 +1074,7 @@ fn match_page(
             let (c, w) = score_pair(&refs_norm[ri], &p.clean);
             if c < 1.0 {
                 used[ci] = true;
+                o.parts = 1;
                 o.matched = Some(cand[ci]);
                 o.produced = Some(p.clean.clone());
                 o.cer = Some(c);
@@ -993,6 +1082,54 @@ fn match_page(
             }
         }
         outcomes.push(o);
+    }
+    // Many-to-one: a reference drawn as one unit (stacked signs, a screen)
+    // may be several produced boxes. Greedily add unused produced regions
+    // whose centre lies inside the reference box (grown by 10%) while the
+    // joined text (in reading order) lowers the error.
+    for (ri, o) in outcomes.iter_mut().enumerate() {
+        let g = grow(ref_px[ri], 0.1);
+        let mut parts: Vec<usize> = o
+            .matched
+            .and_then(|pi| cand.iter().position(|&c| c == pi))
+            .into_iter()
+            .collect();
+        let mut best = o.cer.unwrap_or(1.0);
+        loop {
+            let mut improved = None;
+            for (ci, &pi) in cand.iter().enumerate() {
+                if used[ci] || parts.contains(&ci) {
+                    continue;
+                }
+                let b = det_box(&pr.boxes[pr.produced[pi].box_index]);
+                let c = ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0);
+                if c.0 < g[0] || c.0 > g[2] || c.1 < g[1] || c.1 > g[3] {
+                    continue;
+                }
+                let mut trial = parts.clone();
+                trial.push(ci);
+                let text = joined(pr, cand, &trial);
+                let (cer, _) = score_pair(&refs_norm[ri], &text);
+                if cer < best && improved.is_none_or(|(_, e)| cer < e) {
+                    improved = Some((ci, cer));
+                }
+            }
+            let Some((ci, cer)) = improved else { break };
+            parts.push(ci);
+            best = cer;
+        }
+        if parts.len() > 1 || (o.matched.is_none() && !parts.is_empty()) {
+            for &ci in &parts {
+                used[ci] = true;
+            }
+            let text = joined(pr, cand, &parts);
+            let (c, w) = score_pair(&refs_norm[ri], &text);
+            o.matched = Some(cand[parts[0]]);
+            o.parts = parts.len();
+            o.produced = Some(text);
+            o.cer = Some(c);
+            o.wer = Some(w);
+        }
     }
     let mut unmatched_nonempty = Vec::new();
     let mut unmatched_empty = 0;
@@ -1013,6 +1150,23 @@ fn match_page(
         unmatched_nonempty,
         unmatched_empty,
     }
+}
+
+/// Clean texts of the given candidate positions, in reading order.
+fn joined(pr: &PageResult, cand: &[usize], parts: &[usize]) -> String {
+    let mut ps: Vec<usize> = parts.iter().map(|&ci| cand[ci]).collect();
+    ps.sort_by(|&a, &b| {
+        let (ba, bb) = (
+            det_box(&pr.boxes[pr.produced[a].box_index]),
+            det_box(&pr.boxes[pr.produced[b].box_index]),
+        );
+        ba[1].total_cmp(&bb[1]).then(ba[0].total_cmp(&bb[0]))
+    });
+    ps.iter()
+        .map(|&p| pr.produced[p].clean.as_str())
+        .filter(|t| !t.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn variants_page(

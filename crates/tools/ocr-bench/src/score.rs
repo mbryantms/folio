@@ -17,11 +17,16 @@ pub(crate) fn normalize(s: &str, is_reference: bool) -> String {
     } else {
         s.replace([WILD, OPT_SPACE], "")
     };
-    let joined = s
-        .to_uppercase()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let joined = punctuation_spacing(
+        &s.replace(['\u{2018}', '\u{2019}'], "'")
+            .replace(['\u{201C}', '\u{201D}'], "\"")
+            .replace('\u{2014}', "--")
+            .replace('\u{2013}', "-")
+            .to_uppercase()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" "),
+    );
     if !is_reference {
         return joined;
     }
@@ -39,6 +44,42 @@ pub(crate) fn normalize(s: &str, is_reference: bool) -> String {
             }
         })
         .collect()
+}
+
+/// The reference's spacing convention, applied to both sides: no space
+/// before `. , ! ? ; :`, none around `--`, and one space after `, ! ? ; :`
+/// (and after `.` before a letter) when a word follows directly.
+fn punctuation_spacing(s: &str) -> String {
+    let c: Vec<char> = s.chars().collect();
+    let mut out: Vec<char> = Vec::with_capacity(c.len());
+    let mut i = 0;
+    while i < c.len() {
+        let ch = c[i];
+        if ch == ' ' {
+            let next = c.get(i + 1).copied();
+            let next2 = c.get(i + 2).copied();
+            let before_punct = matches!(next, Some('.' | ',' | '!' | '?' | ';' | ':'));
+            let before_dash = next == Some('-') && next2 == Some('-');
+            let after_dash =
+                out.len() >= 2 && out[out.len() - 1] == '-' && out[out.len() - 2] == '-';
+            if before_punct || before_dash || after_dash {
+                i += 1;
+                continue;
+            }
+        }
+        out.push(ch);
+        let next = c.get(i + 1).copied();
+        let wants_space = match ch {
+            ',' | '!' | '?' | ';' | ':' => next.is_some_and(char::is_alphanumeric),
+            '.' => next.is_some_and(char::is_alphabetic),
+            _ => false,
+        };
+        if wants_space {
+            out.push(' ');
+        }
+        i += 1;
+    }
+    out.into_iter().collect()
 }
 
 /// A normalised reference with its wildcard spaces turned back into
@@ -231,6 +272,15 @@ mod tests {
     #[test]
     fn normalises_case_and_space() {
         assert_eq!(normalize("  Hello\n  world ", false), "HELLO WORLD");
+    }
+
+    #[test]
+    fn punctuation_spacing_is_normalised() {
+        assert_eq!(normalize("PAPERS ? FOOL!MASS", false), "PAPERS? FOOL! MASS");
+        assert_eq!(normalize("WAIT -- NO", false), "WAIT--NO");
+        assert_eq!(normalize("AROUND ,RESET", false), "AROUND, RESET");
+        assert_eq!(normalize("3.5 \u{2019}EM", false), "3.5 'EM");
+        assert_eq!(normalize("OH...WELL", true), "OH... WELL");
     }
 
     #[test]

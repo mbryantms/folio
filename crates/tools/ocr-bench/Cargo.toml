@@ -21,6 +21,10 @@ anyhow = { workspace = true }
 clap = { version = "4.6", features = ["derive"] }
 image = { workspace = true }
 imageproc = { workspace = true }
+# The ONNX Runtime binding and array crate the server already links
+# (through comic-text-detector); exact pin so no second runtime is pulled.
+ndarray = "0.16"
+ort = "=2.0.0-rc.10"
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

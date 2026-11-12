@@ -4881,6 +4881,8 @@ dependencies = [
  "clap",
  "image",
  "imageproc 0.27.0",
+ "ndarray",
+ "ort",
  "serde",
  "serde_json",
  "server",

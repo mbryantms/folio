@@ -75,6 +75,9 @@ fn agg_row(out: &mut String, name: &str, a: &Agg) {
 fn grouped_table(out: &mut String, g: &Grouped) {
     agg_header(out, "group");
     agg_row(out, "all", &g.overall);
+    for (k, a) in &g.by_use {
+        agg_row(out, k, a);
+    }
     for (k, a) in &g.by_kind {
         agg_row(out, &format!("kind: {k}"), a);
     }
