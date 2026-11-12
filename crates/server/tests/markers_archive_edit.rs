@@ -284,3 +284,75 @@ async fn truncation_pulls_trailing_anchors_onto_the_last_page() {
         .unwrap();
     assert_eq!(o2, Default::default());
 }
+
+/// ARC-2 (5): an issue with no anchors when the edit starts, and a marker
+/// written while the rewrite runs (after the anchors were first looked
+/// at). The bookkeeping looks again, so the marker follows its page AND is
+/// stamped with that page's hash, as an anchor that existed before the
+/// edit is. Pre-fix it was moved by ordinal but kept no hash.
+#[tokio::test]
+async fn an_anchor_added_during_the_rewrite_follows_its_page_with_its_hash() {
+    use server::jobs::archive_edit::{EditFaults, edit_one_issue_with_faults};
+    let app = TestApp::spawn().await;
+    let dir = tempdir().unwrap();
+    let db = app.state().db.clone();
+    let lib = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .insert(&db)
+        .await;
+    let series = SeriesSeed::new(lib, "Late Anchor").insert(&db).await;
+    let path = dir.path().join("issue.cbz");
+    let issue_id = IssueSeed::new(lib, series, &path, &four_page_cbz(), 1.0)
+        .with_page_count(4)
+        .insert(&db)
+        .await;
+    let user_id = register_user(&app).await;
+
+    let marker_id = Uuid::now_v7();
+    let (late_db, late_issue) = (db.clone(), issue_id.clone());
+    let faults = EditFaults {
+        after_swap: Some(Box::pin(async move {
+            let now = Utc::now().fixed_offset();
+            marker::ActiveModel {
+                id: Set(marker_id),
+                user_id: Set(user_id),
+                series_id: Set(series),
+                issue_id: Set(late_issue),
+                page_index: Set(2),
+                kind: Set(marker::MarkerKind::parse("bookmark").unwrap()),
+                is_favorite: Set(false),
+                tags: Set(vec![]),
+                region: Set(None),
+                selection: Set(None),
+                body: Set(None),
+                color: Set(None),
+                created_at: Set(now),
+                updated_at: Set(now),
+                hidden_from_log: Set(false),
+                page_hash: Set(None),
+            }
+            .insert(&late_db)
+            .await
+            .unwrap();
+        })),
+        ..Default::default()
+    };
+    edit_one_issue_with_faults(
+        &app.state(),
+        &job(&issue_id, vec![PageOp::Remove { ordinal: 0 }]),
+        faults,
+    )
+    .await
+    .unwrap();
+
+    let m = marker::Entity::find_by_id(marker_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(m.page_index, 1, "old page 3 is now page 2");
+    let want = blake3::hash(&png_bytes(4, 4, [0, 0, 30]))
+        .to_hex()
+        .to_string();
+    assert_eq!(m.page_hash, Some(want), "stamped with its page's hash");
+}

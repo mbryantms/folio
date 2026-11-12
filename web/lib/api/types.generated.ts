@@ -6947,13 +6947,32 @@ export interface components {
         };
         BackupView: {
             /**
+             * @description RFC3339 time the backup was made (the file's inode change time,
+             *     `archive_rewrite::backup_made_at`, the clock the retention sweep
+             *     ages backups by), or null when that cannot be known (no change time,
+             *     or one earlier than the modification time); the sweep keeps such a
+             *     backup. A later rotation, restore or permission change moves it
+             *     forward, never back.
+             */
+            made_at?: string | null;
+            /**
              * @description RFC3339 modification time of the backup file, or null if
              *     unavailable. For a hard-linked backup (the usual kind) this is the
-             *     ORIGINAL archive's modification time, not when the backup was made;
-             *     the retention sweep ages backups by when they were made instead.
+             *     ORIGINAL archive's modification time, not when the backup was made:
+             *     show `made_at` as the backup's date.
              */
             modified_at?: string | null;
+            /** @description The backup's file name: what `POST …/archive/restore?backup=` takes. */
+            name: string;
             path: string;
+            /**
+             * @description The backup of the archive this issue's file was converted from
+             *     (`X.cbr.bak` / `X.cb7.bak[.n]` beside the issue's `X.cbz`), not of
+             *     the current file. Listed so it can be found; restore does not use
+             *     it as is: restoring it (`?backup=<name>`) rebuilds it as a CBZ into
+             *     the issue's file, and the backup itself stays untouched.
+             */
+            pre_conversion: boolean;
             /** Format: int64 */
             size_bytes: number;
             /**
@@ -8749,6 +8768,12 @@ export interface components {
         };
         CreateViewGroupReq: {
             name: string;
+            /**
+             * Format: uuid
+             * @description Optional enclosing group (same scope; groups nest at most four
+             *     levels deep). Absent or null = top level.
+             */
+            parent_id?: string | null;
             scope: string;
             /**
              * @description Optional initial members. Each must be a view visible to the
@@ -11160,8 +11185,18 @@ export interface components {
             /** Format: uuid */
             id: string;
             /**
+             * Format: uuid
+             * @description The enclosing group, which must be a group of this scope (and so
+             *     listed in the same payload). `null` = top level. **Absent = keep
+             *     the group's stored parent**, so a client that predates nesting
+             *     reorders without flattening the tree. Sibling order is the order
+             *     in which the groups of one parent appear in `groups`.
+             */
+            parent_id?: string | null;
+            /**
              * @description Member view ids in display order. A view listed under no group is
-             *     ungrouped after the write.
+             *     ungrouped after the write. Ids the caller cannot see (deleted, or
+             *     not theirs) are ignored.
              */
             view_ids: string[];
         };
@@ -14053,7 +14088,12 @@ export interface components {
             ids: string[];
         };
         ReplaceLayoutReq: {
-            /** @description Every group in the scope, exactly once, in display order. */
+            /**
+             * @description Every group in the scope, exactly once. Each group's siblings
+             *     (same parent) are ordered as they appear here; the resulting tree
+             *     — stated parents plus the stored parent of any group that states
+             *     none — must be acyclic and at most four levels deep.
+             */
             groups: components["schemas"]["LayoutGroupReq"][];
             scope: string;
             /**
@@ -14200,8 +14240,44 @@ export interface components {
             skipped: number;
         };
         RestoreResponse: {
+            /**
+             * @description True when the restore was still running when this response was
+             *     sent: it finishes on its own (audit row, rescan, lock release), and
+             *     a failure is recorded as a library event. `kept_as`, `warning` and
+             *     `rebuilt_from` are then not known yet.
+             */
+            in_progress: boolean;
             issue_id: string;
+            /**
+             * @description Where the archive the restore replaced is kept: `<file>.bak`, the
+             *     newest backup (restore swaps the archive and its `.bak`, so
+             *     restoring again undoes it). Null when there was no archive at the
+             *     issue's path to keep. When the replaced archive could not take the
+             *     `.bak` name (the last step of the fallback swap failed), the name
+             *     it is kept under instead, `<file>.bak.<hex>.tmp`; `warning` says so.
+             */
+            kept_as?: string | null;
+            /**
+             * @description What the restore did (or, `in_progress`, that it is still running),
+             *     in one sentence for the admin.
+             */
+            message: string;
+            /**
+             * @description Set when the restore rebuilt the archive from a pre-conversion
+             *     backup (`?backup=X.cbr.bak`): the backup's file name. The archive
+             *     is then a CBZ rebuilt from that file, not its bytes.
+             */
+            rebuilt_from?: string | null;
+            /**
+             * @description `restored`, or `in_progress` when the restore was still running at
+             *     the response deadline ([`RESTORE_RESPONSE_DEADLINE`]).
+             */
             status: string;
+            /**
+             * @description Set when the restore happened but something about keeping the
+             *     replaced archive did not go as planned: says where it is and why.
+             */
+            warning?: string | null;
         };
         RevokeAllResp: {
             /**
@@ -16731,9 +16807,12 @@ export interface components {
             created_at: string;
             id: string;
             name: string;
+            /** @description The enclosing group, `null` for a top-level group. */
+            parent_id?: string | null;
             /**
              * Format: int32
-             * @description Ordinal within the scope (dense 0..N after any layout write).
+             * @description Ordinal among the group's siblings (same scope and parent; dense
+             *     0..N after any layout write).
              */
             position: number;
             /**
@@ -21423,6 +21502,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description the issue file's own backups by slot, then the pre-conversion backups */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -21548,7 +21628,17 @@ export interface operations {
     };
     archive_edit_restore: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Which backup to restore: its file name exactly as the backups
+                 *     listing returns it in `name`. Omitted, or the issue's own
+                 *     `<file>.bak`: the newest backup is swapped in (unchanged behaviour).
+                 *     A pre-conversion backup (`pre_conversion: true`) is rebuilt as a
+                 *     CBZ into the issue's file. Anything else the listing does not offer
+                 *     for this issue is refused (422 `archive.backup_not_restorable`).
+                 */
+                backup?: string;
+            };
             header?: never;
             path: {
                 id: string;
@@ -21557,6 +21647,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description restored, or (`in_progress: true`) still running at the response deadline and finishing on its own */
             202: {
                 headers: {
                     [name: string]: unknown;
@@ -21579,14 +21670,14 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description another rewrite is in progress */
+            /** @description another rewrite is in progress / the issue's archive changed while the restore was starting (`archive.issue_changed`) */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description writeback disabled / unsupported format */
+            /** @description writeback disabled / unsupported format / the named backup is not restorable / the pre-conversion backup could not be rebuilt */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -26366,6 +26457,13 @@ export interface operations {
                     "application/json": components["schemas"]["ViewGroupView"];
                 };
             };
+            /** @description invalid name or scope, an unknown or duplicate view id, or a parent that is missing, in another scope, or already at the deepest level */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     view_groups_replace_layout: {
@@ -26387,7 +26485,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description unknown scope, group set mismatch, or a view id that is duplicate, unknown, or placed twice */
+            /** @description unknown scope, group set mismatch, a parent that is not listed, a cycle, a tree deeper than four levels, or a view id placed twice */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -26407,6 +26505,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description deleted; its lists moved to its parent group (or the ungrouped section when it was top-level) after the parent's own, and its child groups took its place among its siblings */
             204: {
                 headers: {
                     [name: string]: unknown;

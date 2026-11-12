@@ -37,11 +37,17 @@ export const ROW_PAD = "px-2 py-2 @min-[30rem]/board:px-3";
 export const ROW_CELL = {
   grip: "hidden @min-[30rem]/board:inline-flex @min-[30rem]/board:col-start-1 @min-[30rem]/board:row-start-1",
   /** Cover (item) or chevron + folder icon (folder), indented by the
-   *  row's `--row-depth`. Spans both narrow rows. */
+   *  row's `--row-depth` (0 at the root, up to 4: a list in a fourth-level
+   *  folder). Spans both narrow rows. The step shrinks with the tier so
+   *  the deepest indent never eats the name's track: 0.5rem narrow (2rem
+   *  at most, beside a ≥14rem name on a phone), 0.75rem medium (3rem at
+   *  most: a 30rem table still fits the name's 10rem minimum), 1.25rem
+   *  wide (5rem at most: a 42rem table still fits its 12rem minimum). */
   lead: [
     "col-start-1 row-start-1 row-span-2 self-start flex items-center gap-1",
-    "pl-[calc(var(--row-depth,0)*0.75rem)]",
-    "@min-[30rem]/board:col-start-2 @min-[30rem]/board:row-span-1 @min-[30rem]/board:self-center @min-[30rem]/board:pl-[calc(var(--row-depth,0)*1.75rem)]",
+    "pl-[calc(var(--row-depth,0)*0.5rem)]",
+    "@min-[30rem]/board:col-start-2 @min-[30rem]/board:row-span-1 @min-[30rem]/board:self-center @min-[30rem]/board:pl-[calc(var(--row-depth,0)*0.75rem)]",
+    "@min-[42rem]/board:pl-[calc(var(--row-depth,0)*1.25rem)]",
   ].join(" "),
   main: "col-start-2 row-start-1 min-w-0 @min-[30rem]/board:col-start-3",
   /** The one data column every tier shows (under the name when narrow). */

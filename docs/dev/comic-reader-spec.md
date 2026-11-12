@@ -160,7 +160,8 @@ Every archive parser enforces these caps before extraction; violation = typed er
 | Max uncompressed total | 8 GiB | `COMIC_ARCHIVE_MAX_TOTAL_BYTES` |
 | Max single entry uncompressed | 512 MiB | `COMIC_ARCHIVE_MAX_ENTRY_BYTES` |
 | Max compression ratio (per-entry) | 200 : 1 | `COMIC_ARCHIVE_MAX_RATIO` |
-| Max archive-within-archive nesting | 1 | `COMIC_ARCHIVE_MAX_NESTING` |
+
+Nested archives are never opened: an archive stored inside an archive is an ordinary entry, not a page (one under an image name fails the content sniff and is skipped), so there is no nesting depth to bound.
 
 Entry-name validation (zip-slip and friends): reject any entry whose canonicalized path escapes the archive root, contains `\0`, contains control characters, is absolute, is a symlink, or refers to a device file. Validation runs before any byte is materialized.
 
@@ -1348,7 +1349,7 @@ CSP violations posted to `/csp-report` (rate-limited, 100/min/IP) and surfaced i
 - `/data` files are served by the Rust binary, never by Next.js — auth and ACL checks happen first.
 
 ### 17.6 Archive defenses
-See §4.1.1 for the full set of caps and subprocess limits. In short: zip-slip rejection at entry-name validation, hard caps on entry count / total bytes / single-entry bytes / compression ratio / nesting depth, `prlimit`-bounded subprocesses, no shell invocation, encrypted archives surfaced rather than retried.
+See §4.1.1 for the full set of caps and subprocess limits. In short: zip-slip rejection at entry-name validation, hard caps on entry count / total bytes / single-entry bytes / compression ratio, nested archives never opened, `prlimit`-bounded subprocesses, no shell invocation, encrypted archives surfaced rather than retried.
 
 ### 17.7 Rate limiting
 Token-bucket limits enforced via `tower-governor`, Redis-backed when Redis is configured (otherwise in-memory). "User" = JWT subject or app-password ID. "IP" = first untrusted hop in `X-Forwarded-For`, honoring `COMIC_TRUSTED_PROXIES`.

@@ -17,6 +17,7 @@ import { showUndoToast } from "@/lib/ui/undo-toast";
 import { apiFetch } from "../auth-refresh";
 import { queryKeys, type EntityKindPath } from "../queries";
 import { apiPath } from "../path";
+import { buildQuery } from "../build-query";
 import { getCsrfToken, useApiMutation } from "./_core";
 import {
   applyOptimisticProgress,
@@ -1345,14 +1346,37 @@ export function useBulkArchiveEditMutation() {
   }));
 }
 
-/** Restore an issue's archive from its most recent `.bak`. */
+/**
+ * Restore an issue's archive: from its most recent `.bak` when `backup` is
+ * omitted, or from the named backup (a file name the backups listing
+ * returned; a pre-conversion backup is rebuilt as a CBZ).
+ */
+/** The success toast of a restore: what happened, where the replaced
+ *  archive went when that needs saying, or that it is still running. */
+export function restoreSuccessMessage(data: RestoreResponse | null): string {
+  if (data?.in_progress) {
+    return "Archive restore still running: the issue refreshes when it is done";
+  }
+  if (data?.warning) return `Archive restored. ${data.warning}`;
+  if (data?.rebuilt_from) return data.message;
+  return "Archive restored";
+}
+
 export function useRestoreArchiveMutation(issueId: string) {
-  return useApiMutation<RestoreResponse, void>(
-    () => ({
-      path: apiPath`/issues/${issueId}/archive/restore`,
+  return useApiMutation<RestoreResponse, { backup?: string } | void>(
+    (vars) => ({
+      path:
+        apiPath`/issues/${issueId}/archive/restore` +
+        buildQuery({ backup: vars ? vars.backup : undefined }),
       method: "POST",
     }),
-    { successMessage: "Restore queued" },
+    {
+      // The restore runs while the request waits; past the server's
+      // deadline it answers `in_progress` and finishes on its own.
+      successMessage: restoreSuccessMessage,
+      // "Still running" is an app-state notice, not a completion.
+      successVariant: (data) => (data?.in_progress ? "info" : "success"),
+    },
   );
 }
 
@@ -1848,14 +1872,15 @@ export function useUpdateViewGroup(scope: ViewGroupScope) {
   );
 }
 
-/** DELETE /me/view-groups/{id} — the group's views fall back to the
- *  ungrouped section (server cascade); nothing else is touched. */
+/** DELETE /me/view-groups/{id} — the group's views and child groups
+ *  move up one level (to its parent, or the ungrouped section / top
+ *  level); nothing else is touched. */
 export function useDeleteViewGroup(scope: ViewGroupScope) {
   const qc = useQueryClient();
   return useApiMutation<unknown, string>(
     (id) => ({ path: apiPath`/me/view-groups/${id}`, method: "DELETE" }),
     {
-      successMessage: "Group removed — its views are ungrouped",
+      successMessage: "Group removed — its contents moved up a level",
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.viewGroups(scope) });
       },
@@ -1864,8 +1889,8 @@ export function useDeleteViewGroup(scope: ViewGroupScope) {
 }
 
 /** PUT /me/view-groups/layout — the drag-and-drop commit. One request
- *  carries the whole scope (group order, every group's members, and the
- *  ungrouped order), so a cross-group move is atomic. The cache is
+ *  carries the whole scope (the group tree and sibling order, every
+ *  group's members, and the ungrouped order), so a cross-group move is atomic. The cache is
  *  replaced optimistically with the requested layout; on error it snaps
  *  back and the shared error toast fires. */
 export function useReplaceViewGroupLayout(scope: ViewGroupScope) {
@@ -1879,11 +1904,29 @@ export function useReplaceViewGroupLayout(scope: ViewGroupScope) {
         const snapshot = qc.getQueryData<ViewGroupListView>(key);
         if (snapshot) {
           const byId = new Map(snapshot.groups.map((g) => [g.id, g]));
+          // Positions count among siblings, in order of appearance.
+          const next = new Map<string | null, number>();
           qc.setQueryData<ViewGroupListView>(key, {
             ...snapshot,
-            groups: input.groups.flatMap((g, position) => {
+            groups: input.groups.flatMap((g) => {
               const prev = byId.get(g.id);
-              return prev ? [{ ...prev, position, view_ids: g.view_ids }] : [];
+              if (!prev) return [];
+              // Absent keeps the stored parent (the server's rule);
+              // the board always states it.
+              const parent =
+                g.parent_id === undefined
+                  ? (prev.parent_id ?? null)
+                  : g.parent_id;
+              const position = next.get(parent) ?? 0;
+              next.set(parent, position + 1);
+              return [
+                {
+                  ...prev,
+                  parent_id: parent,
+                  position,
+                  view_ids: g.view_ids,
+                },
+              ];
             }),
             ungrouped_ids: input.ungrouped ?? snapshot.ungrouped_ids,
           });

@@ -83,6 +83,17 @@ describe("showUndoToast options", () => {
     expect(toastSuccess).toHaveBeenCalledTimes(1);
   });
 
+  it("builds the follow-up toast from what onUndo resolved to", async () => {
+    showUndoToast({
+      message: "m",
+      onUndo: async () => 3,
+      restoredMessage: (n: number) => `Back, ${n} moved`,
+    });
+    lastOpts().action.onClick();
+    await flush();
+    expect(toastSuccess).toHaveBeenLastCalledWith("Back, 3 moved");
+  });
+
   it("raises a plain toast for the neutral tone", () => {
     const id = showUndoToast({
       message: "m",

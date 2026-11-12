@@ -161,6 +161,63 @@ fn convert_to_cbz(
     Ok(converted)
 }
 
+/// Rebuild the archive `io` reads (a pre-conversion backup: RAR, 7z, or a
+/// ZIP) as a CBZ into `io`'s staging file, with the same repack the
+/// conversion uses (pages in natural-sort order, stored; the kept non-page
+/// entries verbatim), then check the staged CBZ re-opens with as many pages
+/// as the source. For [`archive_rewrite::restore_rebuilt`]: restoring a
+/// converted archive from the file it was converted from. A source that is
+/// none of the three, unreadable, over a limit or yielding no pages is an
+/// error carrying the reader's reason; nothing is swapped then.
+pub fn rebuild_cbz_into(
+    io: &archive_rewrite::RewriteIo<'_>,
+    limits: ArchiveLimits,
+) -> Result<(), RewriteError> {
+    let source = io.source()?;
+    let pages = match detect_container(&source).map_err(RewriteError::Io)? {
+        Container::Rar => {
+            let mut c = Cbr::open_file(source, limits).map_err(RewriteError::ArchiveErr)?;
+            let n = c.pages().len();
+            repack(&mut c, io.staging_file()?, limits)?;
+            n
+        }
+        Container::SevenZ => {
+            let mut c = Cb7::open_file(source, limits).map_err(RewriteError::ArchiveErr)?;
+            c.preload_all().map_err(RewriteError::ArchiveErr)?;
+            let n = c.pages().len();
+            repack(&mut c, io.staging_file()?, limits)?;
+            n
+        }
+        Container::Zip => {
+            let mut c =
+                archive::cbz::Cbz::open_file(source, limits).map_err(RewriteError::ArchiveErr)?;
+            let n = c.pages().len();
+            repack(&mut c, io.staging_file()?, limits)?;
+            n
+        }
+        Container::Tar | Container::Unknown => {
+            return Err(RewriteError::ValidationFailed(
+                "the backup is not a RAR, 7z or ZIP archive".to_owned(),
+            ));
+        }
+    };
+    if pages == 0 {
+        return Err(RewriteError::ValidationFailed(
+            "the backup holds no readable pages".to_owned(),
+        ));
+    }
+    let staged = archive::cbz::Cbz::open_file(io.staged_archive()?, limits).map_err(|e| {
+        RewriteError::ValidationFailed(format!("the rebuilt archive won't re-open: {e}"))
+    })?;
+    if staged.pages().len() != pages {
+        return Err(RewriteError::ValidationFailed(format!(
+            "the rebuilt archive has {} pages, the backup {pages}",
+            staged.pages().len()
+        )));
+    }
+    Ok(())
+}
+
 /// Read every page (natural-sort order — the order the reader uses) plus the
 /// entries the rewrite policy keeps, and write them as a CBZ at `tmp`.
 fn repack(

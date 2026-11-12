@@ -94,8 +94,8 @@ export function ReadingListsBoard({
 /** The grouped board with the updates feature tucked into its toolbar.
  *  The "Updates" menu runs a check or a bulk update and reveals the
  *  updates panel under the toolbar; the panel stays hidden otherwise.
- *  Each group's ⋯ menu gets "Update these lists", which feeds the same
- *  runner and opens the same panel. */
+ *  Each group's ⋯ menu gets "Update these lists" (its subgroups' lists
+ *  included), which feeds the same runner and opens the same panel. */
 function Board({
   views,
   loading,
@@ -111,8 +111,9 @@ function Board({
 }) {
   const { busy, startBatch } = useCblUpdates();
   const groupMenuExtra = React.useCallback(
-    (group: BoardGroup) => {
-      const ids = group.views.flatMap((v) =>
+    // Every list in the group and the groups under it.
+    (_group: BoardGroup, views: SavedViewView[]) => {
+      const ids = views.flatMap((v) =>
         v.cbl_list_id ? [{ id: v.cbl_list_id, name: v.name }] : [],
       );
       return (

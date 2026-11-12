@@ -65,6 +65,8 @@ export const queryKeys = {
     ["libraries", libraryId, "backup-storage"] as const,
   archivePageCount: (issueId: string) =>
     ["issues", issueId, "archive", "page-count"] as const,
+  archiveBackups: (issueId: string) =>
+    ["issues", issueId, "archive", "backups"] as const,
   /** Prefix for every cross-library findings query (any filter set) —
    *  the WS scan-event reducer invalidates it on `scan.health_issue`. */
   adminHealthIssuesAll: ["admin", "health-issues"] as const,

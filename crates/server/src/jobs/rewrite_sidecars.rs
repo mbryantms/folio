@@ -694,6 +694,11 @@ pub(crate) struct RewriteResult {
     #[allow(dead_code)]
     pub summary: RebuildSummary,
     pub backup_path: Option<PathBuf>,
+    /// The archive already held exactly these sidecars
+    /// ([`archive_already_holds`]), typically a retry after the database
+    /// step that followed an earlier attempt's swap failed: nothing was
+    /// rewritten and no backup was made; the bookkeeping still ran.
+    pub already_written: bool,
     /// The `last_sidecar_rewrite_at` this rewrite stamped.
     pub rewritten_at: chrono::DateTime<chrono::FixedOffset>,
 }
@@ -901,7 +906,6 @@ pub(crate) async fn rewrite_one_issue(
         max_total_bytes: limits.max_total_bytes,
         max_entry_bytes: limits.max_entry_bytes,
         max_compression_ratio: limits.max_compression_ratio,
-        max_nesting_depth: limits.max_nesting_depth,
     };
     let source_ext = source_path
         .extension()
@@ -1004,7 +1008,27 @@ pub(crate) async fn rewrite_one_issue(
     let src_path = archive_path.clone();
 
     let result = tokio::task::spawn_blocking(
-        move || -> Result<(RebuildSummary, Option<PathBuf>), WritebackError> {
+        move || -> Result<(RebuildSummary, Option<PathBuf>, bool), WritebackError> {
+            // A retry (apalis after a database failure that followed the
+            // swap, or an operator's Retry of a dead-lettered job) finds
+            // the archive already holding what this job writes. Rewriting
+            // again would rotate the already-rewritten file into `.bak`
+            // and, with one slot, delete the only copy of the original.
+            if archive_already_holds(
+                &root,
+                &src_path,
+                &comic_info_xml,
+                &metron_info_xml,
+                is_cbt,
+                arch_limits,
+            ) {
+                tracing::info!(
+                    path = %src_path.display(),
+                    "sidecar writeback: the archive already holds these sidecars; \
+                     not rewritten, no backup made",
+                );
+                return Ok((RebuildSummary::default(), None, true));
+            }
             let outcome = archive_rewrite::rewrite_atomic(&root, &src_path, retain_count, |io| {
                 if is_cbt {
                     rewrite_cbt_into(io, comic_info_xml, metron_info_xml, arch_limits)
@@ -1017,7 +1041,7 @@ pub(crate) async fn rewrite_one_issue(
             // minimal summary for the audit payload from the post-rewrite
             // archive on disk if the audit row needs counts. v1 keeps it
             // empty.
-            Ok((RebuildSummary::default(), outcome.backup))
+            Ok((RebuildSummary::default(), outcome.backup, false))
         },
     )
     .await
@@ -1025,7 +1049,7 @@ pub(crate) async fn rewrite_one_issue(
         WritebackError::Db(sea_orm::DbErr::Custom(format!("join: {join_err}")))
     })??;
 
-    let (summary, backup) = result;
+    let (summary, backup, already_written) = result;
 
     // Invalidate the zip-LRU entry so the next reader sees the new file.
     state.zip_lru.invalidate(&row.id);
@@ -1055,8 +1079,65 @@ pub(crate) async fn rewrite_one_issue(
         archive_path,
         summary,
         backup_path: backup,
+        already_written,
         rewritten_at: now,
     })
+}
+
+/// Whether the archive at `path` already is what this rewrite would make
+/// of it: its Folio sidecars are exactly a root `ComicInfo.xml` and a root
+/// `MetronInfo.xml` (no nested or differently-cased duplicate, which the
+/// rewrite would drop) holding byte-for-byte the XML this job writes. Every
+/// other entry the rewrite streams through unchanged, and junk it drops is
+/// invisible to every reader and to the scanner, so rewriting such an
+/// archive changes nothing anyone reads; it would only rotate the backups.
+///
+/// The test is on the bytes, not on who wrote them: an earlier rewrite with
+/// other content leaves other bytes and the rewrite runs. The XML a job
+/// carries is fixed when it is queued, so a retry of the same job matches.
+/// A different job whose XML happens to be identical (only ComicVine and
+/// Metron composes carry a timestamp; a manual edit, drift flush, re-emit
+/// or GCD compose of unchanged data does not) is skipped too, rightly: the
+/// rewrite would change nothing. Any failure to read (a missing or unreadable
+/// archive, a link) answers `false`: the rewrite then runs and reports the
+/// problem as before. Opened through the no-follow walk, read-only.
+/// Blocking.
+pub(crate) fn archive_already_holds(
+    root: &crate::library::no_follow::LibraryRoot,
+    path: &std::path::Path,
+    comic_info_xml: &str,
+    metron_info_xml: &str,
+    is_cbt: bool,
+    limits: ArchiveLimits,
+) -> bool {
+    use archive::comic_archive::ComicArchive;
+    let Ok(source) = root.open_archive(path) else {
+        return false;
+    };
+    let opened: Result<Box<dyn ComicArchive>, _> = if is_cbt {
+        archive::cbt::Cbt::open_file(source, limits).map(|c| Box::new(c) as _)
+    } else {
+        Cbz::open_file(source, limits).map(|c| Box::new(c) as _)
+    };
+    let Ok(mut src) = opened else {
+        return false;
+    };
+    let mut sidecars: Vec<&str> = src
+        .entries()
+        .iter()
+        .map(|e| e.name.as_str())
+        .filter(|n| archive::rewrite_policy::is_folio_sidecar(n))
+        .collect();
+    sidecars.sort_unstable();
+    if sidecars != ["ComicInfo.xml", "MetronInfo.xml"] {
+        return false;
+    }
+    let holds = |src: &mut Box<dyn ComicArchive>, name: &str, want: &str| {
+        src.read_entry_bytes(name)
+            .is_ok_and(|have| have == want.as_bytes())
+    };
+    holds(&mut src, "ComicInfo.xml", comic_info_xml)
+        && holds(&mut src, "MetronInfo.xml", metron_info_xml)
 }
 
 /// CBZ sidecar rewrite body, run inside the `rewrite_atomic` closure:
@@ -1197,6 +1278,7 @@ async fn audit_writeback(
             "issue_id": job.issue_id,
             "archive_path": r.archive_path.to_string_lossy(),
             "backup_path": r.backup_path.as_ref().map(|p| p.to_string_lossy().to_string()),
+            "already_written": r.already_written,
             "suppressed_user_pins": job.suppressed_user_pins,
             "triggering_run_id": job.triggering_run_id,
             "triggering_run_ordinal": job.triggering_run_ordinal,
@@ -1266,6 +1348,7 @@ async fn record_writeback_manifest(
                 .entity("issue", job.issue_id.clone(), None)
                 .detail(serde_json::json!({
                     "entries_written": r.summary.entries_written,
+                    "already_written": r.already_written,
                     "series_id": r.series_id,
                     "series": series,
                     "path": r.archive_path.to_string_lossy(),

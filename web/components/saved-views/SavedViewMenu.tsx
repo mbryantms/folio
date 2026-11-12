@@ -214,18 +214,32 @@ export function SavedViewMenu({
                 icon={<FolderInput className="size-4" />}
                 label="Move to group"
               >
-                {board.groups.map((g) => (
+                {/* The group tree, indented by level; a list can go into
+                    a group at any depth. */}
+                {board.groups.map((g, _i, all) => (
                   <DropdownMenuItem
                     key={g.id}
                     disabled={currentGroup === g.id}
                     onSelect={() => board.moveToGroup(view.id, g.id)}
+                    title={g.path.join(" / ")}
                   >
-                    <span className="inline-flex w-4 justify-center">
+                    <span
+                      aria-hidden="true"
+                      className="inline-flex shrink-0 justify-end"
+                      style={{
+                        width: `${1 + Math.max(0, g.depth - 1) * 0.75}rem`,
+                      }}
+                    >
                       {currentGroup === g.id ? (
-                        <Check className="size-4" aria-hidden="true" />
+                        <Check className="size-4" />
                       ) : null}
                     </span>
-                    <span className="truncate">{g.name}</span>
+                    <span className="truncate">
+                      {/* Two groups of one name show their paths. */}
+                      {all.filter((o) => o.name === g.name).length > 1
+                        ? g.path.join(" / ")
+                        : g.name}
+                    </span>
                   </DropdownMenuItem>
                 ))}
                 {board.groups.length > 0 ? (

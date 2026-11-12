@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 
 /// A per-user bucket on the Views index (Settings → Views). Groups are
 /// scoped to one index tab via `scope` (`'filter'`, `'cbl'`,
-/// `'collection'`) and ordered by `position` within that scope.
+/// `'collection'`) and nest through `parent_id`, ordered by `position`
+/// among their siblings.
 /// Membership is in [`super::saved_view_group_item`]; a group with no
 /// items is still rendered (as an empty drop target).
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Serialize, Deserialize)]
@@ -16,7 +17,11 @@ pub struct Model {
     /// belongs to. CHECK-constrained in the migration.
     pub scope: String,
     pub name: String,
-    /// Ordinal within `(user_id, scope)`.
+    /// The enclosing group (same user and scope; the composite foreign key
+    /// enforces that), `None` for a top-level group. At most four levels
+    /// deep, without cycles: enforced by the API, not the schema.
+    pub parent_id: Option<Uuid>,
+    /// Ordinal among siblings: same `(user_id, scope, parent_id)`.
     pub position: i32,
     /// UI state: whether the group renders collapsed on the index.
     pub collapsed: bool,

@@ -1069,3 +1069,236 @@ async fn a_retry_after_an_unfinished_conversion_names_the_file_to_remove() {
     assert!(summary.contains("saga-1.cbz"), "{summary}");
     assert_eq!(std::fs::read(&cbr).unwrap(), cbr_bytes);
 }
+
+// ───────── rewrite job: retry after the swap ─────────
+
+/// Make every `issues` update that stamps a sidecar rewrite fail, the way a
+/// dropped connection after the swap would: the archive is rewritten, the
+/// bookkeeping that follows it is not. `clear_post_swap_fault` lifts it.
+async fn inject_post_swap_fault(app: &TestApp) {
+    use sea_orm::ConnectionTrait;
+    app.state()
+        .db
+        .execute_unprepared(
+            "CREATE FUNCTION test_fail_sidecar_stamp() RETURNS trigger AS $$ \
+             BEGIN RAISE EXCEPTION 'injected post-swap failure'; END $$ LANGUAGE plpgsql; \
+             CREATE TRIGGER test_fail_sidecar_stamp BEFORE UPDATE ON issues FOR EACH ROW \
+             WHEN (NEW.last_rewrite_kind = 'sidecar') \
+             EXECUTE FUNCTION test_fail_sidecar_stamp();",
+        )
+        .await
+        .unwrap();
+}
+
+async fn clear_post_swap_fault(app: &TestApp) {
+    use sea_orm::ConnectionTrait;
+    app.state()
+        .db
+        .execute_unprepared("DROP TRIGGER test_fail_sidecar_stamp ON issues;")
+        .await
+        .unwrap();
+}
+
+async fn set_retain_count(app: &TestApp, issue_id: &str, n: i32) {
+    let row = entity::issue::Entity::find_by_id(issue_id.to_owned())
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    entity::library::ActiveModel {
+        id: Set(row.library_id),
+        archive_backup_retain_count: Set(n),
+        ..Default::default()
+    }
+    .update(&app.state().db)
+    .await
+    .unwrap();
+}
+
+/// Every backup file of `cbz` that exists (`.bak`, `.bak.1` … `.bak.5`).
+fn backups_of(cbz: &Path) -> Vec<(i32, Vec<u8>)> {
+    (0..=5)
+        .filter_map(|slot| {
+            let p = server::archive_rewrite::backup_slot(cbz, slot);
+            std::fs::read(&p).ok().map(|b| (slot, b))
+        })
+        .collect()
+}
+
+fn comic_info_of(cbz: &Path) -> String {
+    let mut a = archive::open_path_unchecked(cbz, archive::ArchiveLimits::default()).unwrap();
+    String::from_utf8(a.read_entry_bytes("ComicInfo.xml").unwrap()).unwrap()
+}
+
+/// ARC-2 (1): the archive is rewritten, then the database step after the
+/// swap fails, so the job returns `Err` and apalis runs it again. The retry
+/// sees that the archive already holds these sidecars and goes straight to
+/// the bookkeeping: no second rewrite, no rotation, so the original is still
+/// the (one) backup. Pre-fix the retry rewrote again and rotated the
+/// rewritten file into `.bak`, deleting the only copy of the original with
+/// one slot. Checked with one slot and with three.
+#[tokio::test]
+async fn a_retry_after_a_post_swap_failure_keeps_the_original_backup() {
+    for slots in [1, 3] {
+        let f = writeback_issue().await;
+        set_retain_count(&f.app, &f.issue_id, slots).await;
+        let original = std::fs::read(&f.cbz).unwrap();
+
+        inject_post_swap_fault(&f.app).await;
+        let first = rewrite_sidecars::handle(
+            sidecar_job(&f.issue_id, f.run_id),
+            Data::new(f.app.state()),
+            Attempt::new_with_value(1),
+        )
+        .await;
+        assert!(
+            first.is_err(),
+            "the post-swap failure is retried ({slots} slots)"
+        );
+        assert!(comic_info_of(&f.cbz).contains("<Title>Rewritten</Title>"));
+        let after_first = std::fs::read(&f.cbz).unwrap();
+        assert_eq!(backups_of(&f.cbz), vec![(0, original.clone())]);
+
+        clear_post_swap_fault(&f.app).await;
+        rewrite_sidecars::handle(
+            sidecar_job(&f.issue_id, f.run_id),
+            Data::new(f.app.state()),
+            Attempt::new_with_value(2),
+        )
+        .await
+        .expect("the retry completes");
+
+        assert_eq!(
+            std::fs::read(&f.cbz).unwrap(),
+            after_first,
+            "the retry did not rewrite the archive again ({slots} slots)"
+        );
+        assert_eq!(
+            backups_of(&f.cbz),
+            vec![(0, original.clone())],
+            "exactly one backup, and it is the original ({slots} slots)"
+        );
+        let row = entity::issue::Entity::find_by_id(f.issue_id.clone())
+            .one(&f.app.state().db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.last_rewrite_kind.as_deref(), Some("sidecar"));
+        assert!(row.last_sidecar_rewrite_at.is_some(), "the bookkeeping ran");
+        assert_eq!(run_row(&f.app, f.run_id).await.status, "completed");
+    }
+}
+
+/// Control for the above: a job with different XML is a new rewrite, not
+/// a retry. It rewrites and rotates as always.
+#[tokio::test]
+async fn a_rewrite_with_different_sidecars_still_rewrites_and_rotates() {
+    let f = writeback_issue().await;
+    set_retain_count(&f.app, &f.issue_id, 3).await;
+    let original = std::fs::read(&f.cbz).unwrap();
+    rewrite_sidecars::handle(
+        sidecar_job(&f.issue_id, f.run_id),
+        Data::new(f.app.state()),
+        Attempt::new_with_value(1),
+    )
+    .await
+    .unwrap();
+    let first = std::fs::read(&f.cbz).unwrap();
+
+    let mut next = sidecar_job(&f.issue_id, f.run_id);
+    next.comic_info_xml =
+        "<?xml version=\"1.0\"?><ComicInfo><Title>Second</Title></ComicInfo>".to_owned();
+    rewrite_sidecars::handle(next, Data::new(f.app.state()), Attempt::new_with_value(1))
+        .await
+        .unwrap();
+    assert!(comic_info_of(&f.cbz).contains("<Title>Second</Title>"));
+    assert_eq!(
+        backups_of(&f.cbz),
+        vec![(0, first), (1, original)],
+        "a different rewrite rotates as before"
+    );
+}
+
+/// One page plus the given extra entries, stored.
+fn cbz_with_entries(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut buf = Cursor::new(Vec::new());
+    {
+        let mut zw = zip::ZipWriter::new(&mut buf);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zw.start_file("page-001.png", opts).unwrap();
+        zw.write_all(b"\x89PNG\r\n\x1a\nnested").unwrap();
+        for (name, bytes) in entries {
+            zw.start_file(*name, opts).unwrap();
+            zw.write_all(bytes).unwrap();
+        }
+        zw.finish().unwrap();
+    }
+    buf.into_inner()
+}
+
+/// The archive holds the job's exact root sidecars AND another Folio
+/// sidecar (a nested `ComicInfo.xml`, or a case-variant name) that the
+/// rewrite drops: it is not yet what the rewrite makes, so the skip must
+/// not apply and the job rewrites (one backup made, the extra gone).
+/// Control: the same archive without the extra is skipped (no backup).
+#[tokio::test]
+async fn an_archive_with_another_folio_sidecar_is_rewritten_not_skipped() {
+    let template = sidecar_job("unused", Uuid::nil());
+    let ci = template.comic_info_xml.clone();
+    let mi = template.metron_info_xml.clone();
+    let cases: [(&str, Option<&str>); 3] = [
+        ("nested", Some("Sub/ComicInfo.xml")),
+        ("case variant", Some("comicinfo.XML")),
+        ("control", None),
+    ];
+    for (label, extra) in cases {
+        let app = TestApp::spawn().await;
+        let dir = tempdir().unwrap();
+        let lib_id = LibrarySeed::new(dir.path())
+            .with_sidecar_writeback()
+            .insert(&app.state().db)
+            .await;
+        let series_id = SeriesSeed::new(lib_id, "Nested")
+            .insert(&app.state().db)
+            .await;
+        let mut entries: Vec<(&str, &[u8])> = vec![
+            ("ComicInfo.xml", ci.as_bytes()),
+            ("MetronInfo.xml", mi.as_bytes()),
+        ];
+        if let Some(name) = extra {
+            entries.push((name, b"<ComicInfo><Title>Stale</Title></ComicInfo>"));
+        }
+        let cbz = dir.path().join("nested-1.cbz");
+        let issue_id = IssueSeed::new(lib_id, series_id, &cbz, &cbz_with_entries(&entries), 1.0)
+            .insert(&app.state().db)
+            .await;
+        let run_id = seed_run(&app, "issue", &issue_id, json!({"kind": "issue"})).await;
+        let before = std::fs::read(&cbz).unwrap();
+
+        rewrite_sidecars::handle(
+            sidecar_job(&issue_id, run_id),
+            Data::new(app.state()),
+            Attempt::new_with_value(1),
+        )
+        .await
+        .unwrap();
+
+        let a = archive::open_path_unchecked(&cbz, archive::ArchiveLimits::default()).unwrap();
+        let names: Vec<String> = a.entries().iter().map(|e| e.name.clone()).collect();
+        if extra.is_some() {
+            assert_eq!(
+                backups_of(&cbz),
+                vec![(0, before)],
+                "{label}: rewritten, the original backed up"
+            );
+            assert!(
+                !names.iter().any(|n| Some(n.as_str()) == extra),
+                "{label}: the extra sidecar was dropped: {names:?}"
+            );
+        } else {
+            assert!(backups_of(&cbz).is_empty(), "{label}: skipped, no backup");
+            assert_eq!(std::fs::read(&cbz).unwrap(), before, "{label}: untouched");
+        }
+    }
+}

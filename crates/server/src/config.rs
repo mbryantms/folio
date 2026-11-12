@@ -304,8 +304,6 @@ pub struct Config {
     pub archive_max_entry_bytes: u64,
     #[serde(default = "default_archive_max_ratio")]
     pub archive_max_ratio: u32,
-    #[serde(default = "default_archive_max_nesting")]
-    pub archive_max_nesting: u8,
 
     // SMTP
     #[serde(default)]
@@ -625,7 +623,6 @@ impl std::fmt::Debug for Config {
             .field("archive_max_total_bytes", &self.archive_max_total_bytes)
             .field("archive_max_entry_bytes", &self.archive_max_entry_bytes)
             .field("archive_max_ratio", &self.archive_max_ratio)
-            .field("archive_max_nesting", &self.archive_max_nesting)
             .field("smtp_host", &self.smtp_host)
             .field("smtp_port", &self.smtp_port)
             .field("smtp_username", &redact_opt(&self.smtp_username))
@@ -874,9 +871,6 @@ fn default_archive_max_entry_bytes() -> u64 {
 fn default_archive_max_ratio() -> u32 {
     200
 }
-fn default_archive_max_nesting() -> u8 {
-    1
-}
 
 /// Where the effective value for a single setting came from. Surfaced by
 /// `GET /admin/settings` so an operator can see why an admin-UI save is
@@ -959,7 +953,6 @@ impl Config {
             max_total_bytes: self.archive_max_total_bytes,
             max_entry_bytes: self.archive_max_entry_bytes,
             max_compression_ratio: self.archive_max_ratio,
-            max_nesting_depth: self.archive_max_nesting,
         }
     }
 
@@ -2090,7 +2083,6 @@ mod tests {
             archive_max_total_bytes: 5_678_900,
             archive_max_entry_bytes: 1_111_222,
             archive_max_ratio: 7,
-            archive_max_nesting: 3,
             ..test_config_skeleton()
         };
         let limits = cfg.archive_limits();
@@ -2098,7 +2090,6 @@ mod tests {
         assert_eq!(limits.max_total_bytes, 5_678_900);
         assert_eq!(limits.max_entry_bytes, 1_111_222);
         assert_eq!(limits.max_compression_ratio, 7);
-        assert_eq!(limits.max_nesting_depth, 3);
     }
 
     /// Minimal `Config` skeleton — only the fields needed to exist
@@ -2152,7 +2143,6 @@ mod tests {
             archive_max_total_bytes: 0,
             archive_max_entry_bytes: 0,
             archive_max_ratio: 0,
-            archive_max_nesting: 0,
             smtp_host: None,
             smtp_port: 587,
             smtp_username: None,
@@ -2233,6 +2223,24 @@ mod tests {
             cfg.session_max_age(),
             Duration::from_secs(90 * 24 * 60 * 60)
         );
+        cfg.validate().expect("defaults validate");
+    }
+
+    /// `COMIC_ARCHIVE_MAX_NESTING` was removed (no reader ever opened an
+    /// archive inside an archive). A deployment that still sets it must
+    /// boot as before: `Config` does not deny unknown keys, so the
+    /// leftover key (what `Env::prefixed("COMIC_")` yields for the
+    /// variable, or a `config.toml` line) is ignored.
+    #[test]
+    fn removed_archive_max_nesting_key_is_ignored() {
+        let cfg: Config = Figment::new()
+            .merge(Toml::string(
+                "database_url = 'postgres://x'\nredis_url = 'redis://x'\n\
+                 library_path = '/l'\ndata_path = '/d'\npublic_url = 'http://localhost'\n\
+                 archive_max_nesting = 1\n",
+            ))
+            .extract()
+            .expect("a leftover archive_max_nesting key extracts");
         cfg.validate().expect("defaults validate");
     }
 

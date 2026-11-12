@@ -106,3 +106,33 @@ export function grabAnywhere(
     onDragStart: (e) => e.preventDefault(),
   };
 }
+
+/** Where the pointer took hold of the lifted row (from its left edge)
+ *  and the row's size, to place the drop label under the pointer. */
+export type HeldGrab = { offset: number; width: number; height: number };
+export const NO_GRAB: HeldGrab = { offset: 0, width: 0, height: 0 };
+
+/** `.drag-lift` (styles/globals.css): the held row is scaled and tilted
+ *  about its centre, so on a wide row the side left of centre hangs
+ *  lower than the row's box. */
+const LIFT_SCALE = 1.04;
+const LIFT_TILT_DEG = 1.25;
+/** Space between the lifted row's lowest edge over the label and the
+ *  label itself. */
+const DROP_LABEL_GAP = 6;
+
+/** The label's left edge (from the row's left) and the top margin that
+ *  keeps it clear of the tilted, scaled row above it. */
+export function dropLabelPlacement(
+  grab: HeldGrab,
+  reducedMotion: boolean,
+): { left: number; top: number } {
+  const left = Math.max(0, grab.offset - 12);
+  const grow = (grab.height * (LIFT_SCALE - 1)) / 2;
+  const tilt = reducedMotion
+    ? 0
+    : Math.max(0, grab.width / 2 - left) *
+      LIFT_SCALE *
+      Math.sin((LIFT_TILT_DEG * Math.PI) / 180);
+  return { left, top: Math.ceil(grow + tilt) + DROP_LABEL_GAP };
+}
