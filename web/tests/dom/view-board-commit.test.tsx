@@ -42,7 +42,16 @@ const state = vi.hoisted(() => ({
   undo: [] as Array<() => unknown>,
   /** Refuse the next layout PUT with this 422 message. */
   refusePut: null as string | null,
+  /** Fail the next request matching `method path`: with a status (the
+   *  server refused or broke, nothing applied), or "lost" (the server
+   *  applied it and the answer never came back). */
+  fail: [] as Array<{ call: string; status: number | "lost" }>,
+  /** The options of every Undo toast raised. */
+  undoOpts: [] as Array<{
+    restoredMessage?: string | null | ((r: never) => string | null);
+  }>,
   toastError: vi.fn(),
+  toastInfo: vi.fn(),
 }));
 
 function json(body: unknown, status = 200) {
@@ -58,6 +67,18 @@ vi.mock("@/lib/api/auth-refresh", () => ({
     const method = init?.method ?? "GET";
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     if (method !== "GET") state.calls.push({ path, method, body });
+    const failAt = state.fail.findIndex((f) => f.call === `${method} ${path}`);
+    const fail = failAt < 0 ? null : state.fail.splice(failAt, 1)[0]!;
+    if (fail && fail.status !== "lost")
+      return json(
+        { error: { code: "test", message: `failed ${fail.status}` } },
+        fail.status,
+      );
+    const lost = fail !== null;
+    const answer = (r: Response) => {
+      if (lost) throw new TypeError("Failed to fetch");
+      return r;
+    };
     if (path.startsWith("/auth/me")) return json({ id: "u1", role: "user" });
     if (path.startsWith("/me/saved-views")) return json({ items: state.views });
     if (path.startsWith("/me/cbl-lists")) return json({ items: state.lists });
@@ -101,7 +122,7 @@ vi.mock("@/lib/api/auth-refresh", () => ({
         },
       );
       state.ungrouped = body.ungrouped;
-      return new Response(null, { status: 204 });
+      return answer(new Response(null, { status: 204 }));
     }
     if (method !== "GET") return new Response(null, { status: 204 });
     if (path.startsWith("/me/view-groups"))
@@ -129,7 +150,7 @@ vi.mock("sonner", () => ({
     success: vi.fn(),
     error: state.toastError,
     message: vi.fn(),
-    info: vi.fn(),
+    info: state.toastInfo,
     loading: vi.fn(),
     dismiss: vi.fn(),
   }),
@@ -138,8 +159,12 @@ vi.mock("sonner", () => ({
 vi.mock("@/lib/ui/undo-toast", () => ({
   UNDO_TOAST_DURATION_MS: 8000,
   UndoFailedError: class UndoFailedError extends Error {},
-  showUndoToast: (o: { onUndo: () => unknown }) => {
+  showUndoToast: (o: {
+    onUndo: () => unknown;
+    restoredMessage?: string | null | ((r: never) => string | null);
+  }) => {
     state.undo.push(o.onUndo);
+    state.undoOpts.push(o);
     return 1;
   },
 }));
@@ -240,7 +265,10 @@ beforeEach(() => {
   state.calls = [];
   state.undo = [];
   state.refusePut = null;
+  state.fail = [];
+  state.undoOpts = [];
   state.toastError.mockClear();
+  state.toastInfo.mockClear();
   // Stored by hand: Events = [Crisis, Watchmen]; the root = [Zeta, Alpha].
   // Most read: Watchmen (0.6) before Crisis (0.2); Alpha (1.0) before
   // Zeta (0.5). Recently updated: Watchmen (1 day) before Crisis (3).
@@ -587,6 +615,110 @@ describe("nested groups", () => {
       "DELETE /me/view-groups/g-new",
     ]);
     expect(state.groups.some((g) => g.id === "g-new")).toBe(false);
+  });
+
+  const undoCalls = () => state.calls.map((c) => `${c.method} ${c.path}`);
+  async function deleteEvents() {
+    openMenu("Actions for group Events");
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: /Delete group/ }),
+    );
+    await waitFor(() => expect(state.undo).toHaveLength(1));
+    state.calls = [];
+  }
+
+  it("Undo keeps the group when the restore's answer is lost, and says so", async () => {
+    await ready(false);
+    await deleteEvents();
+    // The PUT committed; its response never arrived.
+    state.fail = [{ call: "PUT /me/view-groups/layout", status: "lost" }];
+    await expect(state.undo[0]!()).rejects.toThrow(
+      "The restore may not have finished. The page was refreshed.",
+    );
+    expect(undoCalls()).toEqual([
+      "POST /me/view-groups",
+      "PUT /me/view-groups/layout",
+    ]);
+    // The restore that landed stands: Events is back, with Big under it.
+    expect(state.groups.find((g) => g.id === "g-new")?.parent_id).toBe("m");
+    expect(state.groups.find((g) => g.id === "b")?.parent_id).toBe("g-new");
+  });
+
+  it("Undo treats a 5xx on the restore like a lost answer: nothing deleted", async () => {
+    await ready(false);
+    await deleteEvents();
+    state.fail = [{ call: "PUT /me/view-groups/layout", status: 503 }];
+    await expect(state.undo[0]!()).rejects.toThrow(
+      "The restore may not have finished. The page was refreshed.",
+    );
+    expect(undoCalls()).toEqual([
+      "POST /me/view-groups",
+      "PUT /me/view-groups/layout",
+    ]);
+  });
+
+  it("Undo removes the re-created group when restoring its collapsed state fails", async () => {
+    state.groups = state.groups.map((g) =>
+      g.id === "e" ? { ...g, collapsed: true } : g,
+    );
+    await ready(false);
+    await deleteEvents();
+    state.fail = [{ call: "PATCH /me/view-groups/g-new", status: 500 }];
+    await expect(state.undo[0]!()).rejects.toThrow(
+      "Couldn't restore the group. Nothing was changed.",
+    );
+    // Nothing was restored yet, so the empty group goes, whatever the
+    // PATCH failure was.
+    expect(undoCalls()).toEqual([
+      "POST /me/view-groups",
+      "PATCH /me/view-groups/g-new",
+      "DELETE /me/view-groups/g-new",
+    ]);
+    expect(state.groups.some((g) => g.id === "g-new")).toBe(false);
+  });
+
+  it("says so when the cleanup after a refused restore fails too", async () => {
+    await ready(false);
+    await deleteEvents();
+    state.refusePut = "groups must list every group in this scope exactly once";
+    state.fail = [{ call: "DELETE /me/view-groups/g-new", status: 500 }];
+    await expect(state.undo[0]!()).rejects.toThrow(
+      'Couldn\'t restore the group. An empty "Events" was left at the top level.',
+    );
+    expect(undoCalls()).toEqual([
+      "POST /me/view-groups",
+      "PUT /me/view-groups/layout",
+      "DELETE /me/view-groups/g-new",
+    ]);
+  });
+
+  it("the restored toast names the groups the depth cap moved up", async () => {
+    await ready(false);
+    await deleteEvents();
+    const done = state.undoOpts[0]!.restoredMessage as (n: number) => string;
+    expect(done(0)).toBe('Restored group "Events"');
+    expect(done(2)).toBe(
+      'Restored group "Events". 2 groups moved up to stay within four levels.',
+    );
+    // An ordinary restore moved nothing, and resolves to that count.
+    await expect(state.undo[0]!()).resolves.toBe(0);
+  });
+
+  it("a move on a page showing a parent it couldn't place is refused, refreshed and said", async () => {
+    // DC's parent is gone from this page's copy: it shows at the top
+    // level only as a fallback.
+    state.groups = state.groups.map((g) =>
+      g.id === "d" ? { ...g, parent_id: "gone" } : g,
+    );
+    await ready(false);
+    openMenu("Actions for Alpha");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Big" }));
+    await waitFor(() =>
+      expect(state.toastInfo).toHaveBeenCalledWith(
+        "This page was out of date and has been refreshed. Try the move again.",
+      ),
+    );
+    expect(lastPut()).toBeUndefined();
   });
 
   it("a refused nesting move rolls the page back and shows the error", async () => {

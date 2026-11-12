@@ -66,6 +66,7 @@ import {
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { createPortal } from "react-dom";
+import { toast } from "sonner";
 import {
   ArrowDown,
   ArrowUp,
@@ -134,7 +135,11 @@ import {
   useReplaceViewGroupLayout,
   useUpdateViewGroup,
 } from "@/lib/api/mutations";
-import { apiMutate, useApiMutation } from "@/lib/api/mutations/_core";
+import {
+  ApiMutationError,
+  apiMutate,
+  useApiMutation,
+} from "@/lib/api/mutations/_core";
 import { apiPath } from "@/lib/api/path";
 import { jsonFetch, queryKeys, useViewGroups } from "@/lib/api/queries";
 import type {
@@ -169,6 +174,7 @@ import {
   moveGroupAmongSiblings,
   moveGroupTo,
   moveView,
+  restoreGroupLayout,
   restoredGroupLayout,
   sortBoard,
   subtreeIds,
@@ -192,7 +198,10 @@ import {
 import { cn } from "@/lib/utils";
 import {
   DRAG_LIFT_CLASS,
+  type HeldGrab,
   LIFT_TRANSITION,
+  NO_GRAB,
+  dropLabelPlacement,
   SPRING_EASING,
   useSpringSort,
 } from "@/lib/ui/springy-drag";
@@ -209,6 +218,19 @@ export { restoredGroupLayout };
  *  the previous tree back: its slot among its siblings, its lists, and
  *  its child groups under it again. Only the grouping is ever lost — the
  *  views themselves just move up a level — so no confirm is needed. */
+/** The server answered and said no (a 4xx other than a timeout), so the
+ *  request certainly changed nothing. A network failure, a 408 or a 5xx
+ *  may hide a write that landed. */
+function refusedByServer(err: unknown): boolean {
+  return (
+    err instanceof ApiMutationError &&
+    typeof err.status === "number" &&
+    err.status >= 400 &&
+    err.status < 500 &&
+    err.status !== 408
+  );
+}
+
 function useDeleteGroupWithUndo(scope: ViewGroupScope, noun: string) {
   const qc = useQueryClient();
   const key = queryKeys.viewGroups(scope);
@@ -251,10 +273,16 @@ function useDeleteGroupWithUndo(scope: ViewGroupScope, noun: string) {
           showUndoToast({
             message: `Deleted group "${group.name}"`,
             description: moved,
-            restoredMessage: `Restored group "${group.name}"`,
+            restoredMessage: (lifted: number) =>
+              lifted > 0
+                ? `Restored group "${group.name}". ${lifted} ${plural("group", lifted)} moved up to stay within four levels.`
+                : `Restored group "${group.name}"`,
             failedMessage: "Couldn't restore the group",
-            onUndo: async () => {
+            onUndo: async (): Promise<number> => {
               let created: ViewGroupView | null = null;
+              // Set once the layout PUT has gone out: from then on a lost
+              // response may hide a restore that landed.
+              let putSent = false;
               try {
                 if (!before) throw new Error("nothing to restore");
                 // Created empty at the top level; the layout PUT below
@@ -276,37 +304,48 @@ function useDeleteGroupWithUndo(scope: ViewGroupScope, noun: string) {
                 const current = await jsonFetch<ViewGroupListView>(
                   `/me/view-groups?scope=${encodeURIComponent(scope)}`,
                 );
+                const { layout, lifted } = restoreGroupLayout(
+                  scope,
+                  before,
+                  group.id,
+                  newId,
+                  current,
+                );
+                putSent = true;
                 await apiMutate({
                   path: "/me/view-groups/layout",
                   method: "PUT",
-                  body: restoredGroupLayout(
-                    scope,
-                    before,
-                    group.id,
-                    newId,
-                    current,
-                  ),
+                  body: layout,
                 });
+                return lifted;
               } catch (err) {
-                // The re-created group must not stay behind, empty, when
-                // the restore itself was refused (another tab changed
-                // the tree in between, say).
-                if (created) {
-                  const cleaned = await apiMutate({
-                    path: apiPath`/me/view-groups/${created.id}`,
-                    method: "DELETE",
-                  }).then(
-                    () => true,
-                    () => false,
-                  );
+                if (!created) throw err;
+                if (putSent && !refusedByServer(err)) {
+                  // The PUT may have committed with its answer lost (a
+                  // dropped connection, a timeout, a 5xx). Deleting the
+                  // group now could undo a restore that landed and lift
+                  // its contents out again, so leave it and re-read.
                   throw new UndoFailedError(
-                    cleaned
-                      ? "Couldn't restore the group. Nothing was changed."
-                      : `Couldn't restore the group. An empty "${group.name}" was left at the top level.`,
+                    "The restore may not have finished. The page was refreshed.",
                     { cause: err },
                   );
                 }
-                throw err;
+                // Refused, or failed before the restore was sent: the
+                // re-created group is still empty and must not stay
+                // behind (another tab changed the tree in between, say).
+                const cleaned = await apiMutate({
+                  path: apiPath`/me/view-groups/${created.id}`,
+                  method: "DELETE",
+                }).then(
+                  () => true,
+                  () => false,
+                );
+                throw new UndoFailedError(
+                  cleaned
+                    ? "Couldn't restore the group. Nothing was changed."
+                    : `Couldn't restore the group. An empty "${group.name}" was left at the top level.`,
+                  { cause: err },
+                );
               } finally {
                 qc.invalidateQueries({ queryKey: key });
               }
@@ -572,7 +611,7 @@ export function GroupedViewsBoard({
     null,
   );
   const folderPlan = React.useRef<GroupDropState | null>(null);
-  const [grabOffset, setGrabOffset] = React.useState(0);
+  const [grab, setGrab] = React.useState<HeldGrab>(NO_GRAB);
   const [newGroupOpen, setNewGroupOpen] = React.useState(false);
   const [newGroupSeedView, setNewGroupSeedView] = React.useState<string | null>(
     null,
@@ -604,6 +643,9 @@ export function GroupedViewsBoard({
         // fetch the real tree.
         setDraft(null);
         void qc.invalidateQueries({ queryKey: queryKeys.viewGroups(scope) });
+        toast.info(
+          "This page was out of date and has been refreshed. Try the move again.",
+        );
         return;
       }
       const send = (layout: BoardLayout, shown: ViewBoard) => {
@@ -767,10 +809,15 @@ export function GroupedViewsBoard({
       pointer?.target instanceof Element
         ? pointer.target.closest("[data-board-row], [data-folder-row]")
         : null;
-    setGrabOffset(
-      row && typeof pointer?.clientX === "number"
-        ? pointer.clientX - row.getBoundingClientRect().left
-        : 0,
+    const rect = row?.getBoundingClientRect();
+    setGrab(
+      rect && typeof pointer?.clientX === "number"
+        ? {
+            offset: pointer.clientX - rect.left,
+            width: rect.width,
+            height: rect.height,
+          }
+        : NO_GRAB,
     );
     setDragFrom(a?.type === "view" ? containerOf(board, a.id) : null);
     setActiveId(ev.active.id);
@@ -1331,7 +1378,7 @@ export function GroupedViewsBoard({
                         })}
                       </div>
                       {heldRowLabel ? (
-                        <DropLabel label={heldRowLabel} offset={grabOffset} />
+                        <DropLabel label={heldRowLabel} grab={grab} />
                       ) : null}
                     </div>
                   ) : activeView ? (
@@ -1381,7 +1428,7 @@ export function GroupedViewsBoard({
                         <DropLabel
                           label={heldFolderLabel}
                           refused={folderDrag?.plan === null}
-                          offset={grabOffset}
+                          grab={grab}
                         />
                       ) : null}
                     </div>
@@ -1490,19 +1537,19 @@ function innermost<T extends { id: UniqueIdentifier }>(
 function DropLabel({
   label,
   refused,
-  offset,
+  grab,
 }: {
   label: string;
   refused?: boolean;
-  /** Where the pointer took hold of the lifted row, from its left edge:
-   *  the label sits under the pointer, wherever the row was grabbed. */
-  offset: number;
+  grab: HeldGrab;
 }) {
+  const reduced = useReducedMotion();
+  const { left, top } = dropLabelPlacement(grab, reduced);
   return (
     <p
-      style={{ marginLeft: Math.max(0, offset - 12) }}
+      style={{ marginLeft: left, marginTop: top }}
       className={cn(
-        "bg-popover border-border mt-1 block w-max max-w-xs truncate rounded-md border px-2 py-0.5 text-xs shadow-md",
+        "bg-popover border-border block w-max max-w-md truncate rounded-md border px-2 py-0.5 text-xs shadow-md",
         refused ? "text-destructive" : "text-muted-foreground",
       )}
     >

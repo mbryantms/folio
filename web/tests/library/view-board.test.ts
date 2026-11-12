@@ -37,6 +37,7 @@ import {
   GROUP_DROP_EDGE,
   hasDisplayOnlyParents,
   planGroupDrop,
+  restoreGroupLayout,
   restoredGroupLayout,
 } from "@/lib/saved-views/view-board";
 
@@ -734,5 +735,22 @@ describe("restoredGroupLayout never exceeds four levels", () => {
       ["N", "C"],
     ]);
     expect(out.groups.find((x) => x.id === "N")!.view_ids).toEqual(["v"]);
+    // And it counts the move, so the Undo can say so.
+    expect(restoreGroupLayout("cbl", before, "D", "D2", current).lifted).toBe(
+      1,
+    );
+  });
+
+  it("counts nothing when the restored tree fits", () => {
+    const before = {
+      groups: [gp("L1", [], 0, null), gp("D", [], 0, "L1")],
+    };
+    const current = {
+      groups: [gp("L1", [], 0, null), gp("D2", [], 1, null)],
+      ungrouped_ids: [],
+    };
+    expect(restoreGroupLayout("cbl", before, "D", "D2", current).lifted).toBe(
+      0,
+    );
   });
 });

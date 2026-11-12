@@ -924,6 +924,18 @@ export function restoredGroupLayout(
   newId: string,
   current: { groups: readonly StoredGroup[]; ungrouped_ids: string[] },
 ): ReplaceLayoutReq {
+  return restoreGroupLayout(scope, before, oldId, newId, current).layout;
+}
+
+/** `restoredGroupLayout`, plus how many groups the four-level cap moved
+ *  up (so the Undo can say so instead of relocating them silently). */
+export function restoreGroupLayout(
+  scope: ReplaceLayoutReq["scope"],
+  before: { groups: readonly StoredGroup[] },
+  oldId: string,
+  newId: string,
+  current: { groups: readonly StoredGroup[]; ungrouped_ids: string[] },
+): { layout: ReplaceLayoutReq; lifted: number } {
   const swap = (id: string | null | undefined) =>
     id === oldId ? newId : (id ?? null);
   const now = new Map(current.groups.map((g) => [g.id, g]));
@@ -973,10 +985,14 @@ export function restoredGroupLayout(
     listed.add(g.id);
   }
   const grouped = new Set(groups.flatMap((g) => g.view_ids));
+  const capped = capDepth(groups);
   return {
-    scope,
-    groups: capDepth(groups),
-    ungrouped: current.ungrouped_ids.filter((id) => !grouped.has(id)),
+    layout: {
+      scope,
+      groups: capped.groups,
+      ungrouped: current.ungrouped_ids.filter((id) => !grouped.has(id)),
+    },
+    lifted: capped.lifted,
   };
 }
 
@@ -987,7 +1003,10 @@ export function restoredGroupLayout(
  * that still allows it: it lands on level 4, after that ancestor's own
  * children. Order among the rest is unchanged.
  */
-function capDepth(groups: LayoutGroupReq[]): LayoutGroupReq[] {
+function capDepth(groups: LayoutGroupReq[]): {
+  groups: LayoutGroupReq[];
+  lifted: number;
+} {
   const byId = new Map(groups.map((g) => [g.id, g]));
   const chain = (id: string | null | undefined): string[] => {
     const out: string[] = [];
@@ -1019,8 +1038,11 @@ function capDepth(groups: LayoutGroupReq[]): LayoutGroupReq[] {
     }
   }
   const liftedIds = new Set(lifted.map((g) => g.id));
-  return [
-    ...groups.filter((g) => !liftedIds.has(g.id)).map((g) => byId.get(g.id)!),
-    ...lifted,
-  ];
+  return {
+    groups: [
+      ...groups.filter((g) => !liftedIds.has(g.id)).map((g) => byId.get(g.id)!),
+      ...lifted,
+    ],
+    lifted: lifted.length,
+  };
 }

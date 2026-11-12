@@ -834,7 +834,10 @@ async fn replace_layout_inner(
     user_id: Uuid,
     req: ReplaceLayoutReq,
 ) -> Result<Response, Response> {
-    // Shape checks that need no database.
+    // Order of checks: first what the payload alone shows (no group or
+    // view listed twice); then, under the scope lock, that it lists every
+    // stored group; only then the tree, which needs the stored parents
+    // (a group the payload states no parent for keeps its stored one).
     let req_ids: HashSet<Uuid> = req.groups.iter().map(|g| g.id).collect();
     if req_ids.len() != req.groups.len() {
         return Err(error(

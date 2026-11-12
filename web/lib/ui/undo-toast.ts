@@ -21,18 +21,20 @@ import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 
 export { UNDO_TOAST_DURATION_MS };
 
-export type UndoToastOptions = {
+export type UndoToastOptions<R = unknown> = {
   /** The toast title — what just happened, e.g. `Deleted "Fables"`. */
   message: string;
   /** Optional secondary line under the title. */
   description?: string;
   /** Reverses the action. May be async; a throw / rejection surfaces
    *  `failedMessage` as an error toast. */
-  onUndo: () => unknown;
+  onUndo: () => NoInfer<R> | Promise<NoInfer<R>>;
   /** Toast shown once the undo has landed. Defaults to `"Restored"`.
    *  `null` skips it — for undos whose result is already on screen
-   *  (e.g. re-opening an editor with the discarded draft). */
-  restoredMessage?: string | null;
+   *  (e.g. re-opening an editor with the discarded draft). A function
+   *  gets what `onUndo` resolved to, for a message that depends on how
+   *  the restore went. */
+  restoredMessage?: string | null | ((result: R) => string | null);
   /** Error toast when `onUndo` fails. */
   failedMessage?: string;
   /** Reuse an existing sonner toast id — lets the Undo toast replace a
@@ -53,7 +55,7 @@ export type UndoToastOptions = {
 export class UndoFailedError extends Error {}
 
 /** Pop the shared "done — Undo" toast. Returns the sonner toast id. */
-export function showUndoToast({
+export function showUndoToast<R = unknown>({
   message,
   description,
   onUndo,
@@ -62,7 +64,7 @@ export function showUndoToast({
   id,
   duration = UNDO_TOAST_DURATION_MS,
   tone = "success",
-}: UndoToastOptions): string | number {
+}: UndoToastOptions<R>): string | number {
   // Sonner dismisses the toast when the action is clicked, but a fast
   // double-click (or a re-render racing the dismiss) must not replay the
   // restore twice — that would, e.g., recreate a collection twice.
@@ -79,8 +81,12 @@ export function showUndoToast({
         used = true;
         void (async () => {
           try {
-            await onUndo();
-            if (restoredMessage !== null) toast.success(restoredMessage);
+            const result = await onUndo();
+            const done =
+              typeof restoredMessage === "function"
+                ? restoredMessage(result)
+                : restoredMessage;
+            if (done !== null) toast.success(done);
           } catch (err) {
             toast.error(
               err instanceof UndoFailedError ? err.message : failedMessage,
