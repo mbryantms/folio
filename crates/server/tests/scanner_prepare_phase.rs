@@ -15,7 +15,9 @@
 //!  - the moved-file case (persist adopts a row by content hash) still
 //!    gets page hashes, read in prepare;
 //!  - a hashed anchor written between the phases still follows its image
-//!    (persist reads the pages itself, only from the recorded version);
+//!    (persist reads the pages itself, only from the recorded version:
+//!    same size, mtime, device and inode), and that read takes no
+//!    archive-work permit while the transaction pins a connection;
 //!  - prepare reads no pages when no anchor can use them (unchanged file,
 //!    plain rename, a copy, no hashed anchor: `files_page_hashed`);
 //!  - a mixed batch (CBZ, CBT, a converting CBR, an archive with an
@@ -258,9 +260,17 @@ struct Anchored {
 }
 
 async fn anchored() -> Anchored {
-    let app = TestApp::spawn().await;
+    anchored_on(None).await
+}
+
+/// [`anchored`] on a pool of `pool` connections (`None`: the default).
+async fn anchored_on(pool: Option<u32>) -> Anchored {
     let dir = tempdir().unwrap();
     let root = dir.path().to_path_buf();
+    let app = match pool {
+        Some(n) => TestApp::spawn_with_pool(root.clone(), n, 1).await,
+        None => TestApp::spawn().await,
+    };
     let series = root.join("Anchors");
     std::fs::create_dir_all(&series).unwrap();
     let path = series.join("Anchors 001.cbz");
@@ -522,6 +532,78 @@ async fn hashed_anchor_written_between_phases_with_the_file_replaced_again() {
     );
 }
 
+/// The gap again, but the file was replaced by one of the same size and,
+/// as on FAT or SMB (2 s timestamps), the same mtime: only its inode
+/// differs. Persist must not hash it as the version the row records; the
+/// anchor keeps its ordinal, as when the replacement is visible.
+#[tokio::test]
+async fn hashed_anchor_written_between_phases_with_a_same_size_same_mtime_replacement() {
+    let a = anchored().await;
+    unhash_anchors(&a).await;
+    replace(&a.path, &cbz_bytes(&[BLUE, YELLOW, RED, GREEN]), 60);
+    let later = a.path.clone();
+    let between = async {
+        hash_bookmark(&a).await;
+        let before = std::fs::metadata(&later).unwrap();
+        let mtime = filetime::FileTime::from_last_modification_time(&before);
+        // Same images in another order: same size. GREEN on 0.
+        let tmp = later.with_extension("tmp");
+        std::fs::write(&tmp, cbz_bytes(&[GREEN, RED, BLUE, YELLOW])).unwrap();
+        std::fs::rename(&tmp, &later).unwrap();
+        filetime::set_file_mtime(&later, mtime).unwrap();
+        let after = std::fs::metadata(&later).unwrap();
+        use std::os::unix::fs::MetadataExt;
+        assert_eq!(after.len(), before.len(), "same size");
+        assert_eq!(after.mtime_nsec(), before.mtime_nsec(), "same mtime");
+        assert_eq!(after.mtime(), before.mtime(), "same mtime");
+        assert_ne!(after.ino(), before.ino(), "another inode");
+    };
+    prepare_then_persist(&a, &a.path, between).await.unwrap();
+    assert_eq!(
+        markers(&a.app, &a.issue_id).await,
+        vec![(1, vec![], Some(page_hash_of(GREEN)))],
+        "not placed by the replacement's pages (GREEN on 0) as if it were the recorded version"
+    );
+}
+
+/// The second read inside persist takes no archive-work permit: with
+/// every permit held (thumbnail jobs, say) while the batch transaction
+/// holds the only pooled connection, it still completes. It used to wait
+/// for a permit while pinning the connection.
+#[tokio::test]
+async fn second_page_read_in_persist_needs_no_archive_permit() {
+    let a = anchored_on(Some(1)).await;
+    unhash_anchors(&a).await;
+    replace(&a.path, &cbz_bytes(&[BLUE, YELLOW, RED, GREEN]), 60);
+    let held = std::sync::Mutex::new(None);
+    let sem = a.app.state().archive_work_semaphore.clone();
+    let between = async {
+        hash_bookmark(&a).await;
+        let n = u32::try_from(sem.available_permits()).unwrap();
+        assert!(n > 0);
+        *held.lock().unwrap() = Some(sem.clone().acquire_many_owned(n).await.unwrap());
+    };
+    let stats = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        prepare_then_persist(&a, &a.path, between),
+    )
+    .await
+    .expect("persist finishes with every archive-work permit held")
+    .unwrap();
+    assert_eq!(
+        sem.available_permits(),
+        0,
+        "the permits were held throughout"
+    );
+    drop(held);
+    assert_eq!(stats.files_page_hashed, 0, "prepare saw no hashed anchor");
+    assert_eq!(
+        markers(&a.app, &a.issue_id).await,
+        vec![(3, vec![], Some(page_hash_of(GREEN)))],
+        "the bookmark followed GREEN to page 3"
+    );
+}
+
 /// `files_page_hashed` pins the "do not read" side of the prepare gate.
 #[tokio::test]
 async fn page_hashes_are_read_only_when_an_anchor_can_use_them() {
@@ -767,15 +849,13 @@ async fn mixed_batch_ends_with_the_same_rows_anchors_and_findings() {
     bookmark(&app, &auth, &bad_id, 1).await; // PURPLE
 
     // The rescan batch: two reorders, a reorder whose new first page is
-    // unreadable, and a CBR to convert.
-    //
-    // No byte-identical copy of a file that changes in the same batch: a
-    // folder's files are ingested in the order the filesystem lists them,
-    // so whether such a copy meets a row that already carries its content
-    // hash (a duplicate) or not (its own issue) differs from one
-    // filesystem to the next. `page_hashes_are_read_only_when_an_anchor_can_use_them`
-    // covers a copy whose original is unchanged, which has one answer.
+    // unreadable, a CBR to convert, and a byte-identical copy of the CBZ's
+    // new bytes. Files with a row persist before new ones, so the copy
+    // always meets the CBZ's row carrying its content hash: a duplicate,
+    // whichever the filesystem lists first (`scanner_order.rs`).
     replace(&cbz, &cbz_bytes(&[BLUE, YELLOW, RED, GREEN]), 60);
+    let copy = series.join("Mixed 000.cbz");
+    replace(&copy, &cbz_bytes(&[BLUE, YELLOW, RED, GREEN]), 60);
     replace(&cbt, &cbt_bytes(&[RED, PURPLE, GREEN, BLUE]), 60);
     replace(
         &bad,
@@ -791,7 +871,7 @@ async fn mixed_batch_ends_with_the_same_rows_anchors_and_findings() {
             stats.files_converted,
             stats.files_duplicate
         ),
-        (3, 1, 1, 0),
+        (3, 1, 1, 1),
         "{stats:?}"
     );
 
@@ -833,5 +913,6 @@ async fn mixed_batch_ends_with_the_same_rows_anchors_and_findings() {
         .map(|h| format!("{:?}", h.kind))
         .collect();
     open.sort();
-    assert!(open.is_empty(), "{open:?}");
+    assert_eq!(open, vec!["DuplicateContent".to_owned()], "{open:?}");
+    assert!(row_at(&app, &copy).await.is_none(), "the copy is no issue");
 }

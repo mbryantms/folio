@@ -859,6 +859,10 @@ pub struct PreparedIngest {
     existing: Option<issue::Model>,
     hash: String,
     hash_pending: bool,
+    /// `(device, inode)` of the handle prepare read: the file the row's
+    /// size, mtime and content hash describe. For a converted CBR / CB7
+    /// it is the new `.cbz`'s, the file actually hashed.
+    identity: FileIdentity,
     parsed: ParsedArchive,
     /// The per-page hashes a content change may re-anchor hashed markers
     /// and progress with (see [`prepare_page_hashes`]); `NotNeeded` for
@@ -1075,7 +1079,9 @@ pub async fn prepare_ingest<C: ConnectionTrait>(
     let defer_hash = existing.is_none() && lazy_hash_eligible(lib);
 
     // The page hashes below read this same handle (an `Arc` clone, no
-    // reopen); it closes when this function returns.
+    // reopen); it closes when this function returns. Its identity was taken
+    // at the open (`open_for_ingest`), so this costs no system call.
+    let identity = source.identity()?;
     let page_source = source.clone();
     let Some(parsed) = parse_archive_for_ingest(
         state,
@@ -1125,6 +1131,7 @@ pub async fn prepare_ingest<C: ConnectionTrait>(
         existing,
         hash,
         hash_pending,
+        identity,
         parsed,
         page_hashes,
     }))
@@ -1260,34 +1267,57 @@ async fn moved_row_needs_page_hashes<C: ConnectionTrait>(
 /// The page hashes persist needs when a hashed anchor appeared after
 /// prepare decided none was needed (written between the two phases).
 /// Reopens the file through the no-follow walk and hashes it only when
-/// the handle's size and mtime are the ones the row records, so the
-/// hashes describe that file version; otherwise, or when a page cannot be
-/// read, `None` (the ordinal map places the anchors, as for an unreadable
-/// file). Runs inside the transaction, but only in this rare case.
+/// the handle's size and mtime are the ones the row records and its
+/// device and inode are the ones prepare hashed, so the hashes describe
+/// that file version; otherwise, or when a page cannot be read, `None`
+/// (the ordinal map places the anchors, as for an unreadable file). Runs
+/// inside the transaction, but only in this rare case, and takes no
+/// archive-work permit there.
 async fn reread_page_hashes(
     state: &AppState,
     lib: &library::Model,
     path: &Path,
     (size, mtime): Fingerprint,
+    identity: FileIdentity,
 ) -> Option<Vec<String>> {
     let root = PathBuf::from(&lib.root_path);
     let p = path.to_path_buf();
     let opened = tokio::task::spawn_blocking(move || {
+        use std::os::unix::fs::MetadataExt;
         let f = crate::library::no_follow::open_library_file(&root, &p).ok()?;
-        let fp = fingerprint_of(&f.metadata().ok()?).ok()?;
-        Some((f, fp))
+        let meta = f.metadata().ok()?;
+        let fp = fingerprint_of(&meta).ok()?;
+        Some((f, fp, (meta.dev(), meta.ino())))
     })
     .await
     .ok()
     .flatten();
-    match opened {
-        Some((f, fp)) if fp == (size, mtime) => {
-            crate::reading::page_hash::hash_all_pages(state, archive::ArchiveFile::new(f, path))
-                .await
+    // Which check refused the read, logged so a mount whose inode numbers
+    // are not stable (every second read refused, anchors keep their page
+    // number) can be told from a file that really changed.
+    let refused = match &opened {
+        None => Some("open"),
+        Some((_, fp, _)) if *fp != (size, mtime) => Some("fingerprint"),
+        Some((_, _, id)) if *id != identity => Some("identity"),
+        Some(_) => None,
+    };
+    match (opened, refused) {
+        // Size and mtime alone pass a same-size replacement by rename on a
+        // filesystem with coarse timestamps (FAT, SMB: 2 s); the device and
+        // inode prepare hashed must match too.
+        (Some((f, _, id)), None) => {
+            // No archive-work permit: this runs inside the batch
+            // transaction (see `hash_all_pages_without_permit`).
+            crate::reading::page_hash::hash_all_pages_without_permit(
+                state,
+                archive::ArchiveFile::new(f, path).with_identity(id),
+            )
+            .await
         }
-        _ => {
+        (_, check) => {
             tracing::info!(
                 path = %path.display(),
+                check = check.unwrap_or("open"),
                 "scan: file changed or unreadable since prepare; anchors use the ordinal map",
             );
             None
@@ -1330,6 +1360,7 @@ pub async fn persist_prepared<C: ConnectionTrait + sea_orm::TransactionTrait>(
         existing,
         hash,
         hash_pending,
+        identity,
         page_hashes,
         parsed:
             ParsedArchive {
@@ -1743,8 +1774,9 @@ pub async fn persist_prepared<C: ConnectionTrait + sea_orm::TransactionTrait>(
         // and only when some anchor had a hash to match
         // (`prepare_page_hashes`). If an anchor gained a hash after that
         // check (written between the phases), the file is read here, once,
-        // and only if it is still the version this row records
-        // (`reread_page_hashes`). The cached handle was dropped above.
+        // and only if it is still the version this row records, the same
+        // device and inode included (`reread_page_hashes`, no archive-work
+        // permit: this connection is pinned by the transaction). The cached handle was dropped above.
         if content_changed && let Some(now_pages) = resolved_page_count.filter(|n| *n > 0) {
             use crate::reading::page_remap as remap;
             let prev = prev_page_count.filter(|p| *p > 0).unwrap_or(now_pages);
@@ -1756,7 +1788,7 @@ pub async fn persist_prepared<C: ConnectionTrait + sea_orm::TransactionTrait>(
                     // anchors, as it always has for an unreadable page.
                     PreparedPageHashes::ReadFailed => None,
                     PreparedPageHashes::NotNeeded => {
-                        reread_page_hashes(state, lib, path, (size, mtime)).await
+                        reread_page_hashes(state, lib, path, (size, mtime), identity).await
                     }
                 }
             } else {
@@ -2203,6 +2235,8 @@ pub fn open_file_fingerprint(
 
 /// A file's size and modification time as the scanner stores them.
 type Fingerprint = (i64, chrono::DateTime<chrono::Utc>);
+/// `(device, inode)` of an open file.
+type FileIdentity = (u64, u64);
 
 fn fingerprint_of(meta: &std::fs::Metadata) -> anyhow::Result<Fingerprint> {
     let mtime: chrono::DateTime<chrono::Utc> = truncate_to_micros(meta.modified()?.into());

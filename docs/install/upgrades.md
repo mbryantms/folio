@@ -191,17 +191,51 @@ docker compose -f compose.prod.yml up -d --no-deps app
   not see before. **To hold a rating**, an admin sets it on the series
   (series edit): a rating set that way is never replaced by the derived
   one. Clearing it there returns the series to its derived rating.
+- **A rating declared in `series.json` is read in its common
+  spellings.** Mylar writes the series rating as free text, and only a
+  ladder word or one of Metron's words used to count; anything else left
+  the series unrated. These now count as the floor for the series'
+  rating:
+  - `All` and `All Ages` → `Everyone`.
+  - A stated minimum age, alone (`17`, `17+`, `18 +`) or inside other
+    words (`Ages 12+`, `For ages 12+`, `MA 15+`, `12 and up`), up to 21:
+    up to 6 → `Everyone`, 7 to 10 (Mylar's `9+`) → `Everyone 10+`, 11 to
+    13 (Mylar's `12+`) → `Teen`, 14 and 15 → `MA15+`, 16 and 17 →
+    `Mature 17+`, 18 and over → `Adults Only 18+`.
+  - Publisher wording: `Rated T+`, `T+`, `T`, `PSR`, `Parental Advisory`
+    → `Teen`; `Rated M`, `Mature Readers` → `Mature 17+`; `Explicit`,
+    `MAX`, `AO`, `Adults` → `Adults Only 18+`; `Rated E`, `E` →
+    `Everyone`. When the text also states an age, the stricter of the two
+    readings wins (`Mature 16+` → `Mature 17+`).
+  - Text with `not`, `no`, `non`, `never` or `unsuitable` in it, or with
+    both a children or all-ages word and an adult word (`Not for kids`,
+    `Kids & Adults`), is not read, and neither is anything else
+    (`PG-13`, `TV-MA`, `E10+`, `Teen+`, `Ages 4-8`, `13 and under`).
+
+  A series whose rating is read is rated where it used to be unrated.
+  For a grant with an age-rating cap that is stricter: a series whose
+  `series.json` says, for example, `17+` is hidden from a reader capped
+  below it. For a grant with "hide unrated" on it can work the other way:
+  a series that was hidden only because it was unrated is now shown when
+  its declared rating is within the cap. Like the rest of the declared
+  floor, this takes effect at the next scan that reads each folder; no
+  migration is needed.
 - **Age-rating edits are validated.** The issue edit, bulk metadata edit
   and series edit accept a ladder rating, one of Metron's words above,
   or blank; anything else answers 422 ("not a recognised age rating").
   Issue edits also accept `Unknown` / `Rating Pending`; the series edit
   refuses them (clear the rating instead, which returns the series to
   its derived rating). Ratings already stored are not changed.
-- **Saved views may need re-saving.** Filters, facets and saved views
-  compare the rating text as stored, so a saved view that filters series
-  by a spelling the upgrade canonicalised (an alias such as `Mature`, or
-  odd case or spacing) may stop matching until it is re-saved with the
-  ladder spelling.
+- **Rating filters compare rungs, not spellings.** The library grid's
+  age-rating filter, its list of options and saved views treat every
+  spelling of a ladder rating as that rating: `Mature`, `MATURE 17+` and
+  ` Mature 17+ ` all match a filter on `Mature 17+` (or on `Mature`), and
+  the options list shows each rating once, in the ladder's spelling.
+  Saved views keep working without being re-saved, including one that
+  filters on a spelling the upgrade re-wrote. Text that is not a rating
+  (`Unknown`, `Rating Pending`, any other word) is still listed and
+  matched exactly as written. In the issue grid the options now come from
+  the issues' own ratings, which is what that filter compares.
 - **An issue of a hidden series no longer opens.** For a reader with an
   age-rating cap, an issue is visible only when its series is visible
   and its own rating is within the cap. An issue rated within the cap
