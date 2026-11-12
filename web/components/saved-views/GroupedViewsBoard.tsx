@@ -32,7 +32,6 @@ import {
   defaultDropAnimationSideEffects,
   type DropAnimation,
   KeyboardSensor,
-  MeasuringStrategy,
   MouseSensor,
   TouchSensor,
   closestCenter,
@@ -763,10 +762,20 @@ export function GroupedViewsBoard({
       over
         ? `${nameOf(active.id)} is over ${nameOf(over.id)}.`
         : `${nameOf(active.id)} is no longer over a drop area.`,
-    onDragEnd: ({ active, over }) =>
-      over
-        ? `${nameOf(active.id)} was dropped on ${nameOf(over.id)}.`
-        : `${nameOf(active.id)} was dropped.`,
+    onDragEnd: ({ active, over }) => {
+      if (!over) return `${nameOf(active.id)} was dropped.`;
+      // Rows sorted by a column ignore a drop inside the row's own
+      // section (see `onDragEnd`): say so rather than "dropped on".
+      if (
+        sortInside &&
+        sort !== "custom" &&
+        parseDndId(active.id)?.type === "view" &&
+        resolveContainer(over.id) === dragFrom
+      ) {
+        return `Sorted by ${sortLabel.toLowerCase()}. Order unchanged.`;
+      }
+      return `${nameOf(active.id)} was dropped on ${nameOf(over.id)}.`;
+    },
     onDragCancel: ({ active }) =>
       `Dragging was cancelled. ${nameOf(active.id)} was put back.`,
   };
@@ -786,7 +795,14 @@ export function GroupedViewsBoard({
         const next = moveGroup(board, idx, idx + dir);
         if (next !== board) commit(next);
       },
-      onDelete: () => deleteGroup(group, board),
+      // Undo re-creates the group and re-PUTs the layout from what is
+      // captured here, so it must be the stored hand arrangement, not
+      // the (possibly sorted) board on screen.
+      onDelete: () =>
+        deleteGroup(
+          customBoard.groups.find((g) => g.id === group.id) ?? group,
+          customBoard,
+        ),
       menuExtra: groupMenuExtra?.(group),
     };
   }
@@ -884,13 +900,6 @@ export function GroupedViewsBoard({
             <DndContext
               sensors={sensors}
               accessibility={{ announcements }}
-              // Rows: the drop zone that appears under the table while a
-              // row is held must be measured after it renders.
-              measuring={
-                rows
-                  ? { droppable: { strategy: MeasuringStrategy.Always } }
-                  : undefined
-              }
               collisionDetection={collisionDetection}
               onDragStart={onDragStart}
               onDragOver={onDragOver}
