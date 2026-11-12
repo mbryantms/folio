@@ -118,6 +118,12 @@ pub const MAX_ISSUES_PER_LIBRARY_PER_RUN: usize = 5_000;
 /// Rows per `DELETE … WHERE id IN (…)` statement (one transaction each).
 const DELETE_CHUNK: usize = 500;
 
+/// Ids bound per export-count statement ([`count_by`], [`count_ratings`]).
+/// The series purge reads every candidate series of a library at once, and
+/// Postgres refuses a statement with more than 65,535 bind parameters, so
+/// the counts are taken this many ids at a time and merged.
+pub const COUNT_CHUNK: usize = 5_000;
+
 /// Tables that reference issues / series **polymorphically** (a
 /// `(kind, text id)` pair, no FK) and so don't cascade. Each entry is
 /// `(table, kind column, id column)`. Left behind they'd dangle forever and,
@@ -164,6 +170,8 @@ pub struct PurgeLimits {
     pub page: usize,
     /// Most issue rows deleted per library per run.
     pub max_issue_deletes: usize,
+    /// Ids bound per export-count statement.
+    pub count_chunk: usize,
 }
 
 impl Default for PurgeLimits {
@@ -171,6 +179,7 @@ impl Default for PurgeLimits {
         Self {
             page: PRESENCE_BATCH,
             max_issue_deletes: MAX_ISSUES_PER_LIBRARY_PER_RUN,
+            count_chunk: COUNT_CHUNK,
         }
     }
 }
@@ -433,6 +442,7 @@ async fn purge_rows(
         probe,
         window_days,
         cutoff,
+        limits.count_chunk,
         kept,
         &mut purged.series,
     )
@@ -508,7 +518,16 @@ async fn purge_issues(
         while budget > 0 && !to_purge.is_empty() {
             let rest = to_purge.split_off(budget.min(to_purge.len()));
             let before = *purged;
-            let aborted = delete_issues(state, lib, window_days, cutoff, to_purge, purged).await?;
+            let aborted = delete_issues(
+                state,
+                lib,
+                window_days,
+                cutoff,
+                to_purge,
+                limits.count_chunk,
+                purged,
+            )
+            .await?;
             let deleted = usize::try_from(*purged - before).unwrap_or(usize::MAX);
             budget = budget.saturating_sub(deleted);
             if aborted {
@@ -622,6 +641,7 @@ async fn delete_issues(
     window_days: i64,
     cutoff: DateTime<FixedOffset>,
     candidates: Vec<IssueCandidate>,
+    count_chunk: usize,
     purged: &mut u64,
 ) -> anyhow::Result<bool> {
     if candidates.is_empty() {
@@ -630,11 +650,12 @@ async fn delete_issues(
     let db = &state.db;
     let library_id = lib.id;
     let ids: Vec<String> = candidates.iter().map(|c| c.id.clone()).collect();
-    let markers = count_by(db, "markers", "issue_id", &ids).await?;
-    let progress = count_by(db, "progress_records", "issue_id", &ids).await?;
-    let sessions = count_by(db, "reading_sessions", "issue_id", &ids).await?;
-    let collection_entries = count_by(db, "collection_entries", "issue_id", &ids).await?;
-    let ratings = count_ratings(db, "issue", &ids).await?;
+    let markers = count_by(db, "markers", "issue_id", &ids, count_chunk).await?;
+    let progress = count_by(db, "progress_records", "issue_id", &ids, count_chunk).await?;
+    let sessions = count_by(db, "reading_sessions", "issue_id", &ids, count_chunk).await?;
+    let collection_entries =
+        count_by(db, "collection_entries", "issue_id", &ids, count_chunk).await?;
+    let ratings = count_ratings(db, "issue", &ids, count_chunk).await?;
     let get = |m: &HashMap<String, i64>, id: &str| m.get(id).copied().unwrap_or(0);
 
     // Export-to-log BEFORE the delete: once the cascade runs these counts
@@ -724,12 +745,18 @@ async fn delete_issues(
     Ok(aborted)
 }
 
+/// Purge the library's confirmed-removed series that own no issue rows.
+/// The candidates are read in one query; every statement that binds their
+/// ids binds at most [`DELETE_CHUNK`] (stat, unconfirm, delete) or
+/// `count_chunk` (export counts) of them.
+#[allow(clippy::too_many_arguments)]
 async fn purge_series(
     state: &AppState,
     lib: &library::Model,
     probe: &PresenceProbe,
     window_days: i64,
     cutoff: DateTime<FixedOffset>,
+    count_chunk: usize,
     kept: &mut KeptRows,
     purged: &mut u64,
 ) -> anyhow::Result<bool> {
@@ -791,8 +818,9 @@ async fn purge_series(
     let id_strs: Vec<String> = ids.iter().map(Uuid::to_string).collect();
     // Markers / progress / sessions all hang off issues, which are already
     // gone by the time a series qualifies; what's left is series-scoped.
-    let collection_entries = count_by(db, "collection_entries", "series_id", &ids).await?;
-    let ratings = count_ratings(db, "series", &id_strs).await?;
+    let collection_entries =
+        count_by(db, "collection_entries", "series_id", &ids, count_chunk).await?;
+    let ratings = count_ratings(db, "series", &id_strs, count_chunk).await?;
     let get = |m: &HashMap<String, i64>, id: &str| m.get(id).copied().unwrap_or(0);
 
     for c in &candidates {
@@ -890,7 +918,8 @@ fn log_kept(library_id: Uuid, kind: &str, candidates: usize, deleted: usize) {
 /// `$start, $start+1, …` — `n` positional placeholders for an `IN (…)` list.
 /// The workspace's sea-orm build has no `postgres-array` feature, so ids are
 /// bound one parameter each (chunks stay ≤ [`DELETE_CHUNK`] / one candidate
-/// page, [`PRESENCE_BATCH`] in production, far under the 65535 bind cap).
+/// page, [`PRESENCE_BATCH`] in production / [`COUNT_CHUNK`], far under the
+/// 65535 bind cap).
 fn placeholders(start: usize, n: usize) -> String {
     (start..start + n)
         .map(|i| format!("${i}"))
@@ -960,50 +989,69 @@ async fn clean_unconstrained_refs<C: ConnectionTrait>(
     Ok(())
 }
 
-/// Per-target `user_ratings` count for `kind` targets.
+/// `ids` in slices of at most `size` (at least 1), for statements that bind
+/// one parameter per id. Empty `ids` gives no slice, so no statement.
+fn id_chunks<T>(ids: &[T], size: usize) -> std::slice::Chunks<'_, T> {
+    ids.chunks(size.max(1))
+}
+
+/// Per-target `user_ratings` count for `kind` targets, `chunk` ids per
+/// statement. Each id is counted by the one statement that binds it, so the
+/// merged map equals what one statement over all of `ids` would return.
 async fn count_ratings(
     db: &DatabaseConnection,
     kind: &str,
     ids: &[String],
+    chunk: usize,
 ) -> anyhow::Result<HashMap<String, i64>> {
-    let rows = IdCount::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        format!(
-            "SELECT target_id AS id, count(*)::bigint AS n FROM user_ratings \
-             WHERE target_type = $1 AND target_id IN ({}) GROUP BY target_id",
-            placeholders(2, ids.len()),
-        ),
-        with_ids([kind.into()], ids),
-    ))
-    .all(db)
-    .await?;
-    Ok(rows.into_iter().map(|r| (r.id, r.n)).collect())
+    let mut out = HashMap::new();
+    for part in id_chunks(ids, chunk) {
+        let rows = IdCount::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            format!(
+                "SELECT target_id AS id, count(*)::bigint AS n FROM user_ratings \
+                 WHERE target_type = $1 AND target_id IN ({}) GROUP BY target_id",
+                placeholders(2, part.len()),
+            ),
+            with_ids([kind.into()], part),
+        ))
+        .all(db)
+        .await?;
+        out.extend(rows.into_iter().map(|r| (r.id, r.n)));
+    }
+    Ok(out)
 }
 
 /// `SELECT col, count(*) FROM table WHERE col IN (…) GROUP BY col`, keyed by
-/// the id's text form. `table` / `col` are compile-time constants from this
+/// the id's text form, `chunk` ids per statement (merged as in
+/// [`count_ratings`]). `table` / `col` are compile-time constants from this
 /// module, never user input.
 async fn count_by<T>(
     db: &DatabaseConnection,
     table: &str,
     col: &str,
     ids: &[T],
+    chunk: usize,
 ) -> anyhow::Result<HashMap<String, i64>>
 where
     T: Clone + Into<sea_orm::Value>,
 {
-    let rows = IdCount::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        format!(
-            "SELECT {col}::text AS id, count(*)::bigint AS n FROM {table} \
-             WHERE {col} IN ({}) GROUP BY {col}",
-            placeholders(1, ids.len()),
-        ),
-        with_ids([], ids),
-    ))
-    .all(db)
-    .await?;
-    Ok(rows.into_iter().map(|r| (r.id, r.n)).collect())
+    let mut out = HashMap::new();
+    for part in id_chunks(ids, chunk) {
+        let rows = IdCount::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            format!(
+                "SELECT {col}::text AS id, count(*)::bigint AS n FROM {table} \
+                 WHERE {col} IN ({}) GROUP BY {col}",
+                placeholders(1, part.len()),
+            ),
+            with_ids([], part),
+        ))
+        .all(db)
+        .await?;
+        out.extend(rows.into_iter().map(|r| (r.id, r.n)));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -1032,6 +1080,32 @@ mod tests {
         let l = PurgeLimits::default();
         assert_eq!(l.page, PRESENCE_BATCH);
         assert_eq!(l.max_issue_deletes, MAX_ISSUES_PER_LIBRARY_PER_RUN);
+        assert_eq!(l.count_chunk, COUNT_CHUNK);
+        // Two leading binds (`count_ratings`) plus one chunk stay under
+        // Postgres's 65,535 bind parameters.
+        assert!(COUNT_CHUNK + 2 <= usize::from(u16::MAX));
+    }
+
+    #[test]
+    fn id_chunks_edges() {
+        let lens = |n: usize, size: usize| -> Vec<usize> {
+            let ids: Vec<u32> = (0..n as u32).collect();
+            id_chunks(&ids, size).map(<[u32]>::len).collect()
+        };
+        // Empty: no statement at all (an empty `IN ()` is a syntax error).
+        assert_eq!(lens(0, 3), Vec::<usize>::new());
+        // Exactly one chunk.
+        assert_eq!(lens(3, 3), vec![3]);
+        assert_eq!(lens(1, 3), vec![1]);
+        // One over: a second chunk of one.
+        assert_eq!(lens(4, 3), vec![3, 1]);
+        assert_eq!(lens(7, 3), vec![3, 3, 1]);
+        // A zero size is treated as one, never a panic or an endless loop.
+        assert_eq!(lens(2, 0), vec![1, 1]);
+        // Every id lands in exactly one chunk, in order.
+        let ids: Vec<u32> = (0..10).collect();
+        let joined: Vec<u32> = id_chunks(&ids, 4).flatten().copied().collect();
+        assert_eq!(joined, ids);
     }
 
     #[test]
