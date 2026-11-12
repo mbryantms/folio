@@ -160,6 +160,27 @@ guards the mirror.
 | `summary` (M4)                          | `series.summary`                       | `issues.summary`                          |
 | `page_count` (M4)                       | —                                      | `issues.page_count`                       |
 
+### `age_rating` compares ladder rungs
+
+`is` / `is_not` / `in` / `not_in` on `age_rating` do not compare the text
+as stored. A value that ranks on the age-rating ladder (a rung or one of
+Metron's alias words, in any case, with surrounding ASCII whitespace)
+stands for its whole rung: the compiler emits
+`lower(btrim(col, <trim set>)) IN (<every spelling of the rungs named>)`
+(`views::compile::rating_predicate` → `library::age_rating::filter_match`).
+So a view saved on `Mature` matches `Mature 17+`, ` mature 17+ ` and
+`Mature` alike. A value that does not rank (`Unknown`, `Rating Pending`,
+off-ladder text) matches as written, exactly as before. The folding
+happens at compile time; stored views are never rewritten. The negations
+are `NOT (...)` of the same test, so an unrated (NULL) row stays excluded
+from `is_not` / `not_in` as it was from `<>` / `NOT IN`. The list
+endpoints' `?age_rating=` parameters (`GET /series`, `GET /issues`) and
+the `/filter-options/age_ratings` lookup (one option per rung, labelled
+with its canonical spelling; `?entity=issues` lists the issues' own
+ratings) follow the same rule. The `entity=issues` lookup reads every
+visible issue in scope each time the picker opens (no index covers it);
+that cost is accepted for now.
+
 ### `is_empty` / `is_not_empty`
 
 Offered on nullable fields only:

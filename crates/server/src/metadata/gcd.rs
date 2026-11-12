@@ -1445,76 +1445,10 @@ fn parse_price(raw: &str) -> Option<f64> {
         .filter(|p| p.is_finite() && *p >= 0.0)
 }
 
-/// GCD's free-text `rating` → the ComicInfo `AgeRating` vocabulary.
-/// Publisher ratings (`"Rated T+"`, `"Parental Advisory"`, `"Mature
-/// Readers"`, `"All Ages"`, `"Ages 12+"`, `"PSR"`) normalise; Comics-Code
-/// approval text, `"[none]"` and anything unrecognised → `None` (better
-/// empty than junk in the sidecar — the CCA seal isn't an age rating).
-pub(crate) fn map_rating(raw: &str) -> Option<String> {
-    let r = raw.to_lowercase();
-    let words: Vec<&str> = r
-        .split(|c: char| !(c.is_alphanumeric() || c == '+'))
-        .filter(|w| !w.is_empty())
-        .collect();
-    let has = |w: &str| words.contains(&w);
-    let phrase = |p: &str| r.contains(p);
-    if phrase("rating pending") {
-        return Some("Rating Pending".to_owned());
-    }
-    if phrase("comics code") || phrase("code authority") || words.is_empty() {
-        return None;
-    }
-    // A publisher letter code counts only as the whole value ("T+") or
-    // right after "rated" ("Rated M") — a bare "a"/"e" in prose is not
-    // a rating.
-    let code: Option<&str> = if words.len() == 1 {
-        Some(words[0])
-    } else {
-        words.windows(2).find(|w| w[0] == "rated").map(|w| w[1])
-    };
-    // An explicit minimum age wins ("Ages 12+", "16+", "18+").
-    let min_age = words.iter().find_map(|w| {
-        w.strip_suffix('+')
-            .and_then(|n| n.parse::<u32>().ok())
-            .filter(|n| (3..=21).contains(n))
-    });
-    let label = if has("explicit")
-        || has("adult")
-        || has("adults")
-        || code.is_some_and(|c| matches!(c, "x" | "x18+" | "ao" | "max" | "r18+"))
-    {
-        "Adults Only 18+"
-    } else if let Some(age) = min_age {
-        match age {
-            18.. => "Adults Only 18+",
-            17 => "Mature 17+",
-            13..=16 => "Teen",
-            10..=12 => "Everyone 10+",
-            _ => "Everyone",
-        }
-    } else if has("mature") || code.is_some_and(|c| matches!(c, "m" | "ma" | "17+")) {
-        "Mature 17+"
-    } else if has("teen")
-        || has("psr")
-        || has("psr+")
-        || phrase("parental advisory")
-        || phrase("parental supervision")
-        || code.is_some_and(|c| matches!(c, "t" | "t+" | "pg" | "psr" | "psr+" | "pa"))
-    {
-        "Teen"
-    } else if phrase("early childhood") {
-        "Early Childhood"
-    } else if phrase("all ages")
-        || has("everyone")
-        || has("kids")
-        || code.is_some_and(|c| matches!(c, "e" | "a" | "g"))
-    {
-        "Everyone"
-    } else {
-        return None;
-    };
-    Some(label.to_owned())
-}
+/// GCD's free-text `rating` → the ComicInfo `AgeRating` vocabulary. The
+/// normaliser lives with the ladder (it also reads the rating a
+/// `series.json` declares); GCD's behaviour is unchanged.
+pub(crate) use crate::library::age_rating::from_publisher_text as map_rating;
 
 /// GCD `isbn` (`"978-1-58240-711-1; 1-58240-711-6"`) → the first valid
 /// ISBN-10/13, digits (and a trailing `X`) only.

@@ -4249,6 +4249,7 @@
           {
             "name": "library",
             "in": "query",
+            "description": "Restrict to a single library. When omitted, every library the\ncaller can see contributes.",
             "required": false,
             "schema": {
               "type": "string"
@@ -4257,9 +4258,43 @@
           {
             "name": "q",
             "in": "query",
+            "description": "Case-insensitive prefix of a stored rating or of a rung's label.",
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque continuation token returned as `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size (default 100, max 200).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "entity",
+            "in": "query",
+            "description": "`series` (default) lists the series' ratings; `issues` lists the\nissues' own ratings.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Which rating `/filter-options/age_ratings` lists: the series' own\n(`series`, the default) or the issues' own (`issues`, for the issue\ngrid's `?age_rating=` filter, which compares the issue's rating).",
+              "enum": [
+                "series",
+                "issues"
+              ]
             }
           }
         ],
