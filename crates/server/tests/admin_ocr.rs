@@ -3,7 +3,7 @@
 //!
 //! Tests cover:
 //!  - admin-only ACL (RequireAdmin → 403 for non-admins, 401 unauth)
-//!  - response shape: the three expected models in stable order,
+//!  - response shape: the expected models in stable order,
 //!    `total_bytes_on_disk` equals the sum across entries
 //!
 //! Byte-counting behavior is exercised by the `api::admin_ocr`
@@ -125,19 +125,28 @@ async fn admin_gets_full_model_list() {
     // covered by the unit tests in `api::admin_ocr::tests` (which
     // operate on isolated tempdirs without touching env). What
     // this integration test pins is the wiring: admin reaches the
-    // handler, the response carries the three expected models in
-    // stable order, totals add up, and the env-probe fields are
-    // populated.
+    // handler, the response carries the expected models in stable
+    // order, totals add up, and the env-probe fields are populated.
     let app = TestApp::spawn().await;
     let admin = register(&app, "ocr-models-admin@example.com").await;
     let (status, body) = get_models(&app, Some(&admin)).await;
     assert_eq!(status, StatusCode::OK, "got {body}");
 
+    // The current engines first (balloon detector, line finder, line
+    // recogniser), then manga-ocr, then the two legacy engines.
     let models = body["models"].as_array().expect("models array");
-    assert_eq!(models.len(), 3, "expected 3 models, got {}", models.len());
-    assert_eq!(models[0]["id"], "comic-text-detector");
-    assert_eq!(models[1]["id"], "manga-ocr");
-    assert_eq!(models[2]["id"], "tesseract-eng");
+    let ids: Vec<&str> = models.iter().filter_map(|m| m["id"].as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "comic-text-and-bubble-detector",
+            "pp-ocrv5-mobile-det",
+            "en-pp-ocrv5-mobile-rec",
+            "manga-ocr",
+            "comic-text-detector",
+            "tesseract-eng",
+        ]
+    );
 
     // Required shape per model.
     for m in models {
