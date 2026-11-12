@@ -494,8 +494,13 @@ pub struct RestoreResponse {
     /// Where the archive the restore replaced is kept: `<file>.bak`, the
     /// newest backup (restore swaps the archive and its `.bak`, so
     /// restoring again undoes it). Null when there was no archive at the
-    /// issue's path to keep.
+    /// issue's path to keep. When the replaced archive could not take the
+    /// `.bak` name (the last step of the fallback swap failed), the name
+    /// it is kept under instead, `<file>.bak.<hex>.tmp`; `warning` says so.
     pub kept_as: Option<String>,
+    /// Set when the restore happened but something about keeping the
+    /// replaced archive did not go as planned: says where it is and why.
+    pub warning: Option<String>,
 }
 
 #[utoipa::path(
@@ -521,7 +526,39 @@ pub async fn restore(
         Ok(v) => v,
         Err(resp) => return resp,
     };
+    restore_issue(
+        &app,
+        row,
+        actor.id,
+        ctx.ip_string(),
+        ctx.user_agent.clone(),
+        archive_rewrite::restore_latest_backup,
+    )
+    .await
+}
 
+/// The restore after [`preflight`]: claim the per-issue rewrite lock (kept
+/// alive by a heartbeat while the swap runs, as the rewrite job and the page
+/// editor do: the three-step fallback can copy a whole archive), run
+/// `swap` on the blocking pool, then record the restore. `swap` is
+/// [`archive_rewrite::restore_latest_backup`] in production; tests pass the
+/// fault-injecting variant. Public for the integration tests.
+pub async fn restore_issue<F>(
+    app: &AppState,
+    row: entity::issue::Model,
+    actor_id: Uuid,
+    actor_ip: Option<String>,
+    actor_ua: Option<String>,
+    swap: F,
+) -> Response
+where
+    F: FnOnce(
+            &crate::library::no_follow::LibraryRoot,
+            &std::path::Path,
+        ) -> Result<archive_rewrite::RestoreOutcome, archive_rewrite::RewriteError>
+        + Send
+        + 'static,
+{
     let mut redis = app.jobs.redis.clone();
     let token = match mutex::try_claim(&mut redis, &row.id, mutex::EDIT_TTL_SECS).await {
         Ok(Some(t)) => t,
@@ -538,16 +575,18 @@ pub async fn restore(
         }
     };
 
+    let heartbeat = mutex::Heartbeat::start(
+        app.jobs.redis.clone(),
+        row.id.clone(),
+        token.clone(),
+        mutex::EDIT_TTL_SECS,
+    );
+
     // Relative to the folder handle from the no-follow walk; a link at the
     // backup or the archive (or on the folder path) is refused.
     let target = std::path::PathBuf::from(&row.file_path);
-    let restore_res = match crate::library::no_follow::library_root(&app, row.library_id).await {
-        Ok(Some(root)) => {
-            tokio::task::spawn_blocking(move || {
-                archive_rewrite::restore_latest_backup(&root, &target)
-            })
-            .await
-        }
+    let restore_res = match crate::library::no_follow::library_root(app, row.library_id).await {
+        Ok(Some(root)) => tokio::task::spawn_blocking(move || swap(&root, &target)).await,
         Ok(None) => Ok(Err(archive_rewrite::RewriteError::Io(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             "library not found",
@@ -560,6 +599,7 @@ pub async fn restore(
     };
 
     // Always release the mutex regardless of outcome.
+    drop(heartbeat);
     let mut redis = app.jobs.redis.clone();
     mutex::release(&mut redis, &row.id, &token).await;
 
@@ -600,6 +640,7 @@ pub async fn restore(
         .kept
         .as_ref()
         .map(|p| p.to_string_lossy().into_owned());
+    let warning = restored.warning;
 
     app.zip_lru.invalidate(&row.id);
 
@@ -637,7 +678,7 @@ pub async fn restore(
     audit::record(
         &app.db,
         AuditEntry {
-            actor_id: actor.id,
+            actor_id,
             action: "admin.issue.archive_restore",
             target_type: Some("issue"),
             target_id: Some(row.id.clone()),
@@ -645,9 +686,10 @@ pub async fn restore(
                 "issue_id": row.id,
                 "file_path": row.file_path,
                 "kept_as": kept_as,
+                "warning": warning,
             }),
-            ip: ctx.ip_string(),
-            user_agent: ctx.user_agent.clone(),
+            ip: actor_ip,
+            user_agent: actor_ua,
         },
     )
     .await;
@@ -658,6 +700,7 @@ pub async fn restore(
             issue_id: row.id,
             status: "restored",
             kept_as,
+            warning,
         }),
     )
         .into_response()

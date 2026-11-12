@@ -72,6 +72,7 @@ api/admin_users.rs::enable                # POST /admin/users/{id}/enable — de
 api/archive_edit.rs::page_count           # GET /issues/{id}/archive/page-count — read-only live page count
 api/archive_edit.rs::edit                 # POST /issues/{id}/archive/edit — enqueues ArchiveEditJob; the worker writes audit_log (admin.issue.archive_edit) on completion
 api/archive_edit.rs::backups              # GET /issues/{id}/archive/backups — read-only listing of .bak files
+api/archive_edit.rs::restore              # POST /issues/{id}/archive/restore — delegate wrapper: restore_issue (same file) writes audit_log (admin.issue.archive_restore) on success
 api/archive_edit.rs::upload               # POST /uploads — transient image staging (data_dir/uploads/<uuid>), not a mutation on domain data
 
 # ── audit.rs ────────────────────────────────────────────────

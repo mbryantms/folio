@@ -14221,10 +14221,17 @@ export interface components {
              * @description Where the archive the restore replaced is kept: `<file>.bak`, the
              *     newest backup (restore swaps the archive and its `.bak`, so
              *     restoring again undoes it). Null when there was no archive at the
-             *     issue's path to keep.
+             *     issue's path to keep. When the replaced archive could not take the
+             *     `.bak` name (the last step of the fallback swap failed), the name
+             *     it is kept under instead, `<file>.bak.<hex>.tmp`; `warning` says so.
              */
             kept_as?: string | null;
             status: string;
+            /**
+             * @description Set when the restore happened but something about keeping the
+             *     replaced archive did not go as planned: says where it is and why.
+             */
+            warning?: string | null;
         };
         RevokeAllResp: {
             /**

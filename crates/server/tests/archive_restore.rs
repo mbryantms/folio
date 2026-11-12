@@ -265,13 +265,15 @@ fn a_restore_that_fails_half_way_leaves_the_archive_in_place() {
     std::fs::write(&path, b"current").unwrap();
     std::fs::write(slot(&path, 0), b"backup-0").unwrap();
     let root = LibraryRoot::resolve(dir.path());
-    let err = archive_rewrite::restore_latest_backup_with_faults(
+    // Past the middle step the restore has happened: an outcome, not an
+    // error, naming where the replaced archive is kept.
+    let out = archive_rewrite::restore_latest_backup_with_faults(
         &root,
         &path,
         false,
         crash(RewriteStep::Swapped),
     )
-    .unwrap_err();
+    .expect("the restore happened");
     assert_eq!(
         std::fs::read(&path).unwrap(),
         b"backup-0",
@@ -286,11 +288,77 @@ fn a_restore_that_fails_half_way_leaves_the_archive_in_place() {
     assert_eq!(held.len(), 1, "{held:?}");
     assert_eq!(std::fs::read(&held[0]).unwrap(), b"current", "kept");
     let name = held[0].file_name().unwrap().to_string_lossy().into_owned();
-    assert!(err.to_string().contains(&name), "the error names it: {err}");
+    assert_eq!(out.kept.as_deref(), Some(held[0].as_path()));
+    let warning = out.warning.expect("a warning");
+    assert!(warning.contains(&name), "the warning names it: {warning}");
     assert!(
         !archive_rewrite::is_staging_name(&name),
         "startup cleanup leaves it"
     );
+}
+
+/// The same step-3 failure through the endpoint's restore path: the
+/// answer is a success that names the hold file and carries the warning,
+/// the audit row is written, and both files are where the answer says.
+#[tokio::test]
+async fn a_restore_whose_last_step_fails_is_reported_as_done_with_a_warning() {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+    let app = TestApp::spawn().await;
+    let _auth = register_admin(&app).await;
+    let admin = entity::user::Entity::find()
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    let dir = tempdir().unwrap();
+    let (id, path) = seed(&app, dir.path(), 1, "issue.cbz", b"current").await;
+    std::fs::write(slot(&path, 0), b"backup-0").unwrap();
+    let row = entity::issue::Entity::find_by_id(id.clone())
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let resp = server::api::archive_edit::restore_issue(
+        &app.state(),
+        row,
+        admin.id,
+        None,
+        None,
+        |root, target| {
+            archive_rewrite::restore_latest_backup_with_faults(root, target, false, |step| {
+                if step == RewriteStep::Swapped {
+                    Err(RewriteError::Io(std::io::Error::other(
+                        "injected rename failure",
+                    )))
+                } else {
+                    Ok(())
+                }
+            })
+        },
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["status"], "restored", "{body}");
+    let kept = PathBuf::from(body["kept_as"].as_str().expect("kept_as"));
+    assert_ne!(kept, slot(&path, 0), "{body}");
+    let warning = body["warning"].as_str().expect("a warning");
+    let kept_name = kept.file_name().unwrap().to_string_lossy().into_owned();
+    assert!(warning.contains(&kept_name), "{warning}");
+    assert!(warning.contains("injected rename failure"), "{warning}");
+    assert_eq!(std::fs::read(&path).unwrap(), b"backup-0");
+    assert_eq!(std::fs::read(&kept).unwrap(), b"current");
+
+    let audit = entity::audit_log::Entity::find()
+        .filter(entity::audit_log::Column::Action.eq("admin.issue.archive_restore"))
+        .all(&app.state().db)
+        .await
+        .unwrap();
+    assert_eq!(audit.len(), 1);
+    assert_eq!(audit[0].payload["kept_as"], body["kept_as"]);
+    assert_eq!(audit[0].payload["warning"], body["warning"]);
 }
 
 // ───────── (3) pre-conversion backups ─────────

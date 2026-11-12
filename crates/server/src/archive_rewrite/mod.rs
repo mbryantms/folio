@@ -1343,8 +1343,13 @@ fn made_at(ctime: Option<SystemTime>, mtime: Option<SystemTime>) -> Option<Syste
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RestoreOutcome {
     /// Where the replaced archive is now: `<target>.bak`, the newest
-    /// backup. `None` when there was no archive at `target` to keep.
+    /// backup; the second name `<target>.bak.<hex>.tmp` when the last step
+    /// of the three-step swap failed (see `warning`). `None` when there was
+    /// no archive at `target` to keep.
     pub kept: Option<PathBuf>,
+    /// Set when the restore happened but the replaced archive could not
+    /// take the `.bak` name: says where it is kept and why.
+    pub warning: Option<String>,
 }
 
 /// Restore the most recent backup (`<target>.bak`) over `target` — the
@@ -1362,8 +1367,10 @@ pub struct RestoreOutcome {
 /// a conversion's backup), the swap leaves one file in its place, and
 /// discarding the replaced archive instead would make the click
 /// unrecoverable. The retention sweep ages the kept file from the restore
-/// (its change time is stamped then) and the next rewrite's rotation
-/// applies the slot count as usual.
+/// (its change time is stamped then). With one or more slots the next
+/// rewrite's rotation applies the slot count as usual; with zero a rewrite
+/// never rotates, so the kept `.bak` stays until the retention sweep
+/// removes it (forever when retention is off).
 ///
 /// Relative to the folder handle from the no-follow walk: the `.bak` must
 /// be a regular file and `target` a regular file or missing (a link at
@@ -1375,10 +1382,11 @@ pub struct RestoreOutcome {
 /// where links are refused) at `<target>.bak.<hex>.tmp`, the backup is
 /// renamed over the archive (atomic replace), and the second name is
 /// renamed to `.bak`. A failure before the middle step removes the second
-/// name and changes nothing; a failure after it leaves the restored file
-/// at `target` and the replaced one under the second name, which the
-/// error names (that name is not a staging name, so the startup cleanup
-/// never removes it).
+/// name and changes nothing (an error). A failure of the last step is not
+/// an error: the restore has happened, so the outcome says so, with `kept`
+/// naming the second name and `warning` saying why (that name is neither a
+/// staging name nor a backup name, so the startup cleanup and the prune
+/// never touch it).
 pub fn restore_latest_backup(
     root: &LibraryRoot,
     target: &Path,
@@ -1419,7 +1427,10 @@ where
         // No archive to keep: the backup simply takes the name.
         dir.rename(&bak, &name)?;
         dir.sync()?;
-        return Ok(RestoreOutcome { kept: None });
+        return Ok(RestoreOutcome {
+            kept: None,
+            warning: None,
+        });
     };
     // Both names must still hold what was checked (another writer, or a
     // link swapped in, stops the restore with nothing changed).
@@ -1451,21 +1462,31 @@ where
         // From here the second name is the only copy of the replaced
         // archive: never removed.
         guard.disarm();
-        let held_at = |e: RewriteError| {
+        // Past the middle step the restore HAS happened: a failure to give
+        // the replaced archive the `.bak` name is reported with the
+        // outcome (where it is kept, and why), not as an error, so the
+        // caller still records the restore, drops its cached reader and
+        // rescans.
+        let renamed = fault(RewriteStep::Swapped).and_then(|()| Ok(dir.rename(&hold, &bak)?));
+        if let Err(e) = renamed {
+            let kept = dir.display(&hold);
             tracing::error!(
-                kept = %dir.display(&hold).display(),
+                kept = %kept.display(),
                 error = %e,
                 "archive restore: restored, but the replaced archive could not take the .bak name",
             );
-            RewriteError::Io(io::Error::other(format!(
-                "the backup was restored, but the replaced archive could not be renamed to {}; \
-                 it is kept as {}: {e}",
+            let warning = format!(
+                "the backup was restored, but the replaced archive could not be renamed to {} \
+                 ({e}); it is kept as {} in the same folder",
                 file_label(&dir.display(&bak)),
-                file_label(&dir.display(&hold)),
-            )))
-        };
-        fault(RewriteStep::Swapped).map_err(held_at)?;
-        dir.rename(&hold, &bak).map_err(|e| held_at(e.into()))?;
+                file_label(&kept),
+            );
+            sync_after_swap(&dir, &name, &mut fault);
+            return Ok(RestoreOutcome {
+                kept: Some(kept),
+                warning: Some(warning),
+            });
+        }
     }
     // A rename keeps the inode's change time on some filesystems: stamp
     // it so the retention sweep ages the kept archive from the restore
@@ -1488,6 +1509,7 @@ where
     sync_after_swap(&dir, &name, &mut fault);
     Ok(RestoreOutcome {
         kept: Some(dir.display(&bak)),
+        warning: None,
     })
 }
 

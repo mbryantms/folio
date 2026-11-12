@@ -3,6 +3,7 @@
 import { Loader2, PinOff, Plus, Trash2 } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
+import { toast } from "sonner";
 import { createContext, useContext, useMemo, useState } from "react";
 
 import {
@@ -242,7 +243,10 @@ export function IssueActions({
               onClick={(e) => {
                 e.preventDefault();
                 restoreArchive.mutate(undefined, {
-                  onSuccess: () => {
+                  onSuccess: (res) => {
+                    // Restored, but the replaced archive is kept under
+                    // another name than `.bak`: tell the admin where.
+                    if (res?.warning) toast.info(res.warning);
                     setConfirmRestore(false);
                     router.refresh();
                   },
