@@ -174,36 +174,32 @@ Which surfaces draw a badge from what:
   (`progress_summary`). The issue page's previous / next cards draw no
   badge. So no home rail requests `GET /progress`.
 - The one remaining caller of the full list is Undo's prior capture
-  (`capturePriorProgress`) for more than eight issues that neither the
-  overlay nor a cached card list knows (a selection of cards on screen
-  is always known).
+  (`capturePriorProgress`) for more than eight issues that no cached
+  card list, issue page or loaded map knows (a selection of cards on
+  screen is always known).
 
-On the web, [`useCardProgress`](../../web/lib/api/card-progress.ts) and the
-issue page's `useIssueReadState` read this tab's writes from the progress
-overlay ([`progress-overlay.ts`](../../web/lib/api/progress-overlay.ts)),
-one store per `QueryClient` with listeners per issue: a mounted card costs
-one listener and no query, and a write re-renders only that issue's cards.
+On the web the query cache is the only copy: a card reads `progress` from
+the list it was rendered from
+([`useCardProgress`](../../web/lib/api/card-progress.ts)). A mark, bulk
+mark or Undo patches that copy in every cached card list, as a standard
+TanStack optimistic update
+([`card-list-cache.ts`](../../web/lib/api/card-list-cache.ts); which
+queries are card lists is defined once, by `isCardListKey` in
+`mutations/rails.ts`). It first cancels in-flight card-list fetches, so a
+response that started before the write cannot land on top of it; an
+infinite list keeps the patched pages when it fetches the next one. A
+failure rolls back per issue, and only where the cached copy is still the
+mutation's own write, so a later write to the same issue stands. A single
+mark's reply replaces its optimistic copy. Nothing in the badge path
+compares times.
 
-**Ordering rule.** An overlay entry and a card's list copy are ordered by
-*when this tab saw them*, with a counter, never by `updated_at`: a browser
-time is never compared with a server time.
-
-- A mark, bulk mark or Undo writes a *pending* entry (shown at once).
-  The server's acknowledgement settles it (`settleProgress`, with the
-  single mark's reply as the record); a failure puts the previous entry
-  back, or removes it, and notifies the cards.
-- The reader's per-page write reply is written settled.
-- A card list whose fetch *started after* an entry settled replaces the
-  entry with its copy when it lands (it reflects the write and anything
-  newer, including another device's). A fetch that started earlier or
-  while the write was pending, and a server-render snapshot hydrated into
-  the cache, never replace it.
-- A series-level mark (no issue ids) touches no entries; it refetches the
-  mounted card lists, whose copies then take over.
-
-After a write that names its issues, the card lists are only marked stale
-(`invalidateIssueCards`) and refetch on their next mount; a series-level
-mark, a failed Undo and an outbox replay refetch the mounted lists.
+After a write that names its issues, the card lists are marked stale and
+refetch on their next mount. A series-level mark, "select all matching", a
+bulk mark the server partly refused (its reply counts refusals without
+naming them), a failed Undo and an outbox replay refetch the mounted lists
+instead, and reset the issue page's per-issue record, so the issue page
+shows the server's state. The reader only marks the lists stale, and
+updates the issue page's record when one is cached.
 
 ## What this deliberately changes
 
