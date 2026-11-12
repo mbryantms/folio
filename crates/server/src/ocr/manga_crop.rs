@@ -103,6 +103,13 @@ pub fn manga_crop(
     inside.unwrap_or(region)
 }
 
+/// The constants above that decide which box a Japanese request reads,
+/// for the result-cache fingerprint (`ocr::cache`; the mode itself is
+/// there as [`MangaCrop::label`]).
+pub(crate) fn fingerprint() -> String {
+    format!("manga-crop:inside={TEXT_INSIDE_MIN};stray={TEXT_STRAY_MAX}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

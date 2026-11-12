@@ -134,6 +134,14 @@ pub struct EngineInputs {
     /// ([`super::manga_crop::MangaCrop::label`]); fixed for the legacy
     /// set, which reads the region as it always did.
     pub manga_crop: &'static str,
+    /// The constants of the set's page detector that decide a detection
+    /// ([`super::bubbles::fingerprint`]); empty for the legacy set, whose
+    /// detector is an upstream crate.
+    pub detector_tuning: String,
+    /// The other constants that decide a result: the line finder's, the
+    /// recogniser's, the Japanese crop's and the region de-duplication's
+    /// ([`reader_tuning`]); empty for the legacy set.
+    pub reader_tuning: String,
     /// What decides a decoded page's size ([`page_size_key`]'s
     /// fingerprint): a percent region becomes a pixel rect through it, so
     /// whatever rolls the page-size keys rolls the result keys too.
@@ -146,6 +154,22 @@ fn pins(files: &[super::models::PinnedFile]) -> Vec<String> {
         .iter()
         .map(|f| format!("{}@{}/{}#{}", f.repo, f.revision, f.file, f.sha256))
         .collect()
+}
+
+/// The constants of the current set, beyond the detector's, that change
+/// what a request returns: how a crop is split into lines, how lines are
+/// fed to the recogniser, which box a Japanese request reads and which
+/// boxes a rectangle can snap to. Each module lists its own, so a changed
+/// threshold rolls the result keys without a manual version bump. (The
+/// version constants remain for changes in the code itself.)
+pub fn reader_tuning() -> String {
+    [
+        super::lines::fingerprint(),
+        super::recognizer::ctc::fingerprint(),
+        super::manga_crop::fingerprint(),
+        format!("regions:iou={}", super::regions::NEAR_DUPLICATE_IOU),
+    ]
+    .join("|")
 }
 
 /// Identity of the current set's Western path: every pinned file of the
@@ -167,21 +191,27 @@ impl EngineInputs {
     pub fn current(engines: EngineSet) -> Self {
         use super::manga_crop::{MANGA_CROP, MangaCrop};
         use super::models;
-        let (detector, western, manga_crop) = match engines {
+        let (detector, western, manga_crop, detector_tuning, reader_tuning) = match engines {
             EngineSet::Current => (
                 models::BUBBLE_DETECTOR_FILES,
                 line_reader_identity(),
                 MANGA_CROP,
+                super::bubbles::fingerprint(),
+                reader_tuning(),
             ),
             EngineSet::Legacy => (
                 models::DETECTOR_FILES,
                 super::recognizer::western::engine_identity(),
                 MangaCrop::Region,
+                String::new(),
+                String::new(),
             ),
         };
         Self {
             engines,
             manga_crop: manga_crop.label(),
+            detector_tuning,
+            reader_tuning,
             result_version: OCR_RESULT_VERSION,
             detect_version: OCR_DETECT_VERSION,
             detector_pins: pins(detector),
@@ -201,6 +231,8 @@ impl EngineInputs {
             format!("detect-v{}", self.detect_version),
             self.western.clone(),
             format!("manga-crop={}", self.manga_crop),
+            format!("detector-tuning={}", self.detector_tuning),
+            format!("reader-tuning={}", self.reader_tuning),
             format!("page-size={}", self.page_size),
         ];
         parts.extend(self.detector_pins.iter().cloned());
@@ -209,11 +241,13 @@ impl EngineInputs {
     }
 
     /// Fingerprint for detect-cache keys: the engine set and its
-    /// detector alone.
+    /// detector alone (its pins and the constants that decide which
+    /// boxes it keeps).
     pub fn detect_fingerprint(&self) -> String {
         let mut parts = vec![
             format!("engines={}", self.engines.label()),
             format!("detect-v{}", self.detect_version),
+            format!("detector-tuning={}", self.detector_tuning),
         ];
         parts.extend(self.detector_pins.iter().cloned());
         short_hash(&parts)
@@ -615,6 +649,8 @@ mod tests {
         EngineInputs {
             engines: EngineSet::Legacy,
             manga_crop: "region",
+            detector_tuning: "detector:input=640;score=0.5".into(),
+            reader_tuning: "lines:scale=2".into(),
             result_version: 3,
             detect_version: 2,
             detector_pins: vec!["acme/det@aaa/det.onnx#111".into()],
@@ -739,6 +775,20 @@ mod tests {
                 },
             ),
             (
+                "a detector threshold",
+                EngineInputs {
+                    detector_tuning: "detector:input=640;score=0.6".into(),
+                    ..inputs()
+                },
+            ),
+            (
+                "a line finder or recogniser constant",
+                EngineInputs {
+                    reader_tuning: "lines:scale=3".into(),
+                    ..inputs()
+                },
+            ),
+            (
                 "language data",
                 EngineInputs {
                     western: "tesseract=5.5.0;eng.traineddata=abd".into(),
@@ -781,6 +831,13 @@ mod tests {
                     ..inputs()
                 },
             ),
+            (
+                "a detector threshold",
+                EngineInputs {
+                    detector_tuning: "detector:input=640;score=0.6".into(),
+                    ..inputs()
+                },
+            ),
         ] {
             assert_ne!(v.detect_fingerprint(), fp, "{what} must change it");
         }
@@ -810,6 +867,13 @@ mod tests {
                 "japanese crop",
                 EngineInputs {
                     manga_crop: "text-in-region",
+                    ..inputs()
+                },
+            ),
+            (
+                "a line finder or recogniser constant",
+                EngineInputs {
+                    reader_tuning: "lines:scale=3".into(),
                     ..inputs()
                 },
             ),
@@ -861,6 +925,34 @@ mod tests {
             current.manga_crop,
             crate::ocr::manga_crop::MANGA_CROP.label()
         );
+        // The constants that change output are named, value and all.
+        use crate::ocr::{bubbles, lines, recognizer::ctc, regions};
+        for part in [
+            format!("input={}", bubbles::INPUT_SIZE),
+            format!("score={}", bubbles::SCORE_THRESHOLD),
+        ] {
+            assert!(current.detector_tuning.contains(&part), "{part}");
+        }
+        for part in [
+            format!("scale={}", lines::LINE_SCALE),
+            format!("long={}", lines::LINE_MAX_LONG_SIDE),
+            format!("thresh={}", lines::DB_THRESH),
+            format!("box={}", lines::DB_BOX_THRESH),
+            format!("unclip={}", lines::DB_UNCLIP_RATIO),
+            format!("max-lines={}", lines::MAX_LINES_PER_REGION),
+            format!("height={}", ctc::REC_HEIGHT),
+            format!("min={}", ctc::REC_MIN_WIDTH),
+            format!("max={}", ctc::REC_MAX_WIDTH),
+            format!("columns={}", ctc::REC_MAX_BATCH_COLUMNS),
+            format!("inside={}", crate::ocr::manga_crop::TEXT_INSIDE_MIN),
+            format!("stray={}", crate::ocr::manga_crop::TEXT_STRAY_MAX),
+            format!("iou={}", regions::NEAR_DUPLICATE_IOU),
+        ] {
+            assert!(current.reader_tuning.contains(&part), "{part}");
+        }
+        // The legacy set carries none of them.
+        let legacy = EngineInputs::current(EngineSet::Legacy);
+        assert!(legacy.detector_tuning.is_empty() && legacy.reader_tuning.is_empty());
         assert!(
             !current.western.contains("tesseract"),
             "{}",
