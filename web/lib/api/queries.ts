@@ -2271,8 +2271,12 @@ export function useMarkerTags() {
  *    passes `PAGE_TEXT_GC_MS`), so flipping back is instant without a
  *    long session holding every page.
  *  - The query `signal` reaches the fetch: a detection whose last observer
- *    goes away (the page was turned, the panel closed) is aborted
- *    client-side. The server finishes its own work regardless.
+ *    goes away is aborted client-side — the page-text panel's section for
+ *    a page unmounts when the page is turned or the panel closes. Text
+ *    capture's per-page overlays stay mounted in webtoon view, so there a
+ *    started detection runs to the end (the 600 ms settle delay is what
+ *    keeps scrolling from starting them). The server finishes its own
+ *    work regardless.
  *  - `retry` — none by default: a cache miss costs a full detector
  *    inference server-side, and auto-retry would stack runs onto a
  *    struggling box. A caller may pass a predicate that retries only
