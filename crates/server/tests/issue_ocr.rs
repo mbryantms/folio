@@ -2,11 +2,16 @@
 //! (text-detection-1.0 plan, M3).
 //!
 //! These tests exercise the validation + ACL + archive paths *before*
-//! the OCR pipeline runs — the heavy recognizer e2e is covered
-//! separately under `cargo test ... ocr_recognizer -- --ignored`.
-//! Routing this way keeps the integration suite fast (Postgres
-//! bring-up only, no Tesseract C++ on the hot path) while still
-//! pinning the contract the client relies on.
+//! the OCR pipeline runs — what the engines read is covered separately
+//! under `cargo test ... ocr_recognizer -- --ignored`, and the work
+//! around them (timing, cancellation, caching) by `ocr_work.rs` with
+//! stand-in models.
+//!
+//! A few tests here do reach the real pipeline. They pass when it
+//! answers 200 (the pinned Western models, 24 MB, are in the hub cache
+//! or can be fetched) and equally when the models cannot be had on this
+//! box ([`pipeline_unavailable`]): what they pin is that the request got
+//! that far.
 
 mod common;
 
@@ -30,6 +35,18 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 // ─── Test plumbing ───────────────────────────────────────────────
+
+/// The error codes of a request that reached the OCR pipeline and could
+/// not be served by it on this box: the engines failed (`ocr_failed`),
+/// or a pinned model file could not be fetched or verified
+/// (`ocr_model_unverified`, e.g. no network). Anything else on a
+/// non-200 means the request stopped earlier.
+fn pipeline_unavailable(body: &serde_json::Value) -> bool {
+    matches!(
+        body["error"]["code"].as_str(),
+        Some("ocr_failed" | "ocr_model_unverified")
+    )
+}
 
 async fn body_json(b: Body) -> serde_json::Value {
     let bytes = to_bytes(b, usize::MAX).await.unwrap();
@@ -623,17 +640,14 @@ async fn region_outside_page_bounds_returns_400() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reader_with_library_access_reaches_pipeline() {
     // Once ACL passes and the page decodes cleanly + the region is
-    // valid, the handler hands off to `run_ocr`. That fires up the
-    // detector + recognizer singletons, which is exactly the heavy
-    // work we don't want in the per-PR test loop (HF download +
-    // Tesseract C++ build).
+    // valid, the handler prepares the models and hands off to
+    // `run_ocr`.
     //
     // We assert one thing only: the response **is not** the
     // pre-pipeline 404 / 400 / 415 the earlier tests pinned. Either
-    // a 200 (pipeline ran end-to-end on a hot machine) or a 500
-    // `ocr_failed` (pipeline failed cleanly because the models
-    // aren't staged on this box) is fine — both prove the request
-    // reached the dispatch.
+    // a 200 (pipeline ran end-to-end) or a 500 from the pipeline
+    // (the models are not available on this box) is fine — both
+    // prove the request reached the dispatch.
     let app = TestApp::spawn().await;
     let _admin = register(&app, "ocr-reach-admin@example.com").await;
     let reader = register(&app, "ocr-reach-reader@example.com").await;
@@ -654,17 +668,17 @@ async fn reader_with_library_access_reaches_pipeline() {
         }),
     )
     .await;
-    // 200 if pipeline ran; 500 ocr_failed if models / Tesseract
-    // aren't staged. Anything else means we never made it past the
+    // 200 if pipeline ran; 500 from the pipeline if the models
+    // aren't available. Anything else means we never made it past the
     // validation / ACL / archive / decode gates — i.e. a regression.
     assert!(
         matches!(status, StatusCode::OK | StatusCode::INTERNAL_SERVER_ERROR),
         "expected 200 or 500 (pipeline reached), got {status}: {body}",
     );
     if status == StatusCode::INTERNAL_SERVER_ERROR {
-        assert_eq!(
-            body["error"]["code"], "ocr_failed",
-            "500 must be pipeline failure, not an earlier short-circuit"
+        assert!(
+            pipeline_unavailable(&body),
+            "500 must be pipeline failure, not an earlier short-circuit: {body}"
         );
     }
 }
@@ -725,7 +739,7 @@ async fn cache_miss_then_pipeline_writes_cache() {
     // Reach the pipeline with an empty cache; if it ran to
     // completion (200), assert the response was persisted under
     // the same key the handler builds. If the pipeline isn't
-    // available on this box (500 ocr_failed), we skip the assert
+    // available on this box (a 500 from it), we skip the assert
     // — same tolerance as `reader_with_library_access_reaches_pipeline`.
     use redis::AsyncCommands;
     let app = TestApp::spawn().await;
@@ -752,9 +766,10 @@ async fn cache_miss_then_pipeline_writes_cache() {
         "expected 200 or 500 (pipeline reached), got {status}: {body}",
     );
     if status != StatusCode::OK {
-        // Pipeline unavailable on this CI box; the rest of the
+        // Pipeline unavailable on this box; the rest of the
         // assertion is a no-op. The cache-hit test still pins the
         // read-side contract on every box.
+        assert!(pipeline_unavailable(&body), "{body}");
         return;
     }
 
@@ -872,9 +887,9 @@ async fn detect_cache_hit_skips_detector_for_different_region() {
     // Skip when pipeline isn't available on this box, same tolerance
     // as the other pipeline-reach tests.
     if status_a != StatusCode::OK {
-        assert_eq!(
-            body_a["error"]["code"], "ocr_failed",
-            "non-200 must be ocr_failed, not an earlier short-circuit",
+        assert!(
+            pipeline_unavailable(&body_a),
+            "non-200 must be a pipeline failure, not an earlier short-circuit: {body_a}",
         );
         return;
     }
@@ -1051,11 +1066,11 @@ async fn detect_disabled_skips_detector_cache() {
         }),
     )
     .await;
-    // Recognize is far cheaper than detect+recognize; we expect 200
-    // on any host with tessdata staged. 500 is tolerated for parity
-    // with the other pipeline-reach tests but indicates a bad config.
+    // We expect 200 on any host that has (or can fetch) the Western
+    // models. A pipeline failure is tolerated for parity with the
+    // other pipeline-reach tests.
     if status != StatusCode::OK {
-        assert_eq!(body["error"]["code"], "ocr_failed");
+        assert!(pipeline_unavailable(&body), "{body}");
         return;
     }
 
@@ -1078,4 +1093,146 @@ async fn detect_disabled_skips_detector_cache() {
         result_cached.is_some(),
         "result cache should be populated under the no-detect key",
     );
+}
+
+// ─── The real engines through the routes ─────────────────────────
+
+/// The reader's flow on a real page with the real models: fetch the
+/// page's text regions, read one of them (a tap sends the region back as
+/// `region_pct`), then snap a hand-drawn rectangle to the same region
+/// (`detect: true`). Ignored because it loads the three pinned Western
+/// models (24 MB, fetched on first run); the page is the fixture the
+/// engine tests use (`tests/fixtures/ocr/README.md`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "loads the pinned Western models (24 MB, fetched on first run)"]
+async fn a_balloon_of_a_real_page_is_found_and_read_through_the_routes() {
+    const TEXT: &str = "JOHN! LOOK OUT!";
+    // Centre of that balloon, percent of the page.
+    const CENTRE: (f64, f64) = (7.3, 69.2);
+    let page = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/ocr/strange-terrors-6-p028.jpg"
+    ))
+    .unwrap();
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "ocr-real-page@example.com").await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("real.cbz");
+    build_cbz(&cbz, "page-001.jpg", &page);
+    let (_lib, issue_id) = seed_issue(&app, cbz.to_str().unwrap()).await;
+
+    // ── The page's regions: balloons and free text, in percent ──
+    let (status, body) = get_text_regions(&app, &issue_id, 0, Some(&admin)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        (body["page_w"].as_u64(), body["page_h"].as_u64()),
+        (Some(1280), Some(1876))
+    );
+    let regions = body["regions"].as_array().expect("regions");
+    assert!(
+        (13..=16).contains(&regions.len()),
+        "{} regions",
+        regions.len()
+    );
+    let num = |v: &serde_json::Value, k: &str| v[k].as_f64().unwrap();
+    for r in regions {
+        assert!(matches!(r["class"].as_u64(), Some(0 | 2)), "{r}");
+        assert!(num(r, "confidence") >= 0.5, "{r}");
+        assert!(
+            num(r, "x") >= 0.0 && num(r, "x") + num(r, "w") <= 100.001,
+            "{r}"
+        );
+        assert!(
+            num(r, "y") >= 0.0 && num(r, "y") + num(r, "h") <= 100.001,
+            "{r}"
+        );
+    }
+    let region = regions
+        .iter()
+        .filter(|r| {
+            CENTRE.0 >= num(r, "x")
+                && CENTRE.0 <= num(r, "x") + num(r, "w")
+                && CENTRE.1 >= num(r, "y")
+                && CENTRE.1 <= num(r, "y") + num(r, "h")
+        })
+        .min_by(|a, b| (num(a, "w") * num(a, "h")).total_cmp(&(num(b, "w") * num(b, "h"))))
+        .expect("a region under the balloon's centre");
+    let region_pct = json!({
+        "x": num(region, "x"), "y": num(region, "y"),
+        "w": num(region, "w"), "h": num(region, "h"),
+    });
+
+    // ── A tap: the region is read as sent ──
+    let (status, tap) = post_ocr(
+        &app,
+        &issue_id,
+        Some(&admin),
+        json!({ "page": 0, "region_pct": region_pct }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{tap}");
+    assert_eq!(tap["text"], TEXT);
+    assert_eq!(tap["lang"], "western");
+    assert!(tap["confidence"].as_f64().unwrap() > 0.9, "{tap}");
+    assert_eq!(
+        (tap["page_w"].as_u64(), tap["page_h"].as_u64()),
+        (Some(1280), Some(1876))
+    );
+    assert!(tap.get("refined_bbox").is_none(), "no snap without detect");
+    // The text was read in lines; `raw_text` keeps them apart.
+    assert_eq!(tap["raw_text"], "JOHN!\nLOOK\nOUT!");
+    // One entry per line, in page pixels, inside the region.
+    let px = |pct: f64, size: f64| pct / 100.0 * size;
+    let (x0, y0) = (px(num(region, "x"), 1280.0), px(num(region, "y"), 1876.0));
+    let (x1, y1) = (
+        x0 + px(num(region, "w"), 1280.0),
+        y0 + px(num(region, "h"), 1876.0),
+    );
+    let lines = tap["words"].as_array().expect("line entries");
+    let texts: Vec<&str> = lines.iter().filter_map(|l| l["text"].as_str()).collect();
+    assert_eq!(texts, ["JOHN!", "LOOK", "OUT!"]);
+    for l in lines {
+        let (x, y, w, h) = (num(l, "x"), num(l, "y"), num(l, "w"), num(l, "h"));
+        assert!(w > 0.0 && h > 0.0, "{l}");
+        assert!(
+            x >= x0 - 1.0 && y >= y0 - 1.0 && x + w <= x1 + 1.0 && y + h <= y1 + 1.0,
+            "{l} outside the region ({x0}, {y0})–({x1}, {y1})"
+        );
+    }
+
+    // ── The same tap again is a cache hit with the same answer ──
+    let (status, again) = post_ocr(
+        &app,
+        &issue_id,
+        Some(&admin),
+        json!({ "page": 0, "region_pct": region_pct }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again, tap);
+
+    // ── A drawn rectangle inside the balloon snaps to the region ──
+    let (status, snapped) = post_ocr(
+        &app,
+        &issue_id,
+        Some(&admin),
+        json!({
+            "page": 0,
+            "region_pct": {
+                "x": CENTRE.0 - 1.0, "y": CENTRE.1 - 1.0, "w": 2.0, "h": 2.0,
+            },
+            "detect": true,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{snapped}");
+    assert_eq!(snapped["text"], TEXT);
+    let bbox = &snapped["refined_bbox"];
+    for (key, want) in [("x", x0), ("y", y0), ("w", x1 - x0), ("h", y1 - y0)] {
+        assert!(
+            (num(bbox, key) - want).abs() <= 1.0,
+            "refined_bbox.{key} = {} but the region's is {want}",
+            bbox[key]
+        );
+    }
 }
