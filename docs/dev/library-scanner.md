@@ -1602,7 +1602,10 @@ deletion:
   confirmed and are re-examined every run, but however many of them sit at
   the front they no longer hold the purgeable rows behind them back; a
   backlog of purgeable rows drains 5 000 a day, oldest first. Candidate
-  series (no issue rows left) are read in one query with no cap.
+  series (no issue rows left) are read in one query with no cap; every
+  statement that binds their ids binds at most 500 (stat, un-confirm,
+  delete) or 5 000 (`COUNT_CHUNK`, the export counts) of them, so any
+  number of candidates stays under Postgres's 65 535 bind parameters.
 - **Rescans** go through `JobRuntime::coalesce_scoped_scan` (the admin
   "Scan series" path, not forced): one queued `scan_runs` row per series,
   coalesced into a scoped scan already in flight. A series scanned within
@@ -1640,6 +1643,7 @@ deletion:
   `::purge_deletes_at_most_the_cap_per_run`,
   `::purge_counts_committed_deletes_when_a_later_page_fails`,
   `::purge_pages_through_equal_confirmation_times`,
+  `::purge_counts_series_exports_across_statements`,
   `::purge_skips_a_library_whose_root_is_missing`,
   `::empty_root_is_skipped_by_both_sweeps`.
 
