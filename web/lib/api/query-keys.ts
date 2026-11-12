@@ -658,4 +658,9 @@ export const queryKeys = {
    *  only on a response that doesn't carry it. Invalidated by progress
    *  mutations. */
   userProgress: ["progress", "list"] as const,
+  /** One issue's progress record as this tab last wrote it (a mark, its
+   *  reply, Undo; the reader's write when the entry exists). Never
+   *  fetched: the issue page observes it for its live read state and
+   *  falls back to the server-rendered state while it is empty. */
+  issueProgress: (issueId: string) => ["progress", "issue", issueId] as const,
 };

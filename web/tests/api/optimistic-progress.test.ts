@@ -22,10 +22,9 @@ import {
   type ProgressMap,
 } from "@/lib/api/mutations/progress";
 import { queryKeys } from "@/lib/api/queries";
-import { progressOverlay } from "@/lib/api/progress-overlay";
 import type { ContinueReadingView, ProgressView } from "@/lib/api/types";
 
-const entry = (id: string) => progressOverlay(qc).get(id);
+const issueRec = (id: string) => qc.getQueryData(queryKeys.issueProgress(id));
 
 const rec = (
   issue_id: string,
@@ -74,15 +73,12 @@ describe("optimistic progress", () => {
       qc.getQueryData<ContinueReadingView>(queryKeys.continueReading)!.items[0]!
         .progress.percent,
     ).toBe(1);
-    expect(entry("a")).toMatchObject({
-      record: { finished: true },
-      seq: Infinity,
-    });
+    expect(issueRec("a")).toMatchObject({ finished: true });
 
     rollbackProgress(qc, snap);
-    expect(qc.getQueryData(queryKeys.userProgress)).toBe(map);
+    expect(qc.getQueryData(queryKeys.userProgress)).toEqual(map);
     expect(qc.getQueryData(queryKeys.continueReading)).toEqual(cr);
-    expect(entry("a")).toBeUndefined();
+    expect(issueRec("a")).toBeUndefined();
   });
 
   it("doesn't seed a progress map that was never loaded", async () => {
@@ -90,7 +86,7 @@ describe("optimistic progress", () => {
       { issue_id: "a", page: 0, finished: false },
     ]);
     expect(qc.getQueryData(queryKeys.userProgress)).toBeUndefined();
-    expect(entry("a")?.record).toMatchObject({
+    expect(issueRec("a")).toMatchObject({
       finished: false,
       percent: 0,
     });
@@ -139,8 +135,6 @@ describe("optimistic progress", () => {
         body: { issue_id: "mid", page: 5, finished: false },
       },
     ]);
-    // Acknowledged: settled, no longer pending.
-    expect(entry("mid")?.record).toMatchObject({ page: 5, finished: false });
-    expect(entry("mid")?.seq).toBeLessThan(Infinity);
+    expect(issueRec("mid")).toMatchObject({ page: 5, finished: false });
   });
 });

@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 /**
  * A failed mark and a failed Undo put mounted issue cards back where they
- * were. The cards read this tab's writes from the progress overlay; a
- * rollback must notify them (a removed TanStack query does not), or a
- * failed bulk mark from the selection toolbar leaves every card showing
- * the optimistic check until something else re-renders it.
+ * were. A mark patches the cards' embedded progress in the cached lists;
+ * a rollback must write those copies back (notifying the mounted cards),
+ * or a failed bulk mark from the selection toolbar leaves every card
+ * showing the optimistic check.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
@@ -14,6 +14,8 @@ const net = vi.hoisted(() => ({
   calls: [] as string[],
   items: [] as unknown[],
   failPosts: false,
+  /** When set, list GETs wait on it. */
+  gate: null as Promise<void> | null,
 }));
 
 vi.mock("@/lib/api/auth-refresh", () => ({
@@ -31,7 +33,9 @@ vi.mock("@/lib/api/auth-refresh", () => ({
             headers: { "Content-Type": "application/json" },
           });
     }
-    return new Response(JSON.stringify({ items: net.items }), {
+    const items = net.items;
+    if (net.gate) await net.gate;
+    return new Response(JSON.stringify({ items }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
@@ -66,7 +70,6 @@ import {
   capturePriorProgress,
   restoreProgress,
   rollbackProgress,
-  settleProgress,
 } from "@/lib/api/mutations/progress";
 
 const T0 = "2026-11-01T10:00:00+00:00";
@@ -111,6 +114,7 @@ async function mount() {
 beforeEach(() => {
   net.calls.length = 0;
   net.failPosts = false;
+  net.gate = null;
   net.items = [
     card("a", null),
     card("b", null),
@@ -148,7 +152,17 @@ describe("rollback reaches mounted cards", () => {
       ]);
     });
     await waitFor(() => expect(readCheck("a")).not.toBeNull());
+    // The server has them read now.
+    net.items = [
+      card("a", { finished: true, page: 0, percent: 1, updated_at: T0 }),
+      card("b", { finished: true, page: 0, percent: 1, updated_at: T0 }),
+      net.items[2],
+    ];
     net.failPosts = true;
+    // Hold the list refetch the failure triggers, so the rollback itself
+    // is what's on screen.
+    let open!: () => void;
+    net.gate = new Promise((r) => (open = r));
     await act(async () => {
       await restoreProgress(
         client,
@@ -159,8 +173,14 @@ describe("rollback reaches mounted cards", () => {
       ).catch(() => {});
     });
     // Undo's own optimistic step cleared the checks; its failure must
-    // bring them back (and keep them, past the list refetch it triggers).
-    await new Promise((r) => setTimeout(r, 50));
+    // bring them back before the refetch lands…
+    await waitFor(() => expect(readCheck("a")).not.toBeNull());
+    expect(readCheck("b")).not.toBeNull();
+    // …and the refetch (the server's state) keeps them.
+    await act(async () => {
+      open();
+      await new Promise((r) => setTimeout(r, 50));
+    });
     expect(readCheck("a")).not.toBeNull();
     expect(readCheck("b")).not.toBeNull();
   });
@@ -183,7 +203,6 @@ describe("rollback reaches mounted cards", () => {
         ids.map((issue_id) => ({ issue_id, page: 0, finished: true })),
       );
       prior = await priorP;
-      settleProgress(client, ids);
     });
     expect(prior!.get("a")).toBeNull();
     expect(prior!.get("b")).toMatchObject({ page: 5, percent: 0.25 });

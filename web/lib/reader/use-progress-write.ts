@@ -7,7 +7,6 @@ import {
   invalidateRails,
   invalidateSeriesProgress,
 } from "@/lib/api/mutations/rails";
-import { progressOverlay } from "@/lib/api/progress-overlay";
 import { queryKeys } from "@/lib/api/query-keys";
 import { nextPersistedProgressPage } from "@/lib/reader/webtoon-window";
 
@@ -180,28 +179,16 @@ export function useReaderProgressWrite(opts: {
             const reply = (await response.json()) as {
               run?: unknown;
               issue_id?: unknown;
-              finished?: unknown;
-              page?: unknown;
-              percent?: unknown;
             };
-            // The stored record (a `ProgressView`): every issue card and
-            // the issue page read it from the progress overlay, so the
-            // badge follows the read without refetching a list.
+            // The issue page's per-issue read state, if this tab holds
+            // one: keep it on the stored record (a `ProgressView`). The
+            // card lists were marked stale above and refetch on mount.
             if (
               typeof reply.issue_id === "string" &&
-              typeof reply.finished === "boolean" &&
-              typeof reply.page === "number" &&
-              typeof reply.percent === "number"
+              qc.getQueryData(queryKeys.issueProgress(reply.issue_id)) !==
+                undefined
             ) {
-              progressOverlay(qc).write(
-                reply.issue_id,
-                {
-                  finished: reply.finished,
-                  page: reply.page,
-                  percent: reply.percent,
-                },
-                false,
-              );
+              qc.setQueryData(queryKeys.issueProgress(reply.issue_id), reply);
             }
             return typeof reply.run === "number" ? { run: reply.run } : true;
           } catch {

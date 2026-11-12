@@ -17,6 +17,7 @@ import { showUndoToast } from "@/lib/ui/undo-toast";
 import { apiFetch } from "../auth-refresh";
 import { queryKeys, type EntityKindPath } from "../queries";
 import { apiPath } from "../path";
+import { cancelCardLists } from "../card-list-cache";
 import { buildQuery } from "../build-query";
 import { getCsrfToken, useApiMutation } from "./_core";
 import {
@@ -612,11 +613,15 @@ export function useBulkMarkProgress() {
       onError: (_err, _input, ctx) =>
         rollbackProgress(qc, (ctx as MarkProgressCtx | undefined)?.snap),
       onSuccess: (data, input, ctx) => {
-        settleProgress(qc, input.issue_ids);
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
         invalidateSeriesProgress(qc);
-        invalidateIssueCards(qc);
+        // The reply counts refusals but doesn't name them: when any issue
+        // was not written, refetch the mounted lists so their cards show
+        // the server's state instead of the optimistic one.
+        invalidateIssueCards(qc, {
+          refetchActive: (data?.not_found ?? 0) + (data?.failed ?? 0) > 0,
+        });
         const message = summarizeBulkProgress(data, input.finished);
         const prior = (ctx as MarkProgressCtx | undefined)?.prior;
         if (!prior || data?.updated === 0) {
@@ -1455,15 +1460,19 @@ type MarkProgressCtx = {
   prior: PriorProgress | null;
 };
 
-/** Run inside a mark's `onMutate`: capture each issue's prior record
- *  (for Undo) and write the new state into the caches. The prior read
- *  starts first — its cache reads are synchronous, so they see the
- *  pre-mark state — and the optimistic write lands before any network
- *  round-trip the capture may need. */
+/** Run inside a mark's `onMutate`: cancel in-flight card-list fetches,
+ *  capture each issue's prior record (for Undo) and write the new state
+ *  into the caches. The prior read starts before the write — its cache
+ *  reads are synchronous, so they see the pre-mark state — and the
+ *  optimistic write lands before any network round-trip the capture may
+ *  need. */
 async function beginMark(
   qc: ReturnType<typeof useQueryClient>,
   writes: ProgressWrite[],
 ): Promise<MarkProgressCtx> {
+  // A card-list fetch that started before the mark must not land after
+  // it: cancel first, then read the priors, then patch.
+  await cancelCardLists(qc);
   const priorP = capturePriorProgress(
     qc,
     writes.map((w) => w.issue_id),
@@ -1499,11 +1508,8 @@ export function useUpsertIssueProgress() {
       onError: (_err, _input, ctx) =>
         rollbackProgress(qc, (ctx as MarkProgressCtx | undefined)?.snap),
       onSuccess: (data, input, ctx) => {
-        settleProgress(
-          qc,
-          [input.issue_id],
-          data ? new Map([[input.issue_id, data]]) : undefined,
-        );
+        if (data)
+          settleProgress(qc, (ctx as MarkProgressCtx | undefined)?.snap, data);
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
         invalidateSeriesProgress(qc);

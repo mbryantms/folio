@@ -86,40 +86,58 @@ export function invalidateSeriesProgress(
   });
 }
 
-/** Invalidate the issue-card lists that embed the viewer's progress on
- *  each card (`IssueSummaryView.progress`) and that [`invalidateRails`]
- *  does not already cover: the series page's issue list
- *  (`queryKeys.seriesIssues`), the cross-library issue grid and issue
- *  search (`queryKeys.issuesCrossList` / `issueSearch`), the entity
- *  pages' issue grids and insights, and the New issues and On this day
- *  rails. Saved-view, reading-list, collection and New-in-series cards
- *  are under `invalidateRails`' prefixes.
+/** THE definition of a card list: a query whose data carries issue cards
+ *  with the viewer's progress embedded (`IssueSummaryView.progress`).
+ *  Invalidation here, and the patching and scanning in
+ *  [`card-list-cache.ts`](../card-list-cache.ts), all use it — add a new
+ *  card-list key here and every one of them follows. */
+export function isCardListKey(key: readonly unknown[]): boolean {
+  switch (key[0]) {
+    case "series":
+      return key[2] === "issues"; // queryKeys.seriesIssues
+    case "issues":
+      return true; // issuesCrossList, issueSearch
+    case "entities":
+      return key[3] === "issues" || key[3] === "insights";
+    case "rails":
+      return (
+        key[1] === "recent-issues" ||
+        key[1] === "on-this-day" ||
+        key[1] === "new-in-series"
+      );
+    case "saved-views":
+      return key[1] === "issue-results" || key[1] === "issue-results-infinite";
+    case "cbl-lists":
+      return key[1] === "entries";
+    case "collections":
+      return key[1] === "entries" || key[1] === "entries-infinite";
+    default:
+      return false;
+  }
+}
+
+/** Mark every card list ([`isCardListKey`]) stale.
  *
- *  A write that names its issues (a mark, a bulk mark, the reader's
- *  per-page write) has already put each issue's record in the progress
- *  overlay (`../progress-overlay.ts`), which every mounted card reads,
- *  so it only marks these lists stale (`refetchActive: false`, the default): the
- *  next mount refetches them, and no mounted infinite list re-requests
- *  every loaded page for one write. A write that names no issues (mark a
- *  whole series, "select all matching") passes `refetchActive: true` so
- *  the mounted list redraws its badges from the server. */
+ *  A write that names its issues (a mark, a bulk mark) has already
+ *  patched the cards' embedded progress in these caches, and the reader's
+ *  page writes have no cards on screen, so the default only marks them
+ *  stale: the next mount refetches, and no mounted infinite list
+ *  re-requests every loaded page for one write.
+ *
+ *  A write that names no issues (mark a whole series, "select all
+ *  matching", series bulk, an outbox replay, a failed Undo) passes
+ *  `refetchActive: true`: mounted lists refetch, and the per-issue read
+ *  state the issue page keeps (`queryKeys.issueProgress`) is reset so no
+ *  earlier write outlives it — the page falls back to its server state. */
 export function invalidateIssueCards(
   qc: ReturnType<typeof useQueryClient>,
   opts: { refetchActive?: boolean } = {},
 ) {
-  const refetchType = opts.refetchActive ? "active" : "none";
   qc.invalidateQueries({
-    queryKey: queryKeyPrefixes.series,
-    predicate: (q) => q.queryKey[2] === "issues",
-    refetchType,
+    predicate: (q) => isCardListKey(q.queryKey),
+    refetchType: opts.refetchActive ? "active" : "none",
   });
-  qc.invalidateQueries({ queryKey: queryKeyPrefixes.issues, refetchType });
-  qc.invalidateQueries({
-    queryKey: queryKeyPrefixes.entities,
-    predicate: (q) =>
-      q.queryKey[3] === "issues" || q.queryKey[3] === "insights",
-    refetchType,
-  });
-  qc.invalidateQueries({ queryKey: queryKeys.recentIssues, refetchType });
-  qc.invalidateQueries({ queryKey: queryKeyPrefixes.onThisDay, refetchType });
+  if (opts.refetchActive) {
+    void qc.resetQueries({ queryKey: queryKeyPrefixes.issueProgress });
+  }
 }
