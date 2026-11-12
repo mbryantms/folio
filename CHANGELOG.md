@@ -13,6 +13,62 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.80.0](https://github.com/mbryantms/folio/compare/v0.79.0...v0.80.0) (2026-11-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* **acl:** a series is rated by its highest-rated issue, and its issues follow it ([#1602](https://github.com/mbryantms/folio/issues/1602))
+* **api:** Non-admin API responses no longer include file paths, library root paths or library settings. Clients that need them must use an admin account.
+
+### Added
+
+* **admin:** scan rows show their exact finding count, and safety refusals are worded as such ([#1588](https://github.com/mbryantms/folio/issues/1588)) ([657f6d4](https://github.com/mbryantms/folio/commit/657f6d496a2adff7f522eed201c9e705384b8f13))
+* **admin:** the age-cap control groups ratings, can hide unrated series and shows what it hides ([#1607](https://github.com/mbryantms/folio/issues/1607)) ([33bcd43](https://github.com/mbryantms/folio/commit/33bcd43c0915e4a5da254c36e46b3465090f5020))
+* **rate-limit:** page and thumbnail requests have a per-user limit ([#1603](https://github.com/mbryantms/folio/issues/1603)) ([8d69ce0](https://github.com/mbryantms/folio/commit/8d69ce0ce9481e8f288ea710e34430042d7703a8))
+* **scanner:** warn when one scan removes an unusually large share of a library ([#1594](https://github.com/mbryantms/folio/issues/1594)) ([489c03e](https://github.com/mbryantms/folio/commit/489c03ea368c93cc603f227ff465462b17fa34c0))
+* **search:** suggest close series names when a search finds nothing ([#1589](https://github.com/mbryantms/folio/issues/1589)) ([2ed3453](https://github.com/mbryantms/folio/commit/2ed3453f40d32e6e3834e6b8890c5c9c394a2151))
+* **view-groups:** reading list groups nest up to four levels, by drag and drop or by menu ([#1616](https://github.com/mbryantms/folio/issues/1616)) ([36cd714](https://github.com/mbryantms/folio/commit/36cd714bf0d8e5de3a6490e42069ce1ab399a69c))
+* **web:** reading lists are a tree table with full names, folder totals and sorting inside folders ([#1612](https://github.com/mbryantms/folio/issues/1612)) ([d86bcb0](https://github.com/mbryantms/folio/commit/d86bcb07e2754ad08078059f33b96d99fa8113b2))
+
+
+### Fixed
+
+* **acl:** a series is rated by its highest-rated issue, and its issues follow it ([#1602](https://github.com/mbryantms/folio/issues/1602)) ([7e9b9d6](https://github.com/mbryantms/folio/commit/7e9b9d682d5eb07b6170aca40fe161dee17515c9))
+* **acl:** age-rating filters fold spellings, and a rating declared in series.json is read in its common forms ([#1611](https://github.com/mbryantms/folio/issues/1611)) ([d499018](https://github.com/mbryantms/folio/commit/d4990184ee367e9743abad409110c1f01f43b508))
+* **api:** an object the caller cannot see answers like one that does not exist ([#1583](https://github.com/mbryantms/folio/issues/1583)) ([c1c477e](https://github.com/mbryantms/folio/commit/c1c477e4d6941e49b13b267174e6321a7443263d))
+* **api:** readers no longer receive server paths or library settings ([#1581](https://github.com/mbryantms/folio/issues/1581)) ([63389a7](https://github.com/mbryantms/folio/commit/63389a76ead2cc491c194c604102477d0778d1fd))
+* **archive:** a retried rewrite keeps the original's backup, restore keeps the file it replaces, and a restore finishes whatever the request does ([#1613](https://github.com/mbryantms/folio/issues/1613)) ([eb7d98a](https://github.com/mbryantms/folio/commit/eb7d98af14782a650355ff3bc3ca4f539ef0c1eb))
+* **archive:** only backups Folio wrote are pruned, and a backup's age counts from when it was made ([#1608](https://github.com/mbryantms/folio/issues/1608)) ([19ca373](https://github.com/mbryantms/folio/commit/19ca373b036c72730c5be9c48c42e6fdbeaa2bcb))
+* **auth:** a refresh whose response was lost can be retried for a minute ([#1606](https://github.com/mbryantms/folio/issues/1606)) ([7e0ae39](https://github.com/mbryantms/folio/commit/7e0ae39572f9628e0035ed3bb6844c6ecb7a4a89))
+* **ocr:** model downloads are pinned to a revision and verified by digest ([#1582](https://github.com/mbryantms/folio/issues/1582)) ([f3df56f](https://github.com/mbryantms/folio/commit/f3df56fa9785ec5057129db6b1d8f583a4ee28ca))
+* **pages:** missing, malformed and changed archives answer honestly, and OCR is capped ([#1593](https://github.com/mbryantms/folio/issues/1593)) ([5630a1d](https://github.com/mbryantms/folio/commit/5630a1d973fa7a9c01710d7572825d1909fe544c))
+* **purge:** rows that cannot be checked no longer hold back the rest of a library's purge ([#1614](https://github.com/mbryantms/folio/issues/1614)) ([c1f1330](https://github.com/mbryantms/folio/commit/c1f133094a386db414f9dfa8b5ae5a9a1d205773))
+* **scanner:** a cancelled or failed full scan no longer marks findings as resolved ([#1601](https://github.com/mbryantms/folio/issues/1601)) ([69ae210](https://github.com/mbryantms/folio/commit/69ae2102ca862544973bae5450763a7373749bf4))
+* **scanner:** a folder's files are ingested in natural order, and the second page read needs no permit ([#1610](https://github.com/mbryantms/folio/issues/1610)) ([61540ef](https://github.com/mbryantms/folio/commit/61540ef636a529b730b6940662f42e6679992ef4))
+* **web:** starting a metadata search for a series shows one notice, not two ([#1604](https://github.com/mbryantms/folio/issues/1604)) ([c169a01](https://github.com/mbryantms/folio/commit/c169a016c28d7186eaf42cc6a538b52caedac498))
+
+
+### Changed
+
+* **entities:** entity, creator and people lists cost the page, not the library ([#1591](https://github.com/mbryantms/folio/issues/1591)) ([836edf4](https://github.com/mbryantms/folio/commit/836edf4774fd7a7b5a8d56956eeaea27fa754ec6))
+* **scanner:** hash pages in the prepare phase, outside the batch transaction ([#1596](https://github.com/mbryantms/folio/issues/1596)) ([f3e6903](https://github.com/mbryantms/folio/commit/f3e6903dd6dfa0b1ffd61c5e724a16cd37a2b9bf))
+* **web:** the reader's first load sheds the queries barrel and two root-layout helpers ([#1609](https://github.com/mbryantms/folio/issues/1609)) ([43743b3](https://github.com/mbryantms/folio/commit/43743b3c9b3939ae2e8c36044f16749828912e4a))
+
+
+### Dependencies
+
+* update alpine:3 docker digest to f59abe6 ([#1597](https://github.com/mbryantms/folio/issues/1597)) ([5af06ab](https://github.com/mbryantms/folio/commit/5af06abe2d4d6b01a48d8dfada663d8647b03ee8))
+* update dependency @hookform/resolvers to v7.0.5 ([#1500](https://github.com/mbryantms/folio/issues/1500)) ([449f7c7](https://github.com/mbryantms/folio/commit/449f7c75d7061c2606bf89d5bcfe213484f2fb80))
+* update dependency metron-tagger to v5.2.0 ([#1600](https://github.com/mbryantms/folio/issues/1600)) ([0125478](https://github.com/mbryantms/folio/commit/0125478bc934a72ecfa2c88d766970349daca045))
+* update dependency oasdiff/oasdiff to v1.37.0 ([#1605](https://github.com/mbryantms/folio/issues/1605)) ([dd3b8be](https://github.com/mbryantms/folio/commit/dd3b8be3431eaf0ccd53d2c011975233220bdc53))
+
+
+### Build & CI
+
+* apt has three fallback mirrors, not one ([#1599](https://github.com/mbryantms/folio/issues/1599)) ([39150f3](https://github.com/mbryantms/folio/commit/39150f3e47a891d5a034b7741bdf6f3da1e003c2))
+* apt retries a failed download instead of failing the job ([#1595](https://github.com/mbryantms/folio/issues/1595)) ([efc11d9](https://github.com/mbryantms/folio/commit/efc11d977a126370fe9400a4dc272d9953624bab))
+
 ## [0.79.0](https://github.com/mbryantms/folio/compare/v0.78.0...v0.79.0) (2026-11-11)
 
 
