@@ -58,6 +58,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { statusTone, statusToneText } from "@/lib/ui/status-tone";
+import { refreshFailureReason } from "@/lib/cbl/refresh-failure";
 import {
   useCblList,
   useCblListEntriesInfinite,
@@ -81,6 +82,7 @@ import { LoadMoreError } from "@/components/folio/infinite-sentinel";
 import { RailError } from "@/components/saved-views/RailError";
 
 import { ManualMatchPopover } from "./manual-match-popover";
+import { RefreshFailureNotice } from "./RefreshFailureNotice";
 
 const STATUS_FILTERS: { value: "all" | CblMatchStatus; label: string }[] = [
   { value: "all", label: "All" },
@@ -766,6 +768,10 @@ function HistoryTab({ listId, list }: { listId: string; list: CblDetailView }) {
           </Button>
         ) : null}
       </div>
+      <RefreshFailureNotice
+        list={list}
+        canRefresh={list.source_kind !== "upload"}
+      />
       {items.length === 0 ? (
         <div className="text-muted-foreground rounded-md border border-dashed p-6 text-center text-sm">
           No refresh runs yet.
@@ -1017,6 +1023,20 @@ function SettingsTab({
             <dt>Last refreshed</dt>
             <dd className="text-foreground">
               {new Date(list.last_refreshed_at).toLocaleString()}
+            </dd>
+          </>
+        ) : null}
+        {list.last_refresh_attempt_at ? (
+          <>
+            <dt>Last attempt</dt>
+            <dd className="text-foreground">
+              {new Date(list.last_refresh_attempt_at).toLocaleString()}
+              {list.refresh_failure ? (
+                <span className="text-warning">
+                  {" "}
+                  · failed: {refreshFailureReason(list.refresh_failure)}
+                </span>
+              ) : null}
             </dd>
           </>
         ) : null}

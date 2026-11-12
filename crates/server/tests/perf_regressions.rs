@@ -553,6 +553,7 @@ async fn seed_cbls(app: &TestApp, series_with_issues: &[(Uuid, Vec<String>)], cb
             created_at: Set(now),
             updated_at: Set(now),
             preserve_canonical_order: Set(false),
+            ..Default::default()
         }
         .insert(&db)
         .await

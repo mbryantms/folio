@@ -76,12 +76,29 @@ pub struct FetchedBlob {
 
 #[derive(Debug, thiserror::Error)]
 pub enum CatalogError {
+    /// A catalog response Folio could not use (an index that does not
+    /// decode, a `304` with no cached index).
     #[error("HTTP error: {0}")]
     Http(String),
+    /// The request did not complete (connection, TLS, body read).
+    #[error("HTTP error: {0}")]
+    Transport(String),
+    /// GitHub answered a non-success status.
+    #[error("HTTP error: {what} fetch returned {status}")]
+    Status {
+        what: &'static str,
+        status: reqwest::StatusCode,
+    },
     #[error("rate-limited by GitHub")]
     RateLimited,
-    #[error("not found: {0}")]
-    NotFound(String),
+    #[error("not found: catalog source disabled")]
+    Disabled,
+    /// The path is not in the catalog's index.
+    #[error("not found: {0} not in catalog")]
+    PathMissing(String),
+    /// The index lists the path but its blob answered `404`.
+    #[error("not found: blob {0}")]
+    BlobMissing(String),
     #[error("payload exceeds {limit} bytes")]
     TooLarge { limit: usize },
     #[error("DB error: {0}")]
@@ -89,6 +106,17 @@ pub enum CatalogError {
 }
 
 impl CatalogError {
+    /// For the three "not found" variants, the text after `not found: `
+    /// (what the catalog-import handler answers with its `404`).
+    pub fn not_found_message(&self) -> Option<String> {
+        match self {
+            Self::Disabled => Some("catalog source disabled".to_owned()),
+            Self::PathMissing(path) => Some(format!("{path} not in catalog")),
+            Self::BlobMissing(path) => Some(format!("blob {path}")),
+            _ => None,
+        }
+    }
+
     /// The text a response may carry: a database error's own text stays
     /// in the log.
     pub fn public_message(&self) -> String {
@@ -141,7 +169,7 @@ pub async fn refresh_index<C: ConnectionTrait>(
     force: bool,
 ) -> Result<CatalogIndex, CatalogError> {
     if !source.enabled {
-        return Err(CatalogError::NotFound("catalog source disabled".into()));
+        return Err(CatalogError::Disabled);
     }
     if !force
         && let Some(cached) = current_index(source)
@@ -165,7 +193,7 @@ pub async fn refresh_index<C: ConnectionTrait>(
     let resp = req
         .send()
         .await
-        .map_err(|e| CatalogError::Http(e.to_string()))?;
+        .map_err(|e| CatalogError::Transport(e.to_string()))?;
 
     if resp.status() == reqwest::StatusCode::NOT_MODIFIED {
         // Cache hit — surface the existing index without rewriting.
@@ -179,10 +207,10 @@ pub async fn refresh_index<C: ConnectionTrait>(
         return Err(CatalogError::RateLimited);
     }
     if !resp.status().is_success() {
-        return Err(CatalogError::Http(format!(
-            "tree fetch returned {}",
-            resp.status()
-        )));
+        return Err(CatalogError::Status {
+            what: "tree",
+            status: resp.status(),
+        });
     }
     let etag = resp
         .headers()
@@ -217,7 +245,7 @@ pub async fn fetch_blob<C: ConnectionTrait>(
         .entries
         .iter()
         .find(|e| e.path == path)
-        .ok_or_else(|| CatalogError::NotFound(format!("{path} not in catalog")))?;
+        .ok_or_else(|| CatalogError::PathMissing(path.to_owned()))?;
     if (entry.size as usize) > MAX_BLOB_BYTES {
         return Err(CatalogError::TooLarge {
             limit: MAX_BLOB_BYTES,
@@ -244,15 +272,15 @@ pub async fn fetch_blob<C: ConnectionTrait>(
     let resp = apply_auth(http_client().get(&url))
         .send()
         .await
-        .map_err(|e| CatalogError::Http(e.to_string()))?;
+        .map_err(|e| CatalogError::Transport(e.to_string()))?;
     if resp.status() == reqwest::StatusCode::NOT_FOUND {
-        return Err(CatalogError::NotFound(format!("blob {path}")));
+        return Err(CatalogError::BlobMissing(path.to_owned()));
     }
     if !resp.status().is_success() {
-        return Err(CatalogError::Http(format!(
-            "blob fetch returned {}",
-            resp.status()
-        )));
+        return Err(CatalogError::Status {
+            what: "blob",
+            status: resp.status(),
+        });
     }
     let bytes = read_capped(resp, MAX_BLOB_BYTES).await?;
     Ok(FetchedBlob {
@@ -270,7 +298,7 @@ async fn read_capped(resp: reqwest::Response, limit: usize) -> Result<Vec<u8>, C
         .await
         .map_err(|e| match e {
             FetchBytesError::TooLarge { max_bytes } => CatalogError::TooLarge { limit: max_bytes },
-            other => CatalogError::Http(other.to_string()),
+            other => CatalogError::Transport(other.to_string()),
         })
 }
 

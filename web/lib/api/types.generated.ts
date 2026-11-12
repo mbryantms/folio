@@ -7788,12 +7788,18 @@ export interface components {
             id: string;
             imported_at: string;
             last_match_run_at?: string | null;
+            /**
+             * @description When the last refresh attempt (scheduled or manual) finished,
+             *     whether or not it succeeded. `None` until the first one.
+             */
+            last_refresh_attempt_at?: string | null;
             last_refreshed_at?: string | null;
             /** Format: int32 */
             num_issues_declared?: number | null;
             owner_user_id?: string | null;
             parsed_matchers_present: boolean;
             parsed_name: string;
+            refresh_failure?: components["schemas"]["CblRefreshFailureView"] | null;
             refresh_schedule?: string | null;
             source_kind: string;
             source_url?: string | null;
@@ -7803,6 +7809,32 @@ export interface components {
              */
             stats: components["schemas"]["CblStatsView"];
             updated_at: string;
+        };
+        /**
+         * @description Why a reading list's last refresh failed. Each failure path of a refresh
+         *     maps onto exactly one kind (`server::cbl::refresh::RefreshError::failure`).
+         * @enum {string}
+         */
+        CblRefreshErrorKind: "unreachable" | "http_status" | "missing" | "address_refused" | "too_large" | "too_many_entries" | "invalid_list" | "other";
+        /**
+         * @description Why a list's refreshes are failing. Every field is composed by the
+         *     server: no remote response text, host or address.
+         */
+        CblRefreshFailureView: {
+            /**
+             * Format: int32
+             * @description Failed attempts in a row.
+             */
+            consecutive_failures: number;
+            /**
+             * @description A short note built from safe values, e.g. `HTTP 503` or
+             *     `over the 4 MiB limit`. `None` when the kind says it all; always
+             *     `None` for `address_refused`.
+             */
+            detail?: string | null;
+            /** @description The first failed attempt of the current run of failures. */
+            failing_since: string;
+            kind: components["schemas"]["CblRefreshErrorKind"];
         };
         CblStatsView: {
             /** Format: int64 */
