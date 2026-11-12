@@ -17,17 +17,16 @@
 //! non-ignored case only checks that the trait shapes compile, which CI
 //! runs on every push.
 //!
-//! The page and the balloon crops are under `tests/fixtures/ocr/`; their
-//! provenance is in the README there.
+//! The page is under `tests/fixtures/ocr/` with its provenance in the
+//! README there; the balloon crops are cut from it here.
 
 use std::time::{Duration, Instant};
 
 use image::{DynamicImage, GrayImage, Luma};
 use server::ocr::EngineSet;
-use server::ocr::bubbles::{
-    BubbleDetector, CLASS_BUBBLE, CLASS_TEXT_BUBBLE, CLASS_TEXT_FREE, is_region_class,
-};
+use server::ocr::bubbles::{BubbleDetector, CLASS_BUBBLE, CLASS_TEXT_BUBBLE, CLASS_TEXT_FREE};
 use server::ocr::cache::{CachedBbox, CachedDetection};
+use server::ocr::lines::LineRect;
 use server::ocr::manga_crop::{MangaCrop, manga_crop};
 use server::ocr::models;
 use server::ocr::pipeline::{PageDetector, Rect};
@@ -87,9 +86,9 @@ const REGION_CENTRES: [(f32, f32); 13] = [
     (76.15, 72.45),
 ];
 
-/// A balloon crop: its file, the index of its region in
-/// [`REGION_CENTRES`], where the detector's box for it sits on the page
-/// (x, y, w, h), and what it says.
+/// A balloon of the page: a name for messages, the index of its region
+/// in [`REGION_CENTRES`], where the detector's box for it sits on the
+/// page (x, y, w, h), and what it says.
 struct Balloon {
     file: &'static str,
     region: usize,
@@ -97,22 +96,31 @@ struct Balloon {
     text: &'static str,
 }
 
+impl Balloon {
+    /// The balloon cut from the page at its recorded rectangle, so the
+    /// recogniser tests do not depend on the detector.
+    fn crop(&self, page: &DynamicImage) -> DynamicImage {
+        let (x, y, w, h) = self.rect;
+        page.crop_imm(x, y, w, h)
+    }
+}
+
 const BALLOONS: [Balloon; 3] = [
     Balloon {
-        file: "balloon-06.png",
+        file: "balloon 6",
         region: 5,
         rect: (282, 726, 213, 166),
         text: "THAT VOICE --IT SOUNDS LIKE IT'S COMING FROM THE GRAVE!",
     },
     Balloon {
-        file: "balloon-08.png",
+        file: "balloon 8",
         region: 7,
         rect: (687, 660, 292, 190),
         text: "BUT WHY SHOULD HE WANT TO KEEP US FROM OPENING THE MINE? \
                IT WOULD GIVE HIM HIS OLD JOB BACK AGAIN.",
     },
     Balloon {
-        file: "balloon-10.png",
+        file: "balloon 10",
         region: 9,
         rect: (24, 1244, 158, 108),
         text: "JOHN! LOOK OUT!",
@@ -123,16 +131,18 @@ fn area(b: &CachedBbox) -> f32 {
     (b.xmax - b.xmin) * (b.ymax - b.ymin)
 }
 
-/// The regions of a detection: what clients are offered (balloons and
-/// free text), without the text boxes inside balloons.
-fn regions(d: &CachedDetection) -> impl Iterator<Item = &CachedBbox> {
-    d.bboxes.iter().filter(|b| is_region_class(b.class))
+/// The regions of a detection as the server offers them to clients:
+/// balloons and free text, de-duplicated, without the text boxes inside
+/// balloons.
+fn regions(d: &CachedDetection) -> Vec<CachedBbox> {
+    server::ocr::regions::regions(EngineSet::Current, &d.bboxes, d.page_w, d.page_h)
 }
 
 /// The region a tap at a percent point reads: the smallest one holding it.
-fn region_at(d: &CachedDetection, (px, py): (f32, f32)) -> Option<&CachedBbox> {
+fn region_at(d: &CachedDetection, (px, py): (f32, f32)) -> Option<CachedBbox> {
     let (x, y) = (px / 100.0 * d.page_w as f32, py / 100.0 * d.page_h as f32);
     regions(d)
+        .into_iter()
         .filter(|b| x >= b.xmin && x <= b.xmax && y >= b.ymin && y <= b.ymax)
         .min_by(|a, b| area(a).total_cmp(&area(b)))
 }
@@ -181,7 +191,7 @@ async fn the_detector_finds_every_balloon_of_the_fixture_page() {
     // The page has thirteen regions (balloons and captions); the
     // detector does not flood it. The detection also keeps the text
     // boxes inside the balloons, which are not regions.
-    let region_count = regions(&found).count();
+    let region_count = regions(&found).len();
     assert!((13..=16).contains(&region_count), "{region_count} regions");
     let text_boxes = found
         .bboxes
@@ -196,7 +206,7 @@ async fn the_detector_finds_every_balloon_of_the_fixture_page() {
     for (i, centre) in REGION_CENTRES.iter().enumerate() {
         let b = region_at(&found, *centre)
             .unwrap_or_else(|| panic!("no region under the centre of region {}", i + 1));
-        picked.push(rect_of(b));
+        picked.push(rect_of(&b));
     }
     let mut distinct = picked.clone();
     distinct.sort_unstable();
@@ -251,8 +261,9 @@ async fn the_detector_finds_every_balloon_of_the_fixture_page() {
 async fn the_line_recogniser_reads_the_fixture_balloons() {
     let ocr = LineOcr::shared().await.expect("line recogniser");
     assert_eq!(ocr.recognizer().model().id, models::WESTERN_REC.id);
+    let page = fixture(PAGE);
     for balloon in &BALLOONS {
-        let crop = fixture(balloon.file);
+        let crop = balloon.crop(&page);
         assert_eq!(
             (crop.width(), crop.height()),
             (balloon.rect.2, balloon.rect.3)
@@ -300,7 +311,7 @@ async fn a_tap_on_the_page_reads_the_balloon_under_it() {
     let found = detector.detect(&page).expect("detect");
     for balloon in &BALLOONS {
         let region = region_at(&found, REGION_CENTRES[balloon.region]).expect("a region");
-        let (x, y, w, h) = rect_of(region);
+        let (x, y, w, h) = rect_of(&region);
         let out = read(ocr, &page.crop_imm(x, y, w, h));
         assert_eq!(out.text, balloon.text, "{}", balloon.file);
     }
@@ -324,21 +335,30 @@ async fn a_blank_crop_reads_as_nothing() {
 #[tokio::test]
 #[ignore = "fetches every registered line recogniser on first run (37 MB)"]
 async fn every_registered_line_recogniser_loads_with_a_matching_dictionary() {
+    // Model, dictionary length, input columns one run may hold.
     let expected = [
-        ("en-pp-ocrv5-mobile-rec", 436),
-        ("latin-pp-ocrv5-mobile-rec", 836),
-        ("pp-ocrv6-small-rec", 18_708),
+        ("en-pp-ocrv5-mobile-rec", 436, 16_000),
+        ("latin-pp-ocrv5-mobile-rec", 836, 16_000),
+        ("pp-ocrv6-small-rec", 18_708, 3_416),
     ];
     assert_eq!(models::LINE_REC_MODELS.len(), expected.len());
-    let crop = fixture(BALLOONS[2].file);
-    for (model, (id, characters)) in models::LINE_REC_MODELS.iter().zip(expected) {
+    let crop = BALLOONS[2].crop(&fixture(PAGE));
+    let whole = LineRect {
+        x: 0,
+        y: 0,
+        w: crop.width(),
+        h: crop.height(),
+    };
+    for (model, (id, characters, columns)) in models::LINE_REC_MODELS.iter().zip(expected) {
         assert_eq!(model.id, id);
         let rec = CtcRecognizer::load(model)
             .await
             .unwrap_or_else(|e| panic!("{id}: {e:#}"));
         assert_eq!(rec.dictionary_len(), characters, "{id}");
+        // What one run may hold follows the alphabet's size.
+        assert_eq!(rec.max_batch_columns(), columns, "{id}");
         // Each reads a three-line balloon given whole (one "line").
-        let read = rec.read(std::slice::from_ref(&crop)).expect("read");
+        let read = rec.read(&crop, &[whole]).expect("read");
         assert_eq!(read.len(), 1, "{id}");
         assert!((0.0..=1.0).contains(&read[0].confidence), "{id}");
     }
@@ -381,6 +401,7 @@ async fn timing_on_the_fixture_page() {
     detect.sort_by(f64::total_cmp);
 
     let crops: Vec<DynamicImage> = regions(&found)
+        .iter()
         .map(|b| {
             let (x, y, w, h) = rect_of(b);
             page.crop_imm(x, y, w, h)

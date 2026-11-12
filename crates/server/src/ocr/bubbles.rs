@@ -36,7 +36,7 @@ use ort::value::TensorRef;
 use tokio::sync::OnceCell;
 
 use super::cache::{CachedBbox, CachedDetection};
-use super::pipeline::PageDetector;
+use super::pipeline::{PageDetector, bbox_to_rect};
 use super::{models, session};
 
 /// Side of the square the page is squashed to.
@@ -203,10 +203,14 @@ pub(crate) fn target_sizes(page_w: u32, page_h: u32) -> ndarray::Array2<i64> {
     ndarray::arr2(&[[i64::from(page_w), i64::from(page_h)]])
 }
 
-/// A page's detection from the model's rows: rows at or above
-/// [`SCORE_THRESHOLD`], of any of the model's three classes, clamped to
-/// the page; a box with nothing left on the page is dropped. Model order
-/// is kept. Which of them are regions is [`is_region_class`].
+/// A page's detection from the model's rows: rows with a finite score
+/// at or above [`SCORE_THRESHOLD`] (reported as at most 1), of any of
+/// the model's three classes, clamped to the page. A box is kept only
+/// when it still covers at least one whole pixel of the page after
+/// rounding ([`bbox_to_rect`], the rounding the request path crops
+/// with), so no region is ever offered that a request for it would
+/// refuse as empty. Model order is kept. Which of them are regions is
+/// [`is_region_class`].
 pub(crate) fn boxes(raw: &RawDetections, page_w: u32, page_h: u32) -> Vec<CachedBbox> {
     let (w, h) = (page_w as f32, page_h as f32);
     raw.scores
@@ -214,25 +218,30 @@ pub(crate) fn boxes(raw: &RawDetections, page_w: u32, page_h: u32) -> Vec<Cached
         .zip(&raw.labels)
         .zip(&raw.boxes)
         .filter_map(|((&score, &label), b)| {
-            if score.is_nan() || score < SCORE_THRESHOLD {
+            if !score.is_finite() || score < SCORE_THRESHOLD {
                 return None;
             }
             let class = u32::try_from(label).ok().filter(|c| is_known_class(*c))?;
             if b.iter().any(|v| !v.is_finite()) {
                 return None;
             }
-            let (xmin, xmax) = (b[0].clamp(0.0, w), b[2].clamp(0.0, w));
-            let (ymin, ymax) = (b[1].clamp(0.0, h), b[3].clamp(0.0, h));
-            (xmax > xmin && ymax > ymin).then_some(CachedBbox {
-                xmin,
-                ymin,
-                xmax,
-                ymax,
-                confidence: score,
+            let clamped = CachedBbox {
+                xmin: b[0].clamp(0.0, w),
+                ymin: b[1].clamp(0.0, h),
+                xmax: b[2].clamp(0.0, w),
+                ymax: b[3].clamp(0.0, h),
+                confidence: score.min(1.0),
                 class,
-            })
+            };
+            bbox_to_rect(&clamped, page_w, page_h).map(|_| clamped)
         })
         .collect()
+}
+
+/// The constants above that decide what a detection holds, for the
+/// cache-key fingerprints (`ocr::cache`).
+pub(crate) fn fingerprint() -> String {
+    format!("detector:input={INPUT_SIZE};score={SCORE_THRESHOLD}")
 }
 
 #[cfg(test)]
@@ -320,13 +329,55 @@ mod tests {
     #[test]
     fn rows_below_the_threshold_are_dropped_and_the_threshold_itself_is_kept() {
         let b = [0.0, 0.0, 10.0, 10.0];
+        let got = boxes(&raw(&[(0, b, 0.49), (0, b, 0.5), (0, b, 0.51)]), 100, 100);
+        let scores: Vec<f32> = got.iter().map(|b| b.confidence).collect();
+        assert_eq!(scores, [0.5, 0.51]);
+    }
+
+    /// A score that is not a number in range is not trusted: NaN and the
+    /// infinities drop the row, anything above 1 is reported as 1.
+    #[test]
+    fn a_score_must_be_finite_and_is_at_most_one() {
+        let b = [0.0, 0.0, 10.0, 10.0];
         let got = boxes(
-            &raw(&[(0, b, 0.49), (0, b, 0.5), (0, b, f32::NAN), (0, b, 0.51)]),
+            &raw(&[
+                (0, b, f32::NAN),
+                (0, b, f32::INFINITY),
+                (0, b, f32::NEG_INFINITY),
+                (0, b, 1.5),
+                (0, b, 0.75),
+            ]),
             100,
             100,
         );
         let scores: Vec<f32> = got.iter().map(|b| b.confidence).collect();
-        assert_eq!(scores, [0.5, 0.51]);
+        assert_eq!(scores, [1.0, 0.75]);
+    }
+
+    /// Every kept box is a region a request can read: it covers at least
+    /// one whole pixel once rounded, the test the request path applies.
+    #[test]
+    fn a_box_thinner_than_a_pixel_is_dropped() {
+        let got = boxes(
+            &raw(&[
+                // 0.2 px wide, rounds to nothing.
+                (0, [10.3, 10.0, 10.4, 50.0], 0.9),
+                // 0.4 px tall on both sides of a pixel edge: still nothing.
+                (0, [10.0, 19.6, 50.0, 20.4], 0.9),
+                // Clamped to a sliver at the page's right edge.
+                (0, [99.7, 10.0, 140.0, 50.0], 0.9),
+                // One whole pixel after rounding: kept.
+                (2, [10.4, 10.4, 11.6, 11.6], 0.9),
+                (0, [10.0, 10.0, 50.0, 50.0], 0.9),
+            ]),
+            100,
+            100,
+        );
+        assert_eq!(got.len(), 2, "{got:?}");
+        for b in &got {
+            assert!(bbox_to_rect(b, 100, 100).is_some(), "{b:?}");
+        }
+        assert_eq!(got[0].class, CLASS_TEXT_FREE);
     }
 
     /// The model returns page pixels (it is given the page size); what is

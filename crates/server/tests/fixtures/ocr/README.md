@@ -1,8 +1,9 @@
 # OCR fixtures
 
-One comic page and three balloon crops for the real-model tests in
-[`../../ocr_recognizer.rs`](../../ocr_recognizer.rs) (ignored by
-default; they load the pinned models).
+One comic page for the real-model tests in
+[`../../ocr_recognizer.rs`](../../ocr_recognizer.rs) and
+[`../../issue_ocr.rs`](../../issue_ocr.rs) (ignored by default; they
+load the pinned models).
 
 ## The page
 
@@ -19,17 +20,18 @@ default; they load the pinned models).
   pixels, 735,487 bytes, SHA-256
   `2d0f9c53784d283489b0d59b45194eb95e47181cb8ceb78413f10d75ddbc8654`.
 
-## The crops
+## The balloons
 
-Cut from the page above at the boxes the page detector returns for three
-of its balloons, saved as PNG (lossless), so the recogniser tests do not
-depend on the detector:
+The tests cut three balloons from the page at the rectangles the page
+detector returned for them when the fixture was made, so the recogniser
+tests do not depend on the detector (a detector test checks that it
+still returns these rectangles, to two pixels):
 
-| File | Rectangle on the page (x, y, w, h) | Text |
+| Balloon | Rectangle on the page (x, y, w, h) | Text |
 |---|---|---|
-| `balloon-06.png` | 282, 726, 213, 166 | THAT VOICE --IT SOUNDS LIKE IT'S COMING FROM THE GRAVE! |
-| `balloon-08.png` | 687, 660, 292, 190 | BUT WHY SHOULD HE WANT TO KEEP US FROM OPENING THE MINE? IT WOULD GIVE HIM HIS OLD JOB BACK AGAIN. |
-| `balloon-10.png` | 24, 1244, 158, 108 | JOHN! LOOK OUT! |
+| 6 | 282, 726, 213, 166 | THAT VOICE --IT SOUNDS LIKE IT'S COMING FROM THE GRAVE! |
+| 8 | 687, 660, 292, 190 | BUT WHY SHOULD HE WANT TO KEEP US FROM OPENING THE MINE? IT WOULD GIVE HIM HIS OLD JOB BACK AGAIN. |
+| 10 | 24, 1244, 158, 108 | JOHN! LOOK OUT! |
 
 The reference text of the page (13 regions: 11 balloons, 2 captions) was
 transcribed from the scan and checked against it for these three; the

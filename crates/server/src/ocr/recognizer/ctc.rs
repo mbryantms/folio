@@ -25,6 +25,17 @@
 //!   repeats collapse, blanks drop. A line's confidence is the mean
 //!   probability of the classes it kept.
 //!
+//! # Bounds
+//!
+//! A balloon is a few lines read in one run. What a run may hold is
+//! bounded for a drawn region that is not a balloon, because ONNX
+//! Runtime keeps the memory of its largest run: at most
+//! [`REC_MAX_BATCH_COLUMNS`] input columns (lines × batch width), and
+//! fewer for a model with a large alphabet, whose output grows with its
+//! class count ([`max_batch_columns`]). Lines past the bound are read in
+//! a following run. Lines are cut from the crop one at a time while the
+//! batch is filled, so no copy of all of them exists at once.
+//!
 //! The session is locked for the inference and the per-step argmax only.
 //! Blocking: call from the blocking pool.
 
@@ -51,9 +62,34 @@ pub const REC_MIN_WIDTH: u32 = 320;
 /// bounds the tensor for a drawn region that is one long strip.
 pub const REC_MAX_WIDTH: u32 = 3200;
 /// Most input columns (lines × batch width) in one run; lines past it go
-/// into a following run. A balloon stays far below (twenty lines 800
-/// wide are 16,000), so its lines are always read in a single batch.
-const REC_MAX_BATCH_COLUMNS: usize = 96_000;
+/// into a following run. Sized for a balloon with margin, so a balloon's
+/// lines are read in a single batch: on the pages the engines were
+/// measured on the median read is 1,900 columns, nine in ten stay under
+/// 4,700 and the largest (a 15-line box) is 10,900. A larger run only
+/// makes the runtime's memory grow for good, by about 20 MB per 1,000
+/// columns.
+pub const REC_MAX_BATCH_COLUMNS: usize = 16_000;
+
+/// Most output values (lines × steps × classes, 4 bytes each) one run
+/// may produce: the bound on the output tensor for a model with a large
+/// alphabet.
+const REC_MAX_OUTPUT_VALUES: usize = 8_000_000;
+
+/// Input columns per output step: these recognisers emit one step for
+/// every 8 columns of the batch.
+const REC_COLUMNS_PER_STEP: usize = 8;
+
+/// Input columns one run may hold for a model with `classes` classes:
+/// [`REC_MAX_BATCH_COLUMNS`], or fewer when that many columns would
+/// produce more than [`REC_MAX_OUTPUT_VALUES`] (a 436-character alphabet
+/// stays at the column bound; one of 18,000 characters gets about a
+/// fifth of it). Never under one line of the narrowest batch.
+pub(crate) fn max_batch_columns(classes: usize) -> usize {
+    let by_output = REC_MAX_OUTPUT_VALUES / classes.max(1) * REC_COLUMNS_PER_STEP;
+    REC_MAX_BATCH_COLUMNS
+        .min(by_output)
+        .max(REC_MIN_WIDTH as usize)
+}
 
 /// The class CTC uses for "no character".
 const CTC_BLANK: usize = 0;
@@ -74,6 +110,8 @@ pub struct CtcRecognizer {
     input: String,
     output: String,
     dict: Vec<char>,
+    /// Input columns one run may hold ([`max_batch_columns`]).
+    max_columns: usize,
     first_use: crate::ocr::FirstUse,
 }
 
@@ -120,6 +158,7 @@ impl CtcRecognizer {
             input,
             output,
             dict,
+            max_columns: max_batch_columns(classes),
             first_use: crate::ocr::FirstUse::new(),
         })
     }
@@ -134,13 +173,18 @@ impl CtcRecognizer {
         self.dict.len()
     }
 
-    /// Read line images, in order. One run for a balloon's lines (see
-    /// [`REC_MAX_BATCH_COLUMNS`]).
-    pub fn read(&self, lines: &[DynamicImage]) -> anyhow::Result<Vec<LineText>> {
+    /// Input columns one run of this model may hold.
+    pub fn max_batch_columns(&self) -> usize {
+        self.max_columns
+    }
+
+    /// Read the given lines of `image` (rectangles in its pixels), in
+    /// order. One run for a balloon's lines (see [`REC_MAX_BATCH_COLUMNS`]).
+    pub fn read(&self, image: &DynamicImage, lines: &[LineRect]) -> anyhow::Result<Vec<LineText>> {
         let started = std::time::Instant::now();
         let mut out = Vec::with_capacity(lines.len());
-        for batch in batches(lines) {
-            let x = preprocess(batch);
+        for batch in batches(lines, self.max_columns) {
+            let x = preprocess(image, batch);
             let steps = self.run(&x, batch.len())?;
             out.extend(steps.iter().map(|s| ctc_text(s, &self.dict)));
         }
@@ -260,13 +304,13 @@ pub(crate) fn ctc_text(steps: &[(usize, f32)], dict: &[char]) -> LineText {
     }
 }
 
-fn aspect(line: &DynamicImage) -> f64 {
-    f64::from(line.width()) / f64::from(line.height().max(1))
+fn aspect(line: &LineRect) -> f64 {
+    f64::from(line.w) / f64::from(line.h.max(1))
 }
 
 /// Width of a batch holding `lines`: the widest line at height
 /// [`REC_HEIGHT`], between [`REC_MIN_WIDTH`] and [`REC_MAX_WIDTH`].
-pub(crate) fn batch_width(lines: &[DynamicImage]) -> u32 {
+pub(crate) fn batch_width(lines: &[LineRect]) -> u32 {
     let widest = lines
         .iter()
         .map(aspect)
@@ -274,16 +318,15 @@ pub(crate) fn batch_width(lines: &[DynamicImage]) -> u32 {
     ((f64::from(REC_HEIGHT) * widest) as u32).min(REC_MAX_WIDTH)
 }
 
-/// Split `lines` into runs of at most [`REC_MAX_BATCH_COLUMNS`] input
-/// columns each (a run always takes at least one line). Order is kept.
-fn batches(lines: &[DynamicImage]) -> Vec<&[DynamicImage]> {
+/// Split `lines` into runs of at most `max_columns` input columns each
+/// (a run always takes at least one line). Order is kept.
+fn batches(lines: &[LineRect], max_columns: usize) -> Vec<&[LineRect]> {
     let mut out = Vec::new();
     let mut start = 0;
     while start < lines.len() {
         let mut end = start + 1;
         while end < lines.len()
-            && (end + 1 - start) * batch_width(&lines[start..=end]) as usize
-                <= REC_MAX_BATCH_COLUMNS
+            && (end + 1 - start) * batch_width(&lines[start..=end]) as usize <= max_columns
         {
             end += 1;
         }
@@ -293,15 +336,18 @@ fn batches(lines: &[DynamicImage]) -> Vec<&[DynamicImage]> {
     out
 }
 
-/// A batch of lines as the model's input: `[n, 3, 48, batch_width]`,
-/// each line resized to height 48 (bilinear) with its own width, B, G, R
-/// planes, `(x/255 − 0.5) / 0.5`, zeros to the right of it.
-pub(crate) fn preprocess(lines: &[DynamicImage]) -> Array4<f32> {
+/// A batch of lines of `image` as the model's input:
+/// `[n, 3, 48, batch_width]`, each line resized to height 48 (bilinear)
+/// with its own width, B, G, R planes, `(x/255 − 0.5) / 0.5`, zeros to
+/// the right of it. Each line is cut from the image, resized and dropped
+/// before the next, so only one line's pixels are held beside the batch.
+pub(crate) fn preprocess(image: &DynamicImage, lines: &[LineRect]) -> Array4<f32> {
     let batch_w = batch_width(lines);
     let mut x = Array4::<f32>::zeros((lines.len(), 3, REC_HEIGHT as usize, batch_w as usize));
     for (n, line) in lines.iter().enumerate() {
         let w = ((f64::from(REC_HEIGHT) * aspect(line)).ceil() as u32).clamp(1, batch_w);
-        let rgb = line
+        let rgb = image
+            .crop_imm(line.x, line.y, line.w, line.h)
             .resize_exact(w, REC_HEIGHT, FilterType::Triangle)
             .to_rgb8();
         for (px, py, p) in rgb.enumerate_pixels() {
@@ -312,6 +358,16 @@ pub(crate) fn preprocess(lines: &[DynamicImage]) -> Array4<f32> {
         }
     }
     x
+}
+
+/// The constants above that decide what the recogniser is given and how
+/// its output is split into runs, for the result-cache fingerprint
+/// (`ocr::cache`).
+pub(crate) fn fingerprint() -> String {
+    format!(
+        "recogniser:height={REC_HEIGHT};min={REC_MIN_WIDTH};max={REC_MAX_WIDTH};\
+         columns={REC_MAX_BATCH_COLUMNS};values={REC_MAX_OUTPUT_VALUES};per-step={REC_COLUMNS_PER_STEP}"
+    )
 }
 
 // ─── dictionary ──────────────────────────────────────────────────────
@@ -330,8 +386,8 @@ const YAML_INDICATORS: &str = "[]{},#&*!|>'\"%@`-?:~";
 /// start with a guessed dictionary. It accepts exactly:
 ///
 /// - a file that ends with a line break and has no carriage returns;
-/// - one line `PostProcess:` and, inside that block, one line
-///   `  character_dict:`;
+/// - one line `PostProcess:` and, inside that block (which ends at the
+///   next line that is not indented), one line `  character_dict:`;
 /// - then one entry per line, `  - X`, where `X` is a single character,
 ///   unquoted or in single quotes (`''''` is the quote itself), never a
 ///   control character, and never an unquoted character YAML would read
@@ -348,10 +404,14 @@ pub(crate) fn read_dictionary(yml: &str) -> anyhow::Result<Vec<char>> {
         anyhow::bail!("the file does not end with a line break (cut off?)");
     };
     let lines: Vec<&str> = body.split('\n').collect();
-    let is_top_level = |l: &str| l.starts_with(|c: char| c.is_ascii_alphabetic());
+    // Anything written at column 0 ends the PostProcess block, whatever
+    // it starts with: a key, a quoted key, a document marker.
+    let is_top_level = |l: &str| !l.is_empty() && !l.starts_with(' ');
+    // What may follow the list: a mapping key, at column 0 or at the
+    // list's own level.
     let is_key = |l: &str| {
         let key = l.strip_prefix("  ").unwrap_or(l);
-        key.starts_with(|c: char| c.is_ascii_alphabetic()) && key.contains(':')
+        !key.is_empty() && !key.starts_with([' ', '-']) && key.contains(':')
     };
 
     let mut blocks = lines
@@ -468,24 +528,19 @@ impl LineOcr {
 impl Recognizer for LineOcr {
     fn recognize(&self, image: &DynamicImage) -> anyhow::Result<Recognition> {
         let found = self.finder.find(image)?;
-        let (rects, images): (Vec<LineRect>, Vec<DynamicImage>) =
-            lines::cut(image, &found).into_iter().unzip();
-        let read = self.rec.read(&images)?;
-        Ok(assemble(&rects, read))
+        let lines = lines::lines_to_read(&found, image.width(), image.height());
+        let read = self.rec.read(image, &lines)?;
+        Ok(assemble(&lines, read))
     }
 }
 
-/// A balloon's recognition from its lines, in reading order: the
-/// non-empty lines joined with line breaks, the mean confidence over
-/// every line read (an unreadable line counts as 0), and one [`Word`]
-/// entry per non-empty line carrying its text, confidence and box in
-/// crop pixels.
+/// A balloon's recognition from its lines, in reading order: the lines
+/// that produced text joined with line breaks, the mean confidence over
+/// those lines (0 when none did), and one [`Word`] entry per such line
+/// carrying its text, confidence and box in crop pixels. A line box in
+/// which nothing was read (a speck, the balloon's tail) adds no text and
+/// does not count against the confidence of what was read.
 pub(crate) fn assemble(rects: &[LineRect], read: Vec<LineText>) -> Recognition {
-    let confidence = if read.is_empty() {
-        0.0
-    } else {
-        read.iter().map(|l| l.confidence).sum::<f32>() / read.len() as f32
-    };
     let lines: Vec<Word> = rects
         .iter()
         .zip(read)
@@ -506,6 +561,11 @@ pub(crate) fn assemble(rects: &[LineRect], read: Vec<LineText>) -> Recognition {
         .map(|l| l.text.as_str())
         .collect::<Vec<_>>()
         .join("\n");
+    let confidence = if lines.is_empty() {
+        0.0
+    } else {
+        lines.iter().map(|l| l.confidence).sum::<f32>() / lines.len() as f32
+    };
     Recognition {
         text,
         confidence,
@@ -522,32 +582,52 @@ mod tests {
         DynamicImage::ImageRgb8(RgbImage::from_pixel(w, h, Rgb(rgb)))
     }
 
+    const fn rect(x: u32, y: u32, w: u32, h: u32) -> LineRect {
+        LineRect { x, y, w, h }
+    }
+
     // ── preprocessing ──
 
     #[test]
     fn a_batch_is_at_least_320_wide_and_as_wide_as_its_widest_line() {
         // Short lines: the minimum.
-        assert_eq!(batch_width(&[flat(100, 40, [0; 3])]), 320);
-        assert_eq!(batch_width(&[flat(10, 200, [0; 3])]), 320);
+        assert_eq!(batch_width(&[rect(0, 0, 100, 40)]), 320);
+        assert_eq!(batch_width(&[rect(0, 0, 10, 200)]), 320);
         // 600 x 30 is 20 times as wide as tall: 960 at height 48.
         assert_eq!(
-            batch_width(&[flat(100, 40, [0; 3]), flat(600, 30, [0; 3])]),
+            batch_width(&[rect(0, 0, 100, 40), rect(0, 50, 600, 30)]),
             960
         );
         // A strip stops at the ceiling.
-        assert_eq!(batch_width(&[flat(8000, 20, [0; 3])]), REC_MAX_WIDTH);
+        assert_eq!(batch_width(&[rect(0, 0, 8000, 20)]), REC_MAX_WIDTH);
     }
 
+    /// Each line is cut from the image at its rectangle: what lies
+    /// around it does not reach the batch.
     #[test]
-    fn lines_are_height_48_bgr_scaled_to_plus_minus_one_and_padded_with_zeros() {
+    fn lines_are_cut_height_48_bgr_scaled_to_plus_minus_one_and_padded_with_zeros() {
+        // Blue ground, a red 96 x 96 square at the top left and a white
+        // 384 x 48 strip under it.
+        let mut img = RgbImage::from_pixel(400, 160, Rgb([0, 0, 255]));
+        for (x, y, p) in img.enumerate_pixels_mut() {
+            if x < 96 && y < 96 {
+                *p = Rgb([255, 0, 0]);
+            } else if x < 384 && (100..148).contains(&y) {
+                *p = Rgb([255, 255, 255]);
+            }
+        }
+        let img = DynamicImage::ImageRgb8(img);
         // 96 x 96 → 48 wide; 384 x 48 → 384 wide; the batch is 384.
-        let x = preprocess(&[flat(96, 96, [255, 0, 0]), flat(384, 48, [255, 255, 255])]);
+        let x = preprocess(&img, &[rect(0, 0, 96, 96), rect(0, 100, 384, 48)]);
         assert_eq!(x.shape(), &[2, 3, 48, 384]);
-        // Line 0, inside its 48 columns: blue plane −1, green −1, red +1.
+        // Line 0, inside its 48 columns: blue plane −1, green −1, red +1,
+        // right up to its edges (no blue from the ground).
         for y in [0, 24, 47] {
-            assert!((x[[0, 0, y, 20]] + 1.0).abs() < 1e-6);
-            assert!((x[[0, 1, y, 20]] + 1.0).abs() < 1e-6);
-            assert!((x[[0, 2, y, 20]] - 1.0).abs() < 1e-6);
+            for col in [0, 20, 47] {
+                assert!((x[[0, 0, y, col]] + 1.0).abs() < 1e-6);
+                assert!((x[[0, 1, y, col]] + 1.0).abs() < 1e-6);
+                assert!((x[[0, 2, y, col]] - 1.0).abs() < 1e-6);
+            }
             // To the right of the line: padding, exactly zero.
             for c in 0..3 {
                 assert_eq!(x[[0, c, y, 48]], 0.0);
@@ -564,7 +644,7 @@ mod tests {
 
     #[test]
     fn a_line_wider_than_the_ceiling_is_squeezed_into_the_batch() {
-        let x = preprocess(&[flat(8000, 20, [0, 0, 0])]);
+        let x = preprocess(&flat(8000, 20, [0, 0, 0]), &[rect(0, 0, 8000, 20)]);
         assert_eq!(x.shape(), &[1, 3, 48, REC_MAX_WIDTH as usize]);
         // Black fills the whole width: no padding left.
         assert!(x.iter().all(|v| (*v + 1.0).abs() < 1e-6));
@@ -572,17 +652,42 @@ mod tests {
 
     #[test]
     fn a_balloon_is_one_batch_and_a_huge_region_is_split_in_order() {
-        let balloon: Vec<DynamicImage> = (0..20).map(|_| flat(400, 30, [0; 3])).collect();
-        assert_eq!(batches(&balloon).len(), 1);
-        assert!(batches(&[]).is_empty());
-        // 40 strips at the ceiling: 30 fit one run.
-        let strips: Vec<DynamicImage> = (0..40).map(|_| flat(4000, 20, [0; 3])).collect();
-        let runs = batches(&strips);
+        // Twenty lines 640 wide at height 48: 12,800 columns.
+        let balloon: Vec<LineRect> = (0..20).map(|i| rect(0, i * 32, 400, 30)).collect();
+        assert_eq!(batches(&balloon, REC_MAX_BATCH_COLUMNS).len(), 1);
+        assert!(batches(&[], REC_MAX_BATCH_COLUMNS).is_empty());
+        // 38 strips at the ceiling of 3,200 columns: 5 fit one run.
+        let strips: Vec<LineRect> = (0..38).map(|i| rect(0, i * 20, 4000, 20)).collect();
+        let runs = batches(&strips, REC_MAX_BATCH_COLUMNS);
         let sizes: Vec<usize> = runs.iter().map(|r| r.len()).collect();
-        assert_eq!(sizes, [30, 10]);
+        assert_eq!(sizes, [5, 5, 5, 5, 5, 5, 5, 3]);
         for r in &runs {
             assert!(r.len() * batch_width(r) as usize <= REC_MAX_BATCH_COLUMNS);
         }
+        // In order, nothing lost.
+        let flat: Vec<LineRect> = runs.concat();
+        assert_eq!(flat, strips);
+        // A bound under one line still reads it, alone.
+        assert_eq!(batches(&strips[..3], 100).len(), 3);
+    }
+
+    /// The bound on a run follows the model's alphabet: the output has
+    /// one value per step and class.
+    #[test]
+    fn a_large_alphabet_gets_a_smaller_run() {
+        // The English and Latin models: the column bound.
+        assert_eq!(max_batch_columns(438), REC_MAX_BATCH_COLUMNS);
+        assert_eq!(max_batch_columns(838), REC_MAX_BATCH_COLUMNS);
+        // 18,710 classes: 427 steps of output, 3,416 columns.
+        let large = max_batch_columns(18_710);
+        assert_eq!(large, 3_416);
+        assert!(large / REC_COLUMNS_PER_STEP * 18_710 <= REC_MAX_OUTPUT_VALUES);
+        // Never under one narrowest line, whatever the class count.
+        assert_eq!(max_batch_columns(50_000_000), REC_MIN_WIDTH as usize);
+        assert_eq!(max_batch_columns(0), REC_MAX_BATCH_COLUMNS);
+        // Ten short lines of such a model still go in one run.
+        let balloon: Vec<LineRect> = (0..10).map(|i| rect(0, i * 32, 200, 30)).collect();
+        assert_eq!(batches(&balloon, large).len(), 1);
     }
 
     // ── CTC decode ──
@@ -684,6 +789,11 @@ mod tests {
         assert_eq!(read_dictionary(&more).unwrap().len(), 9);
         let at_top = format!("{YML}Tail:\n  x: 1\n");
         assert_eq!(read_dictionary(&at_top).unwrap().len(), 9);
+        // A key need not start with a letter.
+        for key in ["_tail: 1", "\"quoted\": 1", "9: nine"] {
+            let more = format!("{YML}{key}\n");
+            assert_eq!(read_dictionary(&more).unwrap().len(), 9, "{key}");
+        }
     }
 
     #[test]
@@ -731,6 +841,13 @@ mod tests {
             "PostProcess:\n  name: CTCLabelDecode\n",
             // The list is not in PostProcess.
             "Other:\n  character_dict:\n  - A\nPostProcess:\n  name: x\n",
+            // Nor is it when the block after PostProcess starts with a
+            // key that is not a plain word: anything at column 0 ends
+            // the PostProcess block.
+            "PostProcess:\n  name: x\n_Other:\n  character_dict:\n  - A\n",
+            "PostProcess:\n  name: x\n\"Other\":\n  character_dict:\n  - A\n",
+            "PostProcess:\n  name: x\n9:\n  character_dict:\n  - A\n",
+            "PostProcess:\n  name: x\n---\n  character_dict:\n  - A\n",
             // Empty list.
             "PostProcess:\n  character_dict:\nTail: 1\n",
             // Two lists, two blocks.
@@ -778,13 +895,8 @@ mod tests {
 
     // ── assembling a balloon ──
 
-    fn rect(y: u32) -> LineRect {
-        LineRect {
-            x: 5,
-            y,
-            w: 100,
-            h: 20,
-        }
+    fn row(y: u32) -> LineRect {
+        rect(5, y, 100, 20)
     }
 
     fn line(text: &str, confidence: f32) -> LineText {
@@ -797,7 +909,7 @@ mod tests {
     #[test]
     fn a_balloon_is_its_lines_joined_with_one_entry_per_line() {
         let rec = assemble(
-            &[rect(0), rect(25), rect(50)],
+            &[row(0), row(25), row(50)],
             vec![
                 line("SO THESE ARE", 0.9),
                 line("THE SPACE-", 0.8),
@@ -816,14 +928,16 @@ mod tests {
         );
     }
 
+    /// A line box in which nothing was read adds nothing: no text, no
+    /// entry, and no weight in the confidence of the lines that were.
     #[test]
-    fn an_unread_line_lowers_the_confidence_and_has_no_entry() {
+    fn an_unread_line_has_no_entry_and_does_not_lower_the_confidence() {
         let rec = assemble(
-            &[rect(0), rect(25), rect(50)],
-            vec![line("ONE", 0.9), line("", 0.0), line("TWO", 0.9)],
+            &[row(0), row(25), row(50)],
+            vec![line("ONE", 0.9), line("", 0.0), line("TWO", 0.7)],
         );
         assert_eq!(rec.text, "ONE\nTWO");
-        assert!((rec.confidence - 0.6).abs() < 1e-6);
+        assert!((rec.confidence - 0.8).abs() < 1e-6, "{}", rec.confidence);
         let lines = rec.words.expect("line entries");
         let index: Vec<u32> = lines.iter().map(|l| l.line_index).collect();
         assert_eq!(index, [0, 1], "kept lines are numbered consecutively");
@@ -835,7 +949,7 @@ mod tests {
         let rec = assemble(&[], Vec::new());
         assert_eq!((rec.text.as_str(), rec.confidence), ("", 0.0));
         assert!(rec.words.is_none());
-        let rec = assemble(&[rect(0)], vec![line("", 0.0)]);
+        let rec = assemble(&[row(0)], vec![line("", 0.0)]);
         assert_eq!((rec.text.as_str(), rec.confidence), ("", 0.0));
         assert!(rec.words.is_none());
     }

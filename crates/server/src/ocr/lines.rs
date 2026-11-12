@@ -22,6 +22,15 @@
 //! - **Order** ([`reading_order`]): rows top to bottom, left to right
 //!   within a row.
 //! - **No lines found**: the whole crop is read as one line.
+//! - **Bounds** ([`lines_to_read`]): a balloon has a handful of lines
+//!   that tile it. A drawn region can be anything (a whole page, a
+//!   screentone), so what is read is bounded: at most
+//!   [`MAX_LINES_PER_REGION`] lines, the first in reading order, and when
+//!   the lines' summed area passes [`MAX_LINE_AREA_FACTOR`] times the
+//!   crop's (boxes nested in boxes, which text lines are not) the split
+//!   is dropped and the whole crop is read as one line. The box scores
+//!   come from a summed-area table, so their cost does not grow with the
+//!   number of boxes.
 //!
 //! The session is locked for the inference only. Blocking: call from the
 //! blocking pool.
@@ -67,6 +76,17 @@ const DB_MAX_CANDIDATES: usize = 1000;
 const MIN_FOUND_SIDE: u32 = 2;
 /// A line is read only when both sides have at least this many pixels.
 pub const MIN_READ_SIDE: u32 = 4;
+
+/// Most lines of one region that are read; the rest, later in reading
+/// order, are left out. A balloon has a handful, a dense caption a few
+/// dozen: this only cuts a drawn region that is not one.
+pub const MAX_LINES_PER_REGION: usize = 256;
+
+/// The lines of a region tile it, so their summed area is about the
+/// crop's. Past this multiple of it the boxes are stacked on each other
+/// (rings around rings, a texture read as text) and the split is not
+/// used: the whole crop is read as one line.
+pub const MAX_LINE_AREA_FACTOR: u64 = 4;
 
 /// A rectangle in crop pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,7 +154,8 @@ impl LineFinder {
     }
 
     /// The text lines of `crop` in reading order, in crop pixels; the
-    /// whole crop as one line when none is found.
+    /// whole crop as one line when none is found. Every line found is
+    /// returned; [`lines_to_read`] decides which are read.
     pub fn find(&self, crop: &DynamicImage) -> anyhow::Result<Vec<LineRect>> {
         let started = std::time::Instant::now();
         let (w, h) = (crop.width(), crop.height());
@@ -193,6 +214,10 @@ pub(crate) fn preprocess(crop: &DynamicImage) -> Array4<f32> {
 
 /// DB postprocess: the text boxes of a probability map, in pixels of the
 /// `src_w × src_h` crop the map was computed for. See the module docs.
+///
+/// A probability that is not a finite number counts as 0, and a box
+/// whose score is not at least [`DB_BOX_THRESH`] (a NaN included) is
+/// dropped.
 pub(crate) fn db_boxes(prob: ArrayView2<'_, f32>, src_w: u32, src_h: u32) -> Vec<LineBox> {
     let (map_h, map_w) = prob.dim();
     if map_h == 0 || map_w == 0 {
@@ -227,6 +252,7 @@ pub(crate) fn db_boxes(prob: ArrayView2<'_, f32>, src_w: u32, src_h: u32) -> Vec
         b[2] = b[2].max(x);
         b[3] = b[3].max(y);
     }
+    let sums = SummedArea::new(prob);
     let (sx, sy) = (
         f64::from(src_w) / map_w as f64,
         f64::from(src_h) / map_h as f64,
@@ -237,14 +263,8 @@ pub(crate) fn db_boxes(prob: ArrayView2<'_, f32>, src_w: u32, src_h: u32) -> Vec
         if bw.min(bh) < DB_MIN_SIDE {
             continue;
         }
-        let mut sum = 0.0f32;
-        for y in b[1]..=b[3] {
-            for x in b[0]..=b[2] {
-                sum += prob[[y, x]];
-            }
-        }
-        let score = sum / (bw * bh);
-        if score < DB_BOX_THRESH {
+        let score = (sums.sum(b) / f64::from(bw * bh)) as f32;
+        if score.is_nan() || score < DB_BOX_THRESH {
             continue;
         }
         let grow = bw * bh * DB_UNCLIP_RATIO / (2.0 * (bw + bh));
@@ -262,6 +282,42 @@ pub(crate) fn db_boxes(prob: ArrayView2<'_, f32>, src_w: u32, src_h: u32) -> Vec
         });
     }
     out
+}
+
+/// Summed-area table of a probability map: the sum over any rectangle in
+/// four lookups, so scoring a box costs the same whatever its size and
+/// however many boxes overlap it. Sums are kept in `f64`; values that are
+/// not finite count as 0.
+struct SummedArea {
+    /// `(h + 1) × (w + 1)`, row-major; entry `(y, x)` is the sum over
+    /// rows `< y` and columns `< x`.
+    table: Vec<f64>,
+    stride: usize,
+}
+
+impl SummedArea {
+    fn new(prob: ArrayView2<'_, f32>) -> Self {
+        let (h, w) = prob.dim();
+        let stride = w + 1;
+        let mut table = vec![0.0f64; (h + 1) * stride];
+        for y in 0..h {
+            let mut row = 0.0f64;
+            for x in 0..w {
+                let p = prob[[y, x]];
+                if p.is_finite() {
+                    row += f64::from(p);
+                }
+                table[(y + 1) * stride + x + 1] = table[y * stride + x + 1] + row;
+            }
+        }
+        SummedArea { table, stride }
+    }
+
+    /// Sum over the inclusive rectangle `[x0, y0, x1, y1]`.
+    fn sum(&self, [x0, y0, x1, y1]: [usize; 4]) -> f64 {
+        let at = |y: usize, x: usize| self.table[y * self.stride + x];
+        at(y1 + 1, x1 + 1) - at(y0, x1 + 1) - at(y1 + 1, x0) + at(y0, x0)
+    }
 }
 
 /// Sort `x0, y0, x1, y1` boxes into reading order: rows top to bottom,
@@ -315,14 +371,54 @@ pub(crate) fn lines_or_whole(boxes: &[[f32; 4]], w: u32, h: u32) -> Vec<LineRect
     }
 }
 
-/// Cut the lines that are large enough to read ([`MIN_READ_SIDE`]) from
-/// the crop. Returns each kept rectangle with its image, in order.
-pub(crate) fn cut(crop: &DynamicImage, lines: &[LineRect]) -> Vec<(LineRect, DynamicImage)> {
-    lines
-        .iter()
-        .filter(|r| r.w >= MIN_READ_SIDE && r.h >= MIN_READ_SIDE)
-        .map(|r| (*r, crop.crop_imm(r.x, r.y, r.w, r.h)))
-        .collect()
+/// Which of the lines found in a `w × h` crop are read, in order.
+///
+/// 1. A line is read only when both its sides have at least
+///    [`MIN_READ_SIDE`] pixels.
+/// 2. When the summed area of those lines passes
+///    [`MAX_LINE_AREA_FACTOR`] times the crop's, the split is not a set
+///    of text lines: the whole crop is read as one line instead (if it
+///    is itself large enough).
+/// 3. At most [`MAX_LINES_PER_REGION`] lines are read, the first in
+///    reading order; the rest are left out.
+///
+/// The last two only apply to a region that is not a balloon; each is
+/// logged when it does.
+pub(crate) fn lines_to_read(lines: &[LineRect], w: u32, h: u32) -> Vec<LineRect> {
+    let readable = |r: &&LineRect| r.w >= MIN_READ_SIDE && r.h >= MIN_READ_SIDE;
+    let mut read: Vec<LineRect> = lines.iter().filter(readable).copied().collect();
+    let line_area: u64 = read.iter().map(|r| u64::from(r.w) * u64::from(r.h)).sum();
+    let crop_area = u64::from(w) * u64::from(h);
+    if line_area > MAX_LINE_AREA_FACTOR * crop_area {
+        tracing::warn!(
+            lines = read.len(),
+            line_area,
+            crop_area,
+            "ocr: the lines found in a region overlap each other many times over; reading the region as one line"
+        );
+        let whole = LineRect { x: 0, y: 0, w, h };
+        return [whole].iter().filter(readable).copied().collect();
+    }
+    if read.len() > MAX_LINES_PER_REGION {
+        tracing::warn!(
+            lines = read.len(),
+            read = MAX_LINES_PER_REGION,
+            "ocr: a region has more lines than are read; the rest are left out"
+        );
+        read.truncate(MAX_LINES_PER_REGION);
+    }
+    read
+}
+
+/// The constants above that decide which lines a crop is split into,
+/// for the result-cache fingerprint (`ocr::cache`).
+pub(crate) fn fingerprint() -> String {
+    format!(
+        "lines:scale={LINE_SCALE};long={LINE_MAX_LONG_SIDE};thresh={DB_THRESH};box={DB_BOX_THRESH};\
+         unclip={DB_UNCLIP_RATIO};side={DB_MIN_SIDE};grown={DB_MIN_UNCLIPPED_SIDE};\
+         candidates={DB_MAX_CANDIDATES};found={MIN_FOUND_SIDE};read={MIN_READ_SIDE};\
+         max-lines={MAX_LINES_PER_REGION};area={MAX_LINE_AREA_FACTOR}"
+    )
 }
 
 #[cfg(test)]
@@ -512,34 +608,129 @@ mod tests {
         assert_eq!(lines_or_whole(&[[10.0, 10.0, 80.0, 12.0]], 120, 60), whole);
     }
 
+    fn line(x: u32, y: u32, w: u32, h: u32) -> LineRect {
+        LineRect { x, y, w, h }
+    }
+
     #[test]
-    fn only_lines_large_enough_to_read_are_cut() {
-        let crop = DynamicImage::ImageRgb8(RgbImage::new(100, 50));
+    fn only_lines_large_enough_are_read() {
         let lines = [
-            LineRect {
-                x: 0,
-                y: 0,
-                w: 60,
-                h: 12,
-            },
+            line(0, 0, 60, 12),
             // Three pixels tall: found, not read.
-            LineRect {
-                x: 0,
-                y: 20,
-                w: 60,
-                h: 3,
-            },
-            LineRect {
-                x: 10,
-                y: 30,
-                w: 4,
-                h: 4,
-            },
+            line(0, 20, 60, 3),
+            line(10, 30, 4, 4),
         ];
-        let cut = cut(&crop, &lines);
-        assert_eq!(cut.len(), 2);
-        assert_eq!(cut[0].0, lines[0]);
-        assert_eq!((cut[0].1.width(), cut[0].1.height()), (60, 12));
-        assert_eq!(cut[1].0, lines[2]);
+        assert_eq!(lines_to_read(&lines, 100, 50), [lines[0], lines[2]]);
+        assert!(lines_to_read(&[], 100, 50).is_empty());
+        // A crop too small to read at all.
+        assert!(lines_to_read(&[line(0, 0, 3, 3)], 3, 3).is_empty());
+    }
+
+    /// The lines of a balloon are read as found, however they are laid
+    /// out: they tile the crop, so their area stays near its own.
+    #[test]
+    fn the_lines_of_a_balloon_are_all_read() {
+        let lines: Vec<LineRect> = (0..15).map(|i| line(5, i * 20, 290, 24)).collect();
+        assert_eq!(lines_to_read(&lines, 300, 310), lines);
+        // Up to the factor itself: still read.
+        let stacked: Vec<LineRect> = (0..4).map(|_| line(0, 0, 100, 50)).collect();
+        assert_eq!(lines_to_read(&stacked, 100, 50).len(), 4);
+    }
+
+    /// Boxes stacked on each other many times over are not text lines:
+    /// the crop is read whole.
+    #[test]
+    fn lines_covering_the_crop_many_times_over_fall_back_to_the_whole_crop() {
+        // Rings around rings: every box nearly the whole crop.
+        let rings: Vec<LineRect> = (0..40)
+            .map(|i| line(i, i, 400 - 2 * i, 300 - 2 * i))
+            .collect();
+        assert_eq!(lines_to_read(&rings, 400, 300), [line(0, 0, 400, 300)]);
+        // Five copies of the crop: just past the factor.
+        let five: Vec<LineRect> = (0..5).map(|_| line(0, 0, 100, 50)).collect();
+        assert_eq!(lines_to_read(&five, 100, 50), [line(0, 0, 100, 50)]);
+    }
+
+    #[test]
+    fn at_most_the_first_lines_in_reading_order_are_read() {
+        // A whole page of small lines: far more than a balloon has.
+        let lines: Vec<LineRect> = (0..1000u32)
+            .map(|i| line((i % 10) * 100, (i / 10) * 20, 90, 16))
+            .collect();
+        let read = lines_to_read(&lines, 1000, 2000);
+        assert_eq!(read.len(), MAX_LINES_PER_REGION);
+        assert_eq!(read, lines[..MAX_LINES_PER_REGION]);
+    }
+
+    // ── box scores ──
+
+    #[test]
+    fn the_summed_area_table_gives_every_rectangle_sum() {
+        let mut m = Array2::<f32>::zeros((5, 7));
+        for ((y, x), v) in m.indexed_iter_mut() {
+            *v = (y * 7 + x) as f32 / 10.0;
+        }
+        let sums = SummedArea::new(m.view());
+        for rect in [
+            [0, 0, 6, 4],
+            [0, 0, 0, 0],
+            [6, 4, 6, 4],
+            [2, 1, 4, 3],
+            [0, 2, 6, 2],
+        ] {
+            let [x0, y0, x1, y1] = rect;
+            let mut want = 0.0f64;
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    want += f64::from(m[[y, x]]);
+                }
+            }
+            assert!((sums.sum(rect) - want).abs() < 1e-9, "{rect:?}");
+        }
+    }
+
+    /// The score of a box is the mean of the map over its rectangle, and
+    /// overlapping boxes do not disturb each other's.
+    #[test]
+    fn a_box_score_is_the_mean_over_its_rectangle() {
+        // A confident line inside a faint frame around it: the frame's
+        // box covers the line too.
+        let mut m = map(120, 80, &[([30, 30, 90, 42], 0.95)]);
+        for x in 10..110 {
+            for y in [10, 11, 12, 67, 68, 69] {
+                m[[y, x]] = 0.4;
+            }
+        }
+        for y in 10..70 {
+            for x in [10, 11, 12, 107, 108, 109] {
+                m[[y, x]] = 0.4;
+            }
+        }
+        let boxes = db_boxes(m.view(), 120, 80);
+        // The frame's mean is far under the box threshold; the line is
+        // found with its own mean.
+        assert_eq!(boxes.len(), 1, "{boxes:?}");
+        assert!((boxes[0].score - 0.95).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_map_with_values_that_are_not_numbers_yields_no_box_from_them() {
+        // A blob of NaN is not text (NaN is above no threshold), and a
+        // NaN inside a text blob counts as 0 in its score.
+        let mut m = map(100, 60, &[([10, 10, 60, 22], 0.9)]);
+        for y in 40..52 {
+            for x in 10..60 {
+                m[[y, x]] = f32::NAN;
+            }
+        }
+        m[[15, 30]] = f32::NAN;
+        m[[15, 31]] = f32::INFINITY;
+        let boxes = db_boxes(m.view(), 100, 60);
+        assert_eq!(boxes.len(), 1, "{boxes:?}");
+        assert!(boxes[0].score.is_finite());
+        assert!(boxes[0].score > 0.85 && boxes[0].score < 0.9);
+        // All NaN: nothing, and no panic.
+        let nan = Array2::<f32>::from_elem((32, 32), f32::NAN);
+        assert!(db_boxes(nan.view(), 16, 16).is_empty());
     }
 }
