@@ -14,24 +14,6 @@ import {
   type PercentBox,
 } from "@/lib/reader/page-size";
 
-/** The OCR request and response with the fields the server change that
- *  adds percent regions brings (`region_pct` on the request, the decoded
- *  `page_w` / `page_h` on every response). Local until that change is
- *  merged and `just openapi` regenerates the types; then drop these and
- *  use `OcrRequest` / `OcrResponse` directly. */
-type OcrRequestWithPct = Omit<OcrRequest, "region"> & {
-  /** Percent of the decoded page (0–100 floats); wins over `region`. The
-   *  server clamps it to the page and shares the result cache with the
-   *  equivalent pixel rectangle. */
-  region_pct: PercentBox;
-  /** Pixel rectangle against the original page, for a server that does
-   *  not know `region_pct` yet. Sent only when the client knows a size. */
-  region?: OcrRequest["region"];
-};
-type OcrResponseWithSize = Partial<OcrResponse> & {
-  page_w?: number;
-  page_h?: number;
-};
 import { PAGE_TEXT_GC_MS, textBoxKey } from "@/lib/reader/text-regions";
 
 /** Promise-cached Image so concurrent overlays don't re-decode. Used
@@ -136,7 +118,11 @@ export async function ocrCroppedRegion(
   opts: OcrOptions = {},
 ): Promise<OcrResult | null> {
   const { x, y, w, h } = input.region;
-  const body: OcrRequestWithPct = {
+  // `region_pct` (percent of the decoded page) is what the server uses; it
+  // clamps it to the page and shares the result cache with the equivalent
+  // pixel rectangle. The pixel `region` rides along only when a size is
+  // known, for a server that predates `region_pct`.
+  const body: OcrRequest = {
     page: input.pageIndex,
     region_pct: { x, y, w, h },
     ...(input.pageSize
@@ -164,7 +150,9 @@ export async function ocrCroppedRegion(
     throw new OcrRequestError(NETWORK_FAILURE, null);
   }
   if (!res.ok) throw await ocrErrorFromResponse(res);
-  let payload: OcrResponseWithSize;
+  // Partial: a server that predates the page size in the response omits
+  // `page_w` / `page_h`, and the size is then treated as unknown.
+  let payload: Partial<OcrResponse>;
   try {
     payload = (await res.json()) as typeof payload;
   } catch {
