@@ -1046,14 +1046,23 @@ async fn mark_empty_series_removed(
     Ok(())
 }
 
-/// Max soft-removed issue rows the auto-confirm sweep examines per library
-/// per run, read oldest removal first in keyset pages. Rows kept because
-/// they are present or unknown are re-examined every run, so the bound is
-/// generous; past it the sweep makes no further progress that run (the
-/// safe direction) and the next daily run continues.
+/// Max soft-removed issue rows the auto-confirm sweep **confirms** per
+/// library per run. A backlog (a large removal passing its window) is
+/// confirmed over successive days instead of in one run.
+///
+/// It counts rows actually confirmed, not candidates examined: the
+/// candidates are read oldest removal first in keyset pages of
+/// [`PRESENCE_BATCH`] on `(removed_at, id)`, and a row the sweep leaves
+/// alone (file present, or a disk that will not answer) costs one stat and
+/// no budget, as does a row the `UPDATE`'s own guard rejects (restored or
+/// confirmed since the read). So a run stops either after this many
+/// confirmations or at the end of the library's candidates, and kept rows
+/// at the front of the order (which stay unconfirmed and are re-examined
+/// every run) can no longer hold the rows behind them back. No cursor is
+/// kept between runs.
 pub const CONFIRM_MAX_ISSUE_ROWS_PER_LIBRARY_PER_RUN: usize = 20_000;
 
-/// The same bound for soft-removed series rows.
+/// The same bound for soft-removed series rows confirmed per run.
 pub const CONFIRM_MAX_SERIES_ROWS_PER_LIBRARY_PER_RUN: usize = 20_000;
 
 /// Paths stat-ed per `spawn_blocking` call by the removal sweeps, and rows
@@ -1082,9 +1091,12 @@ pub const MAX_SERIES_RESCANS_PER_RUN: usize = 50;
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy)]
 pub struct SweepLimits {
+    /// Candidate rows read (and stat-ed) per keyset page.
     pub page: usize,
-    pub max_issue_rows: usize,
-    pub max_series_rows: usize,
+    /// Most issue rows confirmed per library per run.
+    pub max_issue_confirms: usize,
+    /// Most series rows confirmed per library per run.
+    pub max_series_confirms: usize,
     pub max_series_rescans: usize,
 }
 
@@ -1092,8 +1104,8 @@ impl Default for SweepLimits {
     fn default() -> Self {
         Self {
             page: PRESENCE_BATCH,
-            max_issue_rows: CONFIRM_MAX_ISSUE_ROWS_PER_LIBRARY_PER_RUN,
-            max_series_rows: CONFIRM_MAX_SERIES_ROWS_PER_LIBRARY_PER_RUN,
+            max_issue_confirms: CONFIRM_MAX_ISSUE_ROWS_PER_LIBRARY_PER_RUN,
+            max_series_confirms: CONFIRM_MAX_SERIES_ROWS_PER_LIBRARY_PER_RUN,
             max_series_rescans: MAX_SERIES_RESCANS_PER_RUN,
         }
     }
@@ -1384,14 +1396,52 @@ pub(crate) async fn duplicate_removed_paths(
     Ok(out)
 }
 
+/// Ids listed per kind in a sweep's kept-rows summary event; the counts
+/// are always complete.
+const KEPT_ID_SAMPLE: usize = 50;
+
+/// Kept issue ids of one library run: how many, and the first
+/// [`KEPT_ID_SAMPLE`] of them (all the summary needs). A sweep walks every
+/// candidate, so keeping every id would grow with the rows it leaves alone.
+#[derive(Debug, Default)]
+pub(crate) struct KeptIds {
+    count: usize,
+    sample: Vec<String>,
+}
+
+impl KeptIds {
+    pub(crate) fn push(&mut self, id: String) {
+        self.count += 1;
+        if self.sample.len() < KEPT_ID_SAMPLE {
+            self.sample.push(id);
+        }
+    }
+
+    pub(crate) fn extend(&mut self, ids: impl IntoIterator<Item = String>) {
+        for id in ids {
+            self.push(id);
+        }
+    }
+
+    /// Ids pushed so far (all of them, not just the sample).
+    pub(crate) fn len(&self) -> usize {
+        self.count
+    }
+
+    /// The first ids pushed, at most [`KEPT_ID_SAMPLE`].
+    pub(crate) fn sample(&self) -> &[String] {
+        &self.sample
+    }
+}
+
 /// Rows a removal sweep left alone in one library run.
 #[derive(Debug, Default)]
 pub(crate) struct KeptRows {
     /// Present again: kept, and their series rescanned.
-    pub present_issues: Vec<String>,
+    pub present_issues: KeptIds,
     pub present_series: HashSet<Uuid>,
     /// The disk would not say: kept, not rescanned.
-    pub unknown_issues: Vec<String>,
+    pub unknown_issues: KeptIds,
     pub unknown_series: HashSet<Uuid>,
     /// Series to rescan (those of present issues plus present series).
     pub rescan: BTreeSet<Uuid>,
@@ -1445,8 +1495,6 @@ impl KeptRows {
             );
         }
         if self.present() > 0 || self.unknown() > 0 {
-            /// Ids listed in the event detail; the counts are always complete.
-            const SAMPLE: usize = 50;
             event_log::record(
                 &state.db,
                 NewEvent::new(
@@ -1472,10 +1520,10 @@ impl KeptRows {
                     "series_scans": outcome.series_scans,
                     "library_scans": outcome.library_scans,
                     "rescans_throttled": outcome.throttled,
-                    "present_issue_ids": self.present_issues.iter().take(SAMPLE).collect::<Vec<_>>(),
-                    "present_series_ids": self.present_series.iter().take(SAMPLE).collect::<Vec<_>>(),
-                    "unknown_issue_ids": self.unknown_issues.iter().take(SAMPLE).collect::<Vec<_>>(),
-                    "unknown_series_ids": self.unknown_series.iter().take(SAMPLE).collect::<Vec<_>>(),
+                    "present_issue_ids": self.present_issues.sample(),
+                    "present_series_ids": self.present_series.iter().take(KEPT_ID_SAMPLE).collect::<Vec<_>>(),
+                    "unknown_issue_ids": self.unknown_issues.sample(),
+                    "unknown_series_ids": self.unknown_series.iter().take(KEPT_ID_SAMPLE).collect::<Vec<_>>(),
                 })),
             )
             .await;
@@ -1529,10 +1577,11 @@ pub struct ConfirmStats {
 /// Per library: the scanner's `validate_library` gate runs first and a
 /// library that fails it (root missing, unreadable, empty) is skipped whole.
 /// Then the candidates (soft-removed past the window, unconfirmed) are read
-/// oldest first in keyset pages, at most
-/// [`CONFIRM_MAX_ISSUE_ROWS_PER_LIBRARY_PER_RUN`] issue rows and
-/// [`CONFIRM_MAX_SERIES_ROWS_PER_LIBRARY_PER_RUN`] series rows per run, and
-/// stat-ed on the blocking pool ([`Presence`]):
+/// oldest first in keyset pages and stat-ed on the blocking pool
+/// ([`Presence`]) until [`CONFIRM_MAX_ISSUE_ROWS_PER_LIBRARY_PER_RUN`]
+/// issue rows / [`CONFIRM_MAX_SERIES_ROWS_PER_LIBRARY_PER_RUN`] series rows
+/// were confirmed or the candidates run out (rows left alone cost no
+/// budget):
 ///
 /// - `Absent` (not-found class only): confirmed as before;
 /// - `Present`: not confirmed; its series is rescanned (throttled, see
@@ -1567,7 +1616,7 @@ pub async fn auto_confirm_sweep_with(
         }
         let cutoff = now - Duration::days(lib.soft_delete_days as i64);
         let mut kept = KeptRows::default();
-        let result = confirm_library(state, &lib, now, cutoff, limits, &mut kept).await;
+        let result = confirm_library(state, &lib, cutoff, limits, &mut kept).await;
         // Rows kept before an abort are still reported and rescanned.
         let outcome = kept
             .finish(
@@ -1605,26 +1654,30 @@ pub async fn auto_confirm_sweep_with(
 async fn confirm_library(
     state: &AppState,
     lib: &library::Model,
-    now: chrono::DateTime<chrono::FixedOffset>,
     cutoff: chrono::DateTime<chrono::FixedOffset>,
     limits: SweepLimits,
     kept: &mut KeptRows,
 ) -> Result<u64, (u64, anyhow::Error)> {
     let mut confirmed = 0u64;
-    match confirm_issues(state, lib, now, cutoff, limits, kept, &mut confirmed).await {
+    match confirm_issues(state, lib, cutoff, limits, kept, &mut confirmed).await {
         Ok(()) => {}
         Err(e) => return Err((confirmed, e)),
     }
-    match confirm_series(state, lib, now, cutoff, limits, kept, &mut confirmed).await {
+    match confirm_series(state, lib, cutoff, limits, kept, &mut confirmed).await {
         Ok(()) => Ok(confirmed),
         Err(e) => Err((confirmed, e)),
     }
 }
 
+/// Walk the library's unconfirmed candidates in keyset pages on
+/// `(removed_at, id)`, oldest removal first, confirming what is really gone
+/// until [`SweepLimits::max_issue_confirms`] rows were confirmed or the
+/// candidates run out. Rows left alone (present, unknown), and rows the
+/// `UPDATE`'s guard rejects, cost no budget, so neither stops the walk from
+/// reaching the confirmable rows behind them.
 async fn confirm_issues(
     state: &AppState,
     lib: &library::Model,
-    now: chrono::DateTime<chrono::FixedOffset>,
     cutoff: chrono::DateTime<chrono::FixedOffset>,
     limits: SweepLimits,
     kept: &mut KeptRows,
@@ -1633,30 +1686,33 @@ async fn confirm_issues(
     let db = &state.db;
     let probe = PresenceProbe::for_library(lib);
     let page_size = limits.page.max(1);
+    let mut budget = limits.max_issue_confirms;
     let mut after: Option<(chrono::DateTime<chrono::FixedOffset>, String)> = None;
-    let mut examined = 0usize;
-    while examined < limits.max_issue_rows {
-        let limit = page_size.min(limits.max_issue_rows - examined);
-        let page = confirm_issue_page(db, lib.id, cutoff, after.as_ref(), limit).await?;
-        if page.is_empty() {
+    while budget > 0 {
+        let page = confirm_issue_page(db, lib.id, cutoff, after.as_ref(), page_size).await?;
+        let Some(last) = page.last() else {
             break;
-        }
-        examined += page.len();
-        let full_page = page.len() == limit;
-        after = page.last().map(|c| (c.removed_at, c.id.clone()));
+        };
+        let full_page = page.len() == page_size;
+        // The cursor advances past the whole page whatever happens to its
+        // rows, so the walk always terminates.
+        after = Some((last.removed_at, last.id.clone()));
 
-        let mut confirm: Vec<String> = Vec::new();
+        let order: Vec<String> = page.iter().map(|c| c.id.clone()).collect();
+        let mut confirm: HashSet<String> = HashSet::new();
         let mut to_stat: Vec<((String, Uuid), String)> = Vec::new();
         for c in page {
             if c.duplicate_removed {
-                confirm.push(c.id);
+                confirm.insert(c.id);
             } else {
                 to_stat.push(((c.id, c.series_id), c.file_path));
             }
         }
         for ((id, series_id), presence) in probe.files(to_stat).await? {
             match presence {
-                Presence::Absent => confirm.push(id),
+                Presence::Absent => {
+                    confirm.insert(id);
+                }
                 Presence::Present => {
                     kept.rescan.insert(series_id);
                     kept.present_issues.push(id);
@@ -1667,9 +1723,25 @@ async fn confirm_issues(
                 }
             }
         }
-        for ids in confirm.chunks(RECONCILE_ID_CHUNK) {
+        // Page order, so a cut by the budget leaves the newest of the page's
+        // confirmable rows for the next run.
+        let confirm: Vec<String> = order
+            .into_iter()
+            .filter(|id| confirm.contains(id))
+            .collect();
+        let mut rest = confirm.as_slice();
+        // Each batch takes at least one row, so this ends; rows the guard
+        // rejects leave budget for the page's next confirmable rows.
+        while budget > 0 && !rest.is_empty() {
+            let (ids, tail) = rest.split_at(budget.min(rest.len()).min(RECONCILE_ID_CHUNK));
+            rest = tail;
+            // Stamped when the batch is written, not when the run began: a
+            // long walk would otherwise date late confirmations hours early
+            // and start their purge window early. The `cutoff` stays fixed
+            // for the run.
+            let stamp = Utc::now().fixed_offset();
             let res = IssueEntity::update_many()
-                .col_expr(issue::Column::RemovalConfirmedAt, Expr::value(now))
+                .col_expr(issue::Column::RemovalConfirmedAt, Expr::value(stamp))
                 .filter(issue::Column::LibraryId.eq(lib.id))
                 .filter(issue::Column::Id.is_in(ids.to_vec()))
                 .filter(issue::Column::RemovedAt.is_not_null())
@@ -1678,6 +1750,8 @@ async fn confirm_issues(
                 .exec(db)
                 .await?;
             *confirmed += res.rows_affected;
+            budget =
+                budget.saturating_sub(usize::try_from(res.rows_affected).unwrap_or(usize::MAX));
         }
         if !full_page {
             break;
@@ -1686,10 +1760,12 @@ async fn confirm_issues(
     Ok(())
 }
 
+/// [`confirm_issues`] for removed series, with
+/// [`SweepLimits::max_series_confirms`]. A series one of whose issues this
+/// run kept is passed over without a stat.
 async fn confirm_series(
     state: &AppState,
     lib: &library::Model,
-    now: chrono::DateTime<chrono::FixedOffset>,
     cutoff: chrono::DateTime<chrono::FixedOffset>,
     limits: SweepLimits,
     kept: &mut KeptRows,
@@ -1698,17 +1774,15 @@ async fn confirm_series(
     let db = &state.db;
     let probe = PresenceProbe::for_library(lib);
     let page_size = limits.page.max(1);
+    let mut budget = limits.max_series_confirms;
     let mut after: Option<(chrono::DateTime<chrono::FixedOffset>, Uuid)> = None;
-    let mut examined = 0usize;
-    while examined < limits.max_series_rows {
-        let limit = page_size.min(limits.max_series_rows - examined);
-        let page = confirm_series_page(db, lib.id, cutoff, after.as_ref(), limit).await?;
-        if page.is_empty() {
+    while budget > 0 {
+        let page = confirm_series_page(db, lib.id, cutoff, after.as_ref(), page_size).await?;
+        let Some(last) = page.last() else {
             break;
-        }
-        examined += page.len();
-        let full_page = page.len() == limit;
-        after = page.last().map(|c| (c.removed_at, c.id));
+        };
+        let full_page = page.len() == page_size;
+        after = Some((last.removed_at, last.id));
 
         // Never confirm a series one of whose issues was just kept.
         let candidates: Vec<ConfirmSeriesCandidate> = page
@@ -1735,9 +1809,14 @@ async fn confirm_series(
                 }
             }
         }
-        for ids in confirm.chunks(RECONCILE_ID_CHUNK) {
+        let mut rest = confirm.as_slice();
+        while budget > 0 && !rest.is_empty() {
+            let (ids, tail) = rest.split_at(budget.min(rest.len()).min(RECONCILE_ID_CHUNK));
+            rest = tail;
+            // Stamped per batch, as in `confirm_issues`.
+            let stamp = Utc::now().fixed_offset();
             let res = series::Entity::update_many()
-                .col_expr(series::Column::RemovalConfirmedAt, Expr::value(now))
+                .col_expr(series::Column::RemovalConfirmedAt, Expr::value(stamp))
                 .filter(series::Column::LibraryId.eq(lib.id))
                 .filter(series::Column::Id.is_in(ids.to_vec()))
                 .filter(series::Column::RemovedAt.is_not_null())
@@ -1746,6 +1825,8 @@ async fn confirm_series(
                 .exec(db)
                 .await?;
             *confirmed += res.rows_affected;
+            budget =
+                budget.saturating_sub(usize::try_from(res.rows_affected).unwrap_or(usize::MAX));
         }
         if !full_page {
             break;
@@ -1768,11 +1849,20 @@ async fn confirm_issue_page(
          FROM issues \
          WHERE library_id = $1 AND removed_at IS NOT NULL \
            AND removal_confirmed_at IS NULL AND removed_at < $2";
+    let limit = i64::try_from(limit).unwrap_or(i64::MAX);
     let stmt = match after {
+        // The first page uses the keyset form too, from before every row
+        // (`-infinity`, and every id is `>= ''`), so the planner range-scans
+        // `issues_confirm_keyset_idx` for it: without the row comparison it
+        // takes `issues_removed_at_idx`, which has no `id`, and reads the
+        // whole run of rows sharing the oldest `removed_at` to sort them.
         None => Statement::from_sql_and_values(
             DbBackend::Postgres,
-            format!("{SELECT} ORDER BY removed_at, id LIMIT $3"),
-            [library_id.into(), cutoff.into(), (limit as i64).into()],
+            format!(
+                "{SELECT} AND (removed_at, id) >= ('-infinity'::timestamptz, '') \
+                 ORDER BY removed_at, id LIMIT $3"
+            ),
+            [library_id.into(), cutoff.into(), limit.into()],
         ),
         Some((at, id)) => Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -1780,7 +1870,7 @@ async fn confirm_issue_page(
             [
                 library_id.into(),
                 cutoff.into(),
-                (limit as i64).into(),
+                limit.into(),
                 (*at).into(),
                 id.clone().into(),
             ],
@@ -1801,11 +1891,18 @@ async fn confirm_series_page(
     const SELECT: &str = "SELECT id, folder_path, removed_at FROM series \
          WHERE library_id = $1 AND removed_at IS NOT NULL \
            AND removal_confirmed_at IS NULL AND removed_at < $2";
+    let limit = i64::try_from(limit).unwrap_or(i64::MAX);
     let stmt = match after {
+        // From before every row, as in `confirm_issue_page`, so the first
+        // page range-scans `series_confirm_keyset_idx` too.
         None => Statement::from_sql_and_values(
             DbBackend::Postgres,
-            format!("{SELECT} ORDER BY removed_at, id LIMIT $3"),
-            [library_id.into(), cutoff.into(), (limit as i64).into()],
+            format!(
+                "{SELECT} AND (removed_at, id) >= ('-infinity'::timestamptz, \
+                 '00000000-0000-0000-0000-000000000000'::uuid) \
+                 ORDER BY removed_at, id LIMIT $3"
+            ),
+            [library_id.into(), cutoff.into(), limit.into()],
         ),
         Some((at, id)) => Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -1813,7 +1910,7 @@ async fn confirm_series_page(
             [
                 library_id.into(),
                 cutoff.into(),
-                (limit as i64).into(),
+                limit.into(),
                 (*at).into(),
                 (*id).into(),
             ],
@@ -1822,4 +1919,26 @@ async fn confirm_series_page(
     Ok(ConfirmSeriesCandidate::find_by_statement(stmt)
         .all(db)
         .await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kept_ids_count_everything_and_sample_the_first() {
+        let mut ids = KeptIds::default();
+        assert_eq!(ids.len(), 0);
+        assert!(ids.sample().is_empty());
+        ids.extend((0..KEPT_ID_SAMPLE).map(|n| n.to_string()));
+        assert_eq!(ids.len(), KEPT_ID_SAMPLE);
+        assert_eq!(ids.sample().len(), KEPT_ID_SAMPLE);
+        for n in 0..10 {
+            ids.push(format!("late-{n}"));
+        }
+        assert_eq!(ids.len(), KEPT_ID_SAMPLE + 10, "the count is complete");
+        assert_eq!(ids.sample().len(), KEPT_ID_SAMPLE, "the sample is capped");
+        assert_eq!(ids.sample()[0], "0", "first pushed first");
+        assert!(ids.sample().iter().all(|id| !id.starts_with("late-")));
+    }
 }
