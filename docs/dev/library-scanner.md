@@ -1635,7 +1635,8 @@ deletion:
   `::auto_confirm_pages_past_unknown_rows_at_the_front`,
   `::auto_confirm_confirms_at_most_the_cap_per_run`,
   `::auto_confirm_pages_through_equal_removal_times` and their
-  `auto_confirm_series_*` twins),
+  `auto_confirm_series_*` twins, and
+  `::auto_confirm_cut_by_the_budget_keeps_a_series_whose_unreached_files_are_present`),
   `::probe_batch_refuses_an_empty_root`,
   `::many_series_to_rescan_queue_one_library_scan`,
   `::recently_scanned_series_is_not_rescanned`,

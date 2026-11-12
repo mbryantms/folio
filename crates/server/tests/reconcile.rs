@@ -2790,6 +2790,85 @@ async fn auto_confirm_series_pages_through_equal_removal_times() {
     assert!(!series_confirmed(&app, unknown[0]).await);
 }
 
+/// The issue walk is cut by the confirm budget before it reaches the
+/// issues of a removed series whose files are on disk. The series is not
+/// held by them (they were never examined), but its own folder probe says
+/// present, so it is not confirmed; and nothing about it becomes
+/// purgeable, even once the purge window has passed.
+#[tokio::test]
+async fn auto_confirm_cut_by_the_budget_keeps_a_series_whose_unreached_files_are_present() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    // Three gone issues (oldest) take the whole budget of two.
+    let (_unknown, gone) = paging_issues(&app, root, 0, 3, false).await;
+    let state = app.state();
+    let lib_id = series_named(&app, "Holder").await.library_id;
+
+    // A removed series whose folder holds its archives again, with removed
+    // issues for them: newer than every gone issue, so never reached.
+    let folder = root.join("Present (2022)");
+    write_old_folder(&folder, "Present", 2, 1800);
+    let at = Utc::now().fixed_offset() - chrono::Duration::days(30);
+    let series_id = insert_removed_series(&app, lib_id, Uuid::new_v4(), &folder, at).await;
+    let mut issues = Vec::new();
+    for n in 1..=2u32 {
+        let path = folder.join(format!("Present {n:03}.cbz"));
+        issues.push(insert_removed_issue(&app, lib_id, series_id, Uuid::new_v4(), &path, at).await);
+    }
+
+    let limits = reconcile::SweepLimits {
+        page: 2,
+        max_issue_confirms: 2,
+        ..reconcile::SweepLimits::default()
+    };
+    let stats = reconcile::auto_confirm_sweep_with(&state, limits)
+        .await
+        .unwrap();
+    assert_eq!(stats.confirmed, 2, "the budget, all issues: {stats:?}");
+    assert_eq!(
+        stats.kept_present, 1,
+        "the series, by its folder: {stats:?}"
+    );
+    for id in &gone[..2] {
+        assert!(issue_confirmed(&app, id).await, "{id}: within the budget");
+    }
+    assert!(!issue_confirmed(&app, &gone[2]).await, "past the budget");
+    assert!(
+        !series_confirmed(&app, series_id).await,
+        "folder present → series not confirmed"
+    );
+    for id in &issues {
+        assert!(!issue_confirmed(&app, id).await, "{id}: never reached");
+    }
+
+    // Long past every purge window: the series and its issues are still
+    // unconfirmed, so the purge has nothing of theirs to delete.
+    let later = Utc::now().fixed_offset() + chrono::Duration::days(60);
+    let purge = server::jobs::hard_purge::run_with(&state, 2, later)
+        .await
+        .unwrap();
+    assert_eq!(purge.series, 0, "{purge:?}");
+    assert!(
+        SeriesEntity::find_by_id(series_id)
+            .one(&state.db)
+            .await
+            .unwrap()
+            .is_some(),
+        "series kept"
+    );
+    for id in &issues {
+        assert!(
+            IssueEntity::find_by_id(id.clone())
+                .one(&state.db)
+                .await
+                .unwrap()
+                .is_some(),
+            "{id}: kept"
+        );
+    }
+}
+
 /// Over the per-run series cap, one library scan is queued instead of a
 /// scan per series (cap injected as 2 with three series).
 #[tokio::test]
