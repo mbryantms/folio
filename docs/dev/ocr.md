@@ -147,7 +147,10 @@ checks (encrypted row, missing file, offline library, unreadable archive,
 page past the end, the page entry's listed size over the per-entry cap;
 none waits for a permit, and none reads the page), the models (a
 first-use download is waited on without holding a permit), then an OCR
-permit. The page bytes are read only under the permit: the permit is
+permit. Because the result cache comes before the cheap checks, a cached
+`region_pct` request, like a cached pixel request, is answered without
+them (a missing file, an offline library, an encrypted row or a needed
+conversion does not stop it). The page bytes are read only under the permit: the permit is
 moved into the blocking read + decode and inference tasks
 (`ocr::pipeline::blocking_with_permit`) and released when they finish, so
 a client that disconnects mid-request cannot free it early and start more
@@ -171,7 +174,12 @@ waiting), and the detection is written to the cache like any other
 (fail-open: a write that errors or exceeds the 5 s bound is dropped and
 logged, and the next request detects again). A recognition that fails,
 with an error or a panic from the engine, still hands its finished
-detection to the cache.
+detection to the cache. A failure nobody receives (the request was
+already gone) is logged once at warn. A caught engine panic is logged at
+error with its message and counted in
+`folio_ocr_recognizer_panics_total{model}`; it poisons that engine's
+mutex, so every later request for the engine answers `ocr_failed` until
+the server restarts (unchanged behaviour).
 
 Every OCR cache read is bounded too (`CACHE_READ_TIMEOUT`, 2 s, on top
 of the Redis connection's own 500 ms response timeout); a timed-out read
@@ -347,7 +355,8 @@ decides their payload, computed once per process
   `eng.traineddata` file the recognizer loads (same path resolution:
   `TESSDATA_PREFIX`, else `~/.tesseract-rs/tessdata`; `missing` when
   absent), and every pinned ONNX file of the detector and manga-ocr
-  (repository, commit, file, SHA-256 from `ocr::models`);
+  (repository, commit, file, SHA-256 from `ocr::models`), and the
+  page-size fingerprint (`OCR_PAGE_SIZE_VERSION` and the decode limits);
 - detect keys: `OCR_DETECT_VERSION` and the detector pins only.
 
 An image upgrade that changes Tesseract, its language data or a model
@@ -454,9 +463,14 @@ is read from the archive and decoded once, not once per balloon.
 - **Order**: visibility, the result cache (for a `region_pct` request:
   through the stored page size, when there is one) and the archive
   checks run on every request before this cache is consulted, and it is
-  consulted only with an OCR permit held. A `region_pct` request whose
-  page size is not stored yet looks the result cache up once more after
-  the decode, still under the permit. Memory is the bound plus at most one
+  consulted only with an OCR permit held. A `region_pct` request looks
+  the result cache up after the decode, still under the permit, only when
+  the early lookup did not already read that key: no page size was
+  stored, or the stored one differed from the decode. Every result read
+  by a `region_pct` request accepts only a payload whose `page_w` /
+  `page_h` equal the size it converted with (anything else is a miss,
+  the pipeline runs and the entry is overwritten), and result keys also
+  carry the page-size fingerprint. Memory is the bound plus at most one
   in-flight page per permit; a waiter (holding a permit) waits only on
   a decode that runs under the other permit and ends. The map's lock
   is held for map updates only, never with the Tesseract or detector
@@ -524,6 +538,7 @@ Denied requests increment
 | `folio_ocr_permit_wait_seconds` | histogram | — | Time a request waited for an OCR permit (also recorded when it gave up) |
 | `folio_ocr_busy_total` | counter | — | Requests refused with 503 `service_unavailable` after waiting `OCR_PERMIT_WAIT` (10 s) for a permit |
 | `folio_ocr_detect_abandoned_total` | counter | — | Detections that finished after their request was gone (timeout, abort); each is written to the cache like any other (a write that fails or exceeds 5 s is dropped) |
+| `folio_ocr_recognizer_panics_total` | counter | `model` | Recognizer panics caught during a request (`western`, `manga`); the engine answers `ocr_failed` until restart |
 | `folio_ocr_cache_read_timeouts_total` | counter | — | OCR cache reads (result, detect, page size) that exceeded `CACHE_READ_TIMEOUT` (2 s) and were treated as misses |
 | `folio_ocr_model_load_seconds` | histogram | `model` | Once per process per model (`detector`, `western`, `manga`): verified download (if needed) + session build |
 | `folio_ocr_model_first_use_seconds` | histogram | `model` | Once per process per model: the first inference after load (session warm-up included) |

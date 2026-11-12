@@ -363,34 +363,79 @@ pub async fn run_ocr<P: Send + 'static>(
     let redis = input.redis.clone();
     let result_key = input.result_key.clone();
     let page_size = (input.page_image.width(), input.page_image.height());
+    let gone = cancel.clone();
     let work = tokio::spawn(async move {
-        let ((detection_to_cache, output), permit) = blocking_with_permit(permit, move || {
-            run_blocking(
-                detector,
-                recognizer,
-                input,
-                lang_label,
-                cached_detection,
-                &cancel,
-            )
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("ocr task panicked: {e}"))?;
-        // The permit covers the inference only; the cache writes below do
-        // not hold it.
-        drop(permit);
-        if let (Some(key), Some(detection)) = (detect_key, detection_to_cache) {
-            cache::put_detect(&redis, &key, &detection).await;
+        let result = async move {
+            let ((detection_to_cache, output), permit) = blocking_with_permit(permit, move || {
+                run_blocking(
+                    detector,
+                    recognizer,
+                    input,
+                    lang_label,
+                    cached_detection,
+                    &cancel,
+                )
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("ocr task panicked: {e}"))?;
+            // The permit covers the inference only; the cache writes below do
+            // not hold it.
+            drop(permit);
+            if let (Some(key), Some(detection)) = (detect_key, detection_to_cache) {
+                cache::put_detect(&redis, &key, &detection).await;
+            }
+            let response = OcrResponse::from_output(output?, lang_label, page_size);
+            // Best-effort: a failed write only means the next call reruns.
+            cache::put(&redis, &result_key, &response).await;
+            metrics::histogram!("folio_ocr_pipeline_seconds", "lang" => lang_label)
+                .record(start.elapsed().as_secs_f64());
+            Ok(response)
         }
-        let response = OcrResponse::from_output(output?, lang_label, page_size);
-        // Best-effort: a failed write only means the next call reruns.
-        cache::put(&redis, &result_key, &response).await;
-        metrics::histogram!("folio_ocr_pipeline_seconds", "lang" => lang_label)
-            .record(start.elapsed().as_secs_f64());
-        Ok(response)
+        .await;
+        log_if_unheard(&result, &gone, "ocr");
+        result
     });
     work.await
         .map_err(|e| anyhow::anyhow!("ocr task failed: {e}"))?
+}
+
+/// The error [`recognize_blocking`] returns when it skips recognition because
+/// the request was abandoned (not a failure, so not logged).
+#[derive(Debug)]
+struct CancelledBeforeRecognize;
+
+impl std::fmt::Display for CancelledBeforeRecognize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ocr request cancelled before recognize")
+    }
+}
+
+impl std::error::Error for CancelledBeforeRecognize {}
+
+/// Logs, once at warn, an error from detached OCR work whose request is gone:
+/// nobody else receives it. Skipping recognition because the request was gone
+/// is not a failure and is not logged.
+fn log_if_unheard<T>(result: &anyhow::Result<T>, gone: &AtomicBool, work: &str) {
+    if let Err(e) = result
+        && gone.load(Ordering::Relaxed)
+        && !e.is::<CancelledBeforeRecognize>()
+    {
+        tracing::warn!(error = %e, work, "ocr: detached work failed after the request was gone");
+    }
+}
+
+/// The longest panic message logged from a caught recognizer panic.
+const PANIC_MESSAGE_MAX_CHARS: usize = 200;
+
+/// The message of a caught panic when its payload is a string, cut to
+/// [`PANIC_MESSAGE_MAX_CHARS`].
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    let message = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("<non-string panic payload>");
+    message.chars().take(PANIC_MESSAGE_MAX_CHARS).collect()
 }
 
 /// Sets its flag when dropped — used by [`run_ocr`] to signal the detached
@@ -481,7 +526,7 @@ fn recognize_blocking(
     if cancel.load(Ordering::Relaxed) {
         return Ok((
             detection_to_cache,
-            Err(anyhow::anyhow!("ocr request cancelled before recognize")),
+            Err(anyhow::Error::new(CancelledBeforeRecognize)),
         ));
     }
 
@@ -508,7 +553,14 @@ fn recognize_blocking(
     let recognition = match recognized {
         Ok(Ok(r)) => r,
         Ok(Err(e)) => return Ok((detection_to_cache, Err(e))),
-        Err(_) => {
+        Err(payload) => {
+            tracing::error!(
+                lang = lang_label,
+                panic = %panic_message(payload.as_ref()),
+                "ocr: the recognizer panicked; its engine is unusable until restart"
+            );
+            metrics::counter!("folio_ocr_recognizer_panics_total", "model" => lang_label)
+                .increment(1);
             return Ok((
                 detection_to_cache,
                 Err(anyhow::anyhow!("the recognizer panicked")),
@@ -595,22 +647,28 @@ pub async fn detect_and_cache_regions<P: Send + 'static>(
     let cancel = Arc::new(AtomicBool::new(false));
     let _cancel_on_drop = CancelGuard(cancel.clone());
     let key = cache::detect_cache_key(content_hash, page);
+    let gone = cancel.clone();
     let work = tokio::spawn(async move {
-        let start = std::time::Instant::now();
-        let (detection, permit) = blocking_with_permit(permit, move || {
-            let detection = detector.detect(&page_image);
-            if detection.is_ok() && cancel.load(Ordering::Relaxed) {
-                metrics::counter!("folio_ocr_detect_abandoned_total").increment(1);
-            }
-            detection
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("detect task panicked: {e}"))?;
-        drop(permit);
-        let detection = detection?;
-        metrics::histogram!("folio_ocr_detect_seconds").record(start.elapsed().as_secs_f64());
-        cache::put_detect(&redis, &key, &detection).await;
-        Ok(detection)
+        let result = async move {
+            let start = std::time::Instant::now();
+            let (detection, permit) = blocking_with_permit(permit, move || {
+                let detection = detector.detect(&page_image);
+                if detection.is_ok() && cancel.load(Ordering::Relaxed) {
+                    metrics::counter!("folio_ocr_detect_abandoned_total").increment(1);
+                }
+                detection
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("detect task panicked: {e}"))?;
+            drop(permit);
+            let detection = detection?;
+            metrics::histogram!("folio_ocr_detect_seconds").record(start.elapsed().as_secs_f64());
+            cache::put_detect(&redis, &key, &detection).await;
+            Ok(detection)
+        }
+        .await;
+        log_if_unheard(&result, &gone, "page detection");
+        result
     });
     work.await
         .map_err(|e| anyhow::anyhow!("detect task failed: {e}"))?

@@ -933,6 +933,67 @@ async fn a_stored_size_that_disagrees_with_the_decode_is_replaced() {
     assert_eq!(stored.as_deref(), Some("213x100"), "the decode replaced it");
 }
 
+/// A result payload computed on a page of another size (a percent rectangle
+/// that maps onto the same pixels of a different page) is not served after
+/// the decode: the recognizer runs and the entry is overwritten.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_payload_of_another_page_size_is_not_served() {
+    use redis::AsyncCommands;
+    let _shared = ALL_PERMITS.read().await;
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "ocr-work-pct-other-size@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (id, echo) = echo_issue(&app, &tmp.path().join("lib"), 216, 100).await;
+
+    // No page size stored yet, so the lookup happens after the decode, under
+    // the key the percent request converts to on 216 x 100.
+    let r = server::api::issue_ocr::OcrRegionPct {
+        x: 10.0,
+        y: 10.0,
+        w: 25.0,
+        h: 30.0,
+    }
+    .to_pixels(216, 100)
+    .unwrap();
+    server::ocr::cache::warm_fingerprints().await;
+    let key = server::ocr::cache::cache_key(
+        &id,
+        0,
+        "western",
+        false,
+        &server::ocr::cache::region_hash(r.x, r.y, r.w, r.h),
+    );
+    let mut redis = app.state().jobs.redis.clone();
+    let seeded = serde_json::json!({ "text": "stale", "confidence": 0.9_f64,
+        "page_w": 999_u32, "page_h": 999_u32 })
+    .to_string();
+    let _: () = redis.set_ex(&key, seeded, 600).await.unwrap();
+
+    let (status, body) = send(&app, ocr_request(&admin, &id, pct_body())).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_ne!(body["text"], "stale", "the other page's payload was served");
+    assert_eq!(body["text"], "54x30");
+    assert_eq!(echo.calls.load(Ordering::SeqCst), 1, "the recognizer ran");
+
+    // The detached task overwrites the entry with this page's size.
+    let mut stored = None;
+    for _ in 0..200 {
+        let raw: Option<String> = redis.get(&key).await.unwrap();
+        let value: serde_json::Value = serde_json::from_str(&raw.unwrap()).unwrap();
+        if value["page_w"] == 216 {
+            stored = Some(value);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let stored = stored.expect("the entry was overwritten");
+    assert_eq!(
+        (stored["page_w"].as_u64(), stored["page_h"].as_u64()),
+        (Some(216), Some(100))
+    );
+    assert_eq!(stored["text"], "54x30");
+}
+
 // ─── Review follow-ups ───────────────────────────────────────────
 
 /// A recognition that fails (an error or a panic from the engine) still

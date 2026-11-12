@@ -115,6 +115,10 @@ pub struct EngineInputs {
     /// Tesseract version + language-data digest
     /// ([`super::recognizer::western::engine_identity`]).
     pub western: String,
+    /// What decides a decoded page's size ([`page_size_key`]'s
+    /// fingerprint): a percent region becomes a pixel rect through it, so
+    /// whatever rolls the page-size keys rolls the result keys too.
+    pub page_size: String,
 }
 
 impl EngineInputs {
@@ -133,6 +137,7 @@ impl EngineInputs {
             detector_pins: pins(super::models::DETECTOR_FILES),
             manga_pins: pins(super::models::MANGA_FILES),
             western: super::recognizer::western::engine_identity(),
+            page_size: page_size_fingerprint().to_owned(),
         }
     }
 
@@ -144,6 +149,7 @@ impl EngineInputs {
             format!("result-v{}", self.result_version),
             format!("detect-v{}", self.detect_version),
             self.western.clone(),
+            format!("page-size={}", self.page_size),
         ];
         parts.extend(self.detector_pins.iter().cloned());
         parts.extend(self.manga_pins.iter().cloned());
@@ -389,6 +395,43 @@ fn detect_key_with(fingerprint: &str, content_hash: &str, page: u32) -> String {
     format!("ocr:detect:v{OCR_DETECT_VERSION}:{fingerprint}:{content_hash}:{page}")
 }
 
+/// [`get`] for a result that must have been computed on a page of
+/// `size` (`page_w`, `page_h`). A payload of another size is a miss (and
+/// counted as one): a percent region must never be answered with a
+/// result from a page decoded to a different size.
+pub async fn get_sized(
+    redis: &ConnectionManager,
+    key: &str,
+    size: (u32, u32),
+) -> Option<OcrResponse> {
+    let Some(raw) = get_bounded(redis, key, "ocr cache").await else {
+        metrics::counter!("folio_ocr_cache_misses_total").increment(1);
+        return None;
+    };
+    match serde_json::from_str::<OcrResponse>(&raw) {
+        Ok(resp) if (resp.page_w, resp.page_h) == size => {
+            metrics::counter!("folio_ocr_cache_hits_total").increment(1);
+            Some(resp)
+        }
+        Ok(resp) => {
+            metrics::counter!("folio_ocr_cache_misses_total").increment(1);
+            tracing::debug!(
+                key,
+                cached_w = resp.page_w,
+                cached_h = resp.page_h,
+                page_w = size.0,
+                page_h = size.1,
+                "ocr cache: payload for another page size; treating as miss"
+            );
+            None
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, key, "ocr cache: malformed payload; treating as miss");
+            None
+        }
+    }
+}
+
 /// Look up cached detector output for a page. `Some` on hit, `None`
 /// on miss or Redis error (fail-open).
 pub async fn get_detect(redis: &ConnectionManager, key: &str) -> Option<CachedDetection> {
@@ -470,6 +513,7 @@ mod tests {
                 "acme/manga@bbb/vocab.txt#333".into(),
             ],
             western: "tesseract=5.5.0;eng.traineddata=abc".into(),
+            page_size: "0011223344556677".into(),
         }
     }
 
@@ -560,6 +604,13 @@ mod tests {
                 "tesseract version",
                 EngineInputs {
                     western: "tesseract=5.5.1;eng.traineddata=abc".into(),
+                    ..inputs()
+                },
+            ),
+            (
+                "page size",
+                EngineInputs {
+                    page_size: "7766554433221100".into(),
                     ..inputs()
                 },
             ),

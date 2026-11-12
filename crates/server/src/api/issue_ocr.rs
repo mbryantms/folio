@@ -541,15 +541,20 @@ pub async fn serve(
     // carry the same size, or it is not used. A miss on either key goes
     // on to the decode, which is the authority on the size.
     let size_key = cache::page_size_key(&row.content_hash, req.page);
+    // The result key the early lookup already read (and missed), so the
+    // lookup after the decode does not read it a second time.
+    let mut early_key: Option<String> = None;
     let stored_size = match &req.region_pct {
         Some(pct) => {
             let stored = cache::get_page_size(&app.jobs.redis, &size_key).await;
-            if let Some((w, h)) = stored
-                && let Some(r) = pct.to_pixels(w, h)
-                && let Some(hit) = cache::get(&app.jobs.redis, &result_key(&r)).await
-                && (hit.page_w, hit.page_h) == (w, h)
+            if let Some(size) = stored
+                && let Some(r) = pct.to_pixels(size.0, size.1)
             {
-                return Json(hit).into_response();
+                let key = result_key(&r);
+                if let Some(hit) = cache::get_sized(&app.jobs.redis, &key, size).await {
+                    return Json(hit).into_response();
+                }
+                early_key = Some(key);
             }
             stored
         }
@@ -629,8 +634,14 @@ pub async fn serve(
         }
     };
     let key = result_key(&region);
+    // A percent request looks its result up here only when the early
+    // lookup did not already read this key (no stored size, or one that
+    // differed from the decode), and only accepts a payload computed on a
+    // page of this decoded size: anything else is a miss, the pipeline
+    // runs, and the entry is overwritten.
     if pixel_region.is_none()
-        && let Some(hit) = cache::get(&app.jobs.redis, &key).await
+        && early_key.as_deref() != Some(key.as_str())
+        && let Some(hit) = cache::get_sized(&app.jobs.redis, &key, (page_w, page_h)).await
     {
         return Json(hit).into_response();
     }
@@ -942,8 +953,14 @@ async fn read_and_decode_holding<P: Send + 'static>(
             .record(started.elapsed().as_secs_f64());
         let size_key = cache::page_size_key(claim.key().content_hash(), claim.key().page());
         let size = (page.width(), page.height());
-        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-            runtime.spawn(async move { cache::put_page_size(&redis, &size_key, size).await });
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn(async move { cache::put_page_size(&redis, &size_key, size).await });
+            }
+            Err(_) => tracing::debug!(
+                key = %size_key,
+                "ocr: no runtime handle in the decode; page size not stored"
+            ),
         }
         claim.fulfil(Arc::clone(&page));
         Ok(page)
