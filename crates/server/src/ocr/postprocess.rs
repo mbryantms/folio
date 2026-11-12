@@ -11,10 +11,29 @@
 //!
 //! - **W1** word-confidence drop — needs per-word data; skipped when
 //!   the recognizer returned `words: None`.
-//! - **W2** hyphenated line-break join (`HYPH-\nEN` → `HYPHEN`).
+//! - **W1b** pronoun `I` read as `|` (Tesseract's usual misreading of
+//!   a sans-serif capital I): a token that is exactly `|` with a word
+//!   on both sides *on the same line* becomes `I`, and a token that
+//!   starts `|'M` / `|'LL` / `|'VE` / `|'D` (straight or curly
+//!   apostrophe, any case, optionally followed by punctuation) becomes
+//!   `I'M` / … A `|` at a line edge stays debris (that is where
+//!   balloon borders sit), and so does any `|` glued to other symbols
+//!   (`|~`, `||`, `|_`).
+//! - **W2** line-end hyphen join without deleting the hyphen: a line
+//!   ending in a word + exactly one hyphen joins the next line's first
+//!   token when it starts with a letter (`SPIDER-\nMAN` →
+//!   `SPIDER-MAN`). A double dash is an interruption and is kept as
+//!   written, with the next word after a space (`WAIT--\nNO` →
+//!   `WAIT-- NO`). Accepted cost: a word the letterer really split
+//!   across lines keeps its hyphen (`WON-\nDERFUL` → `WON-DERFUL`);
+//!   comic lettering rarely splits words, and deleting the hyphen
+//!   broke every compound name that wrapped.
 //! - **W3** symbol-only token drop, sparing expressive punctuation
-//!   (`!?`, `...`).
-//! - **W4** edge junk strip per token (`|HELLO!` → `HELLO!`).
+//!   (`!?`, `...`) and symbol swearing (grawlix: a run of three or more
+//!   of `# @ $ % & * ! ?` with at least two different of `# @ $ % & *`,
+//!   e.g. `#@$%!`) whose confidence is at least [`GRAWLIX_MIN_CONF`].
+//! - **W4** edge junk strip per token (`|HELLO!` → `HELLO!`); a kept
+//!   grawlix token is not stripped.
 //! - **W5** per-char allowlist (letters, digits, common punctuation).
 //! - **W6** whitespace collapse — one bubble is one utterance.
 //! - **W7** empty-out guard — cleaning a non-empty raw down to
@@ -58,6 +77,26 @@ const HARD_JUNK: &str = "|~_^`´·•\\/{}[]<>=+*#@";
 
 /// W5: non-alphanumeric chars kept by the per-char allowlist.
 const KEEP_PUNCT: &str = ".,!?…;:'\"()&%$#@*/+=°–—-‘’“”¢£¥€";
+
+/// W1b: contraction endings after which a leading `|` is the pronoun
+/// (`|'M` → `I'M`). Compared case-insensitively.
+const I_CONTRACTIONS: [&str; 4] = ["M", "LL", "VE", "D"];
+
+/// W3: characters a grawlix (symbol swearing, `#@$%!`) is made of.
+const GRAWLIX: &str = "#@$%&*!?";
+
+/// W3: a grawlix needs at least two different of these, so `!!!` (kept
+/// anyway as expressive punctuation) and a run of one repeated symbol
+/// (`***`, halftone or border debris) do not count.
+const GRAWLIX_CORE: &str = "#@$%&*";
+
+/// W3: shortest grawlix kept.
+const GRAWLIX_MIN_LEN: usize = 3;
+
+/// W3: a grawlix is kept only at this confidence or above (the word's
+/// own score, or the whole recognition's when the engine returned no
+/// per-word data). Same bar W1 sets for any symbol-only word.
+pub const GRAWLIX_MIN_CONF: f32 = SYMBOL_WORD_MIN_CONF;
 
 /// Output of [`clean`]. `raw_text` is `Some` only when cleaning
 /// changed the text — a debugging and golden-fixture-authoring aid.
@@ -105,9 +144,13 @@ struct Token {
 
 fn clean_western(rec: &Recognition) -> (String, f32, Option<Vec<Word>>) {
     let had_words = rec.words.is_some();
-    let lines = tokenize(rec); // W1 happens in here
+    let mut lines = tokenize(rec); // W1 happens in here
+    restore_pronoun_i(&mut lines); // W1b
     let tokens = join_hyphenated(lines); // W2
-    let kept: Vec<Token> = tokens.into_iter().filter_map(scrub_token).collect(); // W3-W5
+    let kept: Vec<Token> = tokens
+        .into_iter()
+        .filter_map(|t| scrub_token(t, rec.confidence))
+        .collect(); // W3-W5
 
     // W6: single spaces, no newlines — one bubble, one utterance.
     let text = kept
@@ -192,22 +235,78 @@ fn tokenize(rec: &Recognition) -> Vec<Vec<Token>> {
     }
 }
 
-/// W2: a line ending in a hyphenated stem joins the next line's
-/// first token (`HYPH-` + `EN` → `HYPHEN`). Requires a stem (a lone
-/// `-` is an em-dash-style break, not hyphenation) and a letter on
-/// the other side. Flattens the line structure — every rule after
-/// this operates on a single token stream.
+/// W1b: read Tesseract's `|` as the pronoun `I` where comic lettering
+/// means it (see the module docs). Runs per line, before the hyphen
+/// join flattens the lines, because "between words" has to mean
+/// "between words on the same line": a `|` at a line edge is where a
+/// balloon border sits.
+fn restore_pronoun_i(lines: &mut [Vec<Token>]) {
+    let has_letter = |t: &Token| t.text.chars().any(char::is_alphabetic);
+    for line in lines.iter_mut() {
+        for i in 0..line.len() {
+            if line[i].text == "|" {
+                let between_words = i > 0
+                    && i + 1 < line.len()
+                    && has_letter(&line[i - 1])
+                    && has_letter(&line[i + 1]);
+                if between_words {
+                    line[i].text = "I".to_owned();
+                }
+            } else if let Some(fixed) = contraction_i(&line[i].text) {
+                line[i].text = fixed;
+            }
+        }
+    }
+}
+
+/// `|'M` → `I'M` (also `|'LL`, `|'VE`, `|'D`, a curly apostrophe, any
+/// case, and trailing expressive punctuation such as `|'M,`). `None`
+/// for anything else, including `|'MA` or `|'M~`.
+fn contraction_i(token: &str) -> Option<String> {
+    let rest = token.strip_prefix('|')?;
+    let apostrophe = rest.chars().next().filter(|c| matches!(c, '\'' | '’'))?;
+    let after = &rest[apostrophe.len_utf8()..];
+    let letters_end = after
+        .char_indices()
+        .find(|(_, c)| !c.is_alphabetic())
+        .map_or(after.len(), |(i, _)| i);
+    let (letters, tail) = after.split_at(letters_end);
+    let known = I_CONTRACTIONS
+        .iter()
+        .any(|c| c.eq_ignore_ascii_case(letters));
+    if !known || !tail.chars().all(|c| EXPRESSIVE.contains(c)) {
+        return None;
+    }
+    Some(format!("I{apostrophe}{letters}{tail}"))
+}
+
+/// W2: does this token end in a word followed by exactly one hyphen
+/// (`SPIDER-`, not `WAIT--`, not a lone `-`)?
+fn ends_in_single_hyphen(token: &str) -> bool {
+    let mut rev = token.chars().rev();
+    matches!(rev.next(), Some('-' | '\u{2010}')) && rev.next().is_some_and(char::is_alphanumeric)
+}
+
+/// W2: a line ending in a word + one hyphen joins the next line's
+/// first token when that starts with a letter, and the hyphen stays
+/// (`SPIDER-` + `MAN` → `SPIDER-MAN`; a U+2010 hyphen is written as
+/// `-`, which W5 keeps). A double dash (`WAIT--`) or a lone `-` is not
+/// joined: the next word follows after a space. Flattens the line
+/// structure — every rule after this operates on a single token
+/// stream.
 fn join_hyphenated(lines: Vec<Vec<Token>>) -> Vec<Token> {
     let mut out: Vec<Token> = Vec::new();
     for line in lines {
         let mut iter = line.into_iter();
         if let Some(first) = iter.next() {
-            let joinable = out.last().is_some_and(|prev| {
-                prev.text.chars().count() > 1 && prev.text.ends_with(['-', '\u{2010}'])
-            }) && first.text.chars().next().is_some_and(char::is_alphabetic);
+            let joinable = out
+                .last()
+                .is_some_and(|prev| ends_in_single_hyphen(&prev.text))
+                && first.text.chars().next().is_some_and(char::is_alphabetic);
             if joinable {
                 let prev = out.last_mut().expect("checked non-empty above");
                 prev.text.pop();
+                prev.text.push('-');
                 prev.text.push_str(&first.text);
                 prev.word = match (prev.word.take(), first.word) {
                     (Some(a), Some(b)) => Some(Word {
@@ -230,15 +329,38 @@ fn join_hyphenated(lines: Vec<Vec<Token>>) -> Vec<Token> {
     out
 }
 
+/// W3: symbol swearing (`#@$%!`, `@#$%&!`) as opposed to border or
+/// halftone debris. See [`GRAWLIX`] / [`GRAWLIX_CORE`].
+fn is_grawlix(token: &str) -> bool {
+    if token.chars().count() < GRAWLIX_MIN_LEN || !token.chars().all(|c| GRAWLIX.contains(c)) {
+        return false;
+    }
+    let mut core: Vec<char> = token
+        .chars()
+        .filter(|c| GRAWLIX_CORE.contains(*c))
+        .collect();
+    core.sort_unstable();
+    core.dedup();
+    core.len() >= 2
+}
+
 /// W3 + W4 + W5 on one token. `None` means the token was debris.
-fn scrub_token(mut tok: Token) -> Option<Token> {
+/// `rec_confidence` stands in for the token's own confidence when the
+/// engine returned no per-word data.
+fn scrub_token(mut tok: Token, rec_confidence: f32) -> Option<Token> {
     // W3
     let has_alnum = tok.text.chars().any(char::is_alphanumeric);
-    if !has_alnum && !tok.text.chars().all(|c| EXPRESSIVE.contains(c)) {
+    let confidence = tok.word.as_ref().map_or(rec_confidence, |w| w.confidence);
+    let grawlix = !has_alnum && is_grawlix(&tok.text) && confidence >= GRAWLIX_MIN_CONF;
+    if !has_alnum && !grawlix && !tok.text.chars().all(|c| EXPRESSIVE.contains(c)) {
         return None;
     }
-    // W4
-    let stripped = tok.text.trim_matches(|c| HARD_JUNK.contains(c));
+    // W4 (a grawlix is made of the very symbols W4 strips)
+    let stripped = if grawlix {
+        tok.text.as_str()
+    } else {
+        tok.text.trim_matches(|c| HARD_JUNK.contains(c))
+    };
     // W5
     let filtered: String = stripped
         .chars()
@@ -357,11 +479,28 @@ mod tests {
     // ── W2 (hyphen join) + W6 (whitespace) ──
 
     #[test]
-    fn joins_hyphenated_line_breaks() {
-        assert_eq!(
-            clean(rec("SOME HYPH-\nENATED TEXT"), Language::Western).text,
-            "SOME HYPHENATED TEXT"
-        );
+    fn line_end_hyphen_joins_and_is_kept() {
+        for (input, want) in [
+            ("SPIDER-\nMAN", "SPIDER-MAN"),
+            ("THE SPIDER-\nMAN IS HERE", "THE SPIDER-MAN IS HERE"),
+            ("Spider-\nman", "Spider-man"),
+            // U+2010 is written as an ASCII hyphen, which W5 keeps.
+            ("SPIDER\u{2010}\nMAN", "SPIDER-MAN"),
+            // The accepted cost: a word split across lines keeps its hyphen.
+            ("WON-\nDERFUL", "WON-DERFUL"),
+        ] {
+            assert_eq!(clean(rec(input), Language::Western).text, want, "{input}");
+        }
+    }
+
+    #[test]
+    fn double_dash_at_line_end_is_an_interruption() {
+        for (input, want) in [
+            ("WAIT--\nNO", "WAIT-- NO"),
+            ("I CAN'T--\nLOOK OUT!", "I CAN'T-- LOOK OUT!"),
+        ] {
+            assert_eq!(clean(rec(input), Language::Western).text, want, "{input}");
+        }
     }
 
     #[test]
@@ -442,14 +581,122 @@ mod tests {
         second.ymin = 12.0;
         second.ymax = 22.0;
         let out = clean(rec_with_words(vec![first, second]), Language::Western);
-        assert_eq!(out.text, "HYPHEN");
+        assert_eq!(out.text, "HYPH-EN");
         let words = out.words.expect("words");
         assert_eq!(words.len(), 1);
-        assert_eq!(words[0].text, "HYPHEN");
+        assert_eq!(words[0].text, "HYPH-EN");
         assert!((words[0].confidence - 0.7).abs() < 1e-6);
         assert!((words[0].xmin - 2.0).abs() < 1e-6);
         assert!((words[0].xmax - 20.0).abs() < 1e-6);
         assert!((words[0].ymax - 22.0).abs() < 1e-6);
+    }
+
+    // ── W1b (pronoun I) ──
+
+    #[test]
+    fn lone_bar_between_words_is_the_pronoun() {
+        for (input, want) in [
+            ("WHAT DO | DO NOW?", "WHAT DO I DO NOW?"),
+            ("SO | SAID NO", "SO I SAID NO"),
+            ("and | said", "and I said"),
+        ] {
+            assert_eq!(clean(rec(input), Language::Western).text, want, "{input}");
+        }
+    }
+
+    #[test]
+    fn bar_before_a_contraction_is_the_pronoun() {
+        for (input, want) in [
+            ("|'M FINE", "I'M FINE"),
+            ("|'LL GO", "I'LL GO"),
+            ("WE KNOW |'VE TRIED", "WE KNOW I'VE TRIED"),
+            ("|'D SAY SO", "I'D SAY SO"),
+            ("|’M HERE", "I’M HERE"),
+            ("|'m fine", "I'm fine"),
+            ("YES, |'M!", "YES, I'M!"),
+            // At the start of a line too: `|'M` cannot be border debris.
+            ("HELLO\n|'M BACK", "HELLO I'M BACK"),
+        ] {
+            assert_eq!(clean(rec(input), Language::Western).text, want, "{input}");
+        }
+    }
+
+    #[test]
+    fn bars_that_are_balloon_borders_are_still_dropped() {
+        for (input, want) in [
+            // At a line edge: the border position.
+            ("| HELLO THERE |", "HELLO THERE"),
+            ("HELLO\n| THERE", "HELLO THERE"),
+            ("HELLO |\nTHERE", "HELLO THERE"),
+            // Glued to other symbols.
+            ("HELLO |~ THERE", "HELLO THERE"),
+            ("HELLO || THERE", "HELLO THERE"),
+            ("HELLO |_ THERE", "HELLO THERE"),
+            // Not a word on both sides.
+            ("HELLO | !!", "HELLO !!"),
+            // Not one of the contractions.
+            ("|'MA", "'MA"),
+            ("|'S", "'S"),
+        ] {
+            assert_eq!(clean(rec(input), Language::Western).text, want, "{input}");
+        }
+    }
+
+    #[test]
+    fn low_confidence_bar_is_dropped_before_the_pronoun_rule() {
+        let r = rec_with_words(vec![
+            word("SO", 0.9, 0),
+            word("|", 0.5, 0), // symbol-only below SYMBOL_WORD_MIN_CONF (W1)
+            word("SAID", 0.9, 0),
+        ]);
+        assert_eq!(clean(r, Language::Western).text, "SO SAID");
+        let r = rec_with_words(vec![
+            word("SO", 0.9, 0),
+            word("|", 0.8, 0),
+            word("SAID", 0.9, 0),
+        ]);
+        let out = clean(r, Language::Western);
+        assert_eq!(out.text, "SO I SAID");
+        assert_eq!(out.words.unwrap()[1].text, "I");
+    }
+
+    // ── W3 (grawlix) ──
+
+    #[test]
+    fn grawlix_is_kept_when_confident() {
+        for (input, want) in [
+            ("WHAT THE #@$%!", "WHAT THE #@$%!"),
+            ("@#$%&!", "@#$%&!"),
+            ("YOU *#@!", "YOU *#@!"),
+        ] {
+            assert_eq!(clean(rec(input), Language::Western).text, want, "{input}");
+        }
+        let r = rec_with_words(vec![word("OH", 0.9, 0), word("#@$%!", 0.7, 0)]);
+        assert_eq!(clean(r, Language::Western).text, "OH #@$%!");
+    }
+
+    #[test]
+    fn grawlix_lookalikes_and_low_confidence_runs_are_dropped() {
+        let low = Recognition {
+            text: "OH #@$%!".to_owned(),
+            confidence: 0.4,
+            words: None,
+        };
+        assert_eq!(clean(low, Language::Western).text, "OH");
+        for (input, want) in [
+            // Too short.
+            ("OH #@", "OH"),
+            // One repeated symbol is not swearing.
+            ("OH @@@", "OH"),
+            ("OH ***", "OH"),
+            // Border debris is not grawlix.
+            ("OH ~|'_", "OH"),
+            ("OH ~~~", "OH"),
+            // Grawlix glued to border junk is not a pure grawlix run.
+            ("OH |#@$", "OH"),
+        ] {
+            assert_eq!(clean(rec(input), Language::Western).text, want, "{input}");
+        }
     }
 
     // ── W7 (empty-out guard) + raw_text ──

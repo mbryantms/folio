@@ -47,9 +47,11 @@ pub const CACHE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// response semantics. Old-version keys age out via [`CACHE_TTL`] —
 /// no flush job needed.
 ///
-/// History: v2 = Otsu/polarity/padding preprocessing + postprocess
-/// cleanup (OCR rework 1.0); v1 = unversioned launch shape.
-pub const OCR_RESULT_VERSION: u32 = 2;
+/// History: v3 = cleanup reads `|` as the pronoun `I`, keeps the hyphen
+/// of a line-end join and the double dash of an interruption, keeps
+/// confident grawlix; v2 = Otsu/polarity/padding preprocessing +
+/// postprocess cleanup (OCR rework 1.0); v1 = unversioned launch shape.
+pub const OCR_RESULT_VERSION: u32 = 3;
 
 /// Build the Redis key for one cache entry. Public so tests can
 /// pre-seed entries without going through the full handler path.
