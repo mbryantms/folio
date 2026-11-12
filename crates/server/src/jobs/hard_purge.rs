@@ -52,7 +52,15 @@
 //! `validate_library` runs again before every DELETE chunk, so a share that
 //! unmounts mid-run stops the deletes.
 //! Duplicates-page removals (deliberate; the file is on disk by definition)
-//! are purged without the stat.
+//! are purged without the stat. One mapping, [`decide`], turns each disk
+//! answer into the action for issues and series alike.
+//!
+//! **Bounded, but never stuck.** Candidate issues are read oldest
+//! confirmation first in keyset pages on `(removal_confirmed_at, id)`, and
+//! at most [`MAX_ISSUES_PER_LIBRARY_PER_RUN`] are deleted per library per
+//! run. Kept rows cost no budget, so unknown rows (which stay confirmed, at
+//! the front of the order) never stop a run from reaching the purgeable
+//! rows behind them.
 //!
 //! **Series** are purged only when confirmed-removed past the same window
 //! **and** left with no issue rows at all (any state). `issues.series_id`
@@ -74,7 +82,8 @@
 
 use crate::library::event_log::{self, Action, Category, NewEvent, Severity};
 use crate::library::reconcile::{
-    KeptRows, MAX_SERIES_RESCANS_PER_RUN, Presence, PresenceProbe, library_ready_for_sweep,
+    KeptRows, MAX_SERIES_RESCANS_PER_RUN, PRESENCE_BATCH, Presence, PresenceProbe,
+    library_ready_for_sweep,
 };
 use crate::state::AppState;
 use chrono::{DateTime, Duration, FixedOffset, Utc};
@@ -90,10 +99,19 @@ use uuid::Uuid;
 /// `soft_delete_days × multiplier`.
 pub const MIN_PURGE_WINDOW_DAYS: i64 = 1;
 
-/// Max issue rows purged per library per run. A backlog (first run after an
-/// upgrade on a high-churn library) drains over successive days instead of
-/// one unbounded run.
-pub const MAX_ISSUES_PER_LIBRARY_PER_RUN: i64 = 5_000;
+/// Max issue rows **deleted** per library per run. A backlog (first run
+/// after an upgrade on a high-churn library) drains over successive days
+/// instead of one unbounded run of deletes, exports and cascades.
+///
+/// It counts deletes, not candidates examined: the candidates are read in
+/// keyset pages of [`PRESENCE_BATCH`] on `(removal_confirmed_at, id)`, and a
+/// row the run keeps (file present, or a disk that will not answer) costs
+/// one stat and no budget. So a run stops either after this many deletes or
+/// at the end of the library's candidates, and kept rows at the front of the
+/// order can no longer hold the rows behind them back: every run reaches the
+/// oldest purgeable rows, and each run that stops early has deleted this many
+/// of them.
+pub const MAX_ISSUES_PER_LIBRARY_PER_RUN: usize = 5_000;
 
 /// Rows per `DELETE … WHERE id IN (…)` statement (one transaction each).
 const DELETE_CHUNK: usize = 500;
@@ -134,6 +152,48 @@ const CONFIRMED_PAST_CUTOFF: &str = "removed_at IS NOT NULL \
 /// Series-side guard: no issue rows of any state remain.
 const SERIES_HAS_NO_ISSUES: &str =
     "NOT EXISTS (SELECT 1 FROM issues i WHERE i.series_id = series.id)";
+
+/// Paging bounds for the issue purge. [`Default`] is the production values;
+/// tests pass small ones through [`run_with_limits`].
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PurgeLimits {
+    /// Candidate issue rows read (and stat-ed) per keyset page.
+    pub page: usize,
+    /// Most issue rows deleted per library per run.
+    pub max_issue_deletes: usize,
+}
+
+impl Default for PurgeLimits {
+    fn default() -> Self {
+        Self {
+            page: PRESENCE_BATCH,
+            max_issue_deletes: MAX_ISSUES_PER_LIBRARY_PER_RUN,
+        }
+    }
+}
+
+/// What the purge does with one candidate, given what the disk said.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Decision {
+    /// Really gone: delete the row.
+    Purge,
+    /// Back on disk: keep the row, clear its confirmation, rescan its series.
+    KeepUnconfirm,
+    /// The disk would not say: keep the row exactly as it is, confirmed.
+    KeepConfirmed,
+}
+
+/// The one mapping from a probe answer to the purge's action, shared by the
+/// issue and series purges. Only [`Presence::Absent`] (the not-found class,
+/// see [`Presence`]) ever leads to a delete.
+fn decide(presence: Presence) -> Decision {
+    match presence {
+        Presence::Absent => Decision::Purge,
+        Presence::Present => Decision::KeepUnconfirm,
+        Presence::Unknown => Decision::KeepConfirmed,
+    }
+}
 
 /// Totals for one sweep.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -183,6 +243,17 @@ pub async fn run_with(
     multiplier: u32,
     now: DateTime<FixedOffset>,
 ) -> anyhow::Result<PurgeStats> {
+    run_with_limits(state, multiplier, now, PurgeLimits::default()).await
+}
+
+/// [`run_with`] with explicit paging bounds (tests).
+#[doc(hidden)]
+pub async fn run_with_limits(
+    state: &AppState,
+    multiplier: u32,
+    now: DateTime<FixedOffset>,
+    limits: PurgeLimits,
+) -> anyhow::Result<PurgeStats> {
     let mut stats = PurgeStats::default();
     if multiplier == 0 {
         return Ok(stats);
@@ -197,7 +268,7 @@ pub async fn run_with(
             continue;
         }
         let cutoff = now - Duration::days(days);
-        match purge_library(state, &lib, days, cutoff).await {
+        match purge_library(state, &lib, days, cutoff, limits).await {
             Ok(lib_stats) => {
                 if lib_stats.issues > 0 || lib_stats.series > 0 {
                     stats.libraries += 1;
@@ -271,10 +342,11 @@ async fn purge_library(
     lib: &library::Model,
     window_days: i64,
     cutoff: DateTime<FixedOffset>,
+    limits: PurgeLimits,
 ) -> anyhow::Result<PurgeStats> {
     let probe = PresenceProbe::for_library(lib);
     let mut kept = KeptRows::default();
-    let result = purge_rows(state, lib, &probe, window_days, cutoff, &mut kept).await;
+    let result = purge_rows(state, lib, &probe, window_days, cutoff, limits, &mut kept).await;
     // Rows kept before an abort are still rescanned and reported.
     let outcome = kept
         .finish(state, lib.id, "Hard purge", MAX_SERIES_RESCANS_PER_RUN)
@@ -301,9 +373,11 @@ async fn purge_rows(
     probe: &PresenceProbe,
     window_days: i64,
     cutoff: DateTime<FixedOffset>,
+    limits: PurgeLimits,
     kept: &mut KeptRows,
 ) -> anyhow::Result<(u64, u64, bool)> {
-    let (issues, aborted) = purge_issues(state, lib, probe, window_days, cutoff, kept).await?;
+    let (issues, aborted) =
+        purge_issues(state, lib, probe, window_days, cutoff, limits, kept).await?;
     if aborted {
         return Ok((issues, 0, true));
     }
@@ -338,44 +412,104 @@ where
     Ok(())
 }
 
+/// Walk the library's candidates in keyset pages on
+/// `(removal_confirmed_at, id)`, oldest confirmation first, deleting what is
+/// really gone until [`PurgeLimits::max_issue_deletes`] rows were sent to the
+/// `DELETE` or the candidates run out. Kept rows cost no budget, so they
+/// never stop the walk from reaching the purgeable rows behind them.
 async fn purge_issues(
     state: &AppState,
     lib: &library::Model,
     probe: &PresenceProbe,
     window_days: i64,
     cutoff: DateTime<FixedOffset>,
+    limits: PurgeLimits,
     kept: &mut KeptRows,
 ) -> anyhow::Result<(u64, bool)> {
     let db = &state.db;
-    let library_id = lib.id;
-    let candidates = IssueCandidate::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        format!(
-            "SELECT id, series_id, slug, file_path, content_hash, removed_at, \
-                    removal_confirmed_at, \
-                    EXISTS (SELECT 1 FROM issue_duplicate_decision d \
-                            WHERE d.issue_id = issues.id AND d.decision = 'remove') \
-                      AS duplicate_removed \
-             FROM issues \
-             WHERE library_id = $1 AND {CONFIRMED_PAST_CUTOFF} \
-             ORDER BY removal_confirmed_at, id \
-             LIMIT $3"
-        ),
-        [
-            library_id.into(),
-            cutoff.into(),
-            MAX_ISSUES_PER_LIBRARY_PER_RUN.into(),
-        ],
-    ))
-    .all(db)
-    .await?;
-    if candidates.is_empty() {
-        return Ok((0, false));
-    }
+    let page_size = limits.page.max(1);
+    let mut budget = limits.max_issue_deletes;
+    let mut after: Option<(DateTime<FixedOffset>, String)> = None;
+    let mut purged = 0u64;
+    while budget > 0 {
+        let page = issue_candidate_page(db, lib.id, cutoff, after.as_ref(), page_size).await?;
+        let Some(last) = page.last() else {
+            break;
+        };
+        let full_page = page.len() == page_size;
+        after = Some((last.removal_confirmed_at, last.id.clone()));
 
-    // Stat guard: only a file that is really gone is deleted. Present: kept,
-    // confirmation cleared, series rescanned. Unknown: kept as it is.
-    let to_stat: Vec<((String, Uuid), String)> = candidates
+        let mut to_purge = settle_issue_page(db, lib.id, cutoff, probe, page, kept).await?;
+        // The rows past the budget stay confirmed for the next run, which
+        // reaches them first among the purgeable ones (oldest first).
+        to_purge.truncate(budget);
+        budget -= to_purge.len();
+        let (n, aborted) = delete_issues(state, lib, window_days, cutoff, to_purge).await?;
+        purged += n;
+        if aborted {
+            return Ok((purged, true));
+        }
+        if !full_page {
+            break;
+        }
+    }
+    Ok((purged, false))
+}
+
+/// One keyset page of confirmed-past-cutoff issue candidates after `after`.
+async fn issue_candidate_page(
+    db: &DatabaseConnection,
+    library_id: Uuid,
+    cutoff: DateTime<FixedOffset>,
+    after: Option<&(DateTime<FixedOffset>, String)>,
+    limit: usize,
+) -> anyhow::Result<Vec<IssueCandidate>> {
+    let select = format!(
+        "SELECT id, series_id, slug, file_path, content_hash, removed_at, \
+                removal_confirmed_at, \
+                EXISTS (SELECT 1 FROM issue_duplicate_decision d \
+                        WHERE d.issue_id = issues.id AND d.decision = 'remove') \
+                  AS duplicate_removed \
+         FROM issues \
+         WHERE library_id = $1 AND {CONFIRMED_PAST_CUTOFF}"
+    );
+    let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+    let stmt = match after {
+        None => Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            format!("{select} ORDER BY removal_confirmed_at, id LIMIT $3"),
+            [library_id.into(), cutoff.into(), limit.into()],
+        ),
+        Some((at, id)) => Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            format!(
+                "{select} AND (removal_confirmed_at, id) > ($4, $5) \
+                 ORDER BY removal_confirmed_at, id LIMIT $3"
+            ),
+            [
+                library_id.into(),
+                cutoff.into(),
+                limit.into(),
+                (*at).into(),
+                id.clone().into(),
+            ],
+        ),
+    };
+    Ok(IssueCandidate::find_by_statement(stmt).all(db).await?)
+}
+
+/// Stat one page and settle its kept rows ([`decide`]); returns the rows to
+/// delete, in page order. Present: kept, confirmation cleared, series
+/// rescanned. Unknown: kept as it is. Duplicates-page removals skip the stat.
+async fn settle_issue_page(
+    db: &DatabaseConnection,
+    library_id: Uuid,
+    cutoff: DateTime<FixedOffset>,
+    probe: &PresenceProbe,
+    page: Vec<IssueCandidate>,
+    kept: &mut KeptRows,
+) -> anyhow::Result<Vec<IssueCandidate>> {
+    let to_stat: Vec<((String, Uuid), String)> = page
         .iter()
         .filter(|c| !c.duplicate_removed)
         .map(|c| ((c.id.clone(), c.series_id), c.file_path.clone()))
@@ -383,14 +517,14 @@ async fn purge_issues(
     let mut present_ids: Vec<String> = Vec::new();
     let mut keep: HashSet<String> = HashSet::new();
     for ((id, series_id), presence) in probe.files(to_stat).await? {
-        match presence {
-            Presence::Absent => {}
-            Presence::Present => {
+        match decide(presence) {
+            Decision::Purge => {}
+            Decision::KeepUnconfirm => {
                 kept.rescan.insert(series_id);
                 keep.insert(id.clone());
                 present_ids.push(id);
             }
-            Presence::Unknown => {
+            Decision::KeepConfirmed => {
                 keep.insert(id.clone());
                 kept.unknown_issues.push(id);
             }
@@ -400,14 +534,23 @@ async fn purge_issues(
         unconfirm(db, "issues", library_id, cutoff, &present_ids).await?;
         kept.present_issues.extend(present_ids);
     }
-    let candidates: Vec<IssueCandidate> = candidates
-        .into_iter()
-        .filter(|c| !keep.contains(&c.id))
-        .collect();
+    Ok(page.into_iter().filter(|c| !keep.contains(&c.id)).collect())
+}
+
+/// Export, delete (re-checking the guard inside each transaction) and log
+/// `candidates`. `(rows deleted, aborted)`.
+async fn delete_issues(
+    state: &AppState,
+    lib: &library::Model,
+    window_days: i64,
+    cutoff: DateTime<FixedOffset>,
+    candidates: Vec<IssueCandidate>,
+) -> anyhow::Result<(u64, bool)> {
     if candidates.is_empty() {
         return Ok((0, false));
     }
-
+    let db = &state.db;
+    let library_id = lib.id;
     let ids: Vec<String> = candidates.iter().map(|c| c.id.clone()).collect();
     let markers = count_by(db, "markers", "issue_id", &ids).await?;
     let progress = count_by(db, "progress_records", "issue_id", &ids).await?;
@@ -539,10 +682,10 @@ async fn purge_series(
     let presence = probe.folders(folders, HashSet::new()).await?;
     let mut present_ids: Vec<Uuid> = Vec::new();
     for (id, p) in &presence {
-        match p {
-            Presence::Absent => {}
-            Presence::Present => present_ids.push(*id),
-            Presence::Unknown => {
+        match decide(*p) {
+            Decision::Purge => {}
+            Decision::KeepUnconfirm => present_ids.push(*id),
+            Decision::KeepConfirmed => {
                 kept.unknown_series.insert(*id);
             }
         }
@@ -554,7 +697,11 @@ async fn purge_series(
     }
     let candidates: Vec<SeriesCandidate> = candidates
         .into_iter()
-        .filter(|c| presence.get(&c.id).is_none_or(|p| *p == Presence::Absent))
+        .filter(|c| {
+            presence
+                .get(&c.id)
+                .is_none_or(|p| decide(*p) == Decision::Purge)
+        })
         .collect();
     if candidates.is_empty() {
         return Ok((0, false));
@@ -661,8 +808,8 @@ fn log_kept(library_id: Uuid, kind: &str, candidates: usize, deleted: usize) {
 
 /// `$start, $start+1, …` — `n` positional placeholders for an `IN (…)` list.
 /// The workspace's sea-orm build has no `postgres-array` feature, so ids are
-/// bound one parameter each (chunks stay ≤ [`DELETE_CHUNK`] /
-/// [`MAX_ISSUES_PER_LIBRARY_PER_RUN`], far under the 65535 bind cap).
+/// bound one parameter each (chunks stay ≤ [`DELETE_CHUNK`] / one candidate
+/// page, [`PRESENCE_BATCH`] in production, far under the 65535 bind cap).
 fn placeholders(start: usize, n: usize) -> String {
     (start..start + n)
         .map(|i| format!("${i}"))
@@ -797,5 +944,133 @@ mod tests {
     fn window_has_a_floor() {
         assert_eq!(window_days(0, 2), Some(MIN_PURGE_WINDOW_DAYS));
         assert_eq!(window_days(-5, 2), Some(MIN_PURGE_WINDOW_DAYS));
+    }
+
+    #[test]
+    fn default_limits_are_the_production_bounds() {
+        let l = PurgeLimits::default();
+        assert_eq!(l.page, PRESENCE_BATCH);
+        assert_eq!(l.max_issue_deletes, MAX_ISSUES_PER_LIBRARY_PER_RUN);
+    }
+
+    #[test]
+    fn only_absent_is_purged() {
+        assert_eq!(decide(Presence::Absent), Decision::Purge);
+        assert_eq!(decide(Presence::Present), Decision::KeepUnconfirm);
+        assert_eq!(decide(Presence::Unknown), Decision::KeepConfirmed);
+    }
+
+    /// A failed stat, through the probe's error mapping, to the decision.
+    fn decide_error(e: std::io::Error) -> Decision {
+        decide(Presence::from_error(&e))
+    }
+
+    #[test]
+    fn missing_file_errors_are_purged() {
+        use std::io::ErrorKind;
+        assert_eq!(decide_error(ErrorKind::NotFound.into()), Decision::Purge);
+        assert_eq!(
+            decide_error(ErrorKind::NotADirectory.into()),
+            Decision::Purge
+        );
+        // ENOENT / ENOTDIR as the OS reports them.
+        assert_eq!(
+            decide_error(std::io::Error::from_raw_os_error(2)),
+            Decision::Purge
+        );
+        assert_eq!(
+            decide_error(std::io::Error::from_raw_os_error(20)),
+            Decision::Purge
+        );
+    }
+
+    #[test]
+    fn permission_denied_is_kept_confirmed() {
+        assert_eq!(
+            decide_error(std::io::ErrorKind::PermissionDenied.into()),
+            Decision::KeepConfirmed
+        );
+        // EACCES / EPERM as the OS reports them.
+        assert_eq!(
+            decide_error(std::io::Error::from_raw_os_error(13)),
+            Decision::KeepConfirmed
+        );
+        assert_eq!(
+            decide_error(std::io::Error::from_raw_os_error(1)),
+            Decision::KeepConfirmed
+        );
+    }
+
+    #[test]
+    fn other_io_errors_are_kept_confirmed() {
+        use std::io::ErrorKind;
+        for kind in [
+            ErrorKind::Other,
+            ErrorKind::TimedOut,
+            ErrorKind::Interrupted,
+            ErrorKind::InvalidInput,
+            ErrorKind::Unsupported,
+        ] {
+            assert_eq!(
+                decide_error(kind.into()),
+                Decision::KeepConfirmed,
+                "{kind:?}"
+            );
+        }
+        // EIO, ELOOP, ENAMETOOLONG, ESTALE, ENOTCONN, EHOSTDOWN (Linux).
+        for errno in [5, 40, 36, 116, 107, 112] {
+            assert_eq!(
+                decide_error(std::io::Error::from_raw_os_error(errno)),
+                Decision::KeepConfirmed,
+                "errno {errno}"
+            );
+        }
+    }
+
+    /// The real probe on a real directory, for the answers a test can
+    /// produce without privileges (no chmod, so it holds under root too).
+    #[cfg(unix)]
+    #[test]
+    fn archive_probe_answers_map_to_decisions() {
+        use crate::library::ignore::IgnoreRules;
+        use crate::library::scanner::enumerate::archive_presence;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let canon = std::fs::canonicalize(root).unwrap();
+        let series = root.join("Series (2020)");
+        std::fs::create_dir_all(&series).unwrap();
+        std::fs::write(series.join("Here 001.cbz"), b"x").unwrap();
+        std::fs::write(root.join("plain-file"), b"x").unwrap();
+        // A folder link that points at itself: every path through it fails
+        // with ELOOP, an error that is not the not-found class.
+        std::os::unix::fs::symlink("Loop", root.join("Loop")).unwrap();
+        let ignore = IgnoreRules::default();
+        let probe = |p: std::path::PathBuf| decide(archive_presence(root, &canon, &p, &ignore));
+
+        assert_eq!(
+            probe(series.join("Here 001.cbz")),
+            Decision::KeepUnconfirm,
+            "exists"
+        );
+        assert_eq!(
+            probe(series.join("Gone 002.cbz")),
+            Decision::Purge,
+            "missing"
+        );
+        assert_eq!(
+            probe(root.join("No Such Folder").join("Gone 003.cbz")),
+            Decision::Purge,
+            "missing folder"
+        );
+        assert_eq!(
+            probe(root.join("plain-file").join("Gone 004.cbz")),
+            Decision::Purge,
+            "a path component is a file (ENOTDIR)"
+        );
+        assert_eq!(
+            probe(root.join("Loop").join("Kept 005.cbz")),
+            Decision::KeepConfirmed,
+            "the disk would not say (ELOOP)"
+        );
     }
 }

@@ -946,7 +946,7 @@ pub enum Presence {
 
 impl Presence {
     /// Map a failed stat: only the not-found class means absent.
-    fn from_error(e: &std::io::Error) -> Self {
+    pub(crate) fn from_error(e: &std::io::Error) -> Self {
         match e.kind() {
             std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory => Self::Absent,
             _ => Self::Unknown,
