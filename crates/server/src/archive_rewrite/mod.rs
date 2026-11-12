@@ -1251,6 +1251,38 @@ pub fn is_backup_name(name: &str) -> bool {
             .is_some_and(crate::library::ignore::is_recognized_archive_ext)
 }
 
+/// The backup slot of `candidate` (a bare file name in the same folder) when
+/// it is a backup of the archive `archive` (a bare file name, the issue's
+/// current file) was converted from: `X.cbr.bak[.n]` or `X.cb7.bak[.n]`
+/// (extension in any case) beside `X.cbz`. A CBR / CB7 converted to CBZ
+/// (scan, page editor, sidecar writeback) keeps its original under its old
+/// name, so the backups built from the current name ([`backup_slot`]) never
+/// include it. `None` for anything else, including the archive's own
+/// backups and a candidate that fails [`is_backup_name`].
+pub fn pre_conversion_backup_slot(archive: &str, candidate: &str) -> Option<i32> {
+    if !is_backup_name(candidate) {
+        return None;
+    }
+    let (base, slot) = match candidate.strip_suffix(".bak") {
+        Some(base) => (base, 0),
+        None => {
+            let (base, n) = candidate.rsplit_once(".bak.")?;
+            (base, n.parse::<i32>().ok()?)
+        }
+    };
+    let base = Path::new(base);
+    let ext = base.extension()?.to_str()?;
+    if !(ext.eq_ignore_ascii_case("cbr") || ext.eq_ignore_ascii_case("cb7")) {
+        return None;
+    }
+    let archive = Path::new(archive);
+    let converted_to_cbz = archive
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("cbz"));
+    (converted_to_cbz && base.file_stem() == archive.file_stem()).then_some(slot)
+}
+
 /// When Folio made the backup described by `meta` (the `lstat` of a file
 /// [`is_backup_name`] accepts), for the retention sweep and the
 /// backup-storage dates. `None` when that cannot be known: the sweep then
@@ -1307,14 +1339,75 @@ fn made_at(ctime: Option<SystemTime>, mtime: Option<SystemTime>) -> Option<Syste
     }
 }
 
+/// What [`restore_latest_backup`] did with the file it replaced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestoreOutcome {
+    /// Where the replaced archive is now: `<target>.bak`, the newest
+    /// backup; the second name `<target>.bak.<hex>.tmp` when the last step
+    /// of the three-step swap failed (see `warning`). `None` when there was
+    /// no archive at `target` to keep.
+    pub kept: Option<PathBuf>,
+    /// Set when the restore happened but the replaced archive could not
+    /// take the `.bak` name: says where it is kept and why.
+    pub warning: Option<String>,
+}
+
 /// Restore the most recent backup (`<target>.bak`) over `target` — the
-/// one-click undo of the last rewrite. The rename is atomic on the same
-/// filesystem, so a crash can't leave `target` half-written. Relative to
-/// the folder handle from the no-follow walk: the `.bak` must be a regular
-/// file and `target` a regular file or missing (a link at either is
-/// refused). Returns `Err(NotFound)` when no `.bak` exists. Higher slots
-/// (`.bak.1`, …) are left untouched (older history stays available).
-pub fn restore_latest_backup(root: &LibraryRoot, target: &Path) -> Result<(), RewriteError> {
+/// one-click undo of the last rewrite — **keeping the file it replaces as
+/// the newest backup**: the restore is a swap of `target` and
+/// `<target>.bak`. Restoring again swaps them back, so a wrong click can
+/// be undone the same way.
+///
+/// Slots: the restored backup leaves slot 0 and the replaced file takes
+/// it, so the number of backups and every older slot (`.bak.1`, …) stay
+/// as they were; nothing is rotated or deleted, and no slot beyond what
+/// was already there is written, whatever the library's
+/// `archive_backup_retain_count`. With zero slots the swap still happens:
+/// the `.bak` being restored exists anyway (left from a higher setting, or
+/// a conversion's backup), the swap leaves one file in its place, and
+/// discarding the replaced archive instead would make the click
+/// unrecoverable. The retention sweep ages the kept file from the restore
+/// (its change time is stamped then). With one or more slots the next
+/// rewrite's rotation applies the slot count as usual; with zero a rewrite
+/// never rotates, so the kept `.bak` stays until the retention sweep
+/// removes it (forever when retention is off).
+///
+/// Relative to the folder handle from the no-follow walk: the `.bak` must
+/// be a regular file and `target` a regular file or missing (a link at
+/// either is refused). Returns `Err(NotFound)` when no `.bak` exists.
+///
+/// **`target` is never missing.** On Linux the swap is one
+/// `renameat2(RENAME_EXCHANGE)`. Where that is not available it takes
+/// three steps: the archive gets a second name (a hard link, or a copy
+/// where links are refused) at `<target>.bak.<hex>.tmp`, the backup is
+/// renamed over the archive (atomic replace), and the second name is
+/// renamed to `.bak`. A failure before the middle step removes the second
+/// name and changes nothing (an error). A failure of the last step is not
+/// an error: the restore has happened, so the outcome says so, with `kept`
+/// naming the second name and `warning` saying why (that name is neither a
+/// staging name nor a backup name, so the startup cleanup and the prune
+/// never touch it).
+pub fn restore_latest_backup(
+    root: &LibraryRoot,
+    target: &Path,
+) -> Result<RestoreOutcome, RewriteError> {
+    restore_latest_backup_with_faults(root, target, true, |_| Ok(()))
+}
+
+/// [`restore_latest_backup`] with a fault hook (tests). `try_exchange =
+/// false` forces the three-step path; the hook sees
+/// [`RewriteStep::BackedUp`] once the replaced archive has its second name
+/// and [`RewriteStep::Swapped`] once the backup is renamed over the
+/// archive. An `Err` from the hook stops the restore right there.
+pub fn restore_latest_backup_with_faults<H>(
+    root: &LibraryRoot,
+    target: &Path,
+    try_exchange: bool,
+    mut fault: H,
+) -> Result<RestoreOutcome, RewriteError>
+where
+    H: FnMut(RewriteStep) -> Result<(), RewriteError>,
+{
     let (dir, name) = open_target(root, target)?;
     let bak = backup_slot_name(&name, 0);
     match dir.kind(&bak)? {
@@ -1328,14 +1421,254 @@ pub fn restore_latest_backup(root: &LibraryRoot, target: &Path) -> Result<(), Re
         EntryKind::Symlink => return Err(RewriteError::Refused(Refusal::Symlink)),
         EntryKind::Other => return Err(RewriteError::Refused(Refusal::NotRegular)),
     }
-    match dir.kind(&name)? {
-        EntryKind::Regular | EntryKind::Missing => {}
-        EntryKind::Symlink => return Err(RewriteError::Refused(Refusal::Symlink)),
-        EntryKind::Other => return Err(RewriteError::Refused(Refusal::NotRegular)),
+    let bak_identity = dir.identity(&bak)?;
+    // A link or anything but a regular file at the archive name is refused.
+    let Some(current) = open_original(&dir, &name, target)? else {
+        // No archive to keep: the backup simply takes the name.
+        dir.rename(&bak, &name)?;
+        dir.sync()?;
+        return Ok(RestoreOutcome {
+            kept: None,
+            warning: None,
+        });
+    };
+    // Both names must still hold what was checked (another writer, or a
+    // link swapped in, stops the restore with nothing changed).
+    let bak_unchanged = |dir: &LibraryDir| -> Result<(), RewriteError> {
+        if dir.kind(&bak)? == EntryKind::Regular && dir.identity(&bak)? == bak_identity {
+            Ok(())
+        } else {
+            Err(RewriteError::Io(io::Error::other(
+                "the backup changed on disk during the restore; nothing was replaced",
+            )))
+        }
+    };
+    confirm_unchanged(&dir, &name, Some(&current))?;
+    bak_unchanged(&dir)?;
+    let swapped = try_exchange && dir.exchange(&bak, &name)?;
+    if !swapped {
+        // Three steps; the archive name holds a file throughout.
+        let hold = staging_name(&bak);
+        link_or_copy(&dir, &name, &hold, &current, None)?;
+        let mut guard = Staged {
+            dir: &dir,
+            identity: dir.identity(&hold).ok(),
+            name: hold.clone(),
+        };
+        fault(RewriteStep::BackedUp)?;
+        confirm_unchanged(&dir, &name, Some(&current))?;
+        bak_unchanged(&dir)?;
+        dir.rename(&bak, &name)?;
+        // From here the second name is the only copy of the replaced
+        // archive: never removed.
+        guard.disarm();
+        // Past the middle step the restore HAS happened: a failure to give
+        // the replaced archive the `.bak` name is reported with the
+        // outcome (where it is kept, and why), not as an error, so the
+        // caller still records the restore, drops its cached reader and
+        // rescans.
+        let renamed = fault(RewriteStep::Swapped).and_then(|()| Ok(dir.rename(&hold, &bak)?));
+        if let Err(e) = renamed {
+            let kept = dir.display(&hold);
+            tracing::error!(
+                kept = %kept.display(),
+                error = %e,
+                "archive restore: restored, but the replaced archive could not take the .bak name",
+            );
+            let warning = format!(
+                "the backup was restored, but the replaced archive could not be renamed to {} \
+                 ({e}); it is kept as {} in the same folder",
+                file_label(&dir.display(&bak)),
+                file_label(&kept),
+            );
+            sync_after_swap(&dir, &name, &mut fault);
+            return Ok(RestoreOutcome {
+                kept: Some(kept),
+                warning: Some(warning),
+            });
+        }
     }
-    dir.rename(&bak, &name)?;
+    stamp_made_now(&dir, &bak);
+    // The swap is done: like the rewrite, a failed folder fsync is logged,
+    // not returned (an error would invite a second click, which swaps back).
+    sync_after_swap(&dir, &name, &mut fault);
+    Ok(RestoreOutcome {
+        kept: Some(dir.display(&bak)),
+        warning: None,
+    })
+}
+
+/// A rename keeps the inode's change time on some filesystems: stamp the
+/// kept archive at `name` so the retention sweep ages it from the restore
+/// (a `chmod` to its own mode sets ctime; nothing else changes).
+/// Best-effort, logged.
+fn stamp_made_now(dir: &LibraryDir, name: &OsStr) {
+    let stamped = dir
+        .open_regular(name)
+        .map_err(|r| io::Error::other(r.to_string()))
+        .and_then(|f| {
+            f.metadata()
+                .and_then(|m| f.set_permissions(m.permissions()))
+        });
+    if let Err(e) = stamped {
+        tracing::warn!(path = %dir.display(name).display(), error = %e, "archive restore: could not stamp the kept archive's change time");
+    }
+}
+
+/// Restore a converted archive from the backup of the file it was converted
+/// from (`X.cbr.bak[.n]` / `X.cb7.bak[.n]` beside `target`, `X.cbz`): the
+/// backup is **rebuilt as a CBZ** by `write_into` (the converter's repack,
+/// `scanner::cbr_convert::rebuild_cbz_into`) into a staging file in the
+/// same folder, which then takes `target`'s name with the same swap rules
+/// as [`restore_latest_backup`]: one `renameat2(RENAME_EXCHANGE)` where
+/// available, else a second name for the current archive (hard link or
+/// copy), the rename of the rebuilt file over `target`, and the move of the
+/// second name to `.bak`. The current archive becomes the newest backup
+/// `<target>.bak`; the archive's own older backups rotate as a rewrite's do
+/// ([`rotate_backups`] with `retain_count`, at least one: a restore always
+/// keeps the file it replaces, so with zero slots the one `.bak` stays until
+/// the retention sweep), so the slot count never grows past the library's.
+/// `source` (a bare file name in `target`'s folder) is read through its
+/// handle and never changed: the original bytes stay there, and the
+/// rotation names only `<target>.bak[.n]`, never `source`.
+///
+/// The rebuild is staged under a [`staging_name`] of `target` (reaped by
+/// [`startup_cleanup`] if the process dies mid-rebuild) and renamed to the
+/// second name `<target>.bak.<hex>.tmp` just before the swap, so after an
+/// exchange the replaced archive is under a name the cleanup never reaps.
+///
+/// `source` must be what [`pre_conversion_backup_slot`] accepts for
+/// `target`'s name (else `InvalidInput`) and a regular file (a link is
+/// refused, a missing one is `NotFound`). Any failure before the rebuilt
+/// file takes the name removes the staging file (and the second name) and
+/// changes nothing else; a write or validation failure of the rebuild
+/// surfaces as [`RewriteError::ArchiveErr`] / [`RewriteError::ValidationFailed`].
+/// Past that point the restore has happened: a failure to rotate or to give
+/// the replaced archive the `.bak` name is reported in
+/// [`RestoreOutcome::warning`], with `kept` naming where it is
+/// (`<target>.bak.<hex>.tmp`, which neither the startup cleanup nor the
+/// prune touches).
+pub fn restore_rebuilt<F, H>(
+    root: &LibraryRoot,
+    target: &Path,
+    source: &OsStr,
+    retain_count: i32,
+    try_exchange: bool,
+    write_into: F,
+    mut fault: H,
+) -> Result<RestoreOutcome, RewriteError>
+where
+    F: FnOnce(&RewriteIo<'_>) -> Result<(), RewriteError>,
+    H: FnMut(RewriteStep) -> Result<(), RewriteError>,
+{
+    if !(0..=MAX_BACKUP_SLOT).contains(&retain_count) {
+        return Err(RewriteError::InvalidRetainCount(retain_count));
+    }
+    let (dir, name) = open_target(root, target)?;
+    let accepted = match (name.to_str(), source.to_str()) {
+        (Some(a), Some(s)) => pre_conversion_backup_slot(a, s).is_some(),
+        _ => false,
+    };
+    if !accepted {
+        return Err(RewriteError::Io(io::Error::new(
+            ErrorKind::InvalidInput,
+            "not a pre-conversion backup of this archive",
+        )));
+    }
+    let Some(backup) = open_original(&dir, source, &dir.display(source))? else {
+        return Err(RewriteError::Io(io::Error::new(
+            ErrorKind::NotFound,
+            "the pre-conversion backup is missing",
+        )));
+    };
+    let current = open_original(&dir, &name, target)?;
+    let bak = backup_slot_name(&name, 0);
+    // A staging name of the archive: a crash mid-rebuild leaves a file the
+    // startup cleanup reaps.
+    let stage = staging_name(&name);
+    let (staging, mut guard) = Staged::create(&dir, &stage)?;
+    let staging_path = dir.display(&stage);
+    write_into(&RewriteIo {
+        source: Some(&backup),
+        staging: &staging,
+        staging_path: &staging_path,
+    })?;
+    staging.sync_all()?;
+    drop(staging);
     dir.sync()?;
-    Ok(())
+    fault(RewriteStep::Staged)?;
+
+    let kept = match &current {
+        None => {
+            confirm_unchanged(&dir, &name, None)?;
+            dir.rename_noreplace(&stage, &name)?;
+            guard.disarm();
+            None
+        }
+        Some(cur) => {
+            confirm_unchanged(&dir, &name, Some(cur))?;
+            // The rebuilt file takes the second name first: after an
+            // exchange that name holds the replaced archive, which the
+            // startup cleanup must never reap.
+            let hold = staging_name(&bak);
+            dir.rename_noreplace(&stage, &hold)?;
+            guard.name = hold.clone();
+            if try_exchange && dir.exchange(&hold, &name)? {
+                guard.disarm();
+                Some(hold)
+            } else {
+                let hold_old = staging_name(&bak);
+                link_or_copy(&dir, &name, &hold_old, cur, None)?;
+                let mut old_guard = Staged {
+                    dir: &dir,
+                    identity: dir.identity(&hold_old).ok(),
+                    name: hold_old.clone(),
+                };
+                fault(RewriteStep::BackedUp)?;
+                confirm_unchanged(&dir, &name, Some(cur))?;
+                dir.rename(&hold, &name)?;
+                guard.disarm();
+                old_guard.disarm();
+                Some(hold_old)
+            }
+        }
+    };
+    let Some(kept) = kept else {
+        sync_after_swap(&dir, &name, &mut fault);
+        return Ok(RestoreOutcome {
+            kept: None,
+            warning: None,
+        });
+    };
+    let placed = fault(RewriteStep::Swapped).and_then(|()| {
+        rotate_backups(&dir, &name, retain_count.max(1))?;
+        Ok(dir.rename(&kept, &bak)?)
+    });
+    if let Err(e) = placed {
+        let held = dir.display(&kept);
+        tracing::error!(
+            kept = %held.display(),
+            error = %e,
+            "archive restore: rebuilt, but the replaced archive could not take the .bak name",
+        );
+        let warning = format!(
+            "the archive was rebuilt from the pre-conversion backup, but the replaced archive \
+             could not be renamed to {} ({e}); it is kept as {} in the same folder",
+            file_label(&dir.display(&bak)),
+            file_label(&held),
+        );
+        sync_after_swap(&dir, &name, &mut fault);
+        return Ok(RestoreOutcome {
+            kept: Some(held),
+            warning: Some(warning),
+        });
+    }
+    stamp_made_now(&dir, &bak);
+    sync_after_swap(&dir, &name, &mut fault);
+    Ok(RestoreOutcome {
+        kept: Some(dir.display(&bak)),
+        warning: None,
+    })
 }
 
 /// Whether `dir` lives on a writable mount — the precondition for any
@@ -1892,10 +2225,28 @@ mod tests {
         rewrite_atomic(&root(&dir), &target, 1, |io| put(io, b"v2")).unwrap();
         assert_eq!(fs::read(&target).unwrap(), b"v2");
 
-        restore_latest_backup(&root(&dir), &target).unwrap();
+        let out = restore_latest_backup(&root(&dir), &target).unwrap();
         assert_eq!(fs::read(&target).unwrap(), b"v1");
-        // The .bak was consumed by the restore.
-        assert!(!target.with_extension("cbz.bak").exists());
+        // The replaced file is kept as the newest backup (ARC-2).
+        let bak = target.with_extension("cbz.bak");
+        assert_eq!(out.kept.as_deref(), Some(bak.as_path()));
+        assert_eq!(fs::read(&bak).unwrap(), b"v2");
+    }
+
+    #[test]
+    fn pre_conversion_backups_are_recognised_by_stem_and_source_format() {
+        let f = pre_conversion_backup_slot;
+        assert_eq!(f("X 001.cbz", "X 001.cbr.bak"), Some(0));
+        assert_eq!(f("X 001.cbz", "X 001.CB7.bak.3"), Some(3));
+        assert_eq!(f("X 001.CBZ", "X 001.Cbr.bak"), Some(0));
+        // Its own backups, another stem, another format, not a backup.
+        assert_eq!(f("X 001.cbz", "X 001.cbz.bak"), None);
+        assert_eq!(f("X 001.cbz", "X 002.cbr.bak"), None);
+        assert_eq!(f("X 001.cbz", "X 001.cbt.bak"), None);
+        assert_eq!(f("X 001.cbz", "X 001.cbr.bak.01"), None);
+        assert_eq!(f("X 001.cbz", "X 001.cbr.bak.txt"), None);
+        // Only a CBZ is ever the product of a conversion.
+        assert_eq!(f("X 001.cbt", "X 001.cbr.bak"), None);
     }
 
     #[test]
