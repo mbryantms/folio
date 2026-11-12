@@ -12,37 +12,42 @@ import {
   CblUpdatesProvider,
   useCblUpdates,
 } from "@/components/cbl/CblRefreshDashboard";
-import { GroupedViewsBoard } from "@/components/saved-views/GroupedViewsBoard";
+import { CblListsContext } from "@/components/cbl/cbl-lists-context";
+import { readingListRows } from "@/components/cbl/ReadingListRows";
+import {
+  GroupedViewsBoard,
+  type BoardRowsPresentation,
+} from "@/components/saved-views/GroupedViewsBoard";
 import { useCblLists } from "@/lib/api/queries";
-import type { CblListView, SavedViewView } from "@/lib/api/types";
+import type { SavedViewView } from "@/lib/api/types";
 import { BatchRefreshProvider } from "@/lib/cbl/use-batch-refresh";
 import type { BoardGroup } from "@/lib/saved-views/view-board";
 
-/** CBL list rows keyed by list id, so each reading-list card can show
- *  stats without its own detail query. `null` until loaded. */
-export const CblListsContext = React.createContext<Map<
-  string,
-  CblListView
-> | null>(null);
+export { CblListsContext };
 
 /**
  * The reading-list board: the caller's own CBL views plus the ones shared
  * with everyone, as a grouped board with the updates feature in its
  * toolbar and an Import CBL action. One body for both homes of the list:
  * the Reading lists tab of Settings → Views and the reader-side `/lists`
- * index. `canImport` drops the import button and dialog for a caller who
- * may not import.
+ * index. Lists render as the board's tree table (`readingListRows`):
+ * folders with roll-ups, a row per list. `canImport` drops the import
+ * button and dialog for a caller who may not import.
+ *
+ * `/me/cbl-lists` and `/me/saved-views` both return every row (no cursor,
+ * no cap), so the roll-ups and the "Most read" sort work on complete data.
  */
 export function ReadingListsBoard({
   views,
   loading,
-  renderCard,
   canImport = true,
+  blurb = "Track an imported CBL reading order.",
 }: {
   views: SavedViewView[];
   loading: boolean;
-  renderCard: (view: SavedViewView) => React.ReactNode;
   canImport?: boolean;
+  /** The toolbar's line; `null` where the page header says it already. */
+  blurb?: string | null;
 }) {
   const cblListsQ = useCblLists();
   const cblListsById = React.useMemo(
@@ -51,6 +56,10 @@ export function ReadingListsBoard({
         ? new Map(cblListsQ.data.items.map((l) => [l.id, l]))
         : null,
     [cblListsQ.data],
+  );
+  const rows = React.useMemo(
+    () => readingListRows(cblListsById),
+    [cblListsById],
   );
   const [importOpen, setImportOpen] = React.useState(false);
   const targets = React.useMemo(
@@ -70,7 +79,8 @@ export function ReadingListsBoard({
             views={views}
             loading={loading}
             onImport={canImport ? () => setImportOpen(true) : null}
-            renderCard={renderCard}
+            rows={rows}
+            blurb={blurb}
           />
         </CblUpdatesProvider>
       </BatchRefreshProvider>
@@ -90,12 +100,14 @@ function Board({
   views,
   loading,
   onImport,
-  renderCard,
+  rows,
+  blurb,
 }: {
   views: SavedViewView[];
   loading: boolean;
   onImport: (() => void) | null;
-  renderCard: (view: SavedViewView) => React.ReactNode;
+  rows: BoardRowsPresentation;
+  blurb: string | null;
 }) {
   const { busy, startBatch } = useCblUpdates();
   const groupMenuExtra = React.useCallback(
@@ -120,7 +132,7 @@ function Board({
       scope="cbl"
       views={views}
       loading={loading}
-      blurb="Track an imported CBL reading order."
+      blurb={blurb}
       noun="list"
       icon={List}
       action={
@@ -134,7 +146,7 @@ function Board({
         </>
       }
       panel={<CblUpdatesPanel />}
-      renderCard={renderCard}
+      rows={rows}
       groupMenuExtra={groupMenuExtra}
       empty={
         onImport
