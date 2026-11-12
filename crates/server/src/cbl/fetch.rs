@@ -146,6 +146,9 @@ pub enum TestSource {
     Body(Vec<u8>),
     /// Never answers; the fetch deadline ends it.
     Stall,
+    /// Fails with this error (a status, a transport failure, a size cap),
+    /// as the vetted fetch would report it.
+    Fail(fn() -> FetchBytesError),
 }
 
 #[cfg(debug_assertions)]
@@ -192,5 +195,6 @@ async fn test_source(
                 .map_err(|_| FetchBytesError::Timeout)
                 .and_then(|()| Err(FetchBytesError::Timeout))
         }
+        TestSource::Fail(make) => Err(make()),
     })
 }

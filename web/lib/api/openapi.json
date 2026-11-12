@@ -17958,6 +17958,13 @@
               "null"
             ]
           },
+          "last_refresh_attempt_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When the last refresh attempt (scheduled or manual) finished,\nwhether or not it succeeded. `None` until the first one."
+          },
           "last_refreshed_at": {
             "type": [
               "string",
@@ -17983,6 +17990,17 @@
           "parsed_name": {
             "type": "string"
           },
+          "refresh_failure": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CblRefreshFailureView",
+                "description": "Set while the list's refreshes are failing; `None` when the last\nattempt succeeded or there has been none. A failure never changes\nthe entries or `last_refreshed_at`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "refresh_schedule": {
             "type": [
               "string",
@@ -18004,6 +18022,50 @@
           },
           "updated_at": {
             "type": "string"
+          }
+        }
+      },
+      "CblRefreshErrorKind": {
+        "type": "string",
+        "description": "Why a reading list's last refresh failed. Each failure path of a refresh\nmaps onto exactly one kind (`server::cbl::refresh::RefreshError::failure`).",
+        "enum": [
+          "unreachable",
+          "http_status",
+          "missing",
+          "address_refused",
+          "too_large",
+          "too_many_entries",
+          "invalid_list",
+          "other"
+        ]
+      },
+      "CblRefreshFailureView": {
+        "type": "object",
+        "description": "Why a list's refreshes are failing. Every field is composed by the\nserver: no remote response text, host or address.",
+        "required": [
+          "kind",
+          "failing_since",
+          "consecutive_failures"
+        ],
+        "properties": {
+          "consecutive_failures": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Failed attempts in a row."
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A short note built from safe values, e.g. `HTTP 503` or\n`over the 4 MiB limit`. `None` when the kind says it all; always\n`None` for `address_refused`."
+          },
+          "failing_since": {
+            "type": "string",
+            "description": "The first failed attempt of the current run of failures."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CblRefreshErrorKind"
           }
         }
       },
@@ -25094,6 +25156,35 @@
           }
         }
       },
+      "IssueCardProgress": {
+        "type": "object",
+        "description": "The caller's own reading progress on one issue card\n(`IssueSummaryView.progress`): the read check and the progress bar a\ncard draws, without the client loading every progress record of the\nuser (`GET /progress`).",
+        "required": [
+          "finished",
+          "page",
+          "percent",
+          "updated_at"
+        ],
+        "properties": {
+          "finished": {
+            "type": "boolean"
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Last viewed page index (0-based)."
+          },
+          "percent": {
+            "type": "number",
+            "format": "double",
+            "description": "0.0–1.0 fraction read."
+          },
+          "updated_at": {
+            "type": "string",
+            "description": "RFC 3339 time of the record's last write. Lets a client tell a\ncard that is older than a write it made since."
+          }
+        }
+      },
       "IssueCastView": {
         "type": "object",
         "description": "The issue's cast and setting from the junction tables\n(`issue_characters` / `issue_teams` / `issue_locations` / `issue_arcs`).",
@@ -26152,6 +26243,17 @@
               "null"
             ],
             "format": "int32"
+          },
+          "progress": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IssueCardProgress",
+                "description": "The caller's own reading progress on this issue, so a card draws\nits read check / progress bar without `GET /progress`. `null`\nwhen the caller has no record (unread); absent on endpoints that\ndon't load it, where clients fall back to `GET /progress`. Never\nanother user's progress."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "series_id": {
             "type": "string"

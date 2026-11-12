@@ -85,7 +85,9 @@ async fn register_prune_auth_sessions(scheduler: &JobScheduler, state: &AppState
 /// supports a small set of canonical schedules (`@hourly`, `@daily`,
 /// `@weekly`, `@monthly`) plus the literal `manual` (which refuses to
 /// auto-fire). Real cron parsing is deferred — the API caps the schedule
-/// to these tokens. Each list's remote fetch has its own budget and the
+/// to these tokens. A list whose refreshes keep failing is retried less
+/// often ([`crate::cbl::refresh::failure_backoff`], up to once a day).
+/// Each list's remote fetch has its own budget and the
 /// whole run is bounded (`cbl::fetch::CBL_SWEEP_BUDGET`); see
 /// [`crate::cbl::refresh::run_sweep`].
 async fn register_cbl_refresh_sweep(
@@ -96,7 +98,7 @@ async fn register_cbl_refresh_sweep(
     let job_result = tokio_cron_scheduler::Job::new_async("0 0 * * * *", move |_uuid, _l| {
         let state = state.clone();
         Box::pin(async move {
-            let due = match find_due_cbl_lists(&state.db).await {
+            let due = match crate::cbl::refresh::due_lists(&state.db, chrono::Utc::now()).await {
                 Ok(d) => d,
                 Err(e) => {
                     tracing::warn!(error = %e, "cbl_refresh sweep: query failed");
@@ -116,42 +118,6 @@ async fn register_cbl_refresh_sweep(
         }
         Err(e) => tracing::error!(error = %e, "scheduler: build cbl_refresh_sweep failed"),
     }
-}
-
-async fn find_due_cbl_lists(
-    db: &sea_orm::DatabaseConnection,
-) -> Result<Vec<uuid::Uuid>, sea_orm::DbErr> {
-    use chrono::Utc;
-    use entity::cbl_list;
-    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-    let now = Utc::now();
-    let rows = cbl_list::Entity::find()
-        .filter(cbl_list::Column::RefreshSchedule.is_not_null())
-        .all(db)
-        .await?;
-    let mut due = Vec::new();
-    for list in rows {
-        let Some(schedule) = list.refresh_schedule.as_deref() else {
-            continue;
-        };
-        let cadence_hours: i64 = match schedule.trim() {
-            "@hourly" => 1,
-            // Cron-shaped strings or named tokens; fall back to weekly
-            // for anything we don't recognize so a typo doesn't disable
-            // refresh entirely.
-            "@daily" => 24,
-            "@weekly" | "0 0 * * 0" => 24 * 7,
-            "@monthly" => 24 * 30,
-            "manual" => continue,
-            _ => 24 * 7,
-        };
-        let last = list.last_refreshed_at.unwrap_or(list.imported_at);
-        let age = now - last.with_timezone(&Utc);
-        if age >= chrono::Duration::hours(cadence_hours) {
-            due.push(list.id);
-        }
-    }
-    Ok(due)
 }
 
 /// M6a: close reading sessions whose last heartbeat is > 5 min stale. Runs

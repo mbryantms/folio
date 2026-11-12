@@ -1143,6 +1143,14 @@ pub struct IssueSummaryView {
     pub special_type: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// The caller's own reading progress on this issue, so a card draws
+    /// its read check / progress bar without `GET /progress`. `null`
+    /// when the caller has no record (unread); absent on endpoints that
+    /// don't load it, where clients fall back to `GET /progress`. Never
+    /// another user's progress.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<crate::api::issue_card::IssueCardProgress>)]
+    pub progress: Option<Option<crate::api::issue_card::IssueCardProgress>>,
 }
 
 /// One credit row from `issue_credits` — the source of truth for who
@@ -4875,11 +4883,12 @@ pub async fn list_issues(
         let has_more = rows.len() as u64 > limit;
         let next_cursor = has_more.then(|| encode_offset_cursor(offset + limit));
         let series_slug = s.slug.clone();
-        let items: Vec<IssueSummaryView> = rows
+        let mut items: Vec<IssueSummaryView> = rows
             .into_iter()
             .take(limit as usize)
             .map(|m| m.into_summary_view(&series_slug))
             .collect();
+        crate::api::issue_card::attach_progress(&app.db, user.id, &mut items).await;
         return Json(IssueListView {
             items,
             next_cursor,
@@ -5060,11 +5069,13 @@ pub async fn list_issues(
     let page: Vec<IssueCardRow> = rows.into_iter().take(limit as usize).collect();
 
     let series_slug = s.slug.clone();
+    let mut items: Vec<IssueSummaryView> = page
+        .into_iter()
+        .map(|m| m.into_summary_view(&series_slug))
+        .collect();
+    crate::api::issue_card::attach_progress(&app.db, user.id, &mut items).await;
     Json(IssueListView {
-        items: page
-            .into_iter()
-            .map(|m| m.into_summary_view(&series_slug))
-            .collect(),
+        items,
         next_cursor,
         total,
     })

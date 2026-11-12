@@ -1697,7 +1697,8 @@ async fn hydrate_entries(
     let issue_by_id: HashMap<String, IssueCardRow> =
         issue_rows.into_iter().map(|i| (i.id.clone(), i)).collect();
 
-    rows.into_iter()
+    let mut entries: Vec<CollectionEntryView> = rows
+        .into_iter()
         .filter_map(|r| {
             let series = r.series_id.and_then(|sid| series_by_id.get(&sid).cloned());
             let issue = r.issue_id.as_deref().and_then(|iid| {
@@ -1728,7 +1729,15 @@ async fn hydrate_entries(
                 issue,
             })
         })
-        .collect()
+        .collect();
+    // The viewer's own read state on the issue cards, one lookup.
+    crate::api::issue_card::attach_progress(
+        &app.db,
+        viewer,
+        entries.iter_mut().filter_map(|e| e.issue.as_mut()),
+    )
+    .await;
+    entries
 }
 
 fn encode_position_cursor(after: i32) -> String {

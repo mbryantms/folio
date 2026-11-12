@@ -1890,6 +1890,7 @@ async fn writes_keyed_on_a_hidden_issue_answer_like_an_unknown_id() {
         created_at: Set(now),
         updated_at: Set(now),
         preserve_canonical_order: Set(false),
+        ..Default::default()
     }
     .insert(&db)
     .await

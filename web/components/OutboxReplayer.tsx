@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import {
+  invalidateIssueCards,
   invalidateRails,
   invalidateSeriesProgress,
 } from "@/lib/api/mutations/rails";
@@ -40,6 +41,8 @@ export function OutboxReplayer({ userId }: { userId?: string }) {
         void client.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(client);
         invalidateSeriesProgress(client);
+        // A replayed write is old news to no tab: redraw mounted cards.
+        invalidateIssueCards(client, { refetchActive: true });
       }),
     );
     const offSession = outbox.register(
