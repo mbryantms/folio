@@ -406,8 +406,8 @@ there afterwards); see
 In the Folio Docker image:
 
 - `eng.traineddata` and `tur.traineddata` are baked into the image at
-  `/app/tessdata/` (the rust-builder stage compiles Tesseract from the
-  verified sources; the verified tessdata is copied into the runtime
+  `/app/tessdata/` (the build compiles Tesseract with the pinned sources
+  in place; the pinned tessdata is copied into the runtime
   image). `TESSDATA_PREFIX`
   defaults to that path.
 - `HOME=/data` so the detector + manga-ocr ONNX caches land under

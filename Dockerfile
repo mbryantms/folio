@@ -60,24 +60,30 @@ RUN cargo install cargo-chef --locked
 # branch) without checking any of them, and skips each download when the
 # target already exists under ~/.tesseract-rs. So fetch the four files
 # here, check each against a pinned SHA-256 (a mismatch fails before
-# anything compiles) and lay them out where the build script looks; it
-# then downloads nothing. Pins, the layout and the update steps are in
+# anything compiles) and lay them out where the build script looks, so
+# its skip-if-present checks find them. Pins, the layout and the update steps are in
 # scripts/docker/tesseract-inputs.sh and
 # docs/dev/dependency-management.md ("tesseract-rs build inputs").
 COPY scripts/docker/tesseract-inputs.sh /usr/local/bin/tesseract-inputs.sh
 RUN sh /usr/local/bin/tesseract-inputs.sh fetch
 COPY --from=planner /work/recipe.json recipe.json
 # Drift guard: fetch the crate sources first (skeleton only, nothing is
-# compiled) and fail if the tesseract-rs build.rs in the registry would
-# download anything other than the pinned archives. Without it a Renovate
-# bump of tesseract-rs would silently compile the old pre-placed sources.
+# compiled; host-target crates only) and fail unless the tesseract-rs
+# build.rs in the registry is the one the pins were made for (download
+# URLs, output directory, skip checks, in-place edits). Without it a
+# Renovate bump of tesseract-rs would silently compile the old
+# pre-placed sources.
 RUN cargo chef cook --release --recipe-path recipe.json --bin server --bin migration --no-build \
-    && cargo fetch \
+    && cargo fetch --target "$(rustc -vV | sed -n 's/^host: //p')" \
     && sh /usr/local/bin/tesseract-inputs.sh check-crate
-# `verify` fails if the build script replaced the placed trees or added
-# tessdata, i.e. compiled or downloaded anything but the verified bytes.
+# `verify-build` checks what it can see after the cook. The placed trees
+# list exactly the pinned entries with the pinned bytes; the three files
+# build.rs edits match their pinned edited form; tessdata/ holds exactly
+# the two pinned files; the static libraries are under ~/.tesseract-rs
+# and newer than the placement; no other source location appeared. It
+# does not tie the libraries to the trees byte for byte (see the docs).
 RUN cargo chef cook --release --recipe-path recipe.json --bin server --bin migration \
-    && sh /usr/local/bin/tesseract-inputs.sh verify
+    && sh /usr/local/bin/tesseract-inputs.sh verify-build /work/target
 
 # ───── Stage 1c: compile the workspace ─────
 FROM deps AS rust-builder
@@ -102,11 +108,11 @@ COPY crates ./crates
 RUN cargo build --release --bin server --bin migration \
     && strip /work/target/release/server /work/target/release/migration
 
-# Same check after the final build (it can re-run the tesseract-rs build
-# script): the sources are still the verified trees, and the tessdata the
-# runtime image copies below is exactly eng + tur at the pinned digests
-# (tessdata_best commit e12c65a9; see scripts/docker/tesseract-inputs.sh).
-RUN sh /usr/local/bin/tesseract-inputs.sh verify
+# Same check after the final build: the tessdata the runtime image copies
+# below is exactly eng + tur at the pinned digests (tessdata_best commit
+# e12c65a9; see scripts/docker/tesseract-inputs.sh), and the trees and
+# libraries are as the cook left them.
+RUN sh /usr/local/bin/tesseract-inputs.sh verify-build /work/target
 
 # ───── Stage 2: tini from Debian apt ─────
 FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS apt-source

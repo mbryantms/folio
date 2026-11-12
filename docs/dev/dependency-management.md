@@ -228,57 +228,105 @@ the `Dockerfile` `deps` stage before `cargo chef cook` and
 - **`fetch`** downloads the same two tag archives and the two
   traineddata files from a pinned `tessdata_best` commit, checks every
   file against its pinned SHA-256 (a mismatch fails the build before
-  anything is unpacked or compiled), unpacks each archive the way the
-  build script does (its single top-level folder becomes
-  `third_party/<name>/`) and records a per-file digest manifest of what
-  it placed;
+  anything is unpacked or compiled), rejects archive entries that are
+  absolute, contain `..` or are symlinks, unpacks each archive the way
+  the build script does (its single top-level folder becomes
+  `third_party/<name>/`), and records for each tree an exact listing
+  (type and path of every entry) and a per-file digest manifest. The
+  digests of those two records are pinned in the script too, so a
+  rewritten record cannot vouch for other bytes.
 - **`check-crate`** runs after the crate sources are fetched (`cargo
-  chef cook --no-build` + `cargo fetch`, nothing compiled) and fails if
-  the registry's tesseract-rs `build.rs` contains any https URL other
-  than the pinned archives and the tessdata base, a language list other
-  than `eng` + `tur`, or no longer has the skip-if-present checks;
-- **`verify`** runs after `cargo chef cook` and again after the final
-  `cargo build`: every placed source file still has its manifest digest
-  (except `src/environ.h` and `prog/makefile.static`, which the build
-  script edits in place), and `tessdata/` holds exactly the two pinned
-  files, which the runtime image copies to `/app/tessdata`.
+  chef cook --no-build` + `cargo fetch --target <host>`, nothing
+  compiled) and fails unless the registry's tesseract-rs `build.rs` is
+  the one the pins were made for: exactly the pinned archive URLs plus
+  the tessdata base and no other https URL, the `eng` + `tur` language
+  list, the whole `get_custom_out_dir` function by digest (so the Linux
+  output directory is still `$HOME/.tesseract-rs`), the
+  skip-if-present checks, and exactly three in-place
+  `std::fs::write(` edits.
+- **`verify-build <target dir>`** runs after `cargo chef cook` and
+  again after the final `cargo build`. It checks that each tree's
+  listing is unchanged (no added file, symlink or changed type), every
+  file matches its manifest digest, and each of the three files the
+  build script edits in place (Leptonica `src/environ.h` and
+  `prog/makefile.static`, Tesseract `CMakeLists.txt`) equals either its
+  pristine digest or its pinned post-edit digest. That digest comes from
+  applying build.rs's exact `str::replace` calls to the pinned sources
+  (`scripts/docker/tesseract-edited-digests.py`). `tessdata/` must hold
+  exactly the two pinned files, which the runtime image copies to
+  `/app/tessdata`. It also requires the four static libraries under
+  `~/.tesseract-rs/{cache,leptonica,tesseract}/` to be newer than the
+  placement. The Tesseract cmake build recorded in the tesseract-rs
+  `OUT_DIR` (`build/CMakeCache.txt`, `CMAKE_HOME_DIRECTORY`) must name
+  the placed tree. `~/.tesseract-rs` must hold nothing but those directories,
+  `tessdata` and `third_party`, and no other `third_party` or
+  `.tesseract-rs` directory may exist under `/root`, `/home` or the
+  tesseract-rs `OUT_DIR`.
 
-What `verify` proves: the build script compiled from the verified trees
-and the image carries only the verified tessdata. If the script had
-fallen back to downloading, it would have had to replace a placed tree
-or add a file, and the check would fail. It does not prove that no
-network request was made, and it cannot cover the two edited Leptonica
-files beyond their presence. The image build cannot run without
-network access (cargo fetches crates and `ort-sys` downloads its
-SHA-256-checked ONNX Runtime binaries), so the build is not network
-isolated.
+What this proves: after the build, the files at the placed paths are
+the pinned bytes (or their pinned edited form), nothing was added to the
+trees, the tessdata the image ships is the pinned pair, the build
+produced its libraries after the placement, and no second source
+location appeared where the build script could have downloaded to. What
+it does not prove:
 
-**When Renovate bumps `tesseract-rs`** and the new `build.rs` names
-other versions, `check-crate` fails the image build. To move the pins:
+- Nothing ties the compiled libraries to those trees byte for byte. The
+  link is the build script's own logic, which `check-crate` pins in the
+  parts that matter, plus the Tesseract CMake cache naming the placed
+  tree (Leptonica shares that build directory, so its record is
+  overwritten).
+- The final `cargo build` re-runs the build script (cargo sees
+  `third_party/` changed during the cook). On that run it finds the
+  libraries in `cache/`, so it neither edits nor rebuilds the sources;
+  the second `verify-build` confirms the state is unchanged.
+- A build script runs as root and could rewrite the scripts and records
+  in the image. The pinned record digests catch a changed record, not a
+  rewritten checker.
+- That no network request was made. The image build cannot run without
+  network access (cargo fetches crates and `ort-sys` downloads its
+  SHA-256-checked ONNX Runtime binaries), so it is not network isolated.
+
+**When Renovate bumps `tesseract-rs`** and the new `build.rs` differs in
+any of the checked parts, `check-crate` fails the image build. To move
+the pins:
 
 1. Copy the new archive URLs from the crate's `build.rs`
    (`~/.cargo/registry/src/*/tesseract-rs-<ver>/build.rs`, the
-   `LEPTONICA_URL` / `TESSERACT_URL` constants) and re-read its
-   skip-if-present logic.
+   `LEPTONICA_URL` / `TESSERACT_URL` constants). Re-read
+   `get_custom_out_dir`, the skip-if-present logic and every
+   `std::fs::write(` edit.
 2. `curl -fsSL -o l.zip <leptonica url> && sha256sum l.zip` (same for
    Tesseract). Download each twice a few minutes apart and compare the
-   digests: GitHub tag archives are expected to be stable, but a changed
-   digest means investigate before pinning.
+   digests. **If the digest of a tag that is already pinned (the same
+   URL) ever changes, stop: do not re-pin. Investigate first** (a
+   retagged release or a tampered archive look exactly like this).
 3. Record the commit each tag points at: `git ls-remote <repo>
    'refs/tags/<tag>*'` (for an annotated tag the `^{}` line is the
    commit); `unzip -z l.zip` prints the same commit.
-4. Update `LEPTONICA_URL` / `LEPTONICA_SHA256` / `TESSERACT_URL` /
-   `TESSERACT_SHA256` and their comments in
-   `scripts/docker/tesseract-inputs.sh`, and the version line in the
-   `Dockerfile` `deps` comment.
+4. Unpack each archive into a scratch `third_party/` and rename its
+   top-level folder to `leptonica` / `tesseract`. Then run `sh
+   scripts/docker/tesseract-inputs.sh tree-digests leptonica
+   <dir>/leptonica` (and `tesseract`) for the `*_LISTING_SHA256` /
+   `*_MANIFEST_SHA256` values, using GNU find. Run `python3
+   scripts/docker/tesseract-edited-digests.py <dir>` for the
+   `EDITED_FILES` lines, after updating its `EDITS` to the new build.rs
+   if those calls changed.
+5. Update the URLs, digests and comments in
+   `scripts/docker/tesseract-inputs.sh` (`CRATE_OUT_DIR_FN_SHA256` /
+   `CRATE_IN_PLACE_WRITES` too if those parts changed and you have
+   reviewed them), and the version line in the `Dockerfile` `deps`
+   comment. A pin-only pull request still builds the image in CI
+   (`scripts/docker/**` is in the `docker` path filter).
 
 **Moving tessdata** (only if wanted; `tessdata_best` `main` has not
 changed since 2024-03-09): `git ls-remote
 https://github.com/tesseract-ocr/tessdata_best refs/heads/main` gives
-the commit; `curl -fsSL -O
+the commit. `curl -fsSL -O
 https://github.com/tesseract-ocr/tessdata_best/raw/<commit>/eng.traineddata`
-(and `tur`) then `sha256sum` gives the digests for `TESSDATA_COMMIT`,
-`ENG_SHA256` and `TUR_SHA256`.
+(and `tur`) followed by `sha256sum` gives the digests for
+`TESSDATA_COMMIT`, `ENG_SHA256` and `TUR_SHA256`. The same rule
+applies: a changed digest for an unchanged commit means stop and
+investigate.
 
 Renovate does not update any of this. The archive versions are dictated
 by the crate's `build.rs`, not chosen independently, and Renovate cannot
@@ -290,7 +338,7 @@ upstream's build script as is: on the first build it downloads the four
 files unchecked into `~/.tesseract-rs/` and reuses them afterwards
 (the directory survives `cargo clean`). The script is upstream's and
 has no hook for a checksum. A developer who wants the verified bytes
-locally can run the same steps by hand (the digests are in
+locally can place the files by hand (the digests are in
 `scripts/docker/tesseract-inputs.sh`) or compare an existing
 `~/.tesseract-rs/tessdata/*.traineddata` with `sha256sum`; the image
 build is the verified path. The CI jobs that compile the `server` crate

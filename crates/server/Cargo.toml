@@ -85,9 +85,10 @@ manga-ocr = { workspace = true }
 hf-hub = { workspace = true }
 # Exclusive, self-removing temp files for OCR model downloads.
 tempfile = "3"
-# Western OCR via vendored Tesseract 5.3.4 + Leptonica 1.84.1 (M2).
-# Build script compiles natively via cmake; cache lives at
-# `~/.tesseract-rs/` and survives `cargo clean`.
+# Western OCR via Tesseract 5.5.2 + Leptonica 1.87.0 built from source
+# by tesseract-rs 0.4.0 (M2). Build script compiles natively via cmake;
+# cache lives at `~/.tesseract-rs/` and survives `cargo clean`. The
+# image build pins those sources (scripts/docker/tesseract-inputs.sh).
 tesseract-rs = { workspace = true }
 webp = { workspace = true }
 fast_image_resize = { workspace = true }
