@@ -13,6 +13,7 @@ postprocess pipeline that ships with the Rust binary.
 // Request
 {
   "page": 0,
+  "region_pct": { "x": 12.5, "y": 9.8, "w": 5.0, "h": 2.6 },
   "region": { "x": 250, "y": 300, "w": 100, "h": 80 },
   "lang": "western",
   "detect": false
@@ -24,13 +25,43 @@ postprocess pipeline that ships with the Rust binary.
   "refined_bbox": { "x": 248, "y": 302, "w": 106, "h": 76 },
   "lang": "western",
   "raw_text": "~POW!|",
-  "words": [{ "text": "POW!", "confidence": 0.93, "x": 252, "y": 305, "w": 90, "h": 60 }]
+  "words": [{ "text": "POW!", "confidence": 0.93, "x": 252, "y": 305, "w": 90, "h": 60 }],
+  "page_w": 1988,
+  "page_h": 3056
 }
 ```
 
+- The region comes as **`region_pct`** (percent 0–100 of the decoded
+  page, floats: the reader's marker representation) or as **`region`**
+  (integer pixels of the decoded page). Exactly one is needed; with
+  both, `region_pct` is used and `region` is ignored (a client may send
+  both while older servers, which only read `region`, are around: the
+  request struct has no `deny_unknown_fields`, so an older server
+  ignores `region_pct`). Neither → 422 `validation` with a `region`
+  field detail.
+- `region_pct` is checked on extraction (`Validated<OcrRequest>`):
+  finite numbers, `w` and `h` above 0, and the box must overlap the page
+  (`x < 100`, `y < 100`, `x + w > 0`, `y + h > 0`); a failure is 422
+  `validation` with `error.details` naming `region_pct.x` … or
+  `region_pct` (the overlap rule). After the decode it is converted with
+  the decoded width and height, each edge rounded to a whole pixel and
+  **clamped** to the page (an overshoot at any edge is cut, not
+  refused); a box that rounds to no whole pixel is 422 `invalid_region`.
+  The client never needs the page size, which the page list cannot
+  always give right (ComicInfo-declared sizes that are stale, EXIF
+  rotations).
+- The result cache keys on the pixel rectangle after conversion, so a
+  `region_pct` request and the equivalent `region` request share an
+  entry. A `region` request is looked up before any page work; a
+  `region_pct` one only after the decode (it needs the size), under the
+  permit — with the decoded-page cache that costs a map lookup.
+- `page_w` / `page_h` (always present) are the decoded page size: the
+  space `refined_bbox` and `words` are in. Cached payloads from before
+  these fields existed are retired with result version 3.
 - `region` is integer-pixel against the decoded page, not the
   archive's claimed dimensions — the handler decodes the page and
-  uses the actual `(width, height)` for the bounds check.
+  uses the actual `(width, height)` for the bounds check (unchanged:
+  `w`/`h` of 0 or a rect past the page is 422 `invalid_region`).
 - `lang` is `"western"` or `"manga"`. **Omitted → server-resolved**:
   `series.text_language` if set, else `manga` when
   `series.reading_direction == "rtl"`, else `western`. The response
@@ -81,7 +112,8 @@ Error codes (envelope `{ "error": { "code", "message" } }`):
 
 | Status | code | When |
 |---|---|---|
-| 422 | `invalid_region` | `w`/`h` is 0 OR rect extends outside the decoded page (POST only) |
+| 422 | `invalid_region` | `region`: `w`/`h` is 0 OR rect extends outside the decoded page; `region_pct`: rounds to no whole pixel (POST only) |
+| 422 | `validation` | `region_pct` not finite, `w`/`h` ≤ 0, or wholly off the page; or no region at all; field-level `error.details` (POST only) |
 | 422 | `invalid_lang` | `lang` not in `western`/`manga` (POST only) |
 | 401 / 403 | (CSRF / auth) | Standard CSRF + session guards |
 | 404 | `not_found` | Issue missing or user lacks library access |
@@ -96,7 +128,8 @@ Error codes (envelope `{ "error": { "code", "message" } }`):
 | 503 | `library_offline` | The file is missing and the library root itself cannot be opened or is empty (an unmounted share); `Retry-After: 30` |
 
 Order of work in both routes: visibility (a hidden issue is the
-unknown-id 404), the result cache (a hit takes no permit), the cheap
+unknown-id 404), the result cache (a hit takes no permit; for a
+`region_pct` request the lookup moves after the decode, see above), the cheap
 checks (encrypted row, missing file, offline library, unreadable archive,
 page past the end, the page entry's listed size over the per-entry cap;
 none waits for a permit, and none reads the page), the models (a
@@ -107,34 +140,70 @@ moved into the blocking read + decode and inference tasks
 a client that disconnects mid-request cannot free it early and start more
 concurrent work than there are permits.
 
+With the permit held, the page comes from the [decoded-page
+cache](#decoded-page-cache) (one decode serves every balloon request on
+that page) or is read and decoded. Detection and recognition run in a
+detached task that owns the permit and writes the detect and result
+caches itself, after releasing the permit: a result that finishes after
+the request is gone (the 60 s route timeout, a client abort) is still
+cached, so the retry is a cache hit instead of a second full detection.
+At most `OCR_MAX_CONCURRENT` detections or recognitions, abandoned or
+not, run at once: each runs only under a permit, and a new request must
+take one first (or get the 503 above). What outlives the permit is one
+Redis write per finished result, each bounded by
+`ocr::cache::CACHE_WRITE_TIMEOUT` (5 s). A detection whose request was
+gone before it finished is counted in `folio_ocr_detect_abandoned_total`;
+on the POST the recognition that would follow it is skipped (nobody is
+waiting), the detection is still cached.
+
 ## Pipeline stages
 
 ```text
-client region (pct → px)
+client region (pct → px, in the browser)
    │
    ▼
-ACL + page decode  ── 404 / 415 fall through here
+visibility (ACL)  ── hidden or unknown issue: 404
    │
    ▼
-Redis cache lookup ── HIT? short-circuits to 200
+Redis result cache ── HIT? 200, no permit taken
    │
    ▼ miss
-detector (comic-text-detector)
+cheap checks (encrypted, missing file, offline library, page range, entry size)
    │
    ▼
-snap to bubble polygon (largest overlap with user rect)
+models ready (first-use download waits here, without a permit)
    │
    ▼
-crop (or fall back to the user's rect if no hit)
+OCR permit (≤ 10 s wait, else 503)
    │
    ▼
-recognizer (Western: Tesseract LSTM ; Manga: manga-ocr)
+decoded-page cache ── miss: read + decode the page (415 on a bad image)
+   │
+   ▼
+region bounds check (422) / region_pct → pixels (clamped)
+   │
+   ▼
+region_pct only: Redis result cache ── HIT? 200
+   │
+   ▼  ── from here on a detached task owning the permit ──
+detect: false (default) ─────────────────┐
+detect: true → detect cache, else the    │
+   detector (comic-text-detector) on the │
+   full page; snap to the box with the   │
+   largest overlap, or keep the user's   │
+   rect if none overlaps                 │
+   │                                     │
+   ▼                                     ▼
+crop → recognizer (Western: Tesseract LSTM ; Manga: manga-ocr)
    │
    ▼
 postprocess (junk-token + confidence cleanup)
    │
    ▼
-Redis cache PUT + 200
+permit released → detect-cache PUT (if the detector ran) + result-cache PUT
+   │
+   ▼
+200 (if the request is still there)
 ```
 
 ### Western preprocessing (inside the recognizer)
@@ -153,12 +222,46 @@ LSTM *substitutes* blacklisted chars instead of omitting them.
 is the single deterministic cleanup pass — this is what keeps
 bubble borders/tails/halftone dots from coming back as stray
 `| ~ ' _` symbols. Western rules in order: per-word confidence
-drop (W1) → hyphenated line-break join (W2) → symbol-only token
-drop sparing expressive punctuation like `!?`/`...` (W3) → edge
-junk strip (W4) → per-char allowlist (W5) → whitespace collapse
-(W6) → empty-out guard (W7) → confidence recompute over kept words
-(W8). The manga path only strips control/zero-width/replacement
-chars — Japanese punctuation is all legitimate output.
+drop (W1) → pronoun `I` (W1b) → line-end hyphen join (W2) →
+symbol-only token drop sparing expressive punctuation like
+`!?`/`...` and confident grawlix (W3) → edge junk strip (W4) →
+per-char allowlist (W5) → whitespace collapse (W6) → empty-out guard
+(W7) → confidence recompute over kept words (W8). The manga path only
+strips control/zero-width/replacement chars — Japanese punctuation is
+all legitimate output.
+
+Rules that keep comic lettering intact (result version 3):
+
+- **W1b, pronoun `I`.** Tesseract usually reads a sans-serif capital I
+  as `|`. A token that is exactly `|` with a word (a token holding a
+  letter) on both sides *on the same line* becomes `I`
+  (`WHAT DO | DO` → `WHAT DO I DO`). A token starting `|'M`, `|'LL`,
+  `|'VE` or `|'D` (straight or curly apostrophe, any case, optionally
+  followed by `!?,.` and the like) becomes `I'M` … anywhere on a line
+  (`|'M FINE` → `I'M FINE`). Everything else keeps the old treatment:
+  a `|` at the start or end of a line (where balloon borders sit) is
+  dropped, `|~`, `||`, `|_` are dropped, `|'S` loses its `|` (`'S`).
+  A `|` scored below 0.60 is still dropped by W1 before this rule
+  sees it. `I` and both apostrophes pass the W5 allowlist.
+- **W2, line-end hyphen.** A line whose last token is a word followed
+  by exactly one hyphen joins the next line's first token when that
+  starts with a letter, and the hyphen stays: `SPIDER-` / `MAN` →
+  `SPIDER-MAN` (a U+2010 hyphen is written as `-`). A double dash is
+  an interruption and is not joined: `WAIT--` / `NO` → `WAIT-- NO`.
+  A lone `-` and a digit on the next line are not joined either
+  (unchanged). **Accepted cost:** a word the letterer really split
+  across lines keeps its hyphen, `WON-` / `DERFUL` → `WON-DERFUL`.
+  Comic lettering rarely splits words; the old rule deleted the hyphen
+  of every compound name that wrapped (`SPIDERMAN`) and merged
+  interruptions (`WAIT-NO`).
+- **W3, grawlix.** A symbol-only token of three or more of
+  `# @ $ % & * ! ?` with at least two different of `# @ $ % & *`
+  (`#@$%!`, `@#$%&!`, `*#@!`) is kept as written (W4 does not strip
+  it) when its confidence is at least 0.60 (the word's own score, or
+  the whole recognition's when Tesseract gave no per-word data). Runs
+  of one repeated symbol (`***`, `@@@`), anything shorter, anything
+  with a border character (`|#@$`), and border junk (`~|'_`) are still
+  dropped.
 
 Thresholds/charsets are documented consts in that file (matcher-
 style: consts + tests now, settings-registry promotion only on
@@ -168,36 +271,65 @@ postprocess requires bumping `OCR_RESULT_VERSION`** in `cache.rs`.
 Code map:
 
 - [`crates/server/src/api/issue_ocr.rs`](../../crates/server/src/api/issue_ocr.rs)
-  — request shapes, ACL, decode, cache plumbing, lang resolution,
-  text-regions endpoint.
+  — request shapes, ACL, permit, decode (through the decoded-page
+  cache), lang resolution, text-regions endpoint.
 - [`crates/server/src/ocr/pipeline.rs`](../../crates/server/src/ocr/pipeline.rs)
   — `detect → snap → crop → recognize → clean`, all inside one
-  `spawn_blocking` so the reactor isn't stalled; also
-  `detect_and_cache_regions` for the text-regions endpoint.
+  `spawn_blocking` so the reactor isn't stalled, in a detached task
+  that also writes the caches; also `detect_and_cache_regions` for the
+  text-regions endpoint. Debug builds carry `test_models`, per-content-
+  hash stand-ins for the detector and recognizers used by the
+  integration tests.
 - [`crates/server/src/ocr/detector.rs`](../../crates/server/src/ocr/detector.rs)
   — `comic-text-detector` singleton (`tokio::sync::OnceCell` +
   `std::sync::Mutex<ComicTextDetector>`).
 - [`crates/server/src/ocr/recognizer/western.rs`](../../crates/server/src/ocr/recognizer/western.rs)
-  — Tesseract via `tesseract-rs`, English-only (`tessdata_best/eng`),
-  preprocessing + per-word `ResultIterator` walk.
+  — Tesseract via `tesseract-rs`, loading `eng` only
+  (`tessdata_best/eng`), preprocessing + per-word `ResultIterator`
+  walk. The `tesseract-rs` build script also downloads
+  `tur.traineddata` (it expects both files), and the image ships it;
+  nothing loads it.
 - [`crates/server/src/ocr/recognizer/manga.rs`](../../crates/server/src/ocr/recognizer/manga.rs)
   — `manga-ocr` (encoder + decoder + vocab ONNX, greedy decode).
 - [`crates/server/src/ocr/postprocess.rs`](../../crates/server/src/ocr/postprocess.rs)
   — pure-function cleanup rules (see above).
 - [`crates/server/src/ocr/cache.rs`](../../crates/server/src/ocr/cache.rs)
-  — Redis-backed result + detect caches, version consts.
+  — Redis-backed result + detect caches, version consts, engine
+  fingerprint.
+- [`crates/server/src/ocr/page_cache.rs`](../../crates/server/src/ocr/page_cache.rs)
+  — in-process decoded-page cache.
 - [`crates/server/src/api/admin_ocr.rs`](../../crates/server/src/api/admin_ocr.rs)
   — `GET /admin/ocr/models` reflection-on-disk endpoint.
 
 ## Cache
 
-Two Redis-backed layers, both fail-open on every operation.
+Two Redis-backed layers, both fail-open on every operation, plus an
+in-process cache of decoded pages.
+
+### Engine fingerprint
+
+Both Redis keys carry a 16-hex fingerprint (BLAKE3, truncated) of what
+decides their payload, computed once per process
+(`ocr::cache::fingerprints`, logged at first use):
+
+- result keys: `OCR_RESULT_VERSION`, `OCR_DETECT_VERSION`, the linked
+  Tesseract version (`TessVersion()`), a BLAKE3 of the
+  `eng.traineddata` file the recognizer loads (same path resolution:
+  `TESSDATA_PREFIX`, else `~/.tesseract-rs/tessdata`; `missing` when
+  absent), and every pinned ONNX file of the detector and manga-ocr
+  (repository, commit, file, SHA-256 from `ocr::models`);
+- detect keys: `OCR_DETECT_VERSION` and the detector pins only.
+
+An image upgrade that changes Tesseract, its language data or a model
+pin therefore rolls the keys by itself; old entries age out via the
+TTL. The version constants are still bumped for changes in Folio's own
+code (preprocessing, cleanup, payload shape).
 
 ### Result cache
 
 Stores the final recognized text per region.
 
-**Key**: `ocr:cache:v{N}:{content_hash}:{page}:{lang}:{d|r}:{region_hash}` —
+**Key**: `ocr:cache:v{N}:{fingerprint}:{content_hash}:{page}:{lang}:{d|r}:{region_hash}` —
 the `{d|r}` byte is `d` when run with the detector enabled, `r` for
 recognizer-only. `v{N}` is `OCR_RESULT_VERSION` — bump it on any
 change that alters what the pipeline would produce for the same
@@ -225,8 +357,8 @@ detector is by far the heaviest part of the pipeline (~3 s on a fast
 CPU, much more on constrained hosts) — caching its output is what
 makes "OCR every bubble on this page" feasible.
 
-**Key**: `ocr:detect:v{N}:{content_hash}:{page}` (`N` =
-`OCR_DETECT_VERSION`)
+**Key**: `ocr:detect:v{N}:{fingerprint}:{content_hash}:{page}` (`N` =
+`OCR_DETECT_VERSION`, detector-only fingerprint)
 
 **Value**: `{page_w, page_h, bboxes: [{xmin, ymin, xmax, ymax,
 confidence, class}]}` in page-pixel coordinates. The page dims ride
@@ -234,16 +366,20 @@ along so the text-regions endpoint can convert to percent on a
 cache hit without re-decoding the page (the v1 payload was a bare
 bbox array; v1 entries deserialize-fail and read as misses).
 
-Flow per OCR call:
+Flow per OCR call with `detect: true` (with `detect: false`, the
+default, steps 3–5 are skipped and the user's rect is recognized
+verbatim):
 
 1. Result-cache lookup. Hit → return.
-2. Decode the page.
+2. Take a permit; get the page from the decoded-page cache or decode it.
 3. Detect-cache lookup. Hit → use cached polygons.
-4. Miss → run detector on the **full page**, cache the polygons.
+4. Miss → run detector on the **full page**.
 5. Pick the polygon whose intersection with the user's rect is
    largest. Fall back to the user's rect verbatim if none overlap.
 6. Recognize the chosen crop.
-7. Write the result cache.
+7. Release the permit; write the detect cache (step 4 ran) and the
+   result cache. These writes happen in the detached task, also when
+   the request is gone.
 
 Pre-v0.3.25, step 3-4 ran the detector over a crop around the user's
 rect, not the full page. The model resizes its input to 1024×1024
@@ -260,6 +396,47 @@ per `(content_hash, …)` but a finite TTL caps Redis size.
   — counter (result cache).
 - `folio_ocr_detect_cache_hits_total` /
   `folio_ocr_detect_cache_misses_total` — counter (detector cache).
+
+### Decoded-page cache
+
+Reading a page's balloons one at a time (a tap per balloon, or the
+page-text panel) sends one request per balloon, and each needs the whole
+decoded page. `ocr::page_cache` keeps decoded pages in process so a page
+is read from the archive and decoded once, not once per balloon.
+
+- **Key**: `(content_hash, page)`, both read from the issue row after
+  the visibility check; nothing a user controls. A rescan that changes
+  the file changes the hash (a miss).
+- **Bound**: `DECODED_PAGE_CACHE_BYTES` = 128 MiB of decoded pixels,
+  counted as width × height × bytes per pixel of the decoded image (a
+  2000 × 3000 page is 18 MB as RGB, 24 MB as RGBA: five to seven
+  pages). Least-recently-used pages are evicted to fit; a page larger
+  than the bound is not cached.
+- **Expiry**: `DECODED_PAGE_IDLE` = 60 s without use. Expired pages are
+  dropped on the next lookup and by a sweep task that runs only while
+  the cache holds pages, so an idle server gives the memory back within
+  90 s.
+- **Single flight**: the first request for a page claims it and decodes
+  it; requests for the same page meanwhile wait for that decode and
+  then find the page. The claim is filled from inside the blocking
+  decode, so it completes even when the claiming request is gone; a
+  failed decode wakes the waiters and the next one decodes.
+- **Order**: visibility, the result cache and the archive checks run on
+  every request before this cache is consulted, and it is consulted
+  only with an OCR permit held. Memory is the bound plus at most one
+  in-flight page per permit; a waiter (holding a permit) waits only on
+  a decode that runs under the other permit and ends. The map's lock
+  is held for map updates only, never with the Tesseract or detector
+  mutexes.
+- **Visibility and timing**: a user who cannot see the issue gets the
+  same 404 before the cache is looked at. A user who can see it may
+  notice that a page answers faster because someone opened it in the
+  last minute (also through another issue with identical bytes); the
+  Redis result and detect caches, keyed the same way, already show
+  that (a warm text-regions call answers in milliseconds), so this adds
+  no new kind of signal.
+- **Metrics**: `folio_ocr_page_cache_hits_total` /
+  `folio_ocr_page_cache_misses_total`.
 
 ## OpenMP threads (`OMP_NUM_THREADS`)
 
@@ -310,10 +487,28 @@ Denied requests increment
 | `folio_ocr_pipeline_seconds` | histogram | `lang` | Wall time, detector + recognize (recorded only on success path) |
 | `folio_ocr_recognize_seconds` | histogram | `lang` | Recognize-only — diff with `pipeline_seconds` exposes detector cost |
 | `folio_ocr_detect_seconds` | histogram | — | Detector-only inference via the text-regions endpoint |
+| `folio_ocr_page_decode_seconds` | histogram | — | Archive read + decode of one page (decoded-page cache misses only) |
+| `folio_ocr_permit_wait_seconds` | histogram | — | Time a request waited for an OCR permit (also recorded when it gave up) |
+| `folio_ocr_busy_total` | counter | — | Requests refused with 503 `service_unavailable` after waiting `OCR_PERMIT_WAIT` (10 s) for a permit |
+| `folio_ocr_detect_abandoned_total` | counter | — | Detections that finished after their request was gone (timeout, abort); each is still cached |
+| `folio_ocr_model_load_seconds` | histogram | `model` | Once per process per model (`detector`, `western`, `manga`): verified download (if needed) + session build |
+| `folio_ocr_model_first_use_seconds` | histogram | `model` | Once per process per model: the first inference after load (session warm-up included) |
+| `folio_ocr_page_cache_hits_total` / `folio_ocr_page_cache_misses_total` | counter | — | Decoded-page cache effectiveness |
 | `folio_rate_limit_denied_total{bucket="ocr"}` | counter | `bucket` | OCR bucket denials (also `bucket="ocr.detect"`) |
 
 All visible at `/metrics`. Operator dashboards reading these should
-key on `lang` to spot manga-OCR-bound vs western-OCR-bound boxes.
+key on `lang` to spot manga-OCR-bound vs western-OCR-bound boxes. No
+metric carries a per-user or per-issue label.
+
+Reading slowness: a high `permit_wait_seconds` with a rising
+`busy_total` means the two permits are saturated (look at
+`detect_seconds` / `recognize_seconds` for what holds them); a high
+`page_decode_seconds` with a low page-cache hit rate means pages are
+large or the cache is too small for the readers at once; a large
+`model_first_use_seconds` beside a small steady-state inference time is
+session warm-up after a restart. Every `*_seconds` histogram shares the
+exporter's buckets (top bucket 10 s), so a cold 50 s detection only
+shows as `+Inf`.
 
 ## Models — auto-download + on-disk inspection
 
@@ -486,6 +681,12 @@ endpoint.
 - Cache hit / miss / lang-scoped key:
   [`crates/server/tests/issue_ocr.rs`](../../crates/server/tests/issue_ocr.rs)
   (M4 section).
+- Permit order (what waits for a permit, what never does):
+  [`crates/server/tests/ocr_permits.rs`](../../crates/server/tests/ocr_permits.rs).
+- Work that outlives its request is cached; the decoded-page cache
+  (one decode per page, a hidden issue still 404s, a new content hash
+  is a miss), with debug-build model stand-ins:
+  [`crates/server/tests/ocr_work.rs`](../../crates/server/tests/ocr_work.rs).
 - Admin endpoint + RequireAdmin:
   [`crates/server/tests/admin_ocr.rs`](../../crates/server/tests/admin_ocr.rs).
 - Recognizer trait + heavy E2E (ignored by default):
@@ -504,9 +705,11 @@ endpoint.
 - manga-ocr real confidence: upstream PR to expose mean token
   probability from the decoder logits (today it's a synthetic
   1.0/0.0).
-- Full-page "read all bubbles" — deferred until reading-order
-  inference (RTL panel flow) is solved; tap-to-OCR makes each
-  bubble one click meanwhile.
+- Server-side "read all bubbles": the reader's page-text panel
+  (`PageTextPanel.tsx`) already reads a whole page, from the client:
+  the text regions, then one OCR request per region in reading order,
+  a couple at a time. A batch route that does this in one request is
+  not built.
 - Background pre-detection at scan time (`issue_text_region`
   table) — deferred; the on-demand + content_hash-keyed Redis
   cache already gives invalidation-on-rescan and warm-cache
