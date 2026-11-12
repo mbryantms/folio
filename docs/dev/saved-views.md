@@ -722,9 +722,13 @@ How to prefetch for a page:
   inline script is added.
 
 When not to: below-the-fold rails stay client-fetched on purpose
-(`LazyRail`), and so does On this day (keyed by the browser's local date)
-and the per-card `/progress` map (unbounded per user, and only the
-`IssueCard` badge reads it, not the cover). A prefetch only pays where the
+(`LazyRail`), and so does On this day (keyed by the browser's local date).
+The card badges need no request of their own: every issue-card list
+embeds the viewer's progress on each card (`IssueSummaryView.progress`),
+and the progress rails carry their own, so no home rail requests the
+unbounded `/progress` map (see
+[reading-progress.md](reading-progress.md#issue-card-badges) for the
+surface list). A prefetch only pays where the
 first paint waits on a client request chain; data the shell already
 fetches, or that is cheap and below the fold, is better left to the client.
 A page that is reached mostly by client navigation with a warm cache pays

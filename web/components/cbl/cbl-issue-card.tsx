@@ -19,7 +19,7 @@ import { QuickReadOverlay } from "@/components/QuickReadOverlay";
 import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
 import { Badge } from "@/components/ui/badge";
 import { useUpsertIssueProgress } from "@/lib/api/mutations";
-import { useUserProgress } from "@/lib/api/queries";
+import { cardBadge, useCardProgress } from "@/lib/api/card-progress";
 import { issueLabel } from "@/lib/format";
 import { issueCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
 import { cn } from "@/lib/utils";
@@ -69,15 +69,10 @@ export function CblIssueCard({
   const heading = issue?.title ?? entry.series_name;
   const router = useRouter();
   const upsertProgress = useUpsertIssueProgress();
-  // Shared progress map — same hook IssueCard / SeriesCard read so the
-  // read-check (finished) and percent bar (in progress) appear here
-  // too. Map is keyed by issue id and dedupes via TanStack.
-  const progress = useUserProgress().data?.get(issue?.id ?? "");
-  const finished = progress?.finished ?? false;
-  const inProgress = !!progress && !finished && progress.percent > 0;
-  const percent = inProgress
-    ? Math.max(0, Math.min(100, Math.round(progress.percent * 100)))
-    : 0;
+  // Same badge source as IssueCard: the card's own `progress`, falling
+  // back to the shared `/progress` map only for a response without it.
+  // A placeholder (unmatched) entry has no issue and asks for nothing.
+  const { finished, inProgress, percent } = cardBadge(useCardProgress(issue));
   const collectionActions = useCoverMenuCollectionActions({
     entry_kind: "issue",
     ref_id: issue?.id ?? "",

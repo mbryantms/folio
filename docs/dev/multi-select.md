@@ -130,7 +130,8 @@ All four hooks:
   enforces this with `400 validation`; the UI shouldn't allow
   selections past those bounds.
 - Invalidate the relevant query keys on success (progress
-  invalidates `queryKeys.userProgress`; collection mutations call
+  invalidates `queryKeys.userProgress` and the card lists via
+  `invalidateIssueCards`; collection mutations call
   `invalidateCollectionEntries` which hits four related keys).
 
 The summary builders are pure functions exported from

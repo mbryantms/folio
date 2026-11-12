@@ -25153,6 +25153,35 @@
           }
         }
       },
+      "IssueCardProgress": {
+        "type": "object",
+        "description": "The caller's own reading progress on one issue card\n(`IssueSummaryView.progress`): the read check and the progress bar a\ncard draws, without the client loading every progress record of the\nuser (`GET /progress`).",
+        "required": [
+          "finished",
+          "page",
+          "percent",
+          "updated_at"
+        ],
+        "properties": {
+          "finished": {
+            "type": "boolean"
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Last viewed page index (0-based)."
+          },
+          "percent": {
+            "type": "number",
+            "format": "double",
+            "description": "0.0–1.0 fraction read."
+          },
+          "updated_at": {
+            "type": "string",
+            "description": "RFC 3339 time of the record's last write. Lets a client tell a\ncard that is older than a write it made since."
+          }
+        }
+      },
       "IssueCastView": {
         "type": "object",
         "description": "The issue's cast and setting from the junction tables\n(`issue_characters` / `issue_teams` / `issue_locations` / `issue_arcs`).",
@@ -26211,6 +26240,17 @@
               "null"
             ],
             "format": "int32"
+          },
+          "progress": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IssueCardProgress",
+                "description": "The caller's own reading progress on this issue, so a card draws\nits read check / progress bar without `GET /progress`. `null`\nwhen the caller has no record (unread); absent on endpoints that\ndon't load it, where clients fall back to `GET /progress`. Never\nanother user's progress."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "series_id": {
             "type": "string"

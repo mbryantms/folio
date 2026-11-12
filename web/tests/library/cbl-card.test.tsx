@@ -6,6 +6,7 @@
  * badge/link mix.
  */
 import { describe, expect, it, vi } from "vitest";
+import type * as CardProgress from "@/lib/api/card-progress";
 import type * as React from "react";
 import Link from "next/link";
 
@@ -25,8 +26,16 @@ const progressState = new Map<
   string,
   { issue_id: string; last_page: number; percent: number; finished: boolean }
 >();
+// `useCardProgress` reads the card's embedded progress and falls back to
+// the shared map; the tree inspection runs outside a QueryClient, so the
+// hook is replaced by a lookup in `progressState` (`cardBadge` is real).
 vi.mock("@/lib/api/queries", () => ({
-  useUserProgress: () => ({ data: progressState }),
+  useUserProgress: () => ({ data: undefined }),
+}));
+vi.mock("@/lib/api/card-progress", async (importOriginal) => ({
+  ...(await importOriginal<typeof CardProgress>()),
+  useCardProgress: (issue?: { id: string }) =>
+    issue ? (progressState.get(issue.id) ?? null) : null,
 }));
 // QuickReadOverlay and CoverMenuButton transitively pull `useRouter`.
 vi.mock("next/navigation", () => ({

@@ -10653,6 +10653,30 @@ export interface components {
             source: string;
         };
         /**
+         * @description The caller's own reading progress on one issue card
+         *     (`IssueSummaryView.progress`): the read check and the progress bar a
+         *     card draws, without the client loading every progress record of the
+         *     user (`GET /progress`).
+         */
+        IssueCardProgress: {
+            finished: boolean;
+            /**
+             * Format: int32
+             * @description Last viewed page index (0-based).
+             */
+            page: number;
+            /**
+             * Format: double
+             * @description 0.0–1.0 fraction read.
+             */
+            percent: number;
+            /**
+             * @description RFC 3339 time of the record's last write. Lets a client tell a
+             *     card that is older than a write it made since.
+             */
+            updated_at: string;
+        };
+        /**
          * @description The issue's cast and setting from the junction tables
          *     (`issue_characters` / `issue_teams` / `issue_locations` / `issue_arcs`).
          */
@@ -11101,6 +11125,7 @@ export interface components {
             number?: string | null;
             /** Format: int32 */
             page_count?: number | null;
+            progress?: components["schemas"]["IssueCardProgress"] | null;
             series_id: string;
             /**
              * @description Parent series name, denormalized so card components can fall back

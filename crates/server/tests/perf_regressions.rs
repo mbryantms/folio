@@ -707,6 +707,10 @@ const MAX_QUERIES_ADMIN_STATS: u64 = 20; // observed ≈ 6
 // The progress summary now shares the list's one grouped query (was two).
 const MAX_QUERIES_SERIES_DETAIL: u64 = 17; // observed 15 (16 before the shared progress query)
 const MAX_QUERIES_ISSUE_DETAIL: u64 = 20; // observed ≈ 9 (parallel try_join set)
+// The series page's issue list. Each card carries the viewer's own
+// progress from ONE `progress_records` primary-key lookup per page
+// (`issue_card::attach_progress`); a per-card lookup would add ~10 here.
+const MAX_QUERIES_SERIES_ISSUES: u64 = 8; // observed 5 (4 before the progress lookup)
 // The pre-PERF-1 shape cost ~3 queries per member (~300 for the 100-member
 // batch below); PERF-1 batched the existence probes but still inserted one
 // row per statement (observed 104 for 100 members, bound 110). WP-8.3 made
@@ -848,6 +852,39 @@ async fn realistic_dataset_endpoints_respond_correctly() {
         snap.taken(),
         MAX_QUERIES_SERIES_DETAIL,
         "/api/series/{slug}",
+    );
+
+    // ── /series/{slug}/issues — the issue cards carry the viewer's own
+    // progress (`seed_progress` finished perf-0's first issue only).
+    let log = start_statement_log();
+    let snap = QueryCount::snapshot(&counter);
+    let (status, body, elapsed) = get(&app, &user, "/api/series/perf-0/issues?limit=60").await;
+    let taken = snap.taken();
+    let statements = stop_statement_log(&log);
+    assert_eq!(status, StatusCode::OK, "series issues: {body}");
+    let cards = body["items"].as_array().expect("items");
+    assert_eq!(cards.len(), 10, "perf-0 has 10 issues: {body}");
+    for card in cards {
+        let progress = card.get("progress").expect("progress field on every card");
+        if card["id"] == series_with_issues[0].1[0].as_str() {
+            assert_eq!(progress["finished"], true, "{card}");
+        } else {
+            assert!(progress.is_null(), "{card}");
+        }
+    }
+    let progress_lookups = statements
+        .iter()
+        .filter(|s| s.contains("progress_records"))
+        .count();
+    assert_eq!(
+        progress_lookups, 1,
+        "one batched progress lookup per page: {statements:#?}"
+    );
+    assert_quick(elapsed, "/api/series/perf-0/issues");
+    assert_query_count(
+        taken,
+        MAX_QUERIES_SERIES_ISSUES,
+        "/api/series/{slug}/issues",
     );
 
     // ── /series/{slug}/issues/{slug} detail — PERF-8 parallelized its
