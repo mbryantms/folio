@@ -27,6 +27,7 @@ Plan: [`~/.claude/plans/runtime-config-admin-1.0.md`](../../../.claude/plans/run
 | `COMIC_GITHUB_TOKEN` | Read by the CBL-catalog refresher on each fetch; not a moveable policy setting (per-deploy credential, not user-visible config). |
 | `COMIC_METRICS_TOKEN` | Bearer token gating `GET /metrics` in production/release builds; a deploy-time scrape credential baked into Prometheus config, not user-visible policy. |
 | `COMIC_METRICS_OPEN` | Explicit production opt-out for unauthenticated `/metrics`; leave unset unless a reverse proxy or network ACL protects the route. |
+| `COMIC_OCR_LEGACY_ENGINES` | **Temporary (one release).** `true` runs the previous text-reading engines (`comic-text-detector` + Tesseract) instead of the current ones, so a deploy can go back without a code revert. Which engines a binary runs is a deploy decision, read once at start; it is removed together with the previous engines. See [ocr.md](ocr.md#engine-switch-comic_ocr_legacy_engines). |
 
 Server-generated cryptographic keys are neither env nor DB: they are files
 under `${COMIC_DATA_PATH}/secrets/` (`pepper`, `jwt-ed25519.key`,
