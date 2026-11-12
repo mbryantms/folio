@@ -4,7 +4,9 @@
  * captions the narrower layouts fold the columns into. Free of React so
  * `tests/library/list-rows.test.ts` can pin them.
  */
-import type { CblStatsView, SavedViewView } from "@/lib/api/types";
+import type { CblListView, CblStatsView, SavedViewView } from "@/lib/api/types";
+import { failureDate, listDateVerb } from "@/lib/cbl/refresh-failure";
+import { formatRelativeDate } from "@/lib/format";
 
 export type RowStats = Pick<
   CblStatsView,
@@ -116,4 +118,39 @@ export function inLibraryLabel(s: RowStats): string {
 export function readLabel(s: RowStats): string {
   if (s.matched <= 0) return NOTHING_TO_READ;
   return `${Math.min(s.read_count, s.matched)} of ${s.matched}`;
+}
+
+type DatedList = Pick<
+  CblListView,
+  "last_refreshed_at" | "imported_at" | "refresh_failure"
+>;
+
+/** The list's own date: its last successful refresh, else its import. */
+export function listDate(list: DatedList | null): string | null {
+  return list ? (list.last_refreshed_at ?? list.imported_at) : null;
+}
+
+/** The In library tooltip: "Updated 3 days ago (9 Nov 2026)" /
+ *  "Imported 12 Mar 2025", in the words the old card used to tell a
+ *  refresh from an import. A list whose refresh is failing says "Last
+ *  updated …" and since when it has been failing, so the date never reads
+ *  as a fresh update. */
+export function listDateTitle(
+  list: DatedList | null,
+  now: Date = new Date(),
+): string | undefined {
+  const iso = listDate(list);
+  const relative = formatRelativeDate(iso, now);
+  if (!list || !iso || !relative) return undefined;
+  const full = new Date(iso).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+  const verb = listDateVerb(list);
+  const date =
+    relative === full ? `${verb} ${full}` : `${verb} ${relative} (${full})`;
+  return list.refresh_failure
+    ? `${date}. Refresh failing since ${failureDate(list.refresh_failure.failing_since, now)}`
+    : date;
 }

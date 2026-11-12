@@ -165,7 +165,8 @@ async fn only_the_work_takes_an_ocr_permit() {
     let _: () = redis
         .set_ex(
             &key,
-            serde_json::json!({ "text": "cached", "confidence": 1.0_f64 }).to_string(),
+            serde_json::json!({ "text": "cached", "confidence": 1.0_f64, "page_w": 64, "page_h": 64 })
+                .to_string(),
             60,
         )
         .await

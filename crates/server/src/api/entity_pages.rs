@@ -1044,9 +1044,11 @@ pub(crate) async fn list_count(
 }
 
 /// Load `issue::Model`-free card rows for `ids`, preserving order, with
-/// series slug + name attached. Used by the JSON issues route.
+/// series slug + name and `viewer`'s own progress attached. Used by the
+/// JSON issues route and the insights' earliest issues.
 pub(crate) async fn issue_cards(
     app: &AppState,
+    viewer: Uuid,
     ids: &[String],
 ) -> Result<Vec<IssueSummaryView>, sea_orm::DbErr> {
     if ids.is_empty() {
@@ -1073,14 +1075,16 @@ pub(crate) async fn issue_cards(
         .collect();
     let mut by_id: HashMap<String, IssueCardRow> =
         rows.into_iter().map(|r| (r.id.clone(), r)).collect();
-    Ok(ids
+    let mut cards: Vec<IssueSummaryView> = ids
         .iter()
         .filter_map(|id| by_id.remove(id))
         .map(|r| {
             let (slug, name) = series_by_id.get(&r.series_id).cloned().unwrap_or_default();
             r.into_summary_view(&slug).with_series_name(name)
         })
-        .collect())
+        .collect();
+    crate::api::issue_card::attach_progress(&app.db, viewer, &mut cards).await;
+    Ok(cards)
 }
 
 // ───────── handler bodies (shared by the four thin modules) ─────────
@@ -1641,7 +1645,7 @@ async fn insights(
     };
     let (keys, _) = issue_page(app, kind, row, visible, &paging).await?;
     let ids: Vec<String> = keys.into_iter().map(|(id, _)| id).collect();
-    let earliest = issue_cards(app, &ids).await?;
+    let earliest = issue_cards(app, user_id, &ids).await?;
 
     Ok(EntityInsightsView {
         issues: issue_count,
@@ -1763,7 +1767,7 @@ pub(crate) async fn issues_handler(
         None
     };
     let ids: Vec<String> = keys.into_iter().map(|(id, _)| id).collect();
-    let items = match issue_cards(app, &ids).await {
+    let items = match issue_cards(app, user.id, &ids).await {
         Ok(v) => v,
         Err(e) => return internal(e, "issue cards"),
     };

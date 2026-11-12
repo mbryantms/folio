@@ -71,6 +71,7 @@ const SOURCE_PPI: i32 = 300;
 /// [`WesternOcr::shared`]; subsequent calls share the same API.
 pub struct WesternOcr {
     api: Mutex<TesseractAPI>,
+    first_use: crate::ocr::FirstUse,
 }
 
 impl WesternOcr {
@@ -78,9 +79,11 @@ impl WesternOcr {
     pub async fn shared() -> anyhow::Result<&'static Self> {
         static CELL: OnceCell<WesternOcr> = OnceCell::const_new();
         CELL.get_or_try_init(|| async {
+            let started = std::time::Instant::now();
             let me = tokio::task::spawn_blocking(Self::new)
                 .await
                 .map_err(|e| anyhow::anyhow!("tesseract init task panicked: {e}"))??;
+            crate::ocr::record_model_load("western", started.elapsed());
             Ok(me)
         })
         .await
@@ -89,9 +92,9 @@ impl WesternOcr {
     fn new() -> anyhow::Result<Self> {
         let api = TesseractAPI::new();
         let tessdata = tessdata_dir()?;
-        api.init(&tessdata, "eng").map_err(|e| {
+        api.init(&tessdata, TESS_LANG).map_err(|e| {
             anyhow::anyhow!(
-                "tesseract init failed (tessdata: {}, lang: eng): {e}",
+                "tesseract init failed (tessdata: {}, lang: {TESS_LANG}): {e}",
                 tessdata.display()
             )
         })?;
@@ -99,12 +102,22 @@ impl WesternOcr {
             .map_err(|e| anyhow::anyhow!("tesseract set_page_seg_mode: {e}"))?;
         Ok(WesternOcr {
             api: Mutex::new(api),
+            first_use: crate::ocr::FirstUse::new(),
         })
     }
 }
 
 impl Recognizer for WesternOcr {
     fn recognize(&self, image: &DynamicImage) -> anyhow::Result<Recognition> {
+        let started = std::time::Instant::now();
+        let out = self.recognize_inner(image)?;
+        self.first_use.record("western", started.elapsed());
+        Ok(out)
+    }
+}
+
+impl WesternOcr {
+    fn recognize_inner(&self, image: &DynamicImage) -> anyhow::Result<Recognition> {
         let prepared = preprocess(image);
         let (width, height) = prepared.dimensions();
         // 1 byte per pixel (8-bit grayscale). bytes_per_line == width.
@@ -283,6 +296,41 @@ fn is_white_on_black(bin: &image::GrayImage) -> bool {
         }
     }
     total > 0 && black * 2 > total
+}
+
+/// The one Tesseract language loaded. The build script also downloads
+/// `tur.traineddata` (it expects both); nothing loads it.
+pub const TESS_LANG: &str = "eng";
+
+/// Identity of the Western engine for the OCR cache keys
+/// (`ocr::cache`): the linked Tesseract version and a BLAKE3 of the
+/// language data file [`WesternOcr`] loads (same path resolution), or
+/// a marker when that file is missing or unreadable. Blocking (hashes a
+/// ~15 MB file); `ocr::cache` calls it once per process, off the async
+/// runtime.
+pub fn engine_identity() -> String {
+    let data = match tessdata_dir() {
+        Ok(dir) => {
+            let path = dir.join(format!("{TESS_LANG}.traineddata"));
+            match blake3_file(&path) {
+                Ok(digest) => digest,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => "missing".to_owned(),
+                Err(e) => format!("unreadable:{:?}", e.kind()),
+            }
+        }
+        Err(_) => "no-tessdata-dir".to_owned(),
+    };
+    format!(
+        "tesseract={};{TESS_LANG}.traineddata={data}",
+        TesseractAPI::version()
+    )
+}
+
+fn blake3_file(path: &std::path::Path) -> std::io::Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = blake3::Hasher::new();
+    std::io::copy(&mut file, &mut hasher)?;
+    Ok(hasher.finalize().to_hex().to_string())
 }
 
 /// Resolve where the build script's `download_tessdata` step stashed

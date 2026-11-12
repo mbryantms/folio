@@ -11,6 +11,8 @@ export const queryKeyPrefixes = {
   series: ["series"] as const,
   /** Every series listing (`queryKeys.seriesList`, one-shot + infinite). */
   seriesList: ["series", "list"] as const,
+  /** Every per-issue read state (`queryKeys.issueProgress`). */
+  issueProgress: ["progress", "issue"] as const,
   /** Every saved-view query: index, detail, results. */
   savedViews: ["saved-views"] as const,
   /** Every home-rail query. */

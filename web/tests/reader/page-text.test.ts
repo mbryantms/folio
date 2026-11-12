@@ -11,10 +11,9 @@ import {
   firstLineOf,
   ocrLangTag,
   pageAltText,
-  readingOrderRegions,
-  runInOrderPool,
   usePageTextPanel,
 } from "@/lib/reader/page-text";
+import { readingOrderRegions, runInOrderPool } from "@/lib/reader/text-regions";
 import {
   KEYBIND_DEFAULTS,
   KEYBIND_LABELS,

@@ -613,9 +613,12 @@ export function Reader({
       reviewMarkersFromEndCard,
     ],
   );
-  // Per-page natural dimensions, populated as pages load. Stored in a
-  // ref so a slider that rebuilds PageImage doesn't trigger a re-render
-  // here — the overlay reads it directly.
+  // Per-page natural dimensions, populated as pages load — but only for
+  // an `<img>` that loaded the original bytes (no `srcSet`): with width
+  // variants the browser's natural size follows the variant and the
+  // layout, not the page. The last source of `resolvePageSize`, after the
+  // server's sizes; the marker editor reads it for Detect text. Stored in
+  // a ref so a slider that rebuilds PageImage doesn't re-render here.
   const pageNaturalSize = useRef<
     Map<number, { width: number; height: number }>
   >(new Map());
@@ -643,8 +646,8 @@ export function Reader({
     });
   }, []);
   const handleNaturalSize = useCallback(
-    (page: number) => (width: number, height: number) => {
-      pageNaturalSize.current.set(page, { width, height });
+    (page: number) => (width: number, height: number, original: boolean) => {
+      if (original) pageNaturalSize.current.set(page, { width, height });
       // The image just decoded and the wrapper jumped from ~0 to full
       // height. If this is the page we just turned to and the reader
       // hasn't scrolled away on purpose, snap the (possibly drifted)
@@ -1703,7 +1706,6 @@ export function Reader({
             onRightZone={onRightZone}
             onChromeZone={toggleChrome}
             onNaturalSize={handleNaturalSize}
-            pageNaturalSize={pageNaturalSize}
             transition={pageTransition}
             zoom={zoom}
             panMetricsRef={panMetricsRef}
@@ -1722,7 +1724,6 @@ export function Reader({
             onRightZone={onRightZone}
             onChromeZone={toggleChrome}
             onNaturalSize={handleNaturalSize}
-            pageNaturalSize={pageNaturalSize}
             transition={pageTransition}
             zoom={zoom}
             overflowing={overflowing}
@@ -1744,7 +1745,13 @@ export function Reader({
         urlVersion={pageUrlVersion}
       />
       {markerEditorMounted ? (
-        <MarkerEditor issueId={issueId} pageNaturalSize={pageNaturalSize} />
+        <MarkerEditor
+          issueId={issueId}
+          pageSizeSources={(page) => ({
+            server: pageDimensions(pages[page]) ?? null,
+            measured: pageNaturalSize.current.get(page) ?? null,
+          })}
+        />
       ) : null}
       {pageTextMounted ? (
         <PageTextPanel
@@ -1836,7 +1843,6 @@ function SinglePageView({
   onRightZone,
   onChromeZone,
   onNaturalSize,
-  pageNaturalSize,
   transition,
   zoom,
   overflowing,
@@ -1856,10 +1862,9 @@ function SinglePageView({
   onLeftZone: () => void;
   onRightZone: () => void;
   onChromeZone: () => void;
-  onNaturalSize: (page: number) => (w: number, h: number) => void;
-  pageNaturalSize: React.RefObject<
-    Map<number, { width: number; height: number }>
-  >;
+  onNaturalSize: (
+    page: number,
+  ) => (w: number, h: number, original: boolean) => void;
   transition: PageTransitionResult;
   /** Transform zoom + pan (audit C4/C9). Pan offset is screen-px. */
   zoom: ZoomState;
@@ -1942,7 +1947,6 @@ function SinglePageView({
       document.removeEventListener("visibilitychange", onResume);
     };
   }, [currentPage, fitClass, zoom.scale, onOverflowChange, panMetricsRef]);
-  const natural = pageNaturalSize.current?.get(currentPage) ?? null;
   return (
     <main className="relative grid min-h-screen place-items-center pt-(--reader-top) pb-(--safe-bottom)">
       <div
@@ -2046,7 +2050,7 @@ function SinglePageView({
               issueId={issueId}
               pageIndex={currentPage}
               imgRef={imgRef}
-              naturalSize={natural}
+              serverPageSize={pageDimensions(pageInfo) ?? null}
             />
           </div>
         </div>
@@ -2083,7 +2087,6 @@ function DoublePageView({
   onRightZone,
   onChromeZone,
   onNaturalSize,
-  pageNaturalSize,
   transition,
   zoom,
   panMetricsRef,
@@ -2106,10 +2109,9 @@ function DoublePageView({
   onLeftZone: () => void;
   onRightZone: () => void;
   onChromeZone: () => void;
-  onNaturalSize: (page: number) => (w: number, h: number) => void;
-  pageNaturalSize: React.RefObject<
-    Map<number, { width: number; height: number }>
-  >;
+  onNaturalSize: (
+    page: number,
+  ) => (w: number, h: number, original: boolean) => void;
   transition: PageTransitionResult;
   /** Transform zoom + pan over the whole spread (WP-4.2). */
   zoom: ZoomState;
@@ -2201,7 +2203,6 @@ function DoublePageView({
                 paneClass={soloCapped ? "w-1/2 min-w-0" : paneClass}
                 pageUrlVersion={pageUrlVersion}
                 onNaturalSize={onNaturalSize(p)}
-                naturalSize={pageNaturalSize.current?.get(p) ?? null}
                 zoomed={zoomed}
               />
             ))}
@@ -2232,7 +2233,6 @@ function DoublePagePane({
   fitClass,
   paneClass,
   onNaturalSize,
-  naturalSize,
   zoomed,
 }: {
   issueId: string;
@@ -2242,8 +2242,7 @@ function DoublePagePane({
   pageInfo?: PageInfo;
   fitClass: string;
   paneClass: string;
-  onNaturalSize: (w: number, h: number) => void;
-  naturalSize: { width: number; height: number } | null;
+  onNaturalSize: (w: number, h: number, original: boolean) => void;
   /** Spread is transform-zoomed: read full-res pixels, like single view. */
   zoomed: boolean;
 }) {
@@ -2295,7 +2294,7 @@ function DoublePagePane({
         issueId={issueId}
         pageIndex={page}
         imgRef={imgRef}
-        naturalSize={naturalSize}
+        serverPageSize={pageDimensions(pageInfo) ?? null}
       />
     </div>
   );
@@ -2535,10 +2534,6 @@ const WebtoonPage = memo(function WebtoonPage({
   eager: boolean;
 }) {
   const imgRef = useRef<HTMLImageElement>(null);
-  const [naturalSize, setNaturalSize] = useState<{
-    width: number;
-    height: number;
-  } | null>(null);
   // Reserve height before load via the img width/height attributes
   // (exact — the intrinsic ratio takes over on decode, so no shift
   // and no distortion risk). Pages without server-known dims keep
@@ -2574,14 +2569,13 @@ const WebtoonPage = memo(function WebtoonPage({
         fitClass={fitClass}
         loading={eager ? "eager" : "lazy"}
         imgRef={imgRef}
-        onNaturalSize={(w, h) => setNaturalSize({ width: w, height: h })}
         dimensions={dimensions}
       />
       <MarkerOverlay
         issueId={issueId}
         pageIndex={pageIndex}
         imgRef={imgRef}
-        naturalSize={naturalSize}
+        serverPageSize={dimensions ?? null}
       />
     </>
   );

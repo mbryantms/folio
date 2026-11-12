@@ -7788,12 +7788,18 @@ export interface components {
             id: string;
             imported_at: string;
             last_match_run_at?: string | null;
+            /**
+             * @description When the last refresh attempt (scheduled or manual) finished,
+             *     whether or not it succeeded. `None` until the first one.
+             */
+            last_refresh_attempt_at?: string | null;
             last_refreshed_at?: string | null;
             /** Format: int32 */
             num_issues_declared?: number | null;
             owner_user_id?: string | null;
             parsed_matchers_present: boolean;
             parsed_name: string;
+            refresh_failure?: components["schemas"]["CblRefreshFailureView"] | null;
             refresh_schedule?: string | null;
             source_kind: string;
             source_url?: string | null;
@@ -7803,6 +7809,32 @@ export interface components {
              */
             stats: components["schemas"]["CblStatsView"];
             updated_at: string;
+        };
+        /**
+         * @description Why a reading list's last refresh failed. Each failure path of a refresh
+         *     maps onto exactly one kind (`server::cbl::refresh::RefreshError::failure`).
+         * @enum {string}
+         */
+        CblRefreshErrorKind: "unreachable" | "http_status" | "missing" | "address_refused" | "too_large" | "too_many_entries" | "invalid_list" | "other";
+        /**
+         * @description Why a list's refreshes are failing. Every field is composed by the
+         *     server: no remote response text, host or address.
+         */
+        CblRefreshFailureView: {
+            /**
+             * Format: int32
+             * @description Failed attempts in a row.
+             */
+            consecutive_failures: number;
+            /**
+             * @description A short note built from safe values, e.g. `HTTP 503` or
+             *     `over the 4 MiB limit`. `None` when the kind says it all; always
+             *     `None` for `address_refused`.
+             */
+            detail?: string | null;
+            /** @description The first failed attempt of the current run of failures. */
+            failing_since: string;
+            kind: components["schemas"]["CblRefreshErrorKind"];
         };
         CblStatsView: {
             /** Format: int64 */
@@ -10621,6 +10653,30 @@ export interface components {
             source: string;
         };
         /**
+         * @description The caller's own reading progress on one issue card
+         *     (`IssueSummaryView.progress`): the read check and the progress bar a
+         *     card draws, without the client loading every progress record of the
+         *     user (`GET /progress`).
+         */
+        IssueCardProgress: {
+            finished: boolean;
+            /**
+             * Format: int32
+             * @description Last viewed page index (0-based).
+             */
+            page: number;
+            /**
+             * Format: double
+             * @description 0.0–1.0 fraction read.
+             */
+            percent: number;
+            /**
+             * @description RFC 3339 time of the record's last write. Lets a client tell a
+             *     card that is older than a write it made since.
+             */
+            updated_at: string;
+        };
+        /**
          * @description The issue's cast and setting from the junction tables
          *     (`issue_characters` / `issue_teams` / `issue_locations` / `issue_arcs`).
          */
@@ -11069,6 +11125,7 @@ export interface components {
             number?: string | null;
             /** Format: int32 */
             page_count?: number | null;
+            progress?: components["schemas"]["IssueCardProgress"] | null;
             series_id: string;
             /**
              * @description Parent series name, denormalized so card components can fall back
@@ -12515,6 +12572,29 @@ export interface components {
             /** Format: int32 */
             y: number;
         };
+        /** @description A region in percent (0–100) of the decoded page. */
+        OcrRegionPct: {
+            /**
+             * Format: double
+             * @description Height, percent of page height; above 0.
+             */
+            h: number;
+            /**
+             * Format: double
+             * @description Width, percent of page width; above 0.
+             */
+            w: number;
+            /**
+             * Format: double
+             * @description Left edge, percent of page width.
+             */
+            x: number;
+            /**
+             * Format: double
+             * @description Top edge, percent of page height.
+             */
+            y: number;
+        };
         OcrRequest: {
             /**
              * @description When `true`, run `comic-text-detector` over the page to snap
@@ -12547,11 +12627,20 @@ export interface components {
              */
             page: number;
             /**
-             * @description User's drag rectangle in page-pixel coordinates. All four
-             *     fields are unsigned pixels; w/h must be > 0 and the rect
-             *     must fit inside the decoded page bounds.
+             * @description User's drag rectangle in page-pixel coordinates of the decoded
+             *     page. All four fields are unsigned pixels; w/h must be > 0 and
+             *     the rect must fit inside the decoded page bounds. Send this or
+             *     `region_pct`; when both are present `region_pct` is used.
              */
-            region: components["schemas"]["OcrRegion"];
+            region?: components["schemas"]["OcrRegion"];
+            /**
+             * @description The same rectangle in percent (0–100) of the decoded page, the
+             *     reader's marker representation, so the client needs no page
+             *     size. Converted after the decode with the decoded width and
+             *     height, rounded to whole pixels and clamped to the page; it must
+             *     overlap the page. Wins over `region` when both are sent.
+             */
+            region_pct?: components["schemas"]["OcrRegionPct"];
         };
         OcrResponse: {
             /**
@@ -12569,6 +12658,18 @@ export interface components {
              *     before this field existed still deserialize.
              */
             lang?: string;
+            /**
+             * Format: int32
+             * @description Decoded page height in pixels.
+             */
+            page_h: number;
+            /**
+             * Format: int32
+             * @description Decoded page width in pixels, the space `refined_bbox` and
+             *     `words` are in (and `region_pct` was converted with). Always
+             *     sent; a cached payload without it is malformed (a miss).
+             */
+            page_w: number;
             /**
              * @description Engine output before cleanup. Present only when cleanup
              *     changed the text — a debugging aid, and the raw material for
@@ -24261,6 +24362,13 @@ export interface operations {
             };
             /** @description the issue's file is missing (`archive_missing`) or not a readable archive (`archive_unreadable`) */
             410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description invalid region or lang (`invalid_region`, `invalid_lang`), or a `region_pct` / missing region failing validation (`validation`, with field details) */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

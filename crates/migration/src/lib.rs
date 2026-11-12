@@ -158,6 +158,7 @@ mod m20271113_000001_auth_session_refresh_grace;
 mod m20271114_000001_issues_purge_keyset_idx;
 mod m20271115_000001_view_group_nesting;
 mod m20271116_000001_confirm_sweep_keyset_idx;
+mod m20271117_000001_cbl_refresh_outcome;
 
 /// The series-rating migration's frozen ladder and statement, exposed so
 /// the server's tests can check they agree with the runtime derivation.
@@ -331,6 +332,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20271114_000001_issues_purge_keyset_idx::Migration),
             Box::new(m20271115_000001_view_group_nesting::Migration),
             Box::new(m20271116_000001_confirm_sweep_keyset_idx::Migration),
+            Box::new(m20271117_000001_cbl_refresh_outcome::Migration),
         ]
     }
 }

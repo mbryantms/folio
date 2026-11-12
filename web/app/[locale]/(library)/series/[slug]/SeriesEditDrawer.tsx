@@ -63,7 +63,9 @@ const AGE_RATING_OPTIONS: Array<{ value: string; label: string }> = [
 
 const TEXT_LANGUAGE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "", label: "Auto (infer from direction)" },
-  { value: "western", label: "Western (Latin script)" },
+  // The western recognizer reads English only today; say so, so nobody
+  // expects French or German text to come out right.
+  { value: "western", label: "Western (English text)" },
   { value: "manga", label: "Japanese (manga)" },
 ];
 

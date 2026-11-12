@@ -33,13 +33,15 @@ import { cn } from "@/lib/utils";
 export function ServerInfoClient() {
   const info = useServerInfo({ intervalMs: 15_000 });
 
-  if (info.isLoading || !info.data) {
-    return <ServerInfoSkeleton />;
-  }
-  if (info.error) {
+  // Error first: `!info.data` is also true when the request failed, so
+  // checking it first would keep the skeleton up forever.
+  if (info.error && !info.data) {
     return (
       <p className="text-destructive text-sm">Failed to load server info.</p>
     );
+  }
+  if (info.isLoading || !info.data) {
+    return <ServerInfoSkeleton />;
   }
   const data = info.data;
 
@@ -54,13 +56,14 @@ export function ServerInfoClient() {
   );
 }
 
-function OcrModelsCard() {
-  // Poll every 30 s — if any model is downloading the card refreshes
-  // mid-fetch, giving the operator a near-live progress readout
-  // without aggressively hitting the disk walker. Stable once
-  // everything's `ready` (the response shape doesn't change), so the
-  // extra requests are cheap.
-  const models = useOcrModels();
+/** Exported for the error-state test. */
+export function OcrModelsCard() {
+  // Poll every 30 s (the server card beside it polls every 15 s) — if
+  // any model is downloading the card refreshes mid-fetch, giving the
+  // operator a near-live progress readout without aggressively hitting
+  // the disk walker. Stable once everything's `ready` (the response shape
+  // doesn't change), so the extra requests are cheap.
+  const models = useOcrModels({ intervalMs: 30_000 });
   return (
     <Card>
       <CardHeader>
@@ -69,12 +72,12 @@ function OcrModelsCard() {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {models.isLoading || !models.data ? (
-          <OcrModelsBodySkeleton />
-        ) : models.error ? (
+        {models.error && !models.data ? (
           <p className="text-destructive text-sm">
             Failed to load OCR model status.
           </p>
+        ) : models.isLoading || !models.data ? (
+          <OcrModelsBodySkeleton />
         ) : (
           <ul className="space-y-2 text-sm">
             {models.data.models.map((m) => (

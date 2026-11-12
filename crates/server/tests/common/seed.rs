@@ -543,6 +543,7 @@ impl<'a> CblListSeed<'a> {
             created_at: Set(now),
             updated_at: Set(now),
             preserve_canonical_order: Set(self.preserve_canonical_order),
+            ..Default::default()
         }
         .insert(db)
         .await

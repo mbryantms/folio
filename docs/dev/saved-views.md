@@ -501,8 +501,66 @@ is written. Stored content that has not changed (an upload, a `304`, an
 unchanged catalog blob or an identical body digest) is not re-checked,
 so a list already over the cap keeps re-matching until its source
 changes. The bulk check and refresh report a refusal as that list's
-error. The scheduled sweep only logs failures (WARN); they are not shown
-in the app.
+error.
+
+**Refresh outcome** (`m20271117_000001_cbl_refresh_outcome`). Every
+refresh, scheduled or manual (single or `refresh-all`), records its
+outcome on the list row through `cbl::refresh::record_outcome`:
+`last_refresh_attempt_at`, and while it is failing
+`last_refresh_error_kind` (`entity::cbl_list::CblRefreshErrorKind`),
+`last_refresh_error_detail`, `refresh_failing_since` and
+`refresh_failure_count` (failures in a row). A success clears the failure
+and resets the count; a failure changes neither the entries nor
+`last_refreshed_at`. A "check for updates" records nothing, and neither do
+two errors that say nothing about the source
+(`RefreshError::is_source_failure`): a database error, and a timeout that
+ran into a budget shorter than the sweep's (`is_capped_budget`: the 40 s
+request budget, `refresh-all`'s 15 s per list) once the elapsed time
+reached that cap. A slow host the sweep would wait for is therefore not
+marked failing by a manual refresh or "Refresh all", and its sweep is not
+delayed; the caller still gets the timeout. A timeout under the sweep's
+budget, or one the fetcher reports before the cap (a 30 s step), is
+recorded. Each failure path maps to one kind in `RefreshError::failure`:
+
+| Kind | Failure paths | Detail |
+|---|---|---|
+| `unreachable` | connection / TLS / body-read error, the list's own URL not resolving, a recorded timeout (see above), catalog transport error | `no answer in time` for a timeout, else none |
+| `http_status` | non-success status other than 404 / 410, bot challenge, GitHub rate limit | `HTTP 503`, `HTTP 403, a bot challenge`, `rate limited` |
+| `missing` | HTTP 404 / 410, catalog path gone from the index, catalog blob 404 | `HTTP 404`, `not in the catalog` |
+| `address_refused` | any refusal by the address guard of the list's URL (private / loopback / reserved address, non-https, malformed or hostless); any failure to vet or resolve a redirect target (`FetchBytesError::RedirectRefused`), including a name that does not resolve | none, ever |
+| `too_large` | body over the 4 MiB cap, catalog blob or index over its cap | `over the 4 MiB limit` |
+| `too_many_entries` | changed content over `MAX_BOOKS_PER_LIST` | `5001 entries, over the 5000 limit` |
+| `invalid_list` | body that does not parse, a content type that is not XML / `.cbl` | `not served as XML` for the content type, else none |
+| `other` | redirect loop or bad `Location`, catalog source disabled, missing source settings, an index that does not decode, a database error | `more than 2 redirects`, `invalid redirect`, `catalog source disabled`, else none |
+
+The detail is composed by the server from numbers and fixed words only:
+no remote body, header, host name, resolved address or parser text is
+stored or returned, and every address-guard refusal reads the same, so
+the record cannot be used to probe which internal addresses exist. A
+redirect target that does not resolve is stored like one that resolves to
+a private address: otherwise a source could redirect to names of its
+choosing and read off, hourly from the sweep, which ones resolve inside
+the server's network. The manual refresh's error message is unchanged. The
+list and detail responses carry `last_refresh_attempt_at` and
+`refresh_failure` (`{kind, detail, failing_since, consecutive_failures}`)
+to everyone who may see the list; nothing in them is newly exposed (the
+source URL was already on the same response). The manual refresh's own
+error response and the WARN log line are unchanged.
+
+**Backoff.** The hourly sweep (`cbl::refresh::due_lists` / `is_due`)
+still picks a list when its cadence has passed since its last success;
+a list that is failing must also have waited `failure_backoff(count)`
+since its last attempt: 1 h after the first failure (no change from
+before), then 2, 4, 8, 16 h, at most 24 h, measured with the sweep's
+30-minute budget as slack. A healthy list is unaffected, and a manual
+refresh always tries at once.
+
+On the web, `/lists` marks a failing list with a warning icon after its
+name ("Refresh failing since 3 Nov: the source could not be reached"),
+and its In library tooltip says "Last updated …" instead of "Updated …".
+The list's page and its History tab show the failure in words with the
+last attempt, the count and what to do (`RefreshFailureNotice`). The
+kind-to-words mapping is `web/lib/cbl/refresh-failure.ts`.
 
 ## OPDS
 
@@ -664,9 +722,13 @@ How to prefetch for a page:
   inline script is added.
 
 When not to: below-the-fold rails stay client-fetched on purpose
-(`LazyRail`), and so does On this day (keyed by the browser's local date)
-and the per-card `/progress` map (unbounded per user, and only the
-`IssueCard` badge reads it, not the cover). A prefetch only pays where the
+(`LazyRail`), and so does On this day (keyed by the browser's local date).
+The card badges need no request of their own: every issue-card list
+embeds the viewer's progress on each card (`IssueSummaryView.progress`),
+and the progress rails carry their own, so no home rail requests the
+unbounded `/progress` map (see
+[reading-progress.md](reading-progress.md#issue-card-badges) for the
+surface list). A prefetch only pays where the
 first paint waits on a client request chain; data the shell already
 fetches, or that is cheap and below the fold, is better left to the client.
 A page that is reached mostly by client navigation with a warm cache pays

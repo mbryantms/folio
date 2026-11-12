@@ -3,11 +3,11 @@
 import type { MarkerRegion } from "@/lib/api/types";
 import { pageBytesUrl } from "@/lib/urls";
 
-/** Client-side image-region crop helpers shared by the bookmarks page
- *  (Copy / Save actions). The reader's `marker-selection.ts` has its
- *  own copy of the crop primitive because it pre-processes the canvas
- *  for OCR / SHA-256 (upscale, binarize). We keep them separate so a
- *  change to either path doesn't ripple unexpectedly. */
+/** Client-side image-region crop helpers for the bookmarks page (Copy /
+ *  Save actions). The reader's `marker-selection.ts` keeps its own small
+ *  crop for the image-hash highlight (a plain crop of the original page,
+ *  hashed as PNG); OCR is done on the server and crops nothing here. The
+ *  two stay separate so a change to either path doesn't ripple. */
 
 const imageCache = new Map<string, Promise<HTMLImageElement>>();
 

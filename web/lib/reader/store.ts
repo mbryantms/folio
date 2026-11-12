@@ -78,6 +78,10 @@ export type PendingMarker = {
   body: string;
   is_favorite: boolean;
   tags: string[];
+  /** A new highlight whose region was fitted to a detected text box (a
+   *  tap on a box, or a drag the server snapped) rather than kept as
+   *  drawn. Editor copy only; never sent to the server. */
+  regionFitted?: boolean;
 };
 // `contain` is appended (not slotted in) so the `f` cycle keeps its
 // established width → height → original order for existing muscle memory.

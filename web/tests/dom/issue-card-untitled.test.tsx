@@ -6,6 +6,7 @@
  */
 import { render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import type * as CardProgress from "@/lib/api/card-progress";
 
 const collectionLabels: string[] = [];
 
@@ -21,6 +22,10 @@ vi.mock("@/lib/api/mutations", () => ({
 }));
 vi.mock("@/lib/api/queries", () => ({
   useUserProgress: () => ({ data: undefined }),
+}));
+vi.mock("@/lib/api/card-progress", async (importOriginal) => ({
+  ...(await importOriginal<typeof CardProgress>()),
+  useCardProgress: () => null,
 }));
 vi.mock("@/components/CoverLongPressActions", () => ({
   useCoverLongPressActions: () => ({ wrapperProps: {}, sheet: null }),
