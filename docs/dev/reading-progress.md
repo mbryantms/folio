@@ -161,14 +161,49 @@ insights. Elsewhere the field is **absent**, and the web card falls back
 to the all-records map (`GET /progress`, `useUserProgress`), which a page
 whose lists all embed progress therefore never requests.
 
-On the web, [`useCardProgress`](../../web/lib/api/card-progress.ts) shows
-the newer (by `updated_at`) of the card's copy and this tab's last write
-for the issue, `queryKeys.issueProgress(id)`, which the optimistic mark,
-the mark's reply and the reader's per-page write reply all set. A badge
-therefore follows a read without refetching the list; the lists are only
-marked stale (`invalidateIssueCards`) and refetch on their next mount. A
-write that names no issues (mark a whole series, "select all matching",
-an outbox replay) refetches the mounted lists instead.
+Which surfaces draw a badge from what:
+
+- `IssueCard` and `CblIssueCard` read `progress` off the card. Every list
+  they are rendered from today embeds it, so none of them requests
+  `GET /progress`. A card from a response without the field (an endpoint
+  added later without `attach_progress`) falls back to it.
+- Continue reading and Recently read (`ProgressIssueCard`), On deck, and
+  the reading-list and collection *window* rails carry their own progress
+  fields in their responses and never read the all-records map; the
+  similar-series and random-picks rails draw series cards
+  (`progress_summary`). The issue page's previous / next cards draw no
+  badge. So no home rail requests `GET /progress`.
+- The one remaining caller of the full list is Undo's prior capture
+  (`capturePriorProgress`) for more than eight issues that neither the
+  overlay nor a cached card list knows (a selection of cards on screen
+  is always known).
+
+On the web, [`useCardProgress`](../../web/lib/api/card-progress.ts) and the
+issue page's `useIssueReadState` read this tab's writes from the progress
+overlay ([`progress-overlay.ts`](../../web/lib/api/progress-overlay.ts)),
+one store per `QueryClient` with listeners per issue: a mounted card costs
+one listener and no query, and a write re-renders only that issue's cards.
+
+**Ordering rule.** An overlay entry and a card's list copy are ordered by
+*when this tab saw them*, with a counter, never by `updated_at`: a browser
+time is never compared with a server time.
+
+- A mark, bulk mark or Undo writes a *pending* entry (shown at once).
+  The server's acknowledgement settles it (`settleProgress`, with the
+  single mark's reply as the record); a failure puts the previous entry
+  back, or removes it, and notifies the cards.
+- The reader's per-page write reply is written settled.
+- A card list whose fetch *started after* an entry settled replaces the
+  entry with its copy when it lands (it reflects the write and anything
+  newer, including another device's). A fetch that started earlier or
+  while the write was pending, and a server-render snapshot hydrated into
+  the cache, never replace it.
+- A series-level mark (no issue ids) touches no entries; it refetches the
+  mounted card lists, whose copies then take over.
+
+After a write that names its issues, the card lists are only marked stale
+(`invalidateIssueCards`) and refetch on their next mount; a series-level
+mark, a failed Undo and an outbox replay refetch the mounted lists.
 
 ## What this deliberately changes
 
