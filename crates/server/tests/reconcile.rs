@@ -2633,13 +2633,17 @@ async fn auto_confirm_confirms_at_most_the_cap_per_run() {
         ..reconcile::SweepLimits::default()
     };
 
+    let before = Utc::now().fixed_offset();
     let stats = reconcile::auto_confirm_sweep_with(&state, limits)
         .await
         .unwrap();
+    let after = Utc::now().fixed_offset();
     assert_eq!(stats.confirmed, 3, "the cap: {stats:?}");
     assert_eq!(stats.kept_unknown, 2, "{stats:?}");
     for id in &gone[..3] {
         assert!(issue_confirmed(&app, id).await, "{id}: oldest first");
+        let stamp = issue_row(&app, id).await.removal_confirmed_at.unwrap();
+        assert!(before <= stamp && stamp <= after, "{id}: stamped {stamp}");
     }
     for id in &gone[3..] {
         assert!(!issue_confirmed(&app, id).await, "{id}: past the cap");

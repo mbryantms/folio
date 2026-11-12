@@ -1580,7 +1580,7 @@ pub async fn auto_confirm_sweep_with(
         }
         let cutoff = now - Duration::days(lib.soft_delete_days as i64);
         let mut kept = KeptRows::default();
-        let result = confirm_library(state, &lib, now, cutoff, limits, &mut kept).await;
+        let result = confirm_library(state, &lib, cutoff, limits, &mut kept).await;
         // Rows kept before an abort are still reported and rescanned.
         let outcome = kept
             .finish(
@@ -1618,17 +1618,16 @@ pub async fn auto_confirm_sweep_with(
 async fn confirm_library(
     state: &AppState,
     lib: &library::Model,
-    now: chrono::DateTime<chrono::FixedOffset>,
     cutoff: chrono::DateTime<chrono::FixedOffset>,
     limits: SweepLimits,
     kept: &mut KeptRows,
 ) -> Result<u64, (u64, anyhow::Error)> {
     let mut confirmed = 0u64;
-    match confirm_issues(state, lib, now, cutoff, limits, kept, &mut confirmed).await {
+    match confirm_issues(state, lib, cutoff, limits, kept, &mut confirmed).await {
         Ok(()) => {}
         Err(e) => return Err((confirmed, e)),
     }
-    match confirm_series(state, lib, now, cutoff, limits, kept, &mut confirmed).await {
+    match confirm_series(state, lib, cutoff, limits, kept, &mut confirmed).await {
         Ok(()) => Ok(confirmed),
         Err(e) => Err((confirmed, e)),
     }
@@ -1643,7 +1642,6 @@ async fn confirm_library(
 async fn confirm_issues(
     state: &AppState,
     lib: &library::Model,
-    now: chrono::DateTime<chrono::FixedOffset>,
     cutoff: chrono::DateTime<chrono::FixedOffset>,
     limits: SweepLimits,
     kept: &mut KeptRows,
@@ -1701,8 +1699,13 @@ async fn confirm_issues(
         while budget > 0 && !rest.is_empty() {
             let (ids, tail) = rest.split_at(budget.min(rest.len()).min(RECONCILE_ID_CHUNK));
             rest = tail;
+            // Stamped when the batch is written, not when the run began: a
+            // long walk would otherwise date late confirmations hours early
+            // and start their purge window early. The `cutoff` stays fixed
+            // for the run.
+            let stamp = Utc::now().fixed_offset();
             let res = IssueEntity::update_many()
-                .col_expr(issue::Column::RemovalConfirmedAt, Expr::value(now))
+                .col_expr(issue::Column::RemovalConfirmedAt, Expr::value(stamp))
                 .filter(issue::Column::LibraryId.eq(lib.id))
                 .filter(issue::Column::Id.is_in(ids.to_vec()))
                 .filter(issue::Column::RemovedAt.is_not_null())
@@ -1727,7 +1730,6 @@ async fn confirm_issues(
 async fn confirm_series(
     state: &AppState,
     lib: &library::Model,
-    now: chrono::DateTime<chrono::FixedOffset>,
     cutoff: chrono::DateTime<chrono::FixedOffset>,
     limits: SweepLimits,
     kept: &mut KeptRows,
@@ -1775,8 +1777,10 @@ async fn confirm_series(
         while budget > 0 && !rest.is_empty() {
             let (ids, tail) = rest.split_at(budget.min(rest.len()).min(RECONCILE_ID_CHUNK));
             rest = tail;
+            // Stamped per batch, as in `confirm_issues`.
+            let stamp = Utc::now().fixed_offset();
             let res = series::Entity::update_many()
-                .col_expr(series::Column::RemovalConfirmedAt, Expr::value(now))
+                .col_expr(series::Column::RemovalConfirmedAt, Expr::value(stamp))
                 .filter(series::Column::LibraryId.eq(lib.id))
                 .filter(series::Column::Id.is_in(ids.to_vec()))
                 .filter(series::Column::RemovedAt.is_not_null())

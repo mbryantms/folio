@@ -1569,7 +1569,10 @@ deletion:
   library's candidates, and rows left alone, which stay unconfirmed at the
   front of the order and are re-examined every run, no longer hold the
   confirmable rows behind them back. No position is kept between runs; a
-  backlog of confirmable rows drains 20 000 a day, oldest first. Each page
+  backlog of confirmable rows drains 20 000 a day, oldest first. The
+  window cutoff is fixed when the run starts, but each `UPDATE` batch is
+  stamped with the time it is written, so a long run does not date late
+  confirmations early (and start their purge window early). Each page
   is one range scan of the partial indexes `issues_confirm_keyset_idx` /
   `series_confirm_keyset_idx (library_id, removed_at, id) WHERE removed_at
   IS NOT NULL AND removal_confirmed_at IS NULL` (a reconcile stamps every
