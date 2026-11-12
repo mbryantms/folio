@@ -391,18 +391,24 @@ For a non-LFS file (`vocab.txt`) download it from
 hash-object` should equal the listing's `blobId`). Change `revision`,
 `sha256` and `size` in `models.rs` and this table together.
 
-**Tesseract data** is not fetched at runtime: the `tesseract-rs`
-build script downloads `eng` and `tur` from `tessdata_best`'s `main`
-branch while the image builds, and the Dockerfile checks both against
-pinned SHA-256s right after `cargo build` (a changed upstream file
-fails the image build). Local `cargo build` runs of the build script
-are not checked.
+**Tesseract data** is not fetched at runtime. In the image build,
+`scripts/docker/tesseract-inputs.sh` downloads `eng` and `tur` from a
+pinned `tessdata_best` commit (and the Leptonica + Tesseract sources),
+checks each against a pinned SHA-256 and places them where the
+`tesseract-rs` build script would otherwise download them, so it skips
+its own unchecked download; after the build the Dockerfile checks again
+that the tessdata directory holds exactly those two files. A local
+`cargo build` outside Docker runs the upstream build script unchanged
+and downloads all four files unchecked into `~/.tesseract-rs/` (cached
+there afterwards); see
+[dependency-management.md](dependency-management.md#tesseract-rs-build-inputs).
 
 In the Folio Docker image:
 
-- `eng.traineddata` is baked into the image at `/app/tessdata/` (the
-  rust-builder stage compiles Tesseract from source and downloads
-  tessdata; both are copied into the runtime image). `TESSDATA_PREFIX`
+- `eng.traineddata` and `tur.traineddata` are baked into the image at
+  `/app/tessdata/` (the build compiles Tesseract with the pinned sources
+  in place; the pinned tessdata is copied into the runtime
+  image). `TESSDATA_PREFIX`
   defaults to that path.
 - `HOME=/data` so the detector + manga-ocr ONNX caches land under
   `/data/.cache/huggingface/hub/` (in the persistent volume) and

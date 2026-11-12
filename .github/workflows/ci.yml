@@ -87,6 +87,9 @@ jobs:
               - 'Dockerfile'
               - 'web/Dockerfile'
               - '.dockerignore'
+              # Run by the Dockerfile (tesseract-rs input pins): a pin-only
+              # change must build the image here, not first on main.
+              - 'scripts/docker/**'
               - '.github/workflows/ci.yml'
             cargo_deps:
               - 'Cargo.toml'

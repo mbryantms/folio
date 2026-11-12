@@ -191,11 +191,14 @@ manga-ocr = "0.5.1"
 # move it together with them.
 hf-hub = { version = "0.4", default-features = false }
 # Native Tesseract bindings. The `build-tesseract` feature compiles
-# Leptonica 1.84.1 + Tesseract 5.3.4 from source via cmake on the
-# build host and caches them at `~/.tesseract-rs/` across rebuilds.
-# It also downloads `eng.traineddata` from `tessdata_best` to the
-# same cache directory at first build (requires internet); set
-# `TESSDATA_PREFIX` to point Folio at a pre-staged copy on
+# Leptonica + Tesseract (0.4.0: 1.87.0 + 5.5.2) from source via cmake
+# on the build host and caches them at `~/.tesseract-rs/` across
+# rebuilds. It also downloads `eng` + `tur` traineddata from
+# `tessdata_best` to the same cache directory at first build (requires
+# internet; none of it is checksummed outside the Docker image build,
+# which pins all four files: scripts/docker/tesseract-inputs.sh, and a
+# tesseract-rs bump that changes them fails that build until the pins
+# move); set `TESSDATA_PREFIX` to point Folio at a pre-staged copy on
 # air-gapped operators. First build adds ~10 min one-time cost.
 tesseract-rs = { version = "0.4", features = ["build-tesseract"] }
 
