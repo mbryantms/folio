@@ -69,6 +69,11 @@ const TOUCH_SCROLL_SLOP_PX = 10;
 /** What a capture says when the server read the area and found nothing. */
 const NO_TEXT_MESSAGE =
   "No text found in that area. The highlight editor opens without captured text; you can type it in.";
+/** Layers that close on Esc themselves: open Radix dialogs, alert dialogs
+ *  and sheets (`data-state="open"`), and any modal dialog. */
+const ESC_HANDLING_LAYER =
+  '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"], [aria-modal="true"]';
+
 /** How long the detection status stays empty after it mounts, so the
  *  screen reader has registered the live region before it is filled. */
 const LIVE_REGION_FILL_DELAY_MS = 150;
@@ -252,6 +257,13 @@ export function MarkerOverlay({
     cancelCapture();
   }, [markerMode, cancelCapture]);
   React.useEffect(() => () => cancelCapture(), [cancelCapture]);
+  // Turning away from the page drops its capture too (the overlay of a
+  // paged view is not always remounted on a page turn).
+  React.useEffect(() => {
+    if (pageVisible) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    cancelCapture();
+  }, [pageVisible, cancelCapture]);
 
   /** The page's real pixel size, from the one resolver (`page-size.ts`):
    *  the detection's decode size, else the server's page list, else the
@@ -393,14 +405,16 @@ export function MarkerOverlay({
   React.useEffect(() => {
     if (markerMode === "idle") return;
     const onKey = (e: KeyboardEvent) => {
-      // While the marker editor (or its confirm dialog) is open, or the key
-      // comes from inside any dialog (the page-text panel), Esc belongs to
-      // that surface: the mode stays text capture while the editor is
-      // open, and taking the key here would cost the dialog a press.
+      // Esc belongs to a layer that handles it itself: the marker editor
+      // and its confirm dialog (open while a marker is pending; the mode
+      // stays text capture meanwhile) and the open Radix dialogs and
+      // sheets, which close on Esc — the page-text panel among them.
+      // Taking the key here would cost that layer a press. A plain
+      // `role="dialog"` with no Esc handling of its own (the end-of-issue
+      // card) is not such a layer: Esc still leaves the mode from there.
       if (
         useReaderStore.getState().pendingMarker !== null ||
-        (e.target instanceof Element &&
-          e.target.closest('[role="dialog"], [role="alertdialog"]'))
+        (e.target instanceof Element && e.target.closest(ESC_HANDLING_LAYER))
       ) {
         return;
       }
@@ -719,6 +733,10 @@ export function MarkerOverlay({
           // in-flight read: the query lost its last observer and was
           // cancelled. Not a failure; ask once more.
           if (!isCancelledError(err)) throw err;
+          // Ask again only for a capture that is still wanted: not after
+          // the page was turned or the mode ended (each ask costs an OCR
+          // slot and a rate-limit token).
+          if (!isCurrent() || !captureAllowed()) return null;
           ocr = await queryClient.fetchQuery(options);
         }
       } catch (err) {

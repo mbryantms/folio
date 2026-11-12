@@ -623,44 +623,136 @@ describe("a stale Try again opens nothing", () => {
   });
 });
 
-describe("Esc while the editor is open belongs to the editor", () => {
-  it("the overlay does not take Esc while a marker is being edited, or from inside a dialog", async () => {
-    renderOverlay();
-    act(() =>
-      useReaderStore.getState().beginMarkerEdit(
-        {
-          kind: "highlight",
-          page_index: 0,
-          region: { x: 1, y: 1, w: 5, h: 5, shape: "text" },
-          selection: null,
-          body: "",
-          is_favorite: false,
-          tags: [],
-        },
-        null,
-      ),
-    );
-    const later = vi.fn();
+describe("Esc goes to the layer that handles it", () => {
+  const draft = {
+    kind: "highlight" as const,
+    page_index: 0,
+    region: { x: 1, y: 1, w: 5, h: 5, shape: "text" as const },
+    selection: null,
+    body: "",
+    is_favorite: false,
+    tags: [],
+  };
+  let later: ReturnType<typeof vi.fn<(e: KeyboardEvent) => void>>;
+  beforeEach(() => {
+    later = vi.fn<(e: KeyboardEvent) => void>();
     document.addEventListener("keydown", later);
+  });
+  afterEach(() => {
+    document.removeEventListener("keydown", later);
+    useReaderStore.setState({ pendingMarker: null } as never);
+  });
+
+  it("the marker editor open: the overlay leaves Esc to it", () => {
+    renderOverlay();
+    act(() => useReaderStore.getState().beginMarkerEdit(draft, null));
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(later).toHaveBeenCalledTimes(1);
+    expect(useReaderStore.getState().markerMode).toBe("select-text");
+  });
+
+  it("the editor's confirm dialog open: the first Esc reaches it", () => {
+    renderOverlay();
+    act(() => useReaderStore.getState().beginMarkerEdit(draft, null));
+    const confirm = document.createElement("div");
+    confirm.setAttribute("role", "alertdialog");
+    confirm.setAttribute("data-state", "open");
+    confirm.setAttribute("aria-modal", "true");
+    document.body.appendChild(confirm);
     try {
-      fireEvent.keyDown(document.body, { key: "Escape" });
+      fireEvent.keyDown(confirm, { key: "Escape" });
       expect(later).toHaveBeenCalledTimes(1);
       expect(useReaderStore.getState().markerMode).toBe("select-text");
-
-      act(() => {
-        useReaderStore.getState().beginMarkerEdit(null, null);
-        useReaderStore.setState({ markerMode: "select-text" } as never);
-      });
-      const dialog = document.createElement("div");
-      dialog.setAttribute("role", "dialog");
-      document.body.appendChild(dialog);
-      fireEvent.keyDown(dialog, { key: "Escape" });
-      expect(later).toHaveBeenCalledTimes(2);
-      expect(useReaderStore.getState().markerMode).toBe("select-text");
-      dialog.remove();
     } finally {
-      document.removeEventListener("keydown", later);
+      confirm.remove();
     }
+  });
+
+  it("focus in the page-text panel: the panel gets the first Esc", async () => {
+    regions = [];
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    usePageTextPanel.setState({ open: true, firstText: {} });
+    renderOverlay();
+    const { findByRole } = render(
+      <QueryClientProvider client={qc}>
+        <PageTextPanel issueId="issue-1" pages={[0]} direction="ltr" />
+      </QueryClientProvider>,
+    );
+    const panel = await findByRole("dialog", { name: "Page text" });
+    // The real panel is an open Radix sheet: that is what the check keys on.
+    expect(panel.getAttribute("data-state")).toBe("open");
+    fireEvent.keyDown(panel, { key: "Escape" });
+    expect(useReaderStore.getState().markerMode).toBe("select-text");
+    await waitFor(() => expect(usePageTextPanel.getState().open).toBe(false));
+  });
+
+  it("focus in a non-modal role=dialog with no Esc handling (the end-of-issue card): Esc leaves the mode", () => {
+    renderOverlay();
+    const card = document.createElement("div");
+    card.setAttribute("role", "dialog");
+    card.setAttribute("aria-modal", "false");
+    const button = document.createElement("button");
+    card.appendChild(button);
+    document.body.appendChild(card);
+    try {
+      fireEvent.keyDown(button, { key: "Escape" });
+      expect(useReaderStore.getState().markerMode).toBe("idle");
+    } finally {
+      card.remove();
+    }
+  });
+});
+
+describe("a cancelled shared read is not asked again for a page that was left", () => {
+  it("tap while the panel reads the box, then turn the page: no second OCR request for the old page", async () => {
+    const first = deferred<Response>();
+    ocrResponse = () => first.promise;
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    usePageTextPanel.setState({ open: true, firstText: {} });
+    const panel = render(
+      <QueryClientProvider client={qc}>
+        <PageTextPanel issueId="issue-1" pages={[0]} direction="ltr" />
+      </QueryClientProvider>,
+    );
+    const overlay = render(
+      <QueryClientProvider client={qc}>
+        <div style={{ position: "relative" }}>
+          <MarkerOverlay
+            issueId="issue-1"
+            pageIndex={0}
+            imgRef={{ current: variantImg() }}
+            serverPageSize={SERVER}
+          />
+        </div>
+      </QueryClientProvider>,
+    );
+    const page0 = () =>
+      ocrBodies().filter((b) => (b as { page: number }).page === 0);
+    await waitFor(() => expect(page0()).toHaveLength(1));
+    await outlinesLoaded(overlay.container);
+    const svg = overlay.container.querySelector("svg")!;
+    act(() => pointer(svg, "down", 50, 50));
+    act(() => pointer(svg, "up", 50, 50));
+    await new Promise((r) => setTimeout(r, 10));
+    // Turn the page: the panel follows to page 2, the overlay's page is
+    // no longer current.
+    ocrResponse = () => json(200, { text: "PAGE 2", confidence: 0.9 });
+    act(() => useReaderStore.setState({ currentPage: 1 } as never));
+    panel.rerender(
+      <QueryClientProvider client={qc}>
+        <PageTextPanel issueId="issue-1" pages={[1]} direction="ltr" />
+      </QueryClientProvider>,
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    expect(page0()).toHaveLength(1);
+    expect(useReaderStore.getState().pendingMarker).toBeNull();
+    expect(toast.error).not.toHaveBeenCalled();
+    first.resolve(json(200, { text: "OLD PAGE", confidence: 0.9 }));
+    usePageTextPanel.setState({ open: false });
   });
 });
 
@@ -743,6 +835,40 @@ describe("live region and labels", () => {
     expect(label.length).toBeLessThanOrEqual(240);
     expect(label.endsWith("…")).toBe(true);
     savedMarkers.items = [];
+  });
+});
+
+describe("panel requests under StrictMode (development double effects)", () => {
+  it("the first detection is aborted by the simulated unmount; each box is read once, un-aborted", async () => {
+    regions = [BOX, { x: 5, y: 80, w: 10, h: 10, confidence: 0.9, class: 0 }];
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    usePageTextPanel.setState({ open: true, firstText: {} });
+    const { findByText } = render(
+      <React.StrictMode>
+        <QueryClientProvider client={qc}>
+          <PageTextPanel issueId="issue-1" pages={[0]} direction="ltr" />
+        </QueryClientProvider>
+      </React.StrictMode>,
+    );
+    await findByText("Page 1: 2 text blocks.");
+    const calls = apiFetch.mock.calls.map(([p, init]) => ({
+      path: String(p),
+      aborted: (init as RequestInit | undefined)?.signal?.aborted ?? false,
+      body: (init as RequestInit | undefined)?.body as string | undefined,
+    }));
+    const detections = calls.filter((c) => c.path.includes("text-regions"));
+    // StrictMode's mount / unmount / remount: the first detection lost its
+    // observer and was aborted, then asked again once.
+    expect(detections.map((d) => d.aborted)).toEqual([true, false]);
+    // Every box read that completed did so exactly once and un-aborted; a
+    // real duplicate start would show up here as a second live read.
+    const reads = calls.filter((c) => c.path.endsWith("/ocr"));
+    const live = reads.filter((r) => !r.aborted).map((r) => r.body);
+    expect(live).toHaveLength(2);
+    expect(new Set(live).size).toBe(2);
+    usePageTextPanel.setState({ open: false });
   });
 });
 
