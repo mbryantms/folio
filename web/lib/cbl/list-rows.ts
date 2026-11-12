@@ -64,9 +64,40 @@ export function compareByRead(
   };
 }
 
+/** Sort key `refreshed` ("Recently updated"): the list's own date, newest
+ *  first (`last_refreshed_at`, else `imported_at`: the date the In library
+ *  tooltip shows), lists without one last, ties by name. */
+export function compareByRefreshed(
+  dateOf: (view: SavedViewView) => string | null | undefined,
+): (a: SavedViewView, b: SavedViewView) => number {
+  return (a, b) => {
+    const da = dateOf(a) ?? "";
+    const db = dateOf(b) ?? "";
+    if (da !== db) {
+      if (!da) return 1;
+      if (!db) return -1;
+      return db.localeCompare(da);
+    }
+    return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  };
+}
+
+/** Nothing of the list is in the library, so nothing can be read. */
+export const NOTHING_TO_READ = "Nothing to read yet";
+
 /** "42 of 102 read": the narrow layouts' caption head. */
 export function readCaption(s: RowStats): string {
+  if (s.matched <= 0) return NOTHING_TO_READ;
   return `${Math.min(s.read_count, s.matched)} of ${s.matched} read`;
+}
+
+/** What the library lacks: "16 missing", "3 to match" (entries with
+ *  several candidates, counted in neither In library nor missing). */
+export function gapParts(s: RowStats): string[] {
+  const out: string[] = [];
+  if (s.missing > 0) out.push(`${s.missing} missing`);
+  if (s.ambiguous > 0) out.push(`${s.ambiguous} to match`);
+  return out;
 }
 
 /** "102 of 118": in-library over the list's length. */
@@ -76,5 +107,6 @@ export function inLibraryLabel(s: RowStats): string {
 
 /** "42 of 102": read over in-library. */
 export function readLabel(s: RowStats): string {
+  if (s.matched <= 0) return NOTHING_TO_READ;
   return `${Math.min(s.read_count, s.matched)} of ${s.matched}`;
 }

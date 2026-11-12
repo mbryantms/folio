@@ -54,6 +54,7 @@ export function ReadingListsIndex({
           views={readingLists}
           loading={!hydrated || viewsQ.isLoading}
           canImport={canImport}
+          blurb={null}
         />
       )}
     </div>

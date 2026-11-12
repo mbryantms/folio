@@ -52,6 +52,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { ReadingListsIndex } from "@/components/cbl/ReadingListsIndex";
+import { readingListRows } from "@/components/cbl/ReadingListRows";
 import { GroupedViewsBoard } from "@/components/saved-views/GroupedViewsBoard";
 import { ViewCard } from "@/components/saved-views/ViewsIndex";
 
@@ -131,11 +132,19 @@ function seed() {
       description: "A description that is long enough to be cut first",
       cbl_list_id: "l3",
     }),
+    view({ id: "v4", name: "Wishlist", cbl_list_id: "l4" }),
   ];
   state.lists = [
-    list("l1", { total: 12, matched: 10, read_count: 2, missing: 2 }),
+    list("l1", {
+      total: 13,
+      matched: 10,
+      read_count: 2,
+      missing: 2,
+      ambiguous: 1,
+    }),
     list("l2", { total: 5, matched: 5, read_count: 3 }),
     list("l3", { total: 4, matched: 4, read_count: 4 }),
+    list("l4", { total: 6, missing: 6 }),
   ];
   state.groups = [
     {
@@ -174,7 +183,7 @@ beforeEach(() => {
 });
 
 describe("reading lists tree table", () => {
-  it("draws one column header for the whole table", async () => {
+  it("draws one column header for the whole table, with no date column", async () => {
     const { container } = renderIndex();
     await rowOf("Crisis order");
     const headers = container.querySelectorAll("[data-board-header]");
@@ -183,9 +192,7 @@ describe("reading lists tree table", () => {
     expect(within(header).getByRole("button", { name: "Name" })).toBeTruthy();
     expect(within(header).getByRole("button", { name: "Read" })).toBeTruthy();
     expect(within(header).getByText("In library")).toBeTruthy();
-    expect(
-      within(header).getByRole("button", { name: "Updated" }),
-    ).toBeTruthy();
+    expect(within(header).queryByText(/Updated/)).toBeNull();
     // The group is a folder row inside the same table, not a second header.
     expect(screen.getByRole("region", { name: "Group Events" })).toBeTruthy();
   });
@@ -195,18 +202,26 @@ describe("reading lists tree table", () => {
     await rowOf("Crisis order");
     const folder = screen.getByRole("region", { name: "Group Events" });
     const folderRow = folder.firstElementChild as HTMLElement;
-    // Read 2 + 3 of matched 10 + 5; in library 15 of 12 + 5.
+    // Read 2 + 3 of matched 10 + 5; in library 15 of 13 + 5.
     expect(within(folderRow).getByText("5 of 15")).toBeTruthy();
-    expect(within(folderRow).getByText("15 of 17")).toBeTruthy();
+    expect(folderRow.textContent).toContain(
+      "15 of 18 · 2 missing · 1 to match",
+    );
     expect(within(folderRow).getByText("2 lists")).toBeTruthy();
     expect(
       within(folderRow).getByRole("button", {
         name: "Actions for group Events",
       }),
     ).toBeTruthy();
+    // The folder name toggles its rows and says so.
+    expect(
+      within(folderRow)
+        .getByRole("button", { name: "Events" })
+        .getAttribute("aria-expanded"),
+    ).toBe("true");
   });
 
-  it("shows a list's name, description, numbers and date", async () => {
+  it("shows a list's name, flags, description and numbers, its date as a tooltip", async () => {
     renderIndex();
     const row = await rowOf("Crisis order");
     expect(within(row).getByRole("link").getAttribute("href")).toBe(
@@ -216,97 +231,165 @@ describe("reading lists tree table", () => {
       within(row).getByText("Every issue of the 1985 event in order"),
     ).toBeTruthy();
     expect(within(row).getByText("2 of 10")).toBeTruthy(); // Read
-    expect(within(row).getByText("10 of 12")).toBeTruthy(); // In library
-    const updated = within(row)
-      .getAllByText("3 days ago")
-      .find((el) => el.closest("[title]")?.getAttribute("title"));
-    expect(updated?.closest("[title]")?.getAttribute("title")).toMatch(
-      /^Last refreshed /,
+    const library = row.querySelector("[data-row-gap]")!.parentElement!;
+    expect(library.textContent).toBe(
+      "In library: 10 of 13 · 2 missing · 1 to match",
     );
+    expect(library.getAttribute("title")).toMatch(/^Updated 3 days ago \(/);
+    // Flags sit right after the name, only where they apply.
+    const name = row.querySelector("[data-row-name]") as HTMLElement;
     expect(
-      within(row).getByRole("img", { name: "Pinned to 2 pages" }),
+      within(name).getByRole("img", { name: "Pinned to 2 pages" }),
     ).toBeTruthy();
     expect(
-      within(row).getByRole("img", { name: "In the sidebar" }),
+      within(name).getByRole("img", { name: "In the sidebar" }),
     ).toBeTruthy();
-    // The narrow-width caption folds the columns together.
-    expect(row.querySelector("[data-row-caption]")?.textContent).toContain(
-      "2 of 10 read · 2 missing",
+    const watchmen = await rowOf("Watchmen");
+    const watchmenName = watchmen.querySelector(
+      "[data-row-name]",
+    ) as HTMLElement;
+    expect(within(watchmenName).queryAllByRole("img")).toEqual([]);
+    // Below the wide tier the In library figures fold into the caption.
+    expect(row.querySelector("[data-row-caption]")?.textContent).toBe(
+      "2 of 10 read · 2 missing · 1 to match",
     );
   });
 
   it("calls the missing count out only when there is one", async () => {
     renderIndex();
     const crisis = await rowOf("Crisis order");
-    const missing = crisis.querySelector("[data-row-missing]");
-    expect(missing?.textContent).toBe("2 missing");
-    expect(missing?.className).toContain("text-warning");
+    const gaps = [...crisis.querySelectorAll("[data-row-gap]")];
+    expect(gaps.map((g) => g.textContent)).toEqual(["2 missing", "1 to match"]);
+    expect(gaps[0]!.className).toContain("text-warning");
     const watchmen = await rowOf("Watchmen");
-    expect(watchmen.querySelector("[data-row-missing]")).toBeNull();
+    expect(watchmen.querySelector("[data-row-gap]")).toBeNull();
     expect(within(watchmen).queryByText(/missing/)).toBeNull();
   });
 
-  it("switches density from the toolbar and remembers it", async () => {
+  it("says there is nothing to read rather than 0 of 0", async () => {
+    renderIndex();
+    const row = await rowOf("Wishlist");
+    // The Read figure (wide) and the caption (narrower) both say it.
+    expect(within(row).getAllByText("Nothing to read yet")).toHaveLength(2);
+    expect(within(row).queryByText("0 of 0")).toBeNull();
+    // The hatched bar still shows what is missing.
+    expect(
+      within(row).getByRole("img", { name: "6 not in your library" }),
+    ).toBeTruthy();
+  });
+
+  it("defaults to comfortable, switches density from the toolbar and remembers it", async () => {
     const first = renderIndex();
     let row = await rowOf("Crisis order");
-    expect(row.getAttribute("data-density")).toBe("compact");
-    const link = within(row).getByRole("link");
-    expect(link.className).toContain("lg:flex-row");
+    expect(row.getAttribute("data-density")).toBe("comfortable");
 
-    fireEvent.click(screen.getByRole("radio", { name: "Comfortable rows" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Compact rows" }));
     row = await rowOf("Crisis order");
     await waitFor(() =>
-      expect(row.getAttribute("data-density")).toBe("comfortable"),
-    );
-    expect(within(row).getByRole("link").className).not.toContain(
-      "lg:flex-row",
+      expect(row.getAttribute("data-density")).toBe("compact"),
     );
     expect(window.localStorage.getItem("folio.readingLists.density")).toBe(
-      "comfortable",
+      "compact",
     );
 
     first.unmount();
     renderIndex();
     row = await rowOf("Crisis order");
-    expect(row.getAttribute("data-density")).toBe("comfortable");
+    expect(row.getAttribute("data-density")).toBe("compact");
   });
 
-  it("never clamps a long name at desktop; the description gives way", async () => {
+  it("never cuts a name to one line on a wide table, in either density", async () => {
     renderIndex();
     const row = await rowOf(LONG_NAME);
+    const link = within(row).getByRole("link");
     const name = row.querySelector("[data-row-name]") as HTMLElement;
     const desc = row.querySelector("[data-row-description]") as HTMLElement;
+    const classes = (el: HTMLElement) => el.className.split(/\s+/);
+    const wide = (el: HTMLElement) =>
+      classes(el).filter((c) => c.startsWith("@min-[42rem]/board:"));
     expect(name.textContent).toBe(LONG_NAME);
     expect(name.getAttribute("title")).toBe(LONG_NAME);
-    const classes = (el: HTMLElement) => el.className.split(/\s+/);
-    // No line clamp from lg up (phones get two lines).
+    // No rule anywhere truncates the name to a single line.
     expect(
-      classes(name).filter(
-        (c) => /line-clamp/.test(c) && !c.startsWith("max-sm:"),
-      ),
-    ).toEqual([]);
-    // Compact: the name keeps its width (only the column can cut it), the
-    // description takes what is left.
-    expect(classes(name)).toEqual(
-      expect.arrayContaining(["lg:shrink-0", "lg:max-w-full"]),
-    );
-    expect(classes(desc)).toEqual(
-      expect.arrayContaining(["lg:flex-1", "lg:min-w-0", "lg:truncate"]),
-    );
+      classes(name).some((c) => /truncate|whitespace-nowrap/.test(c)),
+    ).toBe(false);
 
-    fireEvent.click(screen.getByRole("radio", { name: "Comfortable rows" }));
-    await waitFor(() =>
-      expect(row.getAttribute("data-density")).toBe("comfortable"),
+    // Comfortable (default): from the medium tier up the name is never
+    // clamped (narrow tables clamp at two lines); the description gets
+    // two lines under it.
+    expect(classes(name)).toEqual(
+      expect.arrayContaining([
+        "line-clamp-2",
+        "@min-[30rem]/board:line-clamp-none",
+      ]),
     );
-    // Comfortable: the name wraps rather than truncating.
-    expect(
-      classes(name).filter(
-        (c) => /truncate|line-clamp/.test(c) && !c.startsWith("max-sm:"),
-      ),
-    ).toEqual([]);
+    expect(wide(name)).toEqual([]);
+    expect(classes(desc)).toContain("line-clamp-2");
+    expect(wide(link)).toEqual([]);
+
+    // Compact: name and description share a wrapping line, two lines tall
+    // at most; a name that does not fit wraps to its second line (full
+    // name in the title) and pushes the description out of the box; a
+    // description that does fit is cut with an ellipsis.
+    fireEvent.click(screen.getByRole("radio", { name: "Compact rows" }));
+    await waitFor(() =>
+      expect(row.getAttribute("data-density")).toBe("compact"),
+    );
+    expect(wide(link)).toEqual(
+      expect.arrayContaining([
+        "@min-[42rem]/board:flex-row",
+        "@min-[42rem]/board:flex-wrap",
+        "@min-[42rem]/board:max-h-10",
+        "@min-[42rem]/board:overflow-hidden",
+      ]),
+    );
+    expect(wide(name)).toContain("@min-[42rem]/board:line-clamp-2");
+    expect(wide(desc)).toEqual(
+      expect.arrayContaining([
+        "@min-[42rem]/board:basis-0",
+        "@min-[42rem]/board:min-w-24",
+        "@min-[42rem]/board:flex-1",
+        "@min-[42rem]/board:truncate",
+      ]),
+    );
   });
 
-  it("keeps every item in a list's ⋯ menu", async () => {
+  it("sorts inside every folder from the header and keeps folders in place", async () => {
+    renderIndex();
+    await rowOf("Crisis order");
+    const order = () =>
+      [...document.querySelectorAll("[data-board-row] [data-row-name]")].map(
+        (n) => n.textContent,
+      );
+    // Custom order: Events holds Crisis (2 of 10) then Watchmen (3 of 5).
+    expect(order().slice(0, 2)).toEqual(["Crisis order", "Watchmen"]);
+    const header = document.querySelector("[data-board-header]") as HTMLElement;
+    const read = within(header).getByRole("button", { name: "Read" });
+    fireEvent.click(read);
+    await waitFor(() =>
+      expect(order().slice(0, 2)).toEqual(["Watchmen", "Crisis order"]),
+    );
+    expect(read.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("combobox", { name: "Sort" }).textContent).toBe(
+      "Most read",
+    );
+    // The folder row is still first; the grip says what a drag does now.
+    const folder = screen.getByRole("region", { name: "Group Events" });
+    expect(folder.compareDocumentPosition(await rowOf(LONG_NAME))).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    const grip = within(await rowOf("Watchmen")).getByRole("button", {
+      name: "Drag Watchmen",
+    });
+    expect(grip.getAttribute("title")).toMatch(/^Sorted by most read/);
+    // Pressing it again returns to the hand-arranged order.
+    fireEvent.click(read);
+    await waitFor(() =>
+      expect(order().slice(0, 2)).toEqual(["Crisis order", "Watchmen"]),
+    );
+  });
+
+  it("keeps every item in a list's ⋯ menu, saying where it is pinned", async () => {
     renderIndex();
     const row = await rowOf("Crisis order");
     const trigger = within(row).getByRole("button", {
@@ -314,10 +397,10 @@ describe("reading lists tree table", () => {
     });
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
     expect(
-      await screen.findByRole("menuitem", { name: /Pin to pages/ }),
+      await screen.findByRole("menuitem", { name: /Pinned to 2 pages/ }),
     ).toBeTruthy();
     expect(
-      screen.getByRole("menuitemcheckbox", { name: /Show in sidebar/ }),
+      screen.getByRole("menuitem", { name: /Hide from sidebar/ }),
     ).toBeTruthy();
     expect(
       screen.getByRole("menuitem", { name: /Move to group/ }),
@@ -353,5 +436,33 @@ describe("card presentation", () => {
     expect(container.querySelector("[data-board-row]")).toBeNull();
     expect(container.querySelector("[data-board-header]")).toBeNull();
     expect(screen.queryByRole("radio", { name: "Compact rows" })).toBeNull();
+  });
+});
+
+describe("reading-list sorts", () => {
+  it('"Recently updated" orders by the list\'s date, replacing the view-row sort', () => {
+    const lists = new Map(
+      [list("old", {}, 30), list("new", {}, 1)].map((l) => [l.id, l as never]),
+    );
+    const rows = readingListRows(lists);
+    expect(rows.hiddenSorts).toEqual(["updated"]);
+    const refreshed = rows.sorts!.find((x) => x.value === "board:refreshed")!;
+    expect(refreshed.label).toBe("Recently updated");
+    // The view rows say the opposite (`updated_at`): the list date wins.
+    const a = view({
+      id: "a",
+      name: "A",
+      cbl_list_id: "old",
+      updated_at: "2026-11-10T00:00:00Z",
+    }) as never;
+    const b = view({
+      id: "b",
+      name: "B",
+      cbl_list_id: "new",
+      updated_at: "2020-01-01T00:00:00Z",
+    }) as never;
+    expect(
+      [a, b].sort(refreshed.compare).map((x: { id: string }) => x.id),
+    ).toEqual(["b", "a"]);
   });
 });

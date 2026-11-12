@@ -4,8 +4,8 @@ import { useCallback, useSyncExternalStore } from "react";
 
 /**
  * Per-browser row density of a board's rows presentation (the reading
- * lists table): `compact` (one line per row, the default) or
- * `comfortable` (name over description). Stored in `localStorage` under
+ * lists table): `compact` (one line per row where it fits) or
+ * `comfortable` (name over description, the default). Stored in `localStorage` under
  * one key per board; every access is guarded, so a private window or
  * blocked storage keeps the choice in memory for the page's life and
  * starts from the default. The server snapshot is the default too, so
@@ -13,7 +13,7 @@ import { useCallback, useSyncExternalStore } from "react";
  */
 export type BoardDensity = "compact" | "comfortable";
 
-export const DEFAULT_DENSITY: BoardDensity = "compact";
+export const DEFAULT_DENSITY: BoardDensity = "comfortable";
 
 const listeners = new Set<() => void>();
 /** Choices made while storage throws. */

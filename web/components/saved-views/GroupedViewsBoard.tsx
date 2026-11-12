@@ -32,6 +32,7 @@ import {
   defaultDropAnimationSideEffects,
   type DropAnimation,
   KeyboardSensor,
+  MeasuringStrategy,
   MouseSensor,
   TouchSensor,
   closestCenter,
@@ -39,6 +40,7 @@ import {
   rectIntersection,
   useSensor,
   useSensors,
+  type Announcements,
   type CollisionDetection,
   type DragEndEvent,
   type DragOverEvent,
@@ -54,6 +56,7 @@ import {
 } from "@dnd-kit/sortable";
 import { useDroppable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
+import { createPortal } from "react-dom";
 import {
   ArrowDown,
   ArrowUp,
@@ -106,6 +109,7 @@ import {
 import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
+  BOARD_CONTAINER,
   ROW_CELL,
   ROW_GRID,
   ROW_PAD,
@@ -129,16 +133,21 @@ import type {
 import {
   UNGROUPED_ID,
   VIEW_SORT_OPTIONS,
+  boardFromLayout,
   boardRows,
   boardToLayout,
   buildViewBoard,
+  layoutKeepingCustom,
+  sortBoard,
   containerOf,
   countViews,
   filterBoard,
   moveGroup,
   moveView,
   type BoardGroup,
+  type BoardLayout,
   type BoardRow,
+  type BuiltinViewSort,
   type ViewBoard,
   type ViewCompare,
   type ViewSort,
@@ -323,8 +332,9 @@ export type GroupedViewsBoardProps = {
   loading: boolean;
   /** Shown when there are no views at all (groups are irrelevant then). */
   empty: React.ReactNode;
-  /** Short line under the tab header explaining what this kind is. */
-  blurb: string;
+  /** Short line in the toolbar explaining what this kind is; omit it
+   *  where the page header already says it. */
+  blurb?: string | null;
   /** Primary action (New filter view / Import CBL / New collection). */
   action: React.ReactNode;
   /** Noun for copy: "list", "view", "collection". */
@@ -379,6 +389,9 @@ export type BoardRowsPresentation = {
     label: string;
     compare: ViewCompare;
   }>;
+  /** Built-in sorts this board leaves out of its menu (the reading lists
+   *  replace "Recently updated" with their own list date). */
+  hiddenSorts?: ReadonlyArray<BuiltinViewSort>;
   /** `localStorage` key of the density choice. */
   densityKey: string;
 };
@@ -440,25 +453,37 @@ export function GroupedViewsBoard({
     rows?.densityKey ?? "folio.viewBoard.density",
   );
   const extraSorts = rows?.sorts;
+  const hiddenSorts = rows?.hiddenSorts;
   const sortOptions = React.useMemo(
     () => [
-      ...VIEW_SORT_OPTIONS,
+      ...VIEW_SORT_OPTIONS.filter(
+        (o) => !(hiddenSorts ?? []).includes(o.value),
+      ).map(({ value, label }) => ({ value: value as ViewSort, label })),
       ...(extraSorts ?? []).map(({ value, label }) => ({ value, label })),
     ],
-    [extraSorts],
+    [extraSorts, hiddenSorts],
   );
   const compare = extraSorts?.find((s) => s.value === sort)?.compare;
-  const serverBoard = React.useMemo(
+  // The rows presentation sorts inside every group too; cards sort only
+  // the ungrouped section. Groups always keep their arranged order.
+  const sortInside = rows !== undefined;
+  // The stored hand-arranged board, whatever the sort: what a commit made
+  // while sorted keeps (see `layoutKeepingCustom`).
+  const customBoard = React.useMemo(
     () =>
       buildViewBoard(
         views,
         groupsQ.data?.groups ?? [],
         groupsQ.data?.ungrouped_ids ?? [],
-        sort,
-        compare,
+        "custom",
       ),
-    [views, groupsQ.data, sort, compare],
+    [views, groupsQ.data],
   );
+  const serverBoard = React.useMemo(
+    () => sortBoard(customBoard, sort, compare, { groups: sortInside }),
+    [customBoard, sort, compare, sortInside],
+  );
+  const sortLabel = sortOptions.find((o) => o.value === sort)?.label ?? "";
   // While a drag is in flight (and until the commit settles) the board
   // renders from `draft`; afterwards it falls back to the query cache,
   // which the layout mutation already patched optimistically.
@@ -495,23 +520,43 @@ export function GroupedViewsBoard({
 
   const commit = React.useCallback(
     (next: ViewBoard) => {
-      setDraft(next);
-      // The PUT pins the ungrouped order exactly as displayed. If that
-      // order differs from the server's while a non-custom sort is on,
-      // switch to Custom so the pinned order stays what the user sees
-      // instead of re-sorting under them once the draft clears.
+      const send = (layout: BoardLayout, shown: ViewBoard) => {
+        setDraft(shown);
+        replaceLayout.mutate(
+          { scope, ...layout },
+          { onSettled: () => setDraft(null) },
+        );
+      };
+      if (sort === "custom") {
+        // What is shown is the hand arrangement: pin it as is.
+        send(boardToLayout(next), next);
+        return;
+      }
       if (
-        sort !== "custom" &&
+        !sortInside &&
+        sameMembers(next.ungrouped, serverBoard.ungrouped) &&
         !sameIds(next.ungrouped, serverBoard.ungrouped)
       ) {
+        // Cards: a card dragged to a new spot inside the sorted ungrouped
+        // section pins the order shown, and the sort switches to Custom so
+        // it stays what the user sees.
         setSort("custom");
+        send(boardToLayout(next), next);
+        return;
       }
-      replaceLayout.mutate(
-        { scope, ...boardToLayout(next) },
-        { onSettled: () => setDraft(null) },
+      // Any other move while sorted: never pin the sorted order. Each
+      // section keeps its stored order, a newcomer goes to the end.
+      const layout = layoutKeepingCustom(customBoard, next, {
+        groups: sortInside,
+      });
+      send(
+        layout,
+        sortBoard(boardFromLayout(next, layout), sort, compare, {
+          groups: sortInside,
+        }),
       );
     },
-    [replaceLayout, scope, serverBoard, sort],
+    [replaceLayout, scope, serverBoard, customBoard, sort, compare, sortInside],
   );
 
   // ── actions shared with cards (menu fallback for DnD) ──
@@ -528,7 +573,7 @@ export function GroupedViewsBoard({
         setNewGroupOpen(true);
       },
     }),
-    [board, commit],
+    [board, commit, setNewGroupSeedView, setNewGroupOpen],
   );
 
   // ── dnd handlers ──
@@ -619,7 +664,16 @@ export function GroupedViewsBoard({
       const fromContainer = containerOf(board, a.id);
       let next = board;
       if (overContainer && overContainer === fromContainer) {
-        // Same-section reorder (a group or Ungrouped).
+        // Same-section reorder (a group or Ungrouped). Rows sorted by a
+        // column have no hand order to change: only moves between
+        // sections count then.
+        if (sortInside && sort !== "custom") {
+          // The draft may already hold a move into this section from
+          // `onDragOver`: that move counts, a reorder does not.
+          if (dragFrom !== null && dragFrom !== overContainer) commit(board);
+          else setDraft(null);
+          return;
+        }
         const list = viewsIn(board, overContainer);
         const o = parseDndId(over.id);
         const from = list.findIndex((v) => v.id === a.id);
@@ -679,6 +733,43 @@ export function GroupedViewsBoard({
 
   const total = countViews(board);
   const showGroups = board.groups.length > 0;
+
+  // The rows board is a query container (`@container/board`), and
+  // container queries contain layout: a fixed-position overlay inside it
+  // would be placed against the board, not the viewport. Rows render the
+  // overlay in a portal on `body` instead (client only).
+  const mounted = React.useSyncExternalStore(
+    noopSubscribe,
+    () => true,
+    () => false,
+  );
+  const portal = (node: React.ReactNode) =>
+    rows && mounted ? createPortal(node, document.body) : node;
+
+  // Screen-reader announcements in names, not dnd ids.
+  const nameOf = (id: UniqueIdentifier | undefined): string => {
+    const p = id === undefined ? null : parseDndId(id);
+    if (!p) return "";
+    if (p.type === "ungrouped") return "Ungrouped";
+    if (p.type === "group") {
+      const g = board.groups.find((x) => x.id === p.id);
+      return g ? `group ${g.name}` : "a group";
+    }
+    return views.find((v) => v.id === p.id)?.name ?? `a ${noun}`;
+  };
+  const announcements: Announcements = {
+    onDragStart: ({ active }) => `Picked up ${nameOf(active.id)}.`,
+    onDragOver: ({ active, over }) =>
+      over
+        ? `${nameOf(active.id)} is over ${nameOf(over.id)}.`
+        : `${nameOf(active.id)} is no longer over a drop area.`,
+    onDragEnd: ({ active, over }) =>
+      over
+        ? `${nameOf(active.id)} was dropped on ${nameOf(over.id)}.`
+        : `${nameOf(active.id)} was dropped.`,
+    onDragCancel: ({ active }) =>
+      `Dragging was cancelled. ${nameOf(active.id)} was put back.`,
+  };
   const renderView = renderCard ?? renderNothing;
 
   /** The per-group callbacks both presentations wire up the same way.
@@ -703,10 +794,12 @@ export function GroupedViewsBoard({
   return (
     <ViewBoardActionsContext.Provider value={actions}>
       <CardGridClassContext.Provider value={CARD_GRID_CLASS[size]}>
-        <div className="space-y-4">
+        <div className={cn("space-y-4", rows && BOARD_CONTAINER)}>
           {/* Toolbar: blurb + search + sort + new group + primary action */}
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-muted-foreground text-sm">{blurb}</p>
+            {blurb ? (
+              <p className="text-muted-foreground text-sm">{blurb}</p>
+            ) : null}
             <div className="flex flex-wrap items-center gap-2 max-sm:w-full">
               {total > 0 ? (
                 <>
@@ -730,8 +823,12 @@ export function GroupedViewsBoard({
                   >
                     <SelectTrigger
                       className="h-9 w-[11.5rem]"
-                      aria-label="Sort ungrouped"
-                      title="Order of the ungrouped section. Dragging a card pins the custom order."
+                      aria-label={rows ? "Sort" : "Sort ungrouped"}
+                      title={
+                        rows
+                          ? `Order of the ${plural(noun, 2)} in every group and outside them. Groups keep their own order.`
+                          : "Order of the ungrouped section. Dragging a card pins the custom order."
+                      }
                     >
                       <SelectValue />
                     </SelectTrigger>
@@ -786,6 +883,14 @@ export function GroupedViewsBoard({
           ) : (
             <DndContext
               sensors={sensors}
+              accessibility={{ announcements }}
+              // Rows: the drop zone that appears under the table while a
+              // row is held must be measured after it renders.
+              measuring={
+                rows
+                  ? { droppable: { strategy: MeasuringStrategy.Always } }
+                  : undefined
+              }
               collisionDetection={collisionDetection}
               onDragStart={onDragStart}
               onDragOver={onDragOver}
@@ -800,6 +905,11 @@ export function GroupedViewsBoard({
                   visibleBoard={visibleBoard}
                   sort={sort}
                   onSort={setSort}
+                  sortNote={
+                    sort === "custom"
+                      ? null
+                      : `Sorted by ${sortLabel.toLowerCase()}: dragging moves a ${noun} between groups. Choose Custom order to arrange by hand.`
+                  }
                   searching={searching}
                   noun={noun}
                   dragActive={activeId !== null}
@@ -854,53 +964,59 @@ export function GroupedViewsBoard({
                 </div>
               )}
 
-              <DragOverlay dropAnimation={reduced ? null : DROP_ANIMATION}>
-                {activeView && rows ? (
-                  // The held row, on the table's grid at its own width.
-                  <div
-                    data-density={density}
-                    className={cn(
-                      ROW_GRID,
-                      ROW_PAD,
-                      "bg-popover text-popover-foreground border-border pointer-events-none rounded-md border shadow-xl",
-                      DRAG_LIFT_CLASS,
-                    )}
-                    style={{ transition: LIFT_TRANSITION }}
-                  >
-                    <span
+              {portal(
+                <DragOverlay dropAnimation={reduced ? null : DROP_ANIMATION}>
+                  {activeView && rows ? (
+                    // The held row at its own width, in a query container of
+                    // its own (the overlay lives in a portal, outside the
+                    // board's), so it keeps the table's tier.
+                    <div className={BOARD_CONTAINER}>
+                      <div
+                        data-density={density}
+                        className={cn(
+                          ROW_GRID,
+                          ROW_PAD,
+                          "bg-popover text-popover-foreground border-border pointer-events-none rounded-md border shadow-xl",
+                          DRAG_LIFT_CLASS,
+                        )}
+                        style={{ transition: LIFT_TRANSITION }}
+                      >
+                        <span
+                          className={cn(
+                            "text-muted-foreground justify-center",
+                            ROW_CELL.grip,
+                          )}
+                        >
+                          <GripVertical className="size-4" aria-hidden="true" />
+                        </span>
+                        {rows.renderRow(activeView, {
+                          depth: 0,
+                          density,
+                          overlay: true,
+                        })}
+                      </div>
+                    </div>
+                  ) : activeView ? (
+                    // A lifted copy of the card itself, at its own size, so
+                    // what you hold is what lands.
+                    <div
                       className={cn(
-                        ROW_CELL.grip,
-                        "text-muted-foreground inline-flex justify-center",
+                        "pointer-events-none rounded-lg",
+                        DRAG_LIFT_CLASS,
                       )}
+                      style={{ transition: LIFT_TRANSITION }}
                     >
-                      <GripVertical className="size-4" aria-hidden="true" />
-                    </span>
-                    {rows.renderRow(activeView, {
-                      depth: 0,
-                      density,
-                      overlay: true,
-                    })}
-                  </div>
-                ) : activeView ? (
-                  // A lifted copy of the card itself, at its own size, so
-                  // what you hold is what lands.
-                  <div
-                    className={cn(
-                      "pointer-events-none rounded-lg",
-                      DRAG_LIFT_CLASS,
-                    )}
-                    style={{ transition: LIFT_TRANSITION }}
-                  >
-                    {renderView(activeView)}
-                  </div>
-                ) : activeGroup ? (
-                  <DragGhost
-                    icon={GripVertical}
-                    label={activeGroup.name}
-                    meta={`${activeGroup.views.length} ${plural(noun, activeGroup.views.length)}`}
-                  />
-                ) : null}
-              </DragOverlay>
+                      {renderView(activeView)}
+                    </div>
+                  ) : activeGroup ? (
+                    <DragGhost
+                      icon={GripVertical}
+                      label={activeGroup.name}
+                      meta={`${activeGroup.views.length} ${plural(noun, activeGroup.views.length)}`}
+                    />
+                  ) : null}
+                </DragOverlay>,
+              )}
             </DndContext>
           )}
         </div>
@@ -925,6 +1041,8 @@ export function GroupedViewsBoard({
   );
 }
 
+const noopSubscribe = () => () => {};
+
 function renderNothing(): React.ReactNode {
   return null;
 }
@@ -941,6 +1059,11 @@ function viewsIn(board: ViewBoard, container: string): SavedViewView[] {
 
 function sameIds(a: readonly SavedViewView[], b: readonly SavedViewView[]) {
   return a.length === b.length && a.every((v, i) => v.id === b[i]?.id);
+}
+
+function sameMembers(a: readonly SavedViewView[], b: readonly SavedViewView[]) {
+  const ids = new Set(a.map((v) => v.id));
+  return a.length === b.length && b.every((v) => ids.has(v.id));
 }
 
 // ──────────────────── group section ────────────────────
@@ -1437,9 +1560,15 @@ function dragSurface(
     string,
     (e: React.SyntheticEvent) => void
   >;
+  // React events from a portal (the pin dialog, a menu) bubble through
+  // the component tree into this surface; only events from its own DOM
+  // count.
+  const inside = (e: React.SyntheticEvent) =>
+    (e.currentTarget as Element).contains(e.target as Node);
   const guard =
     (name: "onPointerDown" | "onMouseDown" | "onTouchStart") =>
     (e: React.SyntheticEvent) => {
+      if (!inside(e)) return;
       // Buttons / menu items keep plain clicks; everything else starts a
       // drag after the sensor's distance (mouse) or delay (touch).
       if ((e.target as Element).closest(NO_DRAG)) return;
@@ -1449,12 +1578,14 @@ function dragSurface(
     onKeyDown,
     surface: {
       // Native anchor/image drag would fight the pointer sensor.
-      onDragStart: (e: React.DragEvent) => e.preventDefault(),
+      onDragStart: (e: React.DragEvent) => {
+        if (inside(e)) e.preventDefault();
+      },
       onPointerDown: guard("onPointerDown"),
       onMouseDown: guard("onMouseDown"),
       onTouchStart: guard("onTouchStart"),
       onClickCapture: (e: React.MouseEvent) => {
-        if (Date.now() < suppressClickUntil.current) {
+        if (inside(e) && Date.now() < suppressClickUntil.current) {
           e.preventDefault();
           e.stopPropagation();
         }
@@ -1525,8 +1656,8 @@ function DensityToggle({
   onChange: (next: BoardDensity) => void;
 }) {
   return (
-    // Density only changes the desktop table; below `lg` rows always use
-    // the two-line form, so the control is desktop-only.
+    // Density only changes the wide table; below it rows always use the
+    // two-line form, so the control shows in the wide tier only.
     <ToggleGroup
       type="single"
       variant="outline"
@@ -1536,7 +1667,7 @@ function DensityToggle({
         if (v === "compact" || v === "comfortable") onChange(v);
       }}
       aria-label="Row density"
-      className="folio-control max-lg:hidden"
+      className="folio-control hidden @min-[42rem]/board:flex"
     >
       <ToggleGroupItem
         value="compact"
@@ -1583,6 +1714,7 @@ function RowsTable({
   visibleBoard,
   sort,
   onSort,
+  sortNote,
   searching,
   noun,
   dragActive,
@@ -1596,6 +1728,8 @@ function RowsTable({
   visibleBoard: ViewBoard;
   sort: ViewSort;
   onSort: (sort: ViewSort) => void;
+  /** Set while a column sort is on: what a drag can still do. */
+  sortNote: string | null;
   searching: boolean;
   noun: string;
   dragActive: boolean;
@@ -1648,6 +1782,7 @@ function RowsTable({
               suppressClickUntil={suppressClickUntil}
               presentation={presentation}
               density={density}
+              sortNote={sortNote}
               {...groupHandlers(idx)}
             />
           );
@@ -1657,13 +1792,13 @@ function RowsTable({
         rows={rootViews}
         hasGroups={board.groups.length > 0}
         noun={noun}
-        searching={searching}
         nothingVisible={nothingVisible}
         dragActive={dragActive}
         isDropTarget={dropTarget === UNGROUPED_ID}
         suppressClickUntil={suppressClickUntil}
         presentation={presentation}
         density={density}
+        sortNote={sortNote}
       />
     </div>
   );
@@ -1671,9 +1806,9 @@ function RowsTable({
 
 /** The table's one column header. Labels with a sort key are buttons:
  *  press to sort by that column, press the active one again for the
- *  hand-arranged order. As with the sort menu, a sort orders the
- *  ungrouped rows; groups keep their arranged order. Phones have no
- *  header: the sort menu in the toolbar covers it. */
+ *  hand-arranged order. A sort orders the rows inside every group and
+ *  outside them; groups keep their arranged order. The narrow tier has
+ *  no header: the sort menu in the toolbar covers it. */
 function RowsHeader({
   columns,
   sort,
@@ -1694,7 +1829,7 @@ function RowsHeader({
     {
       key: "name",
       label: "Name",
-      cell: "sm:col-start-2 sm:col-span-2 sm:row-start-1",
+      cell: "@min-[30rem]/board:col-start-2 @min-[30rem]/board:col-span-2 @min-[30rem]/board:row-start-1",
       sort: "name",
     },
     ...columns,
@@ -1704,7 +1839,7 @@ function RowsHeader({
       data-board-header=""
       className={cn(
         ROW_GRID,
-        "text-muted-foreground border-border/60 border-b px-2 py-1.5 text-xs font-medium max-sm:hidden sm:px-3",
+        "text-muted-foreground border-border/60 hidden border-b px-2 py-1.5 text-xs font-medium @min-[30rem]/board:grid @min-[30rem]/board:px-3",
       )}
     >
       {cells.map((c) => {
@@ -1719,7 +1854,7 @@ function RowsHeader({
                 title={
                   active
                     ? `Sorted by ${c.label.toLowerCase()}. Press again for your custom order.`
-                    : `Sort ungrouped ${plural(noun, 2)} by ${c.label.toLowerCase()}`
+                    : `Sort ${plural(noun, 2)} by ${c.label.toLowerCase()}`
                 }
                 className={cn(
                   "folio-tap hover:text-foreground focus-visible:ring-ring inline-flex items-center gap-1 rounded focus-visible:ring-2 focus-visible:outline-none",
@@ -1756,6 +1891,7 @@ function GroupRowsSection({
   suppressClickUntil,
   presentation,
   density,
+  sortNote,
   isFirst,
   isLast,
   onRename,
@@ -1775,6 +1911,7 @@ function GroupRowsSection({
   suppressClickUntil: React.MutableRefObject<number>;
   presentation: BoardRowsPresentation;
   density: BoardDensity;
+  sortNote: string | null;
 } & GroupHandlers) {
   const group = node.group;
   const {
@@ -1819,16 +1956,11 @@ function GroupRowsSection({
             onKeyDown={onKeyDown}
             data-drag-handle=""
             aria-label={`Drag to reorder group ${group.name}`}
-            className={cn(ROW_CELL.grip, GRIP_CLASS)}
+            className={cn(GRIP_CLASS, ROW_CELL.grip)}
           >
             <GripVertical className="size-4" aria-hidden="true" />
           </button>
-          <div
-            className={cn(
-              ROW_CELL.lead,
-              "max-sm:row-span-1 max-sm:self-center",
-            )}
-          >
+          <div className={cn(ROW_CELL.lead, "row-span-1 self-center")}>
             <button
               type="button"
               onClick={onToggleCollapsed}
@@ -1868,6 +2000,8 @@ function GroupRowsSection({
                 type="button"
                 onClick={onToggleCollapsed}
                 disabled={forceOpen}
+                aria-expanded={open}
+                aria-controls={panelId}
                 className="focus-visible:ring-ring min-w-0 rounded text-left text-sm font-semibold break-words focus-visible:ring-2 focus-visible:outline-none disabled:cursor-default"
               >
                 {group.name}
@@ -1906,7 +2040,7 @@ function GroupRowsSection({
             <li
               className={cn(
                 ROW_LINE,
-                "text-muted-foreground py-3 pr-3 pl-12 text-sm transition-colors sm:pl-20",
+                "text-muted-foreground py-3 pr-3 pl-12 text-sm transition-colors @min-[30rem]/board:pl-20",
                 dragActive && "text-foreground/80",
               )}
             >
@@ -1927,6 +2061,7 @@ function GroupRowsSection({
                   density={density}
                   suppressClickUntil={suppressClickUntil}
                   renderRow={presentation.renderRow}
+                  sortNote={sortNote}
                 />
               ) : null,
             )
@@ -1938,39 +2073,37 @@ function GroupRowsSection({
 }
 
 /** The root rows: views in no group. Always a drop target, so a row can
- *  be dragged out of a group; with groups present and nothing at the
- *  root it shows a slim line saying so. */
+ *  be dragged out of a group: while a row is held and groups exist, a
+ *  "Drop here to ungroup" line shows under the table, search or not. */
 function UngroupedRows({
   rows,
   hasGroups,
   noun,
-  searching,
   nothingVisible,
   dragActive,
   isDropTarget,
   suppressClickUntil,
   presentation,
   density,
+  sortNote,
 }: {
   rows: Array<Extract<BoardRow, { type: "view" }>>;
   hasGroups: boolean;
   noun: string;
-  searching: boolean;
   nothingVisible: boolean;
   dragActive: boolean;
   isDropTarget: boolean;
   suppressClickUntil: React.MutableRefObject<number>;
   presentation: BoardRowsPresentation;
   density: BoardDensity;
+  sortNote: string | null;
 }) {
   const { setNodeRef } = useDroppable({ id: UNGROUPED_ID });
-  const message = nothingVisible
-    ? `No ${plural(noun, 2)} match your search.`
-    : rows.length > 0 || !hasGroups || searching
-      ? null
-      : dragActive
-        ? "Drop here to ungroup"
-        : `Every ${noun} is in a group.`;
+  const dropZone = dragActive && hasGroups;
+  const message =
+    nothingVisible && !dropZone
+      ? `No ${plural(noun, 2)} match your search.`
+      : null;
   return (
     <div
       ref={setNodeRef}
@@ -1994,12 +2127,22 @@ function UngroupedRows({
                 density={density}
                 suppressClickUntil={suppressClickUntil}
                 renderRow={presentation.renderRow}
+                sortNote={sortNote}
               />
             ))}
           </ul>
         ) : null}
       </SortableContext>
-      {message ? (
+      {dropZone ? (
+        <p
+          className={cn(
+            ROW_LINE,
+            "text-muted-foreground border-primary/40 m-2 rounded-md border border-dashed px-3 py-3 text-center text-sm",
+          )}
+        >
+          Drop here to ungroup
+        </p>
+      ) : message ? (
         <p className={cn(ROW_LINE, "text-muted-foreground px-3 py-3 text-sm")}>
           {message}
         </p>
@@ -2024,6 +2167,7 @@ function BoardRowItem({
   density,
   suppressClickUntil,
   renderRow,
+  sortNote,
 }: {
   view: SavedViewView;
   container: string;
@@ -2031,6 +2175,7 @@ function BoardRowItem({
   density: BoardDensity;
   suppressClickUntil: React.MutableRefObject<number>;
   renderRow: BoardRowsPresentation["renderRow"];
+  sortNote: string | null;
 }) {
   const {
     attributes,
@@ -2077,7 +2222,8 @@ function BoardRowItem({
           onKeyDown={onKeyDown}
           data-drag-handle=""
           aria-label={`Drag ${view.name}`}
-          className={cn(ROW_CELL.grip, GRIP_CLASS)}
+          title={sortNote ?? undefined}
+          className={cn(GRIP_CLASS, ROW_CELL.grip)}
         >
           <GripVertical className="size-4" aria-hidden="true" />
         </button>

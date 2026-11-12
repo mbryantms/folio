@@ -9,6 +9,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SavedViewView } from "@/lib/api/types";
 import {
   compareByRead,
+  compareByRefreshed,
+  gapParts,
   inLibraryLabel,
   readCaption,
   readFraction,
@@ -91,12 +93,38 @@ describe("compareByRead", () => {
   });
 });
 
+describe("compareByRefreshed / captions", () => {
+  it("orders by the list's own date, newest first, undated last", () => {
+    const dates: Record<string, string | null> = {
+      old: "2025-01-01T00:00:00Z",
+      new: "2026-11-01T00:00:00Z",
+      none: null,
+      mid: "2026-03-01T00:00:00Z",
+    };
+    const sorted = Object.keys(dates)
+      .map((id) => v(id))
+      .sort(compareByRefreshed((x) => dates[x.id]));
+    expect(sorted.map((x) => x.id)).toEqual(["new", "mid", "old", "none"]);
+  });
+
+  it("says nothing to read instead of 0 of 0, and names every gap", () => {
+    const empty = s({ total: 6, missing: 6 });
+    expect(readLabel(empty)).toBe("Nothing to read yet");
+    expect(readCaption(empty)).toBe("Nothing to read yet");
+    expect(gapParts(s({ missing: 11, ambiguous: 5 }))).toEqual([
+      "11 missing",
+      "5 to match",
+    ]);
+    expect(gapParts(s({}))).toEqual([]);
+  });
+});
+
 describe("density store", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("defaults to compact without storage and keeps a choice when storage throws", () => {
+  it("defaults to comfortable without storage and keeps a choice when storage throws", () => {
     const store = {
       getItem: () => {
         throw new Error("denied");
@@ -122,6 +150,6 @@ describe("density store", () => {
     writeDensity("k2", "comfortable");
     expect(readDensity("k2")).toBe("comfortable");
     data.set("k2", "huge");
-    expect(readDensity("k2")).toBe("compact");
+    expect(readDensity("k2")).toBe(DEFAULT_DENSITY);
   });
 });

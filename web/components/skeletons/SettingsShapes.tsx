@@ -2,6 +2,7 @@ import type * as React from "react";
 
 import { settingsNav } from "@/components/admin/nav";
 import {
+  BOARD_CONTAINER,
   ROW_CELL,
   ROW_GRID,
   ROW_PAD,
@@ -605,89 +606,89 @@ export function ViewCardsSkeleton({ count = 12 }: { count?: number }) {
 }
 
 /** `GroupedViewsBoard`'s rows presentation (the reading lists table):
- *  the bordered table, its column header (from `sm`), one folder row and
- *  list rows on the shared `ROW_GRID` — a small cover, the name and
- *  description, the read bar, and the `lg` columns. Phones restack the
- *  same cells as the real rows do. */
+ *  the bordered table, its column header, one folder row and list rows
+ *  on the shared `ROW_GRID` — a small cover, the name and description,
+ *  the read bar and the In library column. It carries its own
+ *  `@container/board`, so the route fallback (outside the board) picks
+ *  the same tier the board will. */
 export function ViewRowsSkeleton({ count = 8 }: { count?: number }) {
   return (
-    <div className="border-border/60 bg-card/40 rounded-lg border">
-      <div
-        className={cn(
-          ROW_GRID,
-          "border-border/60 border-b px-2 py-1.5 max-sm:hidden sm:px-3",
-        )}
-      >
-        <div className="sm:col-span-2 sm:col-start-2 sm:row-start-1">
-          <TextLineSkeleton lineClassName="h-4" className="h-2.5 w-10" />
-        </div>
-        <div className={ROW_CELL.stat}>
-          <TextLineSkeleton lineClassName="h-4" className="h-2.5 w-8" />
-        </div>
-        <div className={ROW_CELL.stat2}>
-          <TextLineSkeleton lineClassName="h-4" className="h-2.5 w-14" />
-        </div>
-        <div className={ROW_CELL.stat3}>
-          <TextLineSkeleton lineClassName="h-4" className="h-2.5 w-12" />
-        </div>
-      </div>
-      {Array.from({ length: count }, (_, i) => {
-        const folder = i === 0;
-        return (
-          <div
-            key={i}
-            className={cn(
-              ROW_GRID,
-              ROW_PAD,
-              i > 0 && "border-border/50 border-t",
-              folder && "bg-muted/30",
-            )}
-            style={
-              {
-                "--row-depth": folder ? 0 : i < 4 ? 1 : 0,
-              } as React.CSSProperties
-            }
-          >
-            <div className={ROW_CELL.grip} />
-            <div className={ROW_CELL.lead}>
-              {folder ? (
-                <Skeleton className="size-4 rounded" />
-              ) : (
-                <Skeleton className="aspect-[2/3] w-12 rounded-md sm:w-7" />
-              )}
-            </div>
-            <div className={cn(ROW_CELL.main, "space-y-0.5")}>
-              <TextLineSkeleton className={cn("max-w-full", lineWidth(i))} />
-              {folder ? null : (
-                <TextLineSkeleton
-                  lineClassName="h-4"
-                  className="h-2.5 w-4/5 max-w-full lg:hidden"
-                />
-              )}
-            </div>
-            <div className={cn(ROW_CELL.stat, "space-y-1.5")}>
-              <Skeleton className="h-1.5 w-full rounded-full" />
-              <Skeleton className="h-2.5 w-20" />
-            </div>
-            <div className={ROW_CELL.stat2}>
-              <Skeleton className="h-2.5 w-16" />
-            </div>
-            <div className={ROW_CELL.stat3}>
-              {folder ? null : <Skeleton className="h-2.5 w-14" />}
-            </div>
-            <div className={ROW_CELL.menu}>
-              <IconCell />
-            </div>
+    <div className={BOARD_CONTAINER}>
+      <div className="border-border/60 bg-card/40 rounded-lg border">
+        <div
+          className={cn(
+            ROW_GRID,
+            "border-border/60 hidden border-b px-2 py-1.5 @min-[30rem]/board:grid @min-[30rem]/board:px-3",
+          )}
+        >
+          <div className="@min-[30rem]/board:col-span-2 @min-[30rem]/board:col-start-2 @min-[30rem]/board:row-start-1">
+            <TextLineSkeleton lineClassName="h-4" className="h-2.5 w-10" />
           </div>
-        );
-      })}
+          <div className={ROW_CELL.stat}>
+            <TextLineSkeleton lineClassName="h-4" className="h-2.5 w-8" />
+          </div>
+          <div className={ROW_CELL.stat2}>
+            <TextLineSkeleton lineClassName="h-4" className="h-2.5 w-14" />
+          </div>
+        </div>
+        {Array.from({ length: count }, (_, i) => {
+          const folder = i === 0;
+          return (
+            <div
+              key={i}
+              className={cn(
+                ROW_GRID,
+                ROW_PAD,
+                i > 0 && "border-border/50 border-t",
+                folder && "bg-muted/30",
+              )}
+              style={
+                {
+                  "--row-depth": folder ? 0 : i < 4 ? 1 : 0,
+                } as React.CSSProperties
+              }
+            >
+              <div className={ROW_CELL.grip} />
+              <div className={ROW_CELL.lead}>
+                {folder ? (
+                  <Skeleton className="size-4 rounded" />
+                ) : (
+                  <Skeleton className="aspect-[2/3] w-12 rounded-md @min-[30rem]/board:w-7" />
+                )}
+              </div>
+              <div className={cn(ROW_CELL.main, "space-y-0.5")}>
+                <TextLineSkeleton className={cn("max-w-full", lineWidth(i))} />
+                {folder ? null : (
+                  <TextLineSkeleton
+                    lineClassName="h-4"
+                    className="h-2.5 w-4/5 max-w-full"
+                  />
+                )}
+              </div>
+              <div className={cn(ROW_CELL.stat, "space-y-1.5")}>
+                <Skeleton className="h-1.5 w-full rounded-full" />
+                <Skeleton className="h-2.5 w-20" />
+              </div>
+              <div className={ROW_CELL.stat2}>
+                <Skeleton className="h-2.5 w-24" />
+              </div>
+              <div className={ROW_CELL.menu}>
+                <IconCell />
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
 
-/** The rows board's density toggle (two 36px segments; `lg` and up). */
+/** The rows board's density toggle (two 36px segments; wide tier only,
+ *  read from the board's container). */
 export function DensityToggleSkeleton() {
-  return <Skeleton className="h-9 w-[4.5rem] rounded-md max-lg:hidden" />;
+  return (
+    <Skeleton className="hidden h-9 w-[4.5rem] rounded-md @min-[42rem]/board:block" />
+  );
 }
 
 /** The board toolbar's search / sort / New group controls (shown once the

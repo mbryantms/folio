@@ -17,19 +17,22 @@ import type {
   ViewGroupView,
 } from "@/lib/api/types";
 
-/** `custom` renders the ungrouped section in its hand-arranged (server
- *  pinned) order, with never-arranged views trailing by name; the other
- *  keys ignore the pinned order and sort everything. A board may add its
- *  own keys (the reading lists add `read`) with a comparator; an unknown
- *  key without one sorts by name. */
-export type ViewSort =
-  "custom" | "name" | "updated" | "created" | (string & Record<never, never>);
+/** The sorts every board has. `custom` renders each section in its
+ *  hand-arranged (server-pinned) order, with never-arranged views
+ *  trailing by name; the other keys ignore the pinned order. */
+export type BuiltinViewSort = "custom" | "name" | "updated" | "created";
+
+/** A built-in key, or a board's own (`board:read`, `board:refreshed` on
+ *  the reading lists) that comes with a comparator. The prefix keeps typo
+ *  checking on the built-in keys; a board key without a comparator sorts
+ *  by name. */
+export type ViewSort = BuiltinViewSort | `board:${string}`;
 
 /** Order two views for a board-specific sort key. */
 export type ViewCompare = (a: SavedViewView, b: SavedViewView) => number;
 
 export const VIEW_SORT_OPTIONS: ReadonlyArray<{
-  value: ViewSort;
+  value: BuiltinViewSort;
   label: string;
 }> = [
   { value: "custom", label: "Custom order" },
@@ -37,10 +40,6 @@ export const VIEW_SORT_OPTIONS: ReadonlyArray<{
   { value: "updated", label: "Recently updated" },
   { value: "created", label: "Recently added" },
 ];
-
-const BUILTIN_SORTS: ReadonlySet<string> = new Set(
-  VIEW_SORT_OPTIONS.map((o) => o.value),
-);
 
 export type BoardGroup = {
   id: string;
@@ -67,7 +66,7 @@ export function sortViews(
   compare?: ViewCompare,
 ): SavedViewView[] {
   const out = views.slice();
-  if (compare && !BUILTIN_SORTS.has(sort)) {
+  if (compare && sort.startsWith("board:")) {
     out.sort(compare);
     return out;
   }
@@ -322,4 +321,91 @@ export function boardRows(board: ViewBoard): BoardRow[] {
 export function rowViews(row: BoardRow): SavedViewView[] {
   if (row.type === "view") return [row.view];
   return row.children.flatMap(rowViews);
+}
+
+// ──────────────────── sorting a whole board ────────────────────
+
+/** Order a board for display. `custom` returns it unchanged. Otherwise
+ *  the ungrouped section is sorted, and with `groups` (the rows
+ *  presentation) so are the members of every group. Groups themselves
+ *  always keep their arranged order. */
+export function sortBoard(
+  board: ViewBoard,
+  sort: ViewSort,
+  compare?: ViewCompare,
+  opts: { groups?: boolean } = {},
+): ViewBoard {
+  if (sort === "custom") return board;
+  return {
+    groups: opts.groups
+      ? board.groups.map((g) => ({
+          ...g,
+          views: sortViews(g.views, sort, compare),
+        }))
+      : board.groups,
+    ungrouped: sortViews(board.ungrouped, sort, compare),
+  };
+}
+
+/**
+ * The layout to commit while a sort is on. `next` is the displayed board
+ * after a move (sorted, so its order inside a section means nothing);
+ * `custom` is the stored hand-arranged board. Each section keeps its
+ * stored order for the members it still has, and a member it gained is
+ * appended at the end, so a sorted order is never pinned over the hand
+ * arrangement. Group order and membership come from `next`. Pass
+ * `groups: false` when groups are displayed in their arranged order (the
+ * cards presentation): their order in `next` is then the user's own and
+ * is sent as shown.
+ */
+export function layoutKeepingCustom(
+  custom: ViewBoard,
+  next: ViewBoard,
+  opts: { groups?: boolean } = {},
+): BoardLayout {
+  const keep = (stored: readonly SavedViewView[], shown: SavedViewView[]) => {
+    const members = new Set(shown.map((v) => v.id));
+    const kept = stored.map((v) => v.id).filter((id) => members.has(id));
+    const keptSet = new Set(kept);
+    return [
+      ...kept,
+      ...shown.map((v) => v.id).filter((id) => !keptSet.has(id)),
+    ];
+  };
+  const stored = new Map(custom.groups.map((g) => [g.id, g.views]));
+  return {
+    groups: next.groups.map((g) => ({
+      id: g.id,
+      view_ids:
+        opts.groups === false
+          ? g.views.map((v) => v.id)
+          : keep(stored.get(g.id) ?? [], g.views),
+    })),
+    ungrouped: keep(custom.ungrouped, next.ungrouped),
+  };
+}
+
+/** Rebuild a board from a layout payload, taking the views and the group
+ *  names / collapsed state from `base`. Ids `base` does not know are
+ *  dropped. */
+export function boardFromLayout(
+  base: ViewBoard,
+  layout: BoardLayout,
+): ViewBoard {
+  const byId = new Map<string, SavedViewView>();
+  for (const g of base.groups) for (const v of g.views) byId.set(v.id, v);
+  for (const v of base.ungrouped) byId.set(v.id, v);
+  const resolve = (ids: readonly string[]) =>
+    ids.flatMap((id) => {
+      const v = byId.get(id);
+      return v ? [v] : [];
+    });
+  const meta = new Map(base.groups.map((g) => [g.id, g]));
+  return {
+    groups: layout.groups.flatMap((g) => {
+      const m = meta.get(g.id);
+      return m ? [{ ...m, views: resolve(g.view_ids) }] : [];
+    }),
+    ungrouped: resolve(layout.ungrouped),
+  };
 }

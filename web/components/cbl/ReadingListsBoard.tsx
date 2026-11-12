@@ -41,10 +41,13 @@ export function ReadingListsBoard({
   views,
   loading,
   canImport = true,
+  blurb = "Track an imported CBL reading order.",
 }: {
   views: SavedViewView[];
   loading: boolean;
   canImport?: boolean;
+  /** The toolbar's line; `null` where the page header says it already. */
+  blurb?: string | null;
 }) {
   const cblListsQ = useCblLists();
   const cblListsById = React.useMemo(
@@ -77,6 +80,7 @@ export function ReadingListsBoard({
             loading={loading}
             onImport={canImport ? () => setImportOpen(true) : null}
             rows={rows}
+            blurb={blurb}
           />
         </CblUpdatesProvider>
       </BatchRefreshProvider>
@@ -97,11 +101,13 @@ function Board({
   loading,
   onImport,
   rows,
+  blurb,
 }: {
   views: SavedViewView[];
   loading: boolean;
   onImport: (() => void) | null;
   rows: BoardRowsPresentation;
+  blurb: string | null;
 }) {
   const { busy, startBatch } = useCblUpdates();
   const groupMenuExtra = React.useCallback(
@@ -126,7 +132,7 @@ function Board({
       scope="cbl"
       views={views}
       loading={loading}
-      blurb="Track an imported CBL reading order."
+      blurb={blurb}
       noun="list"
       icon={List}
       action={

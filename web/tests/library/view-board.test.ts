@@ -9,14 +9,17 @@ import { describe, expect, it } from "vitest";
 import type { SavedViewView, ViewGroupView } from "@/lib/api/types";
 import {
   UNGROUPED_ID,
+  boardFromLayout,
   boardRows,
   boardToLayout,
   buildViewBoard,
   containerOf,
   filterBoard,
   moveGroup,
+  layoutKeepingCustom,
   moveView,
   rowViews,
+  sortBoard,
   sortViews,
 } from "@/lib/saved-views/view-board";
 
@@ -197,7 +200,13 @@ describe("board-specific sorts", () => {
     b.name.length - a.name.length;
 
   it("sorts ungrouped with the caller's comparator for an extra key", () => {
-    const board = buildViewBoard(views, [g("g1", ["a"])], [], "read", byLength);
+    const board = buildViewBoard(
+      views,
+      [g("g1", ["a"])],
+      [],
+      "board:read",
+      byLength,
+    );
     // "Civil War" and "Daredevil" tie on length: the sort is stable.
     expect(board.ungrouped.map((x) => x.id)).toEqual(["c", "d", "b"]);
     // Groups keep their arranged order under any sort.
@@ -211,9 +220,9 @@ describe("board-specific sorts", () => {
       "c",
       "d",
     ]);
-    expect(sortViews(views.slice().reverse(), "read").map((x) => x.id)).toEqual(
-      ["a", "b", "c", "d"],
-    );
+    expect(
+      sortViews(views.slice().reverse(), "board:read").map((x) => x.id),
+    ).toEqual(["a", "b", "c", "d"]);
   });
 });
 
@@ -252,5 +261,81 @@ describe("boardRows (tree row model)", () => {
     const rows = boardRows(filterBoard(board, "dare"));
     expect(rows.map((r) => r.id)).toEqual(["g1", "d"]);
     expect(rows[0]!.type === "group" ? rows[0]!.children : null).toEqual([]);
+  });
+});
+
+describe("sorted boards never pin a sorted order", () => {
+  // Stored (custom) arrangement: g1 = [b, a], ungrouped = [d, c].
+  const custom = buildViewBoard(views, [g("g1", ["b", "a"])], ["d", "c"]);
+  const byName = (board: ReturnType<typeof buildViewBoard>) =>
+    sortBoard(board, "name", undefined, { groups: true });
+
+  it("sortBoard sorts inside groups only when asked; groups keep their order", () => {
+    const two = buildViewBoard(
+      views,
+      [g("g2", ["d", "c"], 0), g("g1", ["b", "a"], 1)],
+      [],
+    );
+    const rows = sortBoard(two, "name", undefined, { groups: true });
+    expect(rows.groups.map((x) => x.id)).toEqual(["g2", "g1"]);
+    expect(rows.groups[0]!.views.map((x) => x.id)).toEqual(["c", "d"]);
+    const cards = sortBoard(two, "name");
+    expect(cards.groups[0]!.views.map((x) => x.id)).toEqual(["d", "c"]);
+    expect(sortBoard(two, "custom")).toBe(two);
+  });
+
+  it("rows: an unchanged section sends its stored order, not the sorted one", () => {
+    const shown = byName(custom); // g1 shows [a, b], ungrouped [c, d]
+    // A folder reorder or any commit with no membership change.
+    expect(layoutKeepingCustom(custom, shown)).toEqual({
+      groups: [{ id: "g1", view_ids: ["b", "a"] }],
+      ungrouped: ["d", "c"],
+    });
+  });
+
+  it("rows: a move appends the list to the end of the target's stored order", () => {
+    const shown = byName(custom);
+    const moved = moveView(shown, "c", "g1", 0); // dropped at the top
+    expect(layoutKeepingCustom(custom, moved)).toEqual({
+      groups: [{ id: "g1", view_ids: ["b", "a", "c"] }],
+      ungrouped: ["d"],
+    });
+    // And the board shown after it is the stored order, sorted again.
+    const next = boardFromLayout(moved, layoutKeepingCustom(custom, moved));
+    expect(byName(next).groups[0]!.views.map((x) => x.id)).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+  });
+
+  it("cards: groups are sent as shown, the sorted ungrouped keeps its stored order", () => {
+    const shown = sortBoard(custom, "name"); // ungrouped [c, d]
+    const reordered = moveView(shown, "a", "g1", 0); // [a, b] by hand
+    expect(layoutKeepingCustom(custom, reordered, { groups: false })).toEqual({
+      groups: [{ id: "g1", view_ids: ["a", "b"] }],
+      ungrouped: ["d", "c"],
+    });
+    const ungroupedOne = moveView(shown, "a", UNGROUPED_ID);
+    expect(
+      layoutKeepingCustom(custom, ungroupedOne, { groups: false }),
+    ).toEqual({
+      groups: [{ id: "g1", view_ids: ["b"] }],
+      ungrouped: ["d", "c", "a"],
+    });
+  });
+
+  it("boardFromLayout drops ids it does not know and keeps group names", () => {
+    const b = boardFromLayout(custom, {
+      groups: [
+        { id: "g1", view_ids: ["a", "zzz"] },
+        { id: "gone", view_ids: [] },
+      ],
+      ungrouped: ["b"],
+    });
+    expect(b.groups).toHaveLength(1);
+    expect(b.groups[0]!.name).toBe("g1");
+    expect(b.groups[0]!.views.map((x) => x.id)).toEqual(["a"]);
+    expect(b.ungrouped.map((x) => x.id)).toEqual(["b"]);
   });
 });
