@@ -39,6 +39,18 @@ pub(crate) fn load_session(
     if intra_threads > 0 {
         b = b.with_intra_threads(intra_threads)?;
     }
+    // ONNX Runtime's per-op profile (a Chrome trace JSON per session),
+    // for finding the op a slow model spends its time in.
+    if let Some(dir) = std::env::var_os("OCR_BENCH_ORT_PROFILE") {
+        let stem = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let file = path.file_stem().unwrap_or_default().to_string_lossy();
+        b = b.with_profiling(Path::new(&dir).join(format!("{stem}-{file}")))?;
+    }
     let s = b
         .commit_from_file(path)
         .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;

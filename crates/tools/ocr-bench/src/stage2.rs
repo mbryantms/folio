@@ -829,10 +829,6 @@ fn taps(
     out: &mut PageOut,
 ) -> anyhow::Result<()> {
     let (pw, ph) = (page.width(), page.height());
-    let best_split = Split::ALL
-        .into_iter()
-        .find(|s| s.name() == args.best_split)
-        .unwrap_or(Split::Profile);
     let best_pp = eng.recs.iter().position(|r| r.name == args.best_pp);
     let ctd_page_lines: Vec<[f64; 4]> = det_boxes
         .get("ctd")
@@ -846,7 +842,6 @@ fn taps(
         .into_iter()
         .filter(|s| list(&args.tap_splits).iter().any(|n| n == s.name()))
         .collect();
-    let _ = best_split;
     // (combo name, detector, unit, recogniser, split)
     let mut combos: Vec<(String, &str, &str, &str, Split)> = Vec::new();
     for d in det_boxes.keys() {
@@ -1008,6 +1003,7 @@ struct TimingOut {
     per_line: BTreeMap<String, Vec<f64>>,
     first_balloon: BTreeMap<String, f64>,
     split_profile: Vec<f64>,
+    split_best: Vec<f64>,
     /// Whole page per combo: decode + detect + every unit, measured.
     whole_page: BTreeMap<String, Vec<f64>>,
     units_per_page: BTreeMap<String, Vec<usize>>,
@@ -1063,6 +1059,10 @@ fn timing_page(
         boxes_by.insert(d.clone(), last);
     }
 
+    let best_split = Split::ALL
+        .into_iter()
+        .find(|s| s.name() == args.best_split)
+        .unwrap_or(Split::Profile);
     // Balloons to time: the reference boxes when there is a reference,
     // else comic-text-detector's panel boxes.
     let balloons: Vec<(u32, u32, u32, u32)> = match refs {
@@ -1084,6 +1084,16 @@ fn timing_page(
         let c = crop(&page, rect);
         let (rects, ms) = timed(|| split::profile_lines(&c));
         t.split_profile.push(ms);
+        // Recognition is timed on the chosen split's lines (what a tap
+        // reads); the PP-det splits are timed here too.
+        let rects = match best_split {
+            Split::PpDet | Split::PpDet2x if eng.ppdet.is_some() => {
+                let (r, ms) = timed(|| split_rects(best_split, eng, &c, rect, &[], &[]));
+                t.split_best.push(ms);
+                r?.0
+            }
+            _ => rects,
+        };
         for _ in 0..=args.rec_warm {
             for rec in eng.recs.iter_mut() {
                 let (r, ms) = timed(|| pp_balloon(rec, &c, &rects, true));
@@ -1133,15 +1143,11 @@ fn timing_page(
     }
 
     // Whole page and tap, per combo, measured end to end on this page.
-    let best_split = Split::ALL
-        .into_iter()
-        .find(|s| s.name() == args.best_split)
-        .unwrap_or(Split::Profile);
     let best_pp = eng.recs.iter().position(|r| r.name == args.best_pp);
     for d in &det_names {
         let unit = match d.as_str() {
             "ctd" | "ctd-crate" => "panel",
-            "ogk-s" | "ogk-m" => "text_bubble",
+            "ogk-s" | "ogk-m" => "bubble",
             _ => "blocks",
         };
         let mut recogs: Vec<&str> = Vec::new();
@@ -1326,7 +1332,7 @@ fn run_throughput(
         .ok_or_else(|| anyhow::anyhow!("--dets needs one detector"))?;
     let unit = match d.as_str() {
         "ctd" | "ctd-crate" => "panel",
-        "ogk-s" | "ogk-m" => "text_bubble",
+        "ogk-s" | "ogk-m" => "bubble",
         _ => "blocks",
     };
     let best_split = Split::ALL
@@ -1735,6 +1741,12 @@ fn summarize_timing(t: &TimingOut) -> BTreeMap<String, (Option<f64>, Summary)> {
         m.insert(format!("detect: {d}"), (*first, summarize(warm)));
     }
     m.insert("split: profile".into(), (None, summarize(&t.split_profile)));
+    if !t.split_best.is_empty() {
+        m.insert(
+            "split: chosen PP-det split".into(),
+            (None, summarize(&t.split_best)),
+        );
+    }
     for (k, v) in &t.balloon_batched {
         m.insert(
             format!("balloon (lines batched): {k}"),
