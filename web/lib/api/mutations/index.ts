@@ -2049,8 +2049,12 @@ export function useRefreshCblList(id: string) {
         }
         return parts.length ? parts.join(", ") : "Refreshed";
       },
-      onSuccess: () => {
+      // On settle, not only on success: a failed refresh records its
+      // outcome on the list (attempt time, failure kind, count), so the
+      // list's notice and the `/lists` row marker must re-read it too.
+      onSettled: () => {
         qc.invalidateQueries({ queryKey: queryKeys.cblList(id) });
+        qc.invalidateQueries({ queryKey: queryKeys.cblLists, exact: true });
         qc.invalidateQueries({ queryKey: queryKeys.cblRefreshLog(id) });
         // Refresh applies upstream changes — every paginated entries
         // view (any status filter) must re-fetch.
