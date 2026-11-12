@@ -210,6 +210,7 @@ What is still unproven, in priority order:
 | OCR model files (not Renovate-managed)               | `crates/server/src/ocr/models.rs` (Hugging Face commit + SHA-256 per file, checked at runtime); update steps in [ocr.md](ocr.md#pinned-model-files) |
 | Leptonica + Tesseract sources and tessdata compiled/baked into the image (not Renovate-managed) | `scripts/docker/tesseract-inputs.sh` (URL + commit + SHA-256 per file), run by the `Dockerfile` `deps` stage; see "tesseract-rs build inputs" below |
 | `hf-hub` (Renovate updates disabled)                 | A direct dependency only so `ocr::models` uses the same cache path as `comic-text-detector` and `manga-ocr`, which holds while Cargo resolves one `hf-hub` for all three. Bump it by hand, together with those crates; a test in `ocr::models` fails if `Cargo.lock` holds two copies |
+| `ort`, `ndarray` (Renovate updates disabled)         | Direct dependencies for the ONNX Runtime sessions Folio builds itself (`ocr::session`). `comic-text-detector` and `manga-ocr` pin `ort` exactly (`=2.0.0-rc.10`), so the workspace pin is the same and there is one runtime; `ndarray` must be the version `ort` was built with. Bump them by hand, together with those crates |
 
 ## tesseract-rs build inputs
 

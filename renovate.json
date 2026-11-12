@@ -393,6 +393,17 @@
         "hf-hub"
       ],
       "enabled": false
+    },
+    {
+      "description": "ort and ndarray are direct dependencies only for the ONNX Runtime sessions Folio builds itself (`ocr::session`). comic-text-detector and manga-ocr pin ort exactly (`=2.0.0-rc.10`), Cargo cannot hold two ort versions of one major (and ort-sys links one runtime), and tensors cross between Folio's code and ort as the ndarray version ort was built with. A standalone bump of either cannot resolve or does not compile. Bump them by hand, together with the two OCR crates, when those move.",
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchPackageNames": [
+        "ort",
+        "ndarray"
+      ],
+      "enabled": false
     }
   ],
   "prHourlyLimit": 0,
