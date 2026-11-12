@@ -1488,24 +1488,195 @@ where
             });
         }
     }
-    // A rename keeps the inode's change time on some filesystems: stamp
-    // it so the retention sweep ages the kept archive from the restore
-    // (a `chmod` to the same mode sets ctime; nothing else changes).
-    match dir.open_regular(&bak) {
-        Ok(f) => {
-            if let Err(e) = f
-                .metadata()
-                .and_then(|m| f.set_permissions(m.permissions()))
-            {
-                tracing::warn!(path = %dir.display(&bak).display(), error = %e, "archive restore: could not stamp the kept archive's change time");
-            }
-        }
-        Err(e) => {
-            tracing::warn!(path = %dir.display(&bak).display(), error = %e, "archive restore: could not stamp the kept archive's change time");
-        }
-    }
+    stamp_made_now(&dir, &bak);
     // The swap is done: like the rewrite, a failed folder fsync is logged,
     // not returned (an error would invite a second click, which swaps back).
+    sync_after_swap(&dir, &name, &mut fault);
+    Ok(RestoreOutcome {
+        kept: Some(dir.display(&bak)),
+        warning: None,
+    })
+}
+
+/// A rename keeps the inode's change time on some filesystems: stamp the
+/// kept archive at `name` so the retention sweep ages it from the restore
+/// (a `chmod` to its own mode sets ctime; nothing else changes).
+/// Best-effort, logged.
+fn stamp_made_now(dir: &LibraryDir, name: &OsStr) {
+    let stamped = dir
+        .open_regular(name)
+        .map_err(|r| io::Error::other(r.to_string()))
+        .and_then(|f| {
+            f.metadata()
+                .and_then(|m| f.set_permissions(m.permissions()))
+        });
+    if let Err(e) = stamped {
+        tracing::warn!(path = %dir.display(name).display(), error = %e, "archive restore: could not stamp the kept archive's change time");
+    }
+}
+
+/// Make `<target>.bak` free without deleting anything: shift the archive's
+/// own backups up by one (`.bak` → `.bak.1`, …) as far as the first missing
+/// slot. `false` when every slot up to [`MAX_BACKUP_SLOT`] is taken; then
+/// nothing was renamed.
+fn free_newest_slot(dir: &LibraryDir, target: &OsStr) -> Result<bool, RewriteError> {
+    let mut free = None;
+    for slot in 0..=MAX_BACKUP_SLOT {
+        if dir.kind(&backup_slot_name(target, slot))? == EntryKind::Missing {
+            free = Some(slot);
+            break;
+        }
+    }
+    let Some(free) = free else {
+        return Ok(false);
+    };
+    for slot in (1..=free).rev() {
+        dir.rename(
+            &backup_slot_name(target, slot - 1),
+            &backup_slot_name(target, slot),
+        )?;
+    }
+    Ok(true)
+}
+
+/// Restore a converted archive from the backup of the file it was converted
+/// from (`X.cbr.bak[.n]` / `X.cb7.bak[.n]` beside `target`, `X.cbz`): the
+/// backup is **rebuilt as a CBZ** by `write_into` (the converter's repack,
+/// `scanner::cbr_convert::rebuild_cbz_into`) into a staging file in the
+/// same folder, which then takes `target`'s name with the same swap rules
+/// as [`restore_latest_backup`]: one `renameat2(RENAME_EXCHANGE)` where
+/// available, else a second name for the current archive (hard link or
+/// copy), the rename of the rebuilt file over `target`, and the move of the
+/// second name to `.bak`. The current archive becomes the newest backup
+/// `<target>.bak`; the archive's own older backups shift up by one as far
+/// as the first free slot ([`free_newest_slot`], nothing is deleted).
+/// `source` (a bare file name in `target`'s folder) is read through its
+/// handle and never changed: the original bytes stay there.
+///
+/// `source` must be what [`pre_conversion_backup_slot`] accepts for
+/// `target`'s name (else `InvalidInput`) and a regular file (a link is
+/// refused, a missing one is `NotFound`). Any failure before the rebuilt
+/// file takes the name removes the staging file (and the second name) and
+/// changes nothing else; a write or validation failure of the rebuild
+/// surfaces as [`RewriteError::ArchiveErr`] / [`RewriteError::ValidationFailed`].
+/// Past that point the restore has happened: a failure to give the
+/// replaced archive the `.bak` name (or every slot `.bak` … `.bak.5` taken)
+/// is reported in [`RestoreOutcome::warning`], with `kept` naming where it
+/// is (`<target>.bak.<hex>.tmp`, which neither the startup cleanup nor the
+/// prune touches).
+pub fn restore_rebuilt<F, H>(
+    root: &LibraryRoot,
+    target: &Path,
+    source: &OsStr,
+    try_exchange: bool,
+    write_into: F,
+    mut fault: H,
+) -> Result<RestoreOutcome, RewriteError>
+where
+    F: FnOnce(&RewriteIo<'_>) -> Result<(), RewriteError>,
+    H: FnMut(RewriteStep) -> Result<(), RewriteError>,
+{
+    let (dir, name) = open_target(root, target)?;
+    let accepted = match (name.to_str(), source.to_str()) {
+        (Some(a), Some(s)) => pre_conversion_backup_slot(a, s).is_some(),
+        _ => false,
+    };
+    if !accepted {
+        return Err(RewriteError::Io(io::Error::new(
+            ErrorKind::InvalidInput,
+            "not a pre-conversion backup of this archive",
+        )));
+    }
+    let Some(backup) = open_original(&dir, source, &dir.display(source))? else {
+        return Err(RewriteError::Io(io::Error::new(
+            ErrorKind::NotFound,
+            "the pre-conversion backup is missing",
+        )));
+    };
+    let current = open_original(&dir, &name, target)?;
+    let bak = backup_slot_name(&name, 0);
+    // Named like a restore's second name (`<target>.bak.<hex>.tmp`), not a
+    // staging name: after an exchange it holds the replaced archive, which
+    // the startup cleanup must never reap.
+    let stage = staging_name(&bak);
+    let (staging, mut guard) = Staged::create(&dir, &stage)?;
+    let staging_path = dir.display(&stage);
+    write_into(&RewriteIo {
+        source: Some(&backup),
+        staging: &staging,
+        staging_path: &staging_path,
+    })?;
+    staging.sync_all()?;
+    drop(staging);
+    dir.sync()?;
+    fault(RewriteStep::Staged)?;
+
+    let kept = match &current {
+        None => {
+            confirm_unchanged(&dir, &name, None)?;
+            dir.rename_noreplace(&stage, &name)?;
+            guard.disarm();
+            None
+        }
+        Some(cur) => {
+            confirm_unchanged(&dir, &name, Some(cur))?;
+            if try_exchange && dir.exchange(&stage, &name)? {
+                // The staging name now holds the replaced archive.
+                guard.disarm();
+                Some(stage.clone())
+            } else {
+                let hold = staging_name(&bak);
+                link_or_copy(&dir, &name, &hold, cur, None)?;
+                let mut hold_guard = Staged {
+                    dir: &dir,
+                    identity: dir.identity(&hold).ok(),
+                    name: hold.clone(),
+                };
+                fault(RewriteStep::BackedUp)?;
+                confirm_unchanged(&dir, &name, Some(cur))?;
+                dir.rename(&stage, &name)?;
+                guard.disarm();
+                hold_guard.disarm();
+                Some(hold)
+            }
+        }
+    };
+    let Some(kept) = kept else {
+        sync_after_swap(&dir, &name, &mut fault);
+        return Ok(RestoreOutcome {
+            kept: None,
+            warning: None,
+        });
+    };
+    let placed = fault(RewriteStep::Swapped).and_then(|()| {
+        if free_newest_slot(&dir, &name)? {
+            Ok(dir.rename(&kept, &bak)?)
+        } else {
+            Err(RewriteError::Io(io::Error::other(format!(
+                "every backup slot up to .bak.{MAX_BACKUP_SLOT} is taken"
+            ))))
+        }
+    });
+    if let Err(e) = placed {
+        let held = dir.display(&kept);
+        tracing::error!(
+            kept = %held.display(),
+            error = %e,
+            "archive restore: rebuilt, but the replaced archive could not take the .bak name",
+        );
+        let warning = format!(
+            "the archive was rebuilt from the pre-conversion backup, but the replaced archive \
+             could not be renamed to {} ({e}); it is kept as {} in the same folder",
+            file_label(&dir.display(&bak)),
+            file_label(&held),
+        );
+        sync_after_swap(&dir, &name, &mut fault);
+        return Ok(RestoreOutcome {
+            kept: Some(held),
+            warning: Some(warning),
+        });
+    }
+    stamp_made_now(&dir, &bak);
     sync_after_swap(&dir, &name, &mut fault);
     Ok(RestoreOutcome {
         kept: Some(dir.display(&bak)),

@@ -19,7 +19,7 @@ the scanner and is documented in
 |---|---|---|---|
 | Page editor (single issue) | `POST /issues/{id}/archive/edit` → `api::archive_edit::preflight` | 422 `validation.archive_writeback_disabled` when the library flag is off; the job re-checks (`jobs::archive_edit::edit_one_issue` → `EditError::WritebackDisabled`) | `archive_edit_api.rs::edit_rejected_when_writeback_disabled` |
 | Page editor (bulk selection) | `POST /archive/bulk-edit` | Each issue whose library has the flag off is skipped with reason "archive writeback disabled for this library"; nothing is enqueued for it | `archive_edit_api.rs::bulk_edit_fans_out_and_reports_skips` |
-| Restore from `.bak` | `POST /issues/{id}/archive/restore` → `preflight` → `archive_rewrite::restore_latest_backup` (a swap: the replaced archive becomes the newest `.bak`, see [Restore](#restore-keeps-the-file-it-replaces)) | Same 422 as the editor | `archive_edit_api.rs::restore_rejected_when_writeback_disabled`, `archive_restore.rs::restore_keeps_the_replaced_archive_as_the_newest_backup` |
+| Restore from `.bak` | `POST /issues/{id}/archive/restore` → `preflight` → `archive_rewrite::restore_latest_backup` (a swap: the replaced archive becomes the newest `.bak`, see [Restore](#restore-keeps-the-file-it-replaces)); with `?backup=<pre-conversion backup>` → `archive_rewrite::restore_rebuilt` + `cbr_convert::rebuild_cbz_into` (rebuilds a CBZ from `X.cbr.bak` / `X.cb7.bak`, same swap; the backup is only read) | Same 422 as the editor | `archive_edit_api.rs::restore_rejected_when_writeback_disabled`, `archive_restore.rs::restore_keeps_the_replaced_archive_as_the_newest_backup`, `::restoring_a_pre_conversion_backup_rebuilds_it_as_a_cbz` |
 | Provider metadata → ComicInfo/MetronInfo rewrite | `metadata::apply::{apply_issue,apply_series}` dispatch | Takes the XML-first path only when `metadata_writeback_enabled && allow_archive_writeback`; otherwise the DB-direct path (`apply.rs` dispatch). The job re-checks (`jobs::rewrite_sidecars` → `WritebackError::WritebackDisabled`). The settings API refuses to enable `metadata_writeback_enabled` while the master flag is off (`api/libraries.rs`, 422) | `metadata_apply_sidecar.rs::apply_issue_writeback_disabled_takes_legacy_path`, `::apply_series_writeback_disabled_takes_legacy_path` |
 | CBR → CBZ conversion at scan | `library::scanner::process::conversion_eligible(lib, Cbr)` | Requires `auto_convert_cbr_on_scan && allow_archive_writeback` on a writable mount (the settings API refuses the former without the latter); otherwise the file is flagged `UnsupportedArchiveFormat` and left untouched | `scanner_cbr_convert.rs::scan_skips_cbr_when_disabled` |
 | CB7 → CBZ conversion at scan (WP-6.5) | `library::scanner::process::conversion_eligible(lib, Cb7)` → `scanner::cbr_convert::convert_cb7_to_cbz` | Requires its **own** flag, `auto_convert_cb7_on_scan && allow_archive_writeback`, on a writable mount (settings API refuses the flag without the master toggle, 422). Opting into CBR conversion does not extend to CB7. Otherwise — or when the 7z is encrypted / over a cap / malformed — the file is flagged `UnsupportedArchiveFormat` and left byte-for-byte untouched. On success the original is kept as `<name>.cb7.bak` | `scanner_cb7_convert.rs::scan_skips_cb7_when_only_cbr_conversion_enabled`, `::scan_leaves_encrypted_cb7_untouched`, `archive_edit_settings.rs::enable_cb7_conversion_requires_writeback` |
@@ -57,8 +57,10 @@ Three surfaces read those files back: the daily retention prune
   (`X.cbr.bak[.n]` / `X.cb7.bak[.n]`, extension in any case, beside the
   issue's `X.cbz`: `archive_rewrite::pre_conversion_backup_slot`), marked
   `pre_conversion: true`, sorted by slot and name (never the directory's
-  listing order). Restore does not use those yet (see
-  [Restore](#restore-keeps-the-file-it-replaces)).
+  listing order). Restore can name one of those (`?backup=<name>`) and
+  then rebuilds it as a CBZ (see
+  [Restore](#restore-keeps-the-file-it-replaces)); the name is matched
+  against this listing, never opened as a path.
 - Not distinguished: a file the user named exactly like a Folio backup
   (`cp X.cbz X.cbz.bak`). Only a record of the backups Folio made would
   tell those apart; the name rule cannot. Requiring the sibling archive
@@ -349,15 +351,54 @@ replaced file went; the audit row carries it too.
   `archive_restore.rs::a_restore_that_fails_half_way_leaves_the_archive_in_place`,
   `::a_restore_whose_last_step_fails_is_reported_as_done_with_a_warning`,
   `::three_step_restore_ends_like_the_exchange`.
-- **Pre-conversion backups are listed, not restored.** Restore takes only
-  the issue's own `<file>.bak`. Restoring `X.cbr.bak` for the issue now at
-  `X.cbz` is an open product decision (ARC-2 item 3): restoring the RAR
-  under `X.cbr` leaves a file the scanner either converts again into a
-  *new* issue row (auto-convert on: the current row, with its progress
-  and markers, is reconciled as missing) or does not ingest at all
-  (`UnsupportedArchiveFormat`, auto-convert off). Until that is decided
-  the backups are listed (`pre_conversion: true`) and can be restored by
-  hand.
+- **Pre-conversion backups are restored by converting.** Restoring
+  `X.cbr.bak[.n]` / `X.cb7.bak[.n]` for the issue now at `X.cbz`
+  (`POST /issues/{id}/archive/restore?backup=X.cbr.bak`) rebuilds the
+  original's pages as a CBZ with the scan-time converter
+  (`cbr_convert::rebuild_cbz_into`: container by magic bytes, RAR / 7z /
+  ZIP, same `repack` and page-count check as `convert_atomic`) into a
+  staging file in the same folder, named `<file>.bak.<32 hex>.tmp`, then
+  puts it in place with the swap rules above
+  (`archive_rewrite::restore_rebuilt`): exchange, or the three-step
+  fallback, and the "kept under this name" warning when the last step
+  fails. The replaced `X.cbz` becomes `X.cbz.bak`; an existing `.bak` is
+  moved up a slot first (`free_newest_slot`, which never deletes; with all
+  six slots taken the replaced file stays under the second name with a
+  warning). The pre-conversion backup is never written, renamed or
+  deleted, so the original bytes stay available. `file_path` does not
+  change, so the row keeps its id, progress and markers. Restoring the RAR
+  as `X.cbr` was rejected: the scanner would either convert it again into
+  a *new* row (the current one reconciled as missing) or not ingest it.
+  Rules:
+  - The request names a backup from the listing (the `name` field of a
+    `pre_conversion` entry). Anything else is 422
+    `archive.backup_not_restorable`: another issue's backup, a path, a
+    symbolic link (the listing skips links and the rebuild opens the
+    backup without following one), an older own slot. Omitting
+    `backup`, or naming the own `<file>.bak`, is the ordinary restore.
+  - It works whatever the library's `auto_convert_cbr_on_scan` /
+    `auto_convert_cb7_on_scan` say; it still requires admin, writeback on
+    and the per-issue lock with its heartbeat.
+  - A backup that cannot be rebuilt (corrupt, not RAR / 7z / ZIP, over a
+    limit, no pages) is 422 `archive.restore_conversion_failed` with the
+    reader's reason. Every failure before the swap removes the staging
+    file and leaves the archive and every backup as they were.
+  - The response carries `rebuilt_from` (the backup's name) and a
+    `message` saying the archive was rebuilt as a CBZ from that backup,
+    that the original bytes stay available in it, and where the replaced
+    file is kept; the audit row (`admin.issue.archive_restore`) carries
+    both. The restore dialog shows the same sentence when a
+    pre-conversion backup is chosen.
+  - Anchors: exactly as for an ordinary restore. Neither touches
+    markers or progress directly; both queue the forced scoped rescan,
+    which re-anchors them by page hash (`page_remap::Authority::Hash`,
+    ordinal fallback when the page is gone).
+  Tests: `archive_restore.rs::restoring_a_pre_conversion_backup_rebuilds_it_as_a_cbz`
+  (CBR and CB7, auto-convert off, one slot and zero),
+  `::a_corrupt_pre_conversion_backup_is_refused_and_nothing_changes`,
+  `::restore_refuses_a_backup_the_listing_does_not_offer`,
+  `::rebuild_restore_without_exchange_ends_like_the_exchange`,
+  `::a_rebuild_restore_that_fails_before_the_swap_changes_nothing`.
 
 ### Never over another file
 

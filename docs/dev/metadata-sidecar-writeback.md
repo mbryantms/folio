@@ -809,9 +809,12 @@ solicitation.)
   again undoes it; [archive-writes.md](archive-writes.md#restore-keeps-the-file-it-replaces));
   for an older slot, copy it back over the archive by hand, then
   force-rescan the series. A converted archive's pre-conversion
-  backup (`X.cbr.bak` beside `X.cbz`) is listed by
-  `GET /api/issues/{id}/archive/backups` (`pre_conversion: true`) but not
-  restored by the endpoint. No provider quota. It also reverts anything
+  backup (`X.cbr.bak` beside `X.cbz`, listed by
+  `GET /api/issues/{id}/archive/backups` with `pre_conversion: true`) is
+  restored by choosing it in the same dialog
+  (`…/archive/restore?backup=X.cbr.bak`): the archive is rebuilt as a CBZ
+  from it at the same path, the backup itself is left as it is. No
+  provider quota. It also reverts anything
   else that rewrite changed, so only use a backup from that rewrite.
 - **Per-issue re-fetch** — the default. Series page → ⋯ → *Fetch
   metadata* → **Only missing or partial**

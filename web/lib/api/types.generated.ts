@@ -6962,12 +6962,15 @@ export interface components {
              *     show `made_at` as the backup's date.
              */
             modified_at?: string | null;
+            /** @description The backup's file name: what `POST …/archive/restore?backup=` takes. */
+            name: string;
             path: string;
             /**
              * @description The backup of the archive this issue's file was converted from
              *     (`X.cbr.bak` / `X.cb7.bak[.n]` beside the issue's `X.cbz`), not of
              *     the current file. Listed so it can be found; restore does not use
-             *     it (restore takes the issue's own `<file>.bak`).
+             *     it as is: restoring it (`?backup=<name>`) rebuilds it as a CBZ into
+             *     the issue's file, and the backup itself stays untouched.
              */
             pre_conversion: boolean;
             /** Format: int64 */
@@ -14226,6 +14229,14 @@ export interface components {
              *     it is kept under instead, `<file>.bak.<hex>.tmp`; `warning` says so.
              */
             kept_as?: string | null;
+            /** @description What the restore did, in one sentence for the admin. */
+            message: string;
+            /**
+             * @description Set when the restore rebuilt the archive from a pre-conversion
+             *     backup (`?backup=X.cbr.bak`): the backup's file name. The archive
+             *     is then a CBZ rebuilt from that file, not its bytes.
+             */
+            rebuilt_from?: string | null;
             status: string;
             /**
              * @description Set when the restore happened but something about keeping the
@@ -21565,7 +21576,17 @@ export interface operations {
     };
     archive_edit_restore: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Which backup to restore: its file name exactly as the backups
+                 *     listing returns it in `name`. Omitted, or the issue's own
+                 *     `<file>.bak`: the newest backup is swapped in (unchanged behaviour).
+                 *     A pre-conversion backup (`pre_conversion: true`) is rebuilt as a
+                 *     CBZ into the issue's file. Anything else the listing does not offer
+                 *     for this issue is refused (422 `archive.backup_not_restorable`).
+                 */
+                backup?: string;
+            };
             header?: never;
             path: {
                 id: string;
@@ -21603,7 +21624,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description writeback disabled / unsupported format */
+            /** @description writeback disabled / unsupported format / the named backup is not restorable / the pre-conversion backup could not be rebuilt */
             422: {
                 headers: {
                     [name: string]: unknown;

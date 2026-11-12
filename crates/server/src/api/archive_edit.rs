@@ -13,7 +13,7 @@
 
 use axum::{
     Extension, Json,
-    extract::{DefaultBodyLimit, Multipart, Path as AxPath, State},
+    extract::{DefaultBodyLimit, Multipart, Path as AxPath, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -501,18 +501,36 @@ pub struct RestoreResponse {
     /// Set when the restore happened but something about keeping the
     /// replaced archive did not go as planned: says where it is and why.
     pub warning: Option<String>,
+    /// Set when the restore rebuilt the archive from a pre-conversion
+    /// backup (`?backup=X.cbr.bak`): the backup's file name. The archive
+    /// is then a CBZ rebuilt from that file, not its bytes.
+    pub rebuilt_from: Option<String>,
+    /// What the restore did, in one sentence for the admin.
+    pub message: String,
+}
+
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct RestoreQuery {
+    /// Which backup to restore: its file name exactly as the backups
+    /// listing returns it in `name`. Omitted, or the issue's own
+    /// `<file>.bak`: the newest backup is swapped in (unchanged behaviour).
+    /// A pre-conversion backup (`pre_conversion: true`) is rebuilt as a
+    /// CBZ into the issue's file. Anything else the listing does not offer
+    /// for this issue is refused (422 `archive.backup_not_restorable`).
+    pub backup: Option<String>,
 }
 
 #[utoipa::path(
     operation_id = "archive_edit_restore",    post,
     path = "/issues/{id}/archive/restore",
-    params(("id" = String, Path,)),
+    params(("id" = String, Path,), RestoreQuery),
     responses(
         (status = 202, body = RestoreResponse),
         (status = 403, description = "admin only"),
         (status = 404, description = "issue not found / no backup"),
         (status = 409, description = "another rewrite is in progress"),
-        (status = 422, description = "writeback disabled / unsupported format"),
+        (status = 422, description = "writeback disabled / unsupported format / the named backup is not restorable / the pre-conversion backup could not be rebuilt"),
     )
 )]
 #[handler]
@@ -521,18 +539,64 @@ pub async fn restore(
     RequireAdmin(actor): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     AxPath(id): AxPath<String>,
+    Query(q): Query<RestoreQuery>,
 ) -> Response {
     let (row, _lib) = match preflight(&app, &id).await {
         Ok(v) => v,
         Err(resp) => return resp,
     };
+    let target = std::path::PathBuf::from(&row.file_path);
+    let own_bak = archive_rewrite::backup_slot(&target, 0);
+    let own_bak_name = own_bak
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned());
+    let named = q.backup.filter(|b| Some(b) != own_bak_name.as_ref());
+    let Some(named) = named else {
+        return restore_issue(
+            &app,
+            row,
+            actor.id,
+            ctx.ip_string(),
+            ctx.user_agent.clone(),
+            None,
+            archive_rewrite::restore_latest_backup,
+        )
+        .await;
+    };
+    // Only a backup the listing offers for THIS issue, matched by its bare
+    // file name; the name never becomes a path of its own. Own older slots
+    // are listed but not restorable here.
+    let listed = listed_backups(&target).await;
+    let Some(found) = listed
+        .into_iter()
+        .find(|b| b.pre_conversion && b.name == named)
+    else {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "archive.backup_not_restorable",
+            "restore takes the newest backup (.bak) or a pre-conversion backup the \
+             backups listing offers for this issue",
+        );
+    };
+    let limits = app.cfg().archive_limits();
+    let source = std::ffi::OsString::from(found.name.clone());
     restore_issue(
         &app,
         row,
         actor.id,
         ctx.ip_string(),
         ctx.user_agent.clone(),
-        archive_rewrite::restore_latest_backup,
+        Some(found.name),
+        move |root, target| {
+            archive_rewrite::restore_rebuilt(
+                root,
+                target,
+                &source,
+                true,
+                |io| crate::library::scanner::cbr_convert::rebuild_cbz_into(io, limits),
+                |_| Ok(()),
+            )
+        },
     )
     .await
 }
@@ -549,6 +613,7 @@ pub async fn restore_issue<F>(
     actor_id: Uuid,
     actor_ip: Option<String>,
     actor_ua: Option<String>,
+    rebuilt_from: Option<String>,
     swap: F,
 ) -> Response
 where
@@ -627,6 +692,32 @@ where
                  nothing was restored",
             );
         }
+        Ok(Err(
+            e @ (archive_rewrite::RewriteError::ArchiveErr(_)
+            | archive_rewrite::RewriteError::ValidationFailed(_)),
+        )) => {
+            // Only the rebuild of a pre-conversion backup reads an archive:
+            // a corrupt or unreadable backup, or one over a limit. Nothing
+            // was swapped.
+            tracing::warn!(issue_id = %row.id, error = %e, "archive restore: the backup could not be rebuilt");
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "archive.restore_conversion_failed",
+                &format!(
+                    "the pre-conversion backup could not be rebuilt as a CBZ; nothing was \
+                     changed: {e}"
+                ),
+            );
+        }
+        Ok(Err(archive_rewrite::RewriteError::Io(e)))
+            if e.kind() == std::io::ErrorKind::InvalidInput =>
+        {
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "archive.backup_not_restorable",
+                "the named backup is not a pre-conversion backup of this issue's archive",
+            );
+        }
         Ok(Err(e)) => {
             tracing::error!(error = %e, "archive restore: failed");
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
@@ -641,6 +732,18 @@ where
         .as_ref()
         .map(|p| p.to_string_lossy().into_owned());
     let warning = restored.warning;
+    let kept_label = restored.kept.as_deref().map(archive_rewrite::file_label);
+    let message = match (&rebuilt_from, &kept_label) {
+        (Some(from), kept) => format!(
+            "The archive was rebuilt as a CBZ from the pre-conversion backup {from} (the \
+             original bytes stay available in that backup){}.",
+            kept.as_ref()
+                .map(|k| format!("; the replaced archive is kept as {k}"))
+                .unwrap_or_default()
+        ),
+        (None, Some(k)) => format!("The backup was restored; the replaced archive is kept as {k}."),
+        (None, None) => "The backup was restored.".to_owned(),
+    };
 
     app.zip_lru.invalidate(&row.id);
 
@@ -687,6 +790,8 @@ where
                 "file_path": row.file_path,
                 "kept_as": kept_as,
                 "warning": warning,
+                "rebuilt_from": rebuilt_from,
+                "message": message,
             }),
             ip: actor_ip,
             user_agent: actor_ua,
@@ -701,6 +806,8 @@ where
             status: "restored",
             kept_as,
             warning,
+            rebuilt_from,
+            message,
         }),
     )
         .into_response()
@@ -711,6 +818,8 @@ pub struct BackupView {
     /// Retention slot: 0 = most recent (`.bak`), 1 = `.bak.1`, …
     pub slot: i32,
     pub path: String,
+    /// The backup's file name: what `POST …/archive/restore?backup=` takes.
+    pub name: String,
     /// RFC3339 modification time of the backup file, or null if
     /// unavailable. For a hard-linked backup (the usual kind) this is the
     /// ORIGINAL archive's modification time, not when the backup was made:
@@ -727,56 +836,20 @@ pub struct BackupView {
     /// The backup of the archive this issue's file was converted from
     /// (`X.cbr.bak` / `X.cb7.bak[.n]` beside the issue's `X.cbz`), not of
     /// the current file. Listed so it can be found; restore does not use
-    /// it (restore takes the issue's own `<file>.bak`).
+    /// it as is: restoring it (`?backup=<name>`) rebuilds it as a CBZ into
+    /// the issue's file, and the backup itself stays untouched.
     pub pre_conversion: bool,
 }
 
-fn backup_view(
-    slot: i32,
-    path: &std::path::Path,
-    meta: &std::fs::Metadata,
-    pre_conversion: bool,
-) -> BackupView {
-    let rfc3339 = |t: std::time::SystemTime| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339();
-    BackupView {
-        slot,
-        path: path.to_string_lossy().into_owned(),
-        modified_at: meta.modified().ok().map(rfc3339),
-        made_at: archive_rewrite::backup_made_at(meta).map(rfc3339),
-        size_bytes: meta.len(),
-        pre_conversion,
-    }
-}
-
-#[utoipa::path(
-    operation_id = "archive_edit_backups",    get,
-    path = "/issues/{id}/archive/backups",
-    params(("id" = String, Path,)),
-    responses(
-        (status = 200, body = [BackupView], description = "the issue file's own backups by slot, then the pre-conversion backups"),
-        (status = 403, description = "admin only"),
-        (status = 404, description = "issue not found"),
-    )
-)]
-#[handler]
-pub async fn backups(
-    State(app): State<AppState>,
-    _admin: RequireAdmin,
-    AxPath(id): AxPath<String>,
-) -> Response {
-    let Some(row) = entity::issue::Entity::find_by_id(&id)
-        .one(&app.db)
-        .await
-        .ok()
-        .flatten()
-    else {
-        return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
-    };
-
-    let target = std::path::PathBuf::from(&row.file_path);
+/// The backups the listing offers for the archive at `target`: its own
+/// `<file>.bak[.n]` by slot, then the backups of the archive it was
+/// converted from (`X.cbr.bak[.n]` / `X.cb7.bak[.n]`), sorted by slot and
+/// name, never in directory order. Regular files only (no link followed).
+/// Restore resolves a named backup against exactly this set.
+async fn listed_backups(target: &std::path::Path) -> Vec<BackupView> {
     let mut out = Vec::new();
     for slot in 0..=archive_rewrite::MAX_BACKUP_SLOT {
-        let p = archive_rewrite::backup_slot(&target, slot);
+        let p = archive_rewrite::backup_slot(target, slot);
         // Listed without following links: only a regular file is a backup.
         let Ok(meta) = tokio::fs::symlink_metadata(&p).await else {
             continue;
@@ -815,7 +888,57 @@ pub async fn backups(
                 .map(|(_, slot, p, meta)| backup_view(*slot, p, meta, true)),
         );
     }
+    out
+}
 
+fn backup_view(
+    slot: i32,
+    path: &std::path::Path,
+    meta: &std::fs::Metadata,
+    pre_conversion: bool,
+) -> BackupView {
+    let rfc3339 = |t: std::time::SystemTime| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339();
+    BackupView {
+        slot,
+        name: path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        path: path.to_string_lossy().into_owned(),
+        modified_at: meta.modified().ok().map(rfc3339),
+        made_at: archive_rewrite::backup_made_at(meta).map(rfc3339),
+        size_bytes: meta.len(),
+        pre_conversion,
+    }
+}
+
+#[utoipa::path(
+    operation_id = "archive_edit_backups",    get,
+    path = "/issues/{id}/archive/backups",
+    params(("id" = String, Path,)),
+    responses(
+        (status = 200, body = [BackupView], description = "the issue file's own backups by slot, then the pre-conversion backups"),
+        (status = 403, description = "admin only"),
+        (status = 404, description = "issue not found"),
+    )
+)]
+#[handler]
+pub async fn backups(
+    State(app): State<AppState>,
+    _admin: RequireAdmin,
+    AxPath(id): AxPath<String>,
+) -> Response {
+    let Some(row) = entity::issue::Entity::find_by_id(&id)
+        .one(&app.db)
+        .await
+        .ok()
+        .flatten()
+    else {
+        return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
+    };
+
+    let target = std::path::PathBuf::from(&row.file_path);
+    let out = listed_backups(&target).await;
     Json(out).into_response()
 }
 

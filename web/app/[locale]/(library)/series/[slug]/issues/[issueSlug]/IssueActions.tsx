@@ -37,6 +37,7 @@ import {
   useSetIssueCoverPage,
 } from "@/lib/api/mutations";
 import { AGE_RATING_LADDER } from "@/lib/age-rating";
+import { useArchiveBackups } from "@/lib/api/queries";
 import { collectServerErrors } from "@/lib/api/form-errors";
 import { formatRelativeDate } from "@/lib/format";
 import type {
@@ -164,6 +165,15 @@ export function IssueActions({
     issue.library_id,
   );
   const restoreArchive = useRestoreArchiveMutation(issue.id);
+  // Restorable backups: the newest own `.bak` and any pre-conversion
+  // backup (`X.cbr.bak` beside `X.cbz`, rebuilt as a CBZ on restore).
+  const archiveBackups = useArchiveBackups(issue.id, confirmRestore);
+  const restoreChoices = (archiveBackups.data ?? []).filter(
+    (b) => b.pre_conversion || b.slot === 0,
+  );
+  const [restoreBackup, setRestoreBackup] = useState<string | null>(null);
+  const chosenBackup =
+    restoreChoices.find((b) => b.name === restoreBackup) ?? restoreChoices[0];
 
   // Keyboard shortcuts (M5): `r`/`u`/`b`/`i`/`e`. Gated off while a
   // modal owns focus so a stray bare-key press inside the edit sheet
@@ -229,12 +239,39 @@ export function IssueActions({
           <AlertDialogHeader>
             <AlertDialogTitle>Restore from backup?</AlertDialogTitle>
             <AlertDialogDescription>
-              The archive&apos;s most recent backup (<code>.bak</code>) is
-              restored, undoing the last edit. The current file is kept as the
-              new <code>.bak</code>, so restoring again undoes the restore. The
-              issue is re-scanned afterward.
+              {chosenBackup?.pre_conversion ? (
+                <>
+                  The archive is rebuilt as a CBZ from the pre-conversion backup{" "}
+                  <code>{chosenBackup.name}</code>; the original bytes stay
+                  available in that backup. The current file is kept as the new{" "}
+                  <code>.bak</code>. The issue is re-scanned afterward.
+                </>
+              ) : (
+                <>
+                  The archive&apos;s most recent backup (<code>.bak</code>) is
+                  restored, undoing the last edit. The current file is kept as
+                  the new <code>.bak</code>, so restoring again undoes the
+                  restore. The issue is re-scanned afterward.
+                </>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {restoreChoices.length > 1 && (
+            <div className="grid gap-2">
+              <Label htmlFor="restore-backup">Backup to restore</Label>
+              <NativeSelect
+                id="restore-backup"
+                value={chosenBackup?.name ?? ""}
+                onChange={setRestoreBackup}
+                options={restoreChoices.map((b) => ({
+                  value: b.name,
+                  label: b.pre_conversion
+                    ? `${b.name} (before conversion, rebuilt as CBZ)`
+                    : `${b.name} (newest backup)`,
+                }))}
+              />
+            </div>
+          )}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={restoreArchive.isPending}>
               Cancel
@@ -242,15 +279,21 @@ export function IssueActions({
             <AlertDialogAction
               onClick={(e) => {
                 e.preventDefault();
-                restoreArchive.mutate(undefined, {
-                  onSuccess: (res) => {
-                    // Restored, but the replaced archive is kept under
-                    // another name than `.bak`: tell the admin where.
-                    if (res?.warning) toast.info(res.warning);
-                    setConfirmRestore(false);
-                    router.refresh();
+                restoreArchive.mutate(
+                  chosenBackup ? { backup: chosenBackup.name } : undefined,
+                  {
+                    onSuccess: (res) => {
+                      // Restored, but the replaced archive is kept under
+                      // another name than `.bak`: tell the admin where.
+                      if (res?.warning) toast.info(res.warning);
+                      // Rebuilt from a pre-conversion backup: say so and
+                      // where the replaced archive went.
+                      else if (res?.rebuilt_from) toast.info(res.message);
+                      setConfirmRestore(false);
+                      router.refresh();
+                    },
                   },
-                });
+                );
               }}
               disabled={restoreArchive.isPending}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"

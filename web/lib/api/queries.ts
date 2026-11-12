@@ -108,6 +108,7 @@ import type {
   HealthIssuesPage,
   MetadataOverviewView,
   PageCountResponse,
+  ArchiveBackupView,
   OnDeckView,
   ViewCoversView,
   PreviewReq,
@@ -518,6 +519,23 @@ export function useArchivePageCount(issueId: string, enabled: boolean) {
     queryFn: () =>
       jsonFetch<PageCountResponse>(
         apiPath`/issues/${issueId}/archive/page-count`,
+      ),
+    staleTime: 0,
+  });
+}
+
+/**
+ * An issue's archive backups: its own `.bak[.n]`, then the backups of the
+ * archive it was converted from (`pre_conversion`). The restore dialog
+ * offers the newest own backup and the pre-conversion ones.
+ */
+export function useArchiveBackups(issueId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.archiveBackups(issueId),
+    enabled: enabled && !!issueId,
+    queryFn: () =>
+      jsonFetch<ArchiveBackupView[]>(
+        apiPath`/issues/${issueId}/archive/backups`,
       ),
     staleTime: 0,
   });

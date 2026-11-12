@@ -17,6 +17,7 @@ import { showUndoToast } from "@/lib/ui/undo-toast";
 import { apiFetch } from "../auth-refresh";
 import { queryKeys, type EntityKindPath } from "../queries";
 import { apiPath } from "../path";
+import { buildQuery } from "../build-query";
 import { getCsrfToken, useApiMutation } from "./_core";
 import {
   applyOptimisticProgress,
@@ -1345,11 +1346,17 @@ export function useBulkArchiveEditMutation() {
   }));
 }
 
-/** Restore an issue's archive from its most recent `.bak`. */
+/**
+ * Restore an issue's archive: from its most recent `.bak` when `backup` is
+ * omitted, or from the named backup (a file name the backups listing
+ * returned; a pre-conversion backup is rebuilt as a CBZ).
+ */
 export function useRestoreArchiveMutation(issueId: string) {
-  return useApiMutation<RestoreResponse, void>(
-    () => ({
-      path: apiPath`/issues/${issueId}/archive/restore`,
+  return useApiMutation<RestoreResponse, { backup?: string } | void>(
+    (vars) => ({
+      path:
+        apiPath`/issues/${issueId}/archive/restore` +
+        buildQuery({ backup: vars ? vars.backup : undefined }),
       method: "POST",
     }),
     { successMessage: "Restore queued" },

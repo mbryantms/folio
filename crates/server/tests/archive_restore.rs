@@ -325,6 +325,7 @@ async fn a_restore_whose_last_step_fails_is_reported_as_done_with_a_warning() {
         admin.id,
         None,
         None,
+        None,
         |root, target| {
             archive_rewrite::restore_latest_backup_with_faults(root, target, false, |step| {
                 if step == RewriteStep::Swapped {
@@ -482,5 +483,364 @@ async fn listing_reports_when_each_backup_was_made() {
             parse(&row["modified_at"]) < before - Duration::from_secs(86_400),
             "modified_at keeps its old meaning: {row}"
         );
+    }
+}
+
+// ───────── (3) restoring a pre-conversion backup: rebuilt as a CBZ ─────────
+
+fn fixture(name: &str) -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures")
+        .join(name);
+    assert!(p.is_file(), "fixtures/{name} is committed");
+    p
+}
+
+/// The pages of the archive at `path`, in reading order, as bytes.
+fn page_bytes(path: &Path) -> Vec<Vec<u8>> {
+    let mut a = archive::open_path_unchecked(path, archive::ArchiveLimits::default()).unwrap();
+    let names: Vec<String> = a.pages().iter().map(|e| e.name.clone()).collect();
+    names
+        .iter()
+        .map(|n| a.read_entry_bytes(n).unwrap())
+        .collect()
+}
+
+/// Every file in `dir` with its bytes, sorted by name.
+fn snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
+    let mut v: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| {
+            (
+                e.file_name().to_string_lossy().into_owned(),
+                std::fs::symlink_metadata(e.path())
+                    .ok()
+                    .filter(|m| m.is_file())
+                    .map(|_| std::fs::read(e.path()).unwrap())
+                    .unwrap_or_default(),
+            )
+        })
+        .collect();
+    v.sort();
+    v
+}
+
+async fn restore_named(
+    app: &TestApp,
+    auth: &Authed,
+    id: &str,
+    backup: &str,
+) -> (StatusCode, serde_json::Value) {
+    let q: String = url_encode(backup);
+    call(
+        app,
+        auth,
+        Method::POST,
+        format!("/api/issues/{id}/archive/restore?backup={q}"),
+    )
+    .await
+}
+
+fn url_encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// A marker on page 2 and reading progress for the issue.
+async fn anchor(app: &TestApp, issue_id: &str) -> uuid::Uuid {
+    use sea_orm::EntityTrait;
+    let db = &app.state().db;
+    let user = entity::user::Entity::find().one(db).await.unwrap().unwrap();
+    let row = entity::issue::Entity::find_by_id(issue_id.to_owned())
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let now = chrono::Utc::now().fixed_offset();
+    let marker_id = uuid::Uuid::now_v7();
+    entity::marker::ActiveModel {
+        id: Set(marker_id),
+        user_id: Set(user.id),
+        series_id: Set(row.series_id),
+        issue_id: Set(issue_id.to_owned()),
+        page_index: Set(2),
+        kind: Set(entity::marker::MarkerKind::Bookmark),
+        is_favorite: Set(false),
+        tags: Set(vec![]),
+        region: Set(None),
+        selection: Set(None),
+        body: Set(None),
+        color: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+        hidden_from_log: Set(false),
+        page_hash: Set(None),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    common::seed::seed_progress(db, user.id, issue_id, 1, 0.5, false).await;
+    marker_id
+}
+
+/// Restoring `X.cbr.bak` / `X.cb7.bak` for the issue at `X.cbz` rebuilds the
+/// original's pages as a CBZ at `X.cbz`; the replaced `X.cbz` becomes
+/// `X.cbz.bak`; the pre-conversion backup is untouched; the row keeps its
+/// `file_path`, progress and markers. The library has auto-convert off for
+/// both formats (the seed's default), with one slot and with zero.
+#[tokio::test]
+async fn restoring_a_pre_conversion_backup_rebuilds_it_as_a_cbz() {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+    for (fixture_name, ext) in [
+        ("synthetic-3page.cbr", "cbr"),
+        ("synthetic-3page.cb7", "cb7"),
+    ] {
+        for slots in [0, 1] {
+            let app = TestApp::spawn().await;
+            let auth = register_admin(&app).await;
+            let dir = tempdir().unwrap();
+            // The current CBZ: whatever a later edit made of it.
+            let current_cbz = {
+                use std::io::Write;
+                let mut buf = std::io::Cursor::new(Vec::new());
+                let mut zw = zip::ZipWriter::new(&mut buf);
+                let opts = zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Stored);
+                zw.start_file("p1.png", opts).unwrap();
+                zw.write_all(b"\x89PNG\r\n\x1a\nedited").unwrap();
+                zw.finish().unwrap();
+                buf.into_inner()
+            };
+            let (id, path) = seed(&app, dir.path(), slots, "Thanos001.cbz", &current_cbz).await;
+            let lib = entity::library::Entity::find()
+                .one(&app.state().db)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(!lib.auto_convert_cbr_on_scan && !lib.auto_convert_cb7_on_scan);
+            let pre = dir.path().join(format!("Thanos001.{ext}.bak"));
+            let original = std::fs::read(fixture(fixture_name)).unwrap();
+            std::fs::write(&pre, &original).unwrap();
+            let marker_id = anchor(&app, &id).await;
+
+            let (status, body) =
+                restore_named(&app, &auth, &id, &format!("Thanos001.{ext}.bak")).await;
+            assert_eq!(
+                status,
+                StatusCode::ACCEPTED,
+                "{fixture_name} {slots}: {body}"
+            );
+            assert_eq!(body["rebuilt_from"], format!("Thanos001.{ext}.bak"));
+            let message = body["message"].as_str().unwrap();
+            assert!(message.contains("rebuilt as a CBZ"), "{message}");
+            assert!(
+                message.contains("original bytes stay available"),
+                "{message}"
+            );
+            assert_eq!(
+                body["kept_as"].as_str().map(PathBuf::from),
+                Some(slot(&path, 0))
+            );
+            // X.cbz holds the original's pages, in order.
+            let pages = page_bytes(&path);
+            assert_eq!(pages.len(), 3);
+            assert_eq!(pages, page_bytes(&fixture(fixture_name)), "{fixture_name}");
+            let mut z = std::fs::File::open(&path).unwrap();
+            let mut magic = [0u8; 2];
+            std::io::Read::read_exact(&mut z, &mut magic).unwrap();
+            assert_eq!(&magic, b"PK", "a ZIP");
+            assert_eq!(std::fs::read(slot(&path, 0)).unwrap(), current_cbz);
+            assert_eq!(std::fs::read(&pre).unwrap(), original, "backup untouched");
+
+            let row = entity::issue::Entity::find_by_id(id.clone())
+                .one(&app.state().db)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                Path::new(&row.file_path),
+                path.as_path(),
+                "file_path unchanged"
+            );
+            let m = entity::marker::Entity::find_by_id(marker_id)
+                .one(&app.state().db)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(m.issue_id, id);
+            let progress = entity::progress_record::Entity::find()
+                .filter(entity::progress_record::Column::IssueId.eq(id.clone()))
+                .all(&app.state().db)
+                .await
+                .unwrap();
+            assert_eq!(progress.len(), 1);
+            let audit = entity::audit_log::Entity::find()
+                .filter(entity::audit_log::Column::Action.eq("admin.issue.archive_restore"))
+                .all(&app.state().db)
+                .await
+                .unwrap();
+            assert_eq!(audit.len(), 1);
+            assert_eq!(audit[0].payload["rebuilt_from"], body["rebuilt_from"]);
+            assert_eq!(audit[0].payload["message"], body["message"]);
+        }
+    }
+}
+
+/// A corrupt pre-conversion backup is a refusal with the reader's reason,
+/// and nothing in the folder changes.
+#[tokio::test]
+async fn a_corrupt_pre_conversion_backup_is_refused_and_nothing_changes() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let dir = tempdir().unwrap();
+    let (id, _path) = seed(&app, dir.path(), 1, "Thanos001.cbz", b"current").await;
+    std::fs::write(
+        dir.path().join("Thanos001.cbr.bak"),
+        b"Rar!\x1a\x07\x01\x00this is not a rar archive at all",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("Thanos001.cbz.bak"), b"own backup").unwrap();
+    let before = snapshot(dir.path());
+
+    let (status, body) = restore_named(&app, &auth, &id, "Thanos001.cbr.bak").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(
+        body["error"]["code"], "archive.restore_conversion_failed",
+        "{body}"
+    );
+    assert_eq!(snapshot(dir.path()), before, "nothing changed on disk");
+}
+
+/// A request can only name a backup the listing offers for this issue: not
+/// another issue's backup, not a path, not a link, not an older own slot.
+#[tokio::test]
+async fn restore_refuses_a_backup_the_listing_does_not_offer() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let dir = tempdir().unwrap();
+    let (id, _path) = seed(&app, dir.path(), 3, "Thanos001.cbz", b"current").await;
+    let rar = std::fs::read(fixture("synthetic-3page.cbr")).unwrap();
+    std::fs::write(dir.path().join("Other001.cbr.bak"), &rar).unwrap();
+    std::fs::write(dir.path().join("Thanos001.cbz.bak.1"), b"older").unwrap();
+    let elsewhere = tempdir().unwrap();
+    std::fs::write(elsewhere.path().join("Thanos001.cbr.bak"), &rar).unwrap();
+    std::os::unix::fs::symlink(
+        elsewhere.path().join("Thanos001.cbr.bak"),
+        dir.path().join("Thanos001.cbr.bak"),
+    )
+    .unwrap();
+    let before = snapshot(dir.path());
+    for named in [
+        "Other001.cbr.bak".to_owned(),
+        format!(
+            "../{}/Thanos001.cbr.bak",
+            elsewhere.path().file_name().unwrap().to_string_lossy()
+        ),
+        elsewhere
+            .path()
+            .join("Thanos001.cbr.bak")
+            .to_string_lossy()
+            .into_owned(),
+        "Thanos001.cbr.bak".to_owned(),
+        "Thanos001.cbz.bak.1".to_owned(),
+    ] {
+        let (status, body) = restore_named(&app, &auth, &id, &named).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{named}: {body}");
+        assert_eq!(
+            body["error"]["code"], "archive.backup_not_restorable",
+            "{named}: {body}"
+        );
+    }
+    assert_eq!(snapshot(dir.path()), before);
+}
+
+/// The rebuild-restore takes the same three steps where `RENAME_EXCHANGE`
+/// is unavailable, and moves an existing `.bak` up a slot instead of
+/// overwriting it.
+#[test]
+fn rebuild_restore_without_exchange_ends_like_the_exchange() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("issue.cbz");
+    std::fs::write(&path, b"current").unwrap();
+    std::fs::write(slot(&path, 0), b"older").unwrap();
+    let rar = std::fs::read(fixture("synthetic-3page.cbr")).unwrap();
+    std::fs::write(dir.path().join("issue.cbr.bak"), &rar).unwrap();
+    let root = LibraryRoot::resolve(dir.path());
+    let out = archive_rewrite::restore_rebuilt(
+        &root,
+        &path,
+        std::ffi::OsStr::new("issue.cbr.bak"),
+        false,
+        |io| {
+            server::library::scanner::cbr_convert::rebuild_cbz_into(
+                io,
+                archive::ArchiveLimits::default(),
+            )
+        },
+        |_| Ok(()),
+    )
+    .unwrap();
+    assert_eq!(out.kept, Some(slot(&path, 0)));
+    assert!(out.warning.is_none());
+    assert_eq!(
+        page_bytes(&path),
+        page_bytes(&fixture("synthetic-3page.cbr"))
+    );
+    assert_eq!(std::fs::read(slot(&path, 0)).unwrap(), b"current");
+    assert_eq!(std::fs::read(slot(&path, 1)).unwrap(), b"older");
+    assert_eq!(
+        std::fs::read(dir.path().join("issue.cbr.bak")).unwrap(),
+        rar
+    );
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 4);
+}
+
+/// A failure before the swap leaves the folder exactly as it was: the
+/// staged CBZ is removed, the archive and every backup untouched.
+#[test]
+fn a_rebuild_restore_that_fails_before_the_swap_changes_nothing() {
+    for (step, exchange) in [
+        (RewriteStep::Staged, true),
+        (RewriteStep::Staged, false),
+        (RewriteStep::BackedUp, false),
+    ] {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("issue.cbz");
+        std::fs::write(&path, b"current").unwrap();
+        std::fs::write(
+            dir.path().join("issue.cb7.bak"),
+            std::fs::read(fixture("synthetic-3page.cb7")).unwrap(),
+        )
+        .unwrap();
+        let before = snapshot(dir.path());
+        let root = LibraryRoot::resolve(dir.path());
+        let err = archive_rewrite::restore_rebuilt(
+            &root,
+            &path,
+            std::ffi::OsStr::new("issue.cb7.bak"),
+            exchange,
+            |io| {
+                server::library::scanner::cbr_convert::rebuild_cbz_into(
+                    io,
+                    archive::ArchiveLimits::default(),
+                )
+            },
+            |s| {
+                if s == step {
+                    Err(RewriteError::Io(std::io::Error::other("injected")))
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert!(err.is_err(), "{step:?}");
+        assert_eq!(snapshot(dir.path()), before, "{step:?} exchange={exchange}");
     }
 }
