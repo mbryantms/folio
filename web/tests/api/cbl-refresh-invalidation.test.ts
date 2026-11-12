@@ -64,9 +64,11 @@ function invalidated(key: readonly unknown[]): boolean {
   return qc.getQueryState(key as QueryKey)?.isInvalidated ?? false;
 }
 
-function onSettledOf(): Settled {
+/** Mount the hook (a plain call: the mocks make it hook-free) and return
+ *  the `onSettled` it handed `useApiMutation`. */
+function onSettledOf(mount: () => unknown): Settled {
   captured.length = 0;
-  useRefreshCblList(ID);
+  mount();
   const cb = captured.at(-1)?.onSettled;
   if (!cb) throw new Error("useRefreshCblList registered no onSettled");
   return cb;
@@ -79,7 +81,7 @@ describe("useRefreshCblList invalidates the refresh state on settle", () => {
     ["success", { upstream_changed: true }, null],
     ["error", undefined, new Error("HTTP: upstream returned status 503")],
   ])("after %s", (_label, data, error) => {
-    onSettledOf()(data, error, {}, undefined);
+    onSettledOf(() => useRefreshCblList(ID))(data, error, {}, undefined);
     expect(invalidated(queryKeys.cblList(ID))).toBe(true);
     expect(invalidated(queryKeys.cblLists)).toBe(true);
     expect(invalidated(queryKeys.cblRefreshLog(ID))).toBe(true);
@@ -88,7 +90,7 @@ describe("useRefreshCblList invalidates the refresh state on settle", () => {
   });
 
   it("invalidates in onSettled, not in an onSuccess that skips errors", () => {
-    onSettledOf();
+    onSettledOf(() => useRefreshCblList(ID));
     expect(captured.at(-1)?.onSuccess).toBeUndefined();
   });
 });
