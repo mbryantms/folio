@@ -9,21 +9,30 @@
  *     `IssueCard`, `CblIssueCard` and series card;
  *   - the Continue Reading rail (`queryKeys.continueReading`), whose
  *     cards carry their own `progress.percent`;
- *   - a per-issue record (`issueProgressKey`) the server-rendered issue
- *     page reads its live read state from (it never loads the whole map).
+ *   - the progress overlay (`../progress-overlay.ts`) every issue card and
+ *     the server-rendered issue page read their live state from (neither
+ *     loads the whole map). An optimistic entry stays pending until the
+ *     server acknowledges it ([`settleProgress`]).
  *
  * The caches roll back on error. On success the mutation hooks raise an
  * Undo toast that puts each issue back the way it was
  * ([`restoreProgress`]).
  */
-import type { QueryClient, QueryKey } from "@tanstack/react-query";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import type { QueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 
 import type { ReadState } from "@/lib/reading-state";
 import { readStateFor } from "@/lib/reading-state";
 
 import { jsonFetch, queryKeys } from "../queries";
 import type { ContinueReadingView, ProgressView } from "../types";
+import {
+  cachedCardProgress,
+  progressOverlay,
+  useOverlayEntry,
+  type OverlayEntry,
+  type OverlayRecord,
+} from "../progress-overlay";
 import { apiMutate } from "./_core";
 import {
   invalidateIssueCards,
@@ -36,30 +45,26 @@ export type ProgressMap = Map<string, ProgressView>;
 
 /** One issue's progress before a mark: the stored record, or `null` when
  *  there was none (never opened). */
-export type PriorProgress = Map<string, ProgressView | null>;
-
-/** Live per-issue progress record (`queryKeys.issueProgress`) for
- *  surfaces that don't load the whole `/progress` map: the issue page and
- *  every issue card. Written by the optimistic mark, the mark's response
- *  and the reader's write replies; empty otherwise. */
-export function issueProgressKey(issueId: string): QueryKey {
-  return queryKeys.issueProgress(issueId);
-}
+export type PriorProgress = Map<string, OverlayRecord | null>;
 
 export type ProgressWrite = {
   issue_id: string;
   finished: boolean;
   page: number;
+  /** Known fraction read (an Undo putting a mid-issue record back);
+   *  cache-only, never sent. */
+  percent?: number;
 };
 
 type Snapshot = {
   map: ProgressMap | undefined;
   continueReading: ContinueReadingView | undefined;
-  issues: Array<[string, ProgressView | null | undefined]>;
+  /** Each issue's overlay entry before the write (`undefined` = none). */
+  issues: Array<[string, OverlayEntry | undefined]>;
 };
 
 function nextRecord(
-  prev: ProgressView | null | undefined,
+  prev: (OverlayRecord & { run?: number }) | null | undefined,
   w: ProgressWrite,
 ): ProgressView {
   return {
@@ -69,14 +74,21 @@ function nextRecord(
     finished: w.finished,
     // A mark is all-or-nothing: read = full bar, unread = empty. A
     // restore to a mid-issue page keeps the bar it had (if known).
-    percent: w.finished ? 1 : w.page <= 0 ? 0 : (prev?.percent ?? 0),
+    percent: w.finished
+      ? 1
+      : w.page <= 0
+        ? 0
+        : (w.percent ?? prev?.percent ?? 0),
+    // Display only; nothing orders by it (the overlay orders by when
+    // the tab saw a copy, never by clock).
     updated_at: new Date().toISOString(),
   };
 }
 
 /** Write `writes` into every progress cache; returns what to roll back
- *  to. Cancels in-flight fetches first so a slow refetch can't land on
- *  top of the optimistic state. */
+ *  to. The overlay entries are pending until [`settleProgress`]. Cancels
+ *  in-flight fetches first so a slow refetch can't land on top of the
+ *  optimistic state. */
 export async function applyOptimisticProgress(
   qc: QueryClient,
   writes: readonly ProgressWrite[],
@@ -89,10 +101,7 @@ export async function applyOptimisticProgress(
   const continueReading = qc.getQueryData<ContinueReadingView>(
     queryKeys.continueReading,
   );
-  const issues: Snapshot["issues"] = writes.map((w) => [
-    w.issue_id,
-    qc.getQueryData<ProgressView | null>(issueProgressKey(w.issue_id)),
-  ]);
+  const overlay = progressOverlay(qc);
 
   // Only patch a map that's already loaded: seeding a partial one would
   // read as "everything else unread" to every card for its stale time.
@@ -120,66 +129,95 @@ export async function applyOptimisticProgress(
       }),
     });
   }
-  for (const w of writes) {
-    const prev =
-      qc.getQueryData<ProgressView | null>(issueProgressKey(w.issue_id)) ??
-      map?.get(w.issue_id);
-    qc.setQueryData(issueProgressKey(w.issue_id), nextRecord(prev, w));
-  }
+  const issues: Snapshot["issues"] = writes.map((w) => {
+    const prev = overlay.get(w.issue_id)?.record ?? map?.get(w.issue_id);
+    return [w.issue_id, overlay.write(w.issue_id, nextRecord(prev, w), true)];
+  });
   return { map, continueReading, issues };
 }
 
-/** Undo [`applyOptimisticProgress`] after a failed write. */
+/** The server acknowledged the writes for `ids`; `records` are its
+ *  replies where it sent them (a single mark's `ProgressView`). */
+export function settleProgress(
+  qc: QueryClient,
+  ids: Iterable<string>,
+  records?: Map<string, OverlayRecord>,
+) {
+  progressOverlay(qc).settle(ids, records);
+}
+
+/** Undo [`applyOptimisticProgress`] after a failed write. Every mounted
+ *  card of those issues re-renders with what it showed before. */
 export function rollbackProgress(qc: QueryClient, snap: Snapshot | undefined) {
   if (!snap) return;
   if (snap.map) qc.setQueryData(queryKeys.userProgress, snap.map);
   if (snap.continueReading) {
     qc.setQueryData(queryKeys.continueReading, snap.continueReading);
   }
-  for (const [id, rec] of snap.issues) {
-    if (rec === undefined) qc.removeQueries({ queryKey: issueProgressKey(id) });
-    else qc.setQueryData(issueProgressKey(id), rec);
-  }
+  const overlay = progressOverlay(qc);
+  for (const [id, prev] of snap.issues) overlay.restore(id, prev);
 }
 
-/** Each issue's record before the mark, for Undo. Read from the caches
- *  when they know the issue; a loaded `/progress` map that lacks it means
- *  "no record". The issue page has neither, so it asks the server for
- *  that one record (`?issue_id=`, one row). Must run *before* the
- *  optimistic write. */
+/** Per-id reads (`?issue_id=`, one row each) cover at most this many
+ *  issues no cache knows; past it the full list is one request. */
+const PRIOR_PER_ID_MAX = 8;
+
+/** Each issue's record before the mark, for Undo. Taken from what the tab
+ *  already knows: its own overlay entries, then the progress embedded on
+ *  the cards in the card-list caches (`null` there is a known "no
+ *  record"), then a loaded `/progress` map. Only issues none of them know
+ *  go to the network. Must run *before* the optimistic write. */
 export async function capturePriorProgress(
   qc: QueryClient,
   issueIds: readonly string[],
 ): Promise<PriorProgress> {
-  const map = qc.getQueryData<ProgressMap>(queryKeys.userProgress);
+  const overlay = progressOverlay(qc);
   const prior: PriorProgress = new Map();
-  const missing: string[] = [];
+  let unknown: string[] = [];
   for (const id of issueIds) {
-    const own = qc.getQueryData<ProgressView | null>(issueProgressKey(id));
-    if (own !== undefined) prior.set(id, own);
-    else if (map) prior.set(id, map.get(id) ?? null);
-    else missing.push(id);
+    const own = overlay.get(id);
+    if (own) prior.set(id, own.record);
+    else unknown.push(id);
   }
-  if (missing.length === 1) {
-    const id = missing[0]!;
-    const resp = await jsonFetch<{ records: ProgressView[] }>(
-      apiPath`/progress?issue_id=${id}`,
+  if (unknown.length > 0) {
+    const cards = cachedCardProgress(qc, unknown);
+    const map = qc.getQueryData<ProgressMap>(queryKeys.userProgress);
+    unknown = unknown.filter((id) => {
+      if (cards.has(id)) prior.set(id, cards.get(id) ?? null);
+      else if (map) prior.set(id, map.get(id) ?? null);
+      else return true;
+      return false;
+    });
+  }
+  if (unknown.length === 0) return prior;
+  if (unknown.length <= PRIOR_PER_ID_MAX) {
+    const rows = await Promise.all(
+      unknown.map((id) =>
+        jsonFetch<{ records: ProgressView[] }>(
+          apiPath`/progress?issue_id=${id}`,
+        ).then((r) => r.records.find((x) => x.issue_id === id) ?? null),
+      ),
     );
-    prior.set(id, resp.records.find((r) => r.issue_id === id) ?? null);
-  } else if (missing.length > 1) {
+    unknown.forEach((id, i) => prior.set(id, rows[i] ?? null));
+  } else {
     const resp = await jsonFetch<{ records: ProgressView[] }>("/progress");
     const all = new Map(resp.records.map((r) => [r.issue_id, r]));
-    for (const id of missing) prior.set(id, all.get(id) ?? null);
+    for (const id of unknown) prior.set(id, all.get(id) ?? null);
   }
   return prior;
 }
 
 /** The write that puts `rec` back, as an optimistic cache write. */
-function writeFor(id: string, rec: ProgressView | null): ProgressWrite {
+function writeFor(id: string, rec: OverlayRecord | null): ProgressWrite {
   if (!rec || (!rec.finished && rec.page <= 0)) {
     return { issue_id: id, page: 0, finished: false };
   }
-  return { issue_id: id, page: rec.page, finished: rec.finished };
+  return {
+    issue_id: id,
+    page: rec.page,
+    finished: rec.finished,
+    percent: rec.percent,
+  };
 }
 
 /**
@@ -191,6 +229,9 @@ function writeFor(id: string, rec: ProgressView | null): ProgressWrite {
  *     re-stamps `finished_at` on a false → true flip and has no way to
  *     set it back, so the restore is flagged as catalog maintenance
  *     rather than counted as a finish today.
+ *
+ * On failure the cards go back to the marked state they showed before
+ * the Undo (the server still has it), and the lists refetch.
  */
 export async function restoreProgress(
   qc: QueryClient,
@@ -205,7 +246,7 @@ export async function restoreProgress(
     else if (w.page <= 0) unread.push(id);
     else midway.push(w);
   }
-  await applyOptimisticProgress(
+  const snap = await applyOptimisticProgress(
     qc,
     [...prior].map(([id, rec]) => writeFor(id, rec)),
   );
@@ -226,40 +267,38 @@ export async function restoreProgress(
       });
     }
     for (const w of midway) {
-      await apiMutate({ path: "/progress", method: "POST", body: w });
+      await apiMutate({
+        path: "/progress",
+        method: "POST",
+        body: { issue_id: w.issue_id, page: w.page, finished: w.finished },
+      });
     }
     ok = true;
   } finally {
-    // On success the optimistic restore already matches the server; the
-    // per-issue records stay so the issue page keeps showing it. On
-    // failure they go, and the refetch brings back the server's truth.
-    if (!ok) {
-      for (const id of prior.keys()) {
-        qc.removeQueries({ queryKey: issueProgressKey(id) });
-      }
-    }
+    if (ok) settleProgress(qc, prior.keys());
+    else rollbackProgress(qc, snap);
     qc.invalidateQueries({ queryKey: queryKeys.userProgress });
     invalidateRails(qc);
     invalidateSeriesProgress(qc);
-    invalidateIssueCards(qc);
+    // A failed Undo may have applied part of its writes: refetch the
+    // mounted lists so their copies (fetched after this) take over.
+    invalidateIssueCards(qc, { refetchActive: !ok });
   }
 }
 
 /**
- * The issue page's read state, live: the per-issue record once a mark
- * (or its Undo) has touched it this session, else the server-rendered
- * `fallback`. Observes the cache only — never fetches.
+ * The issue page's read state, live: this tab's overlay entry once a mark
+ * (or its Undo) has touched the issue, else the server-rendered
+ * `fallback`. Observes only — never fetches.
  */
 export function useIssueReadState(
   issue: { id: string; page_count?: number | null },
   fallback: ReadState,
 ): ReadState {
-  const qc = useQueryClient();
-  const key = issueProgressKey(issue.id);
-  const { data } = useQuery({
-    queryKey: key,
-    queryFn: () => qc.getQueryData<ProgressView | null>(key) ?? null,
-    enabled: false,
-  });
-  return data === undefined ? fallback : readStateFor(issue, data);
+  const entry = useOverlayEntry(useQueryClient(), issue.id);
+  if (entry === undefined) return fallback;
+  return readStateFor(
+    issue,
+    entry.record && { ...entry.record, issue_id: issue.id },
+  );
 }

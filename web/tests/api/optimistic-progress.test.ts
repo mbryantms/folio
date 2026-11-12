@@ -17,13 +17,15 @@ vi.mock("@/lib/api/queries", async (importOriginal) => ({
 import {
   applyOptimisticProgress,
   capturePriorProgress,
-  issueProgressKey,
   restoreProgress,
   rollbackProgress,
   type ProgressMap,
 } from "@/lib/api/mutations/progress";
 import { queryKeys } from "@/lib/api/queries";
+import { progressOverlay } from "@/lib/api/progress-overlay";
 import type { ContinueReadingView, ProgressView } from "@/lib/api/types";
+
+const entry = (id: string) => progressOverlay(qc).get(id);
 
 const rec = (
   issue_id: string,
@@ -72,14 +74,15 @@ describe("optimistic progress", () => {
       qc.getQueryData<ContinueReadingView>(queryKeys.continueReading)!.items[0]!
         .progress.percent,
     ).toBe(1);
-    expect(qc.getQueryData(issueProgressKey("a"))).toMatchObject({
-      finished: true,
+    expect(entry("a")).toMatchObject({
+      record: { finished: true },
+      seq: Infinity,
     });
 
     rollbackProgress(qc, snap);
     expect(qc.getQueryData(queryKeys.userProgress)).toBe(map);
     expect(qc.getQueryData(queryKeys.continueReading)).toEqual(cr);
-    expect(qc.getQueryData(issueProgressKey("a"))).toBeUndefined();
+    expect(entry("a")).toBeUndefined();
   });
 
   it("doesn't seed a progress map that was never loaded", async () => {
@@ -87,7 +90,7 @@ describe("optimistic progress", () => {
       { issue_id: "a", page: 0, finished: false },
     ]);
     expect(qc.getQueryData(queryKeys.userProgress)).toBeUndefined();
-    expect(qc.getQueryData(issueProgressKey("a"))).toMatchObject({
+    expect(entry("a")?.record).toMatchObject({
       finished: false,
       percent: 0,
     });
@@ -136,9 +139,8 @@ describe("optimistic progress", () => {
         body: { issue_id: "mid", page: 5, finished: false },
       },
     ]);
-    expect(qc.getQueryData(issueProgressKey("mid"))).toMatchObject({
-      page: 5,
-      finished: false,
-    });
+    // Acknowledged: settled, no longer pending.
+    expect(entry("mid")?.record).toMatchObject({ page: 5, finished: false });
+    expect(entry("mid")?.seq).toBeLessThan(Infinity);
   });
 });

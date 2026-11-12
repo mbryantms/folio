@@ -22,9 +22,9 @@ import { getCsrfToken, useApiMutation } from "./_core";
 import {
   applyOptimisticProgress,
   capturePriorProgress,
-  issueProgressKey,
   restoreProgress,
   rollbackProgress,
+  settleProgress,
   type PriorProgress,
   type ProgressWrite,
 } from "./progress";
@@ -53,11 +53,7 @@ export {
   invalidateRails,
   invalidateSeriesProgress,
 } from "./rails";
-export {
-  issueProgressKey,
-  restoreProgress,
-  useIssueReadState,
-} from "./progress";
+export { restoreProgress, settleProgress, useIssueReadState } from "./progress";
 export * from "./page-overrides";
 export * from "./relationship-suggestions";
 export * from "./shared-lists";
@@ -616,6 +612,7 @@ export function useBulkMarkProgress() {
       onError: (_err, _input, ctx) =>
         rollbackProgress(qc, (ctx as MarkProgressCtx | undefined)?.snap),
       onSuccess: (data, input, ctx) => {
+        settleProgress(qc, input.issue_ids);
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
         invalidateSeriesProgress(qc);
@@ -1502,7 +1499,11 @@ export function useUpsertIssueProgress() {
       onError: (_err, _input, ctx) =>
         rollbackProgress(qc, (ctx as MarkProgressCtx | undefined)?.snap),
       onSuccess: (data, input, ctx) => {
-        if (data) qc.setQueryData(issueProgressKey(input.issue_id), data);
+        settleProgress(
+          qc,
+          [input.issue_id],
+          data ? new Map([[input.issue_id, data]]) : undefined,
+        );
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
         invalidateSeriesProgress(qc);

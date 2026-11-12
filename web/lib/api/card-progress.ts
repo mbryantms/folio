@@ -9,38 +9,19 @@
  * then — so a page whose lists all embed progress never asks for every
  * record of the user.
  *
- * Writes made in this tab land under `queryKeys.issueProgress(id)` (the
- * optimistic mark, the mark's reply, the reader's per-page reply); the
- * card shows whichever of that and its list copy was written last, so a
- * badge follows a read without refetching the list it came from.
+ * A write made in this tab (mark, bulk mark, Undo, the reader's page
+ * writes) is shown from the progress overlay until a list fetched after
+ * it supersedes it — see [`progress-overlay.ts`](./progress-overlay.ts)
+ * for the ordering rule (by when this tab saw each copy, never by clock).
  */
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 
+import { useOverlayEntry, type OverlayRecord } from "./progress-overlay";
 import { useUserProgress } from "./queries";
-import { queryKeys } from "./query-keys";
 import type { IssueSummaryView } from "./types";
 
 /** The fields a badge needs, from any of the progress shapes. */
-export type CardProgressRecord = {
-  finished: boolean;
-  percent: number;
-  updated_at: string;
-};
-
-function writtenAt(r: CardProgressRecord): number {
-  const t = Date.parse(r.updated_at);
-  return Number.isNaN(t) ? Number.NEGATIVE_INFINITY : t;
-}
-
-/** `written` when it is newer than `listed` (or the list has none). */
-export function latestCardProgress(
-  listed: CardProgressRecord | null | undefined,
-  written: CardProgressRecord | null | undefined,
-): CardProgressRecord | null {
-  if (!written) return listed ?? null;
-  if (!listed) return written;
-  return writtenAt(written) > writtenAt(listed) ? written : listed;
-}
+export type CardProgressRecord = OverlayRecord;
 
 /** The viewer's progress on `issue` for its card badge; `null` = unread
  *  (or still loading on the fallback path, which draws no badge either). */
@@ -50,20 +31,12 @@ export function useCardProgress(
   const qc = useQueryClient();
   const id = issue?.id ?? "";
   const embedded = issue?.progress;
-  const needsMap = issue !== undefined && embedded === undefined;
+  const entry = useOverlayEntry(qc, id);
+  const needsMap = issue !== undefined && embedded === undefined && !entry;
   const map = useUserProgress({ enabled: needsMap }).data;
-  // Observes the cache only — never fetches (same as the issue page's
-  // `useIssueReadState`).
-  const { data: written } = useQuery({
-    queryKey: queryKeys.issueProgress(id),
-    queryFn: () =>
-      qc.getQueryData<CardProgressRecord | null>(queryKeys.issueProgress(id)) ??
-      null,
-    enabled: false,
-  });
   if (!issue) return null;
-  const listed = needsMap ? map?.get(id) : embedded;
-  return latestCardProgress(listed, written);
+  if (entry) return entry.record;
+  return (embedded === undefined ? map?.get(id) : embedded) ?? null;
 }
 
 /** Badge state for a card: finished check, or a bar at `percent` (0–100). */

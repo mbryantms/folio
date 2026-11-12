@@ -96,9 +96,9 @@ export function invalidateSeriesProgress(
  *  are under `invalidateRails`' prefixes.
  *
  *  A write that names its issues (a mark, a bulk mark, the reader's
- *  per-page write) has already put each issue's record under
- *  `queryKeys.issueProgress`, which every mounted card reads, so it only
- *  marks these lists stale (`refetchActive: false`, the default): the
+ *  per-page write) has already put each issue's record in the progress
+ *  overlay (`../progress-overlay.ts`), which every mounted card reads,
+ *  so it only marks these lists stale (`refetchActive: false`, the default): the
  *  next mount refetches them, and no mounted infinite list re-requests
  *  every loaded page for one write. A write that names no issues (mark a
  *  whole series, "select all matching") passes `refetchActive: true` so
