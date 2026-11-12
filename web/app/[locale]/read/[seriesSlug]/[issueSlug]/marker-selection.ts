@@ -1,23 +1,24 @@
 "use client";
 
 import { apiFetch, getCsrfToken } from "@/lib/api/auth-refresh";
-import type { MarkerRegion } from "@/lib/api/types";
+import { queryKeys } from "@/lib/api/query-keys";
+import type { MarkerRegion, OcrRequest, OcrResponse } from "@/lib/api/types";
+import {
+  NETWORK_FAILURE,
+  OcrRequestError,
+  ocrErrorFromResponse,
+} from "@/lib/reader/ocr-errors";
+import {
+  regionToPagePixels,
+  type PageSize,
+  type PercentBox,
+} from "@/lib/reader/page-size";
 
-/** Inputs shared by both OCR and image-hash paths. `naturalSize`
- *  is still required because the image-hash path crops pixels in
- *  the browser; the OCR path uses it only to map the region's
- *  0–100 percent fields into integer pixel coordinates that the
- *  server-side handler expects. */
-type CropInput = {
-  issueId: string;
-  pageIndex: number;
-  region: MarkerRegion;
-  naturalSize: { width: number; height: number };
-};
+import { PAGE_TEXT_GC_MS, textBoxKey } from "@/lib/reader/text-regions";
 
 /** Promise-cached Image so concurrent overlays don't re-decode. Used
  *  by the image-hash path; the OCR path doesn't load the page bytes
- *  client-side any more (the server reads from the canonical archive). */
+ *  client-side (the server reads from the canonical archive). */
 const imageCache = new Map<string, Promise<HTMLImageElement>>();
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -33,14 +34,20 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   return p;
 }
 
-/** Canvas-crop the region against the source image at native
- *  resolution. Image-hash uses this directly; the OCR path doesn't
- *  any more (server-side now). */
-async function cropToCanvas(input: CropInput): Promise<HTMLCanvasElement> {
+/** Canvas-crop the region from the ORIGINAL page bytes. The crop is
+ *  computed against that image's own pixel size (it is loaded here
+ *  without a `srcSet`, so its natural size is the file's), never against
+ *  the size of whatever variant the reader's `<img>` shows — so the same
+ *  marked area always hashes the same pixels, on any screen. */
+async function cropToCanvas(input: {
+  issueId: string;
+  pageIndex: number;
+  region: PercentBox;
+}): Promise<HTMLCanvasElement> {
   const src = `/issues/${input.issueId}/pages/${input.pageIndex}`;
   const img = await loadImage(src);
-  const w = input.naturalSize.width;
-  const h = input.naturalSize.height;
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
   const x = (input.region.x / 100) * w;
   const y = (input.region.y / 100) * h;
   const cw = Math.max(1, Math.round((input.region.w / 100) * w));
@@ -54,72 +61,76 @@ async function cropToCanvas(input: CropInput): Promise<HTMLCanvasElement> {
   return canvas;
 }
 
-/** Translate the marker's percent-based region into the integer
- *  pixel rect the server expects. Clamped to page bounds so a
- *  rounding overshoot near the right/bottom edges can't push us
- *  into the handler's `invalid_region` branch. */
-function regionToPixels(
-  region: MarkerRegion,
-  natural: { width: number; height: number },
-): { x: number; y: number; w: number; h: number } {
-  const W = natural.width;
-  const H = natural.height;
-  const x = Math.max(0, Math.min(W - 1, Math.round((region.x / 100) * W)));
-  const y = Math.max(0, Math.min(H - 1, Math.round((region.y / 100) * H)));
-  const w = Math.max(1, Math.min(W - x, Math.round((region.w / 100) * W)));
-  const h = Math.max(1, Math.min(H - y, Math.round((region.h / 100) * H)));
-  return { x, y, w, h };
-}
-
 /** Per-call knobs for [`ocrCroppedRegion`]. */
 export type OcrOptions = {
   /** Recognizer override. Omitted → the server resolves a default
    *  (series `text_language`, falling back to western). */
   lang?: "western" | "manga";
-  /** Run the server-side bubble detector and snap the region to the
-   *  tightest enclosing bubble. Only set this when the page's
-   *  detect cache is known-warm (a text-regions fetch succeeded) —
-   *  a cold detector run can take tens of seconds on weak hosts. */
+  /** Run the server-side box detector and snap the region to the
+   *  tightest enclosing box. Only set this when the page's detect cache
+   *  is known-warm (a text-regions fetch succeeded) — a cold detector
+   *  run can take tens of seconds on weak hosts. Omitted → the server
+   *  only recognizes the rectangle it is given. */
   detect?: boolean;
+  /** Aborts the request (the server still finishes its own work). */
+  signal?: AbortSignal;
 };
 
 export type OcrResult = {
   text: string;
   confidence: number;
-  /** Detector's snap-to-bubble rect in page pixels; `null` when the
+  /** Detector's snap-to-box rect in page pixels; `null` when the
    *  detector didn't run or nothing overlapped the region. */
   refinedBbox: { x: number; y: number; w: number; h: number } | null;
   /** Recognizer the server resolved (`western` / `manga`) — the page-text
    *  panel maps it to a `lang` attribute for screen readers. */
   lang: string | null;
+  /** The decoded page's size the server reported with this answer —
+   *  the size to convert `refinedBbox` back to percent with. `null` from
+   *  a server that does not send it yet. */
+  pageSize: PageSize | null;
 };
 
-/** Run server-side OCR over the cropped region. The pipeline runs
- *  `comic-text-detector` → snap-to-bubble → Tesseract LSTM (or
- *  manga-ocr for `lang: "manga"`) → a junk-stripping postprocess
- *  pass; results are cached server-side keyed by
- *  `(content_hash, page, lang, region_hash)` so a re-OCR on the
- *  same region is a Redis round-trip.
+export type OcrInput = {
+  issueId: string;
+  pageIndex: number;
+  region: MarkerRegion | PercentBox;
+  /** The page's pixel size when the client knows one
+   *  (`resolvePageSize`). The region always goes as `region_pct`, which
+   *  the server maps onto the page it decodes; the size only adds the
+   *  equivalent pixel `region` for a server that predates `region_pct`. */
+  pageSize: PageSize | null;
+};
+
+/** Read the text in one region on the server (`POST /me/issues/{id}/ocr`).
+ *  The recognizer runs on the given rectangle, after an optional detector
+ *  snap (`opts.detect`); results are cached server-side keyed by
+ *  `(content_hash, page, lang, region)`, so the same rectangle a second
+ *  time is a cache hit.
  *
- *  Returns `null` when the server failed (non-2xx, network error)
- *  or recognized no text. The caller (`MarkerEditor` /
- *  `MarkerOverlay`) decides how to surface that — usually a
- *  "Couldn't read any text" toast and a fallback to a plain
- *  highlight.
- *
- *  Pre-M6 this ran tesseract.js entirely in the browser. The new
- *  path drops the 6 MB WASM bundle + 2 s cold-boot in exchange for
- *  a network round-trip; quality is materially better because the
- *  server pairs a real bubble detector with `tessdata_best`. */
+ *  Resolves to the result, or `null` when the server read the region and
+ *  found no text. Rejects with an {@link OcrRequestError} when the request
+ *  failed (network, any non-2xx, an unreadable answer): a failure is never
+ *  reported as "no text", and the error carries the reason
+ *  (`ocrFailureMessage`) and whether retrying can help. */
 export async function ocrCroppedRegion(
-  input: CropInput,
+  input: OcrInput,
   opts: OcrOptions = {},
 ): Promise<OcrResult | null> {
-  // Unlike pre-M6 — no canvas / DOM touch any more, so no SSR
-  // guard. The file is `"use client"` for the other helpers; the
-  // function itself is safe to call from any context that has
-  // `fetch` (i.e. Node 18+ as well as the browser).
-  const region = regionToPixels(input.region, input.naturalSize);
+  const { x, y, w, h } = input.region;
+  // `region_pct` (percent of the decoded page) is what the server uses; it
+  // clamps it to the page and shares the result cache with the equivalent
+  // pixel rectangle. The pixel `region` rides along only when a size is
+  // known, for a server that predates `region_pct`.
+  const body: OcrRequest = {
+    page: input.pageIndex,
+    region_pct: { x, y, w, h },
+    ...(input.pageSize
+      ? { region: regionToPagePixels(input.region, input.pageSize) }
+      : {}),
+    ...(opts.lang ? { lang: opts.lang } : {}),
+    ...(opts.detect ? { detect: true } : {}),
+  };
   const csrf = getCsrfToken();
   let res: Response;
   try {
@@ -130,42 +141,22 @@ export async function ocrCroppedRegion(
         "Content-Type": "application/json",
         ...(csrf ? { "X-CSRF-Token": csrf } : {}),
       },
-      body: JSON.stringify({
-        page: input.pageIndex,
-        region,
-        ...(opts.lang ? { lang: opts.lang } : {}),
-        ...(opts.detect ? { detect: true } : {}),
-      }),
+      body: JSON.stringify(body),
+      signal: opts.signal,
     });
   } catch (err) {
-    // Network failure (offline, DNS, TLS). Same null-return contract
-    // as before so the call site treats it like "couldn't OCR" —
-    // toast strings are owned there.
-    console.warn("markers: server OCR network error", err);
-    return null;
+    if (opts.signal?.aborted) throw err;
+    // Offline, DNS, TLS: no HTTP answer at all.
+    throw new OcrRequestError(NETWORK_FAILURE, null);
   }
-  if (!res.ok) {
-    let detail = `${res.status}`;
-    try {
-      const body = (await res.json()) as { error?: { message?: string } };
-      detail = body.error?.message ?? detail;
-    } catch {
-      // Body wasn't JSON — keep the status code message.
-    }
-    console.warn(`markers: server OCR failed (${res.status}): ${detail}`);
-    return null;
-  }
-  let payload: {
-    text?: string;
-    confidence?: number;
-    refined_bbox?: { x: number; y: number; w: number; h: number } | null;
-    lang?: string;
-  };
+  if (!res.ok) throw await ocrErrorFromResponse(res);
+  // Partial: a server that predates the page size in the response omits
+  // `page_w` / `page_h`, and the size is then treated as unknown.
+  let payload: Partial<OcrResponse>;
   try {
     payload = (await res.json()) as typeof payload;
-  } catch (err) {
-    console.warn("markers: server OCR returned malformed JSON", err);
-    return null;
+  } catch {
+    throw new OcrRequestError(res.status, "ocr_failed");
   }
   const text = (payload.text ?? "").trim();
   if (!text) return null;
@@ -175,15 +166,55 @@ export async function ocrCroppedRegion(
     confidence,
     refinedBbox: payload.refined_bbox ?? null,
     lang: payload.lang ?? null,
+    pageSize:
+      payload.page_w && payload.page_h
+        ? { width: payload.page_w, height: payload.page_h }
+        : null,
   };
 }
 
-/** Compute a SHA-256 over the cropped pixel bytes. Used for the
- *  image-aware highlight mode so a future "find this panel" lookup
- *  can bucket matches by hash. Returns lowercase hex. */
-export async function sha256CroppedRegion(
-  input: CropInput,
-): Promise<string | null> {
+/** The query that reads one detected box with the default recognizer and
+ *  no detector snap — shared by the page-text panel and a capture tap /
+ *  key press, so reading a box the panel already read is instant and both
+ *  hit one cache entry (client and server). Keyed by the percent box
+ *  (`textBoxKey`), never by a pixel rectangle, so callers that knew
+ *  different page sizes still share it. Failures are errors, never cached
+ *  as a result. */
+export function boxTextQueryOptions(
+  issueId: string,
+  pageIndex: number,
+  box: PercentBox,
+  pageSize: PageSize | null,
+) {
+  return {
+    queryKey: queryKeys.issuePageRegionText(
+      issueId,
+      pageIndex,
+      textBoxKey(box),
+    ),
+    queryFn: ({ signal }: { signal?: AbortSignal }) =>
+      ocrCroppedRegion(
+        {
+          issueId,
+          pageIndex,
+          region: { x: box.x, y: box.y, w: box.w, h: box.h },
+          pageSize,
+        },
+        { signal },
+      ),
+    staleTime: Infinity,
+    gcTime: PAGE_TEXT_GC_MS,
+  };
+}
+
+/** Compute a SHA-256 over the cropped pixel bytes of the original page.
+ *  Used for the image-aware highlight mode so a future "find this panel"
+ *  lookup can bucket matches by hash. Returns lowercase hex. */
+export async function sha256CroppedRegion(input: {
+  issueId: string;
+  pageIndex: number;
+  region: PercentBox;
+}): Promise<string | null> {
   if (typeof document === "undefined") return null;
   if (typeof crypto === "undefined" || !crypto.subtle) return null;
   const canvas = await cropToCanvas(input);

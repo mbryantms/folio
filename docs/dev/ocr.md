@@ -252,7 +252,7 @@ binarization (midpoint fallback on near-uniform crops) →
 caption ⇒ invert) → **24 px white border pad** (Tesseract
 mis-segments glyphs touching the canvas edge) → PSM 6 + pinned
 300 DPI. `tessedit_char_blacklist` is deliberately not used: the
-LSTM *substitutes* blacklisted chars instead of omitting them.
+LSTM _substitutes_ blacklisted chars instead of omitting them.
 
 ### Postprocess
 
@@ -390,7 +390,7 @@ full pipeline and write the result.
 
 ### Detector-result cache (M4 follow-up, v0.3.25)
 
-Stores the detector's polygon list per page so re-OCRs on *different*
+Stores the detector's polygon list per page so re-OCRs on _different_
 regions of the same page skip the expensive detector stage. The
 detector is by far the heaviest part of the pipeline (~3 s on a fast
 CPU, much more on constrained hosts) — caching its output is what
@@ -501,7 +501,7 @@ pipeline.**
 
 Folio's `main.rs` auto-tunes this at process start: if `OMP_NUM_THREADS`
 isn't already set, we call `std::thread::available_parallelism()`
-(which *does* respect cgroups on Linux) and set the env var to that
+(which _does_ respect cgroups on Linux) and set the env var to that
 value, clamped to 8 to avoid diminishing returns on fat boxes.
 
 Operator override: set `OMP_NUM_THREADS=N` in compose / env-file to
@@ -563,11 +563,11 @@ shows as `+Inf`.
 
 The three model artifacts the pipeline depends on:
 
-| Component | Where | Download source | Approx size |
-|---|---|---|---|
-| `comic-text-detector` ONNX | `${HOME}/.cache/huggingface/hub/models--mayocream--comic-text-detector-onnx/` | `mayocream/comic-text-detector-onnx` | ~95 MB |
-| `manga-ocr` ONNX (encoder + decoder + vocab) | `${HOME}/.cache/huggingface/hub/models--mayocream--manga-ocr-onnx/` | `mayocream/manga-ocr-onnx` | ~440 MB |
-| Tesseract LSTM (`eng.traineddata`) | `${TESSDATA_PREFIX}` (default `${HOME}/.tesseract-rs/tessdata`) | tessdata_best (build script) | ~15 MB |
+| Component                                    | Where                                                                         | Download source                      | Approx size |
+| -------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------ | ----------- |
+| `comic-text-detector` ONNX                   | `${HOME}/.cache/huggingface/hub/models--mayocream--comic-text-detector-onnx/` | `mayocream/comic-text-detector-onnx` | ~95 MB      |
+| `manga-ocr` ONNX (encoder + decoder + vocab) | `${HOME}/.cache/huggingface/hub/models--mayocream--manga-ocr-onnx/`           | `mayocream/manga-ocr-onnx`           | ~440 MB     |
+| Tesseract LSTM (`eng.traineddata`)           | `${TESSDATA_PREFIX}` (default `${HOME}/.tesseract-rs/tessdata`)               | tessdata_best (build script)         | ~15 MB      |
 
 The ONNX cache path follows `HOME`, not `HF_HOME` (see the gotcha
 below). The first request that touches a model triggers download + ~1–2 s session
@@ -613,12 +613,12 @@ the pin, the previous `snapshots/<old commit>/` folder (and, for files
 the hub downloaded before pinning, its `blobs/`) stays on disk unused
 and can be deleted.
 
-| Repository | Commit | File | SHA-256 | Bytes |
-|---|---|---|---|---|
-| `mayocream/comic-text-detector-onnx` | `a5d67ec772adef819ef5b0e7aa701fcf4c8bf74a` | `comic-text-detector.onnx` | `1a86ace7…071d718f` | 94,669,756 |
-| `mayocream/manga-ocr-onnx` | `24b12778d85800835e2ca409236de281b8ab7b9f` | `encoder_model.onnx` | `15fa8155…d995def85f` | 343,454,249 |
-| | | `decoder_model.onnx` | `ef776526…fa61f5e8` | 117,480,262 |
-| | | `vocab.txt` | `5cb5c558…4d6a36a3` | 30,216 |
+| Repository                           | Commit                                     | File                       | SHA-256               | Bytes       |
+| ------------------------------------ | ------------------------------------------ | -------------------------- | --------------------- | ----------- |
+| `mayocream/comic-text-detector-onnx` | `a5d67ec772adef819ef5b0e7aa701fcf4c8bf74a` | `comic-text-detector.onnx` | `1a86ace7…071d718f`   | 94,669,756  |
+| `mayocream/manga-ocr-onnx`           | `24b12778d85800835e2ca409236de281b8ab7b9f` | `encoder_model.onnx`       | `15fa8155…d995def85f` | 343,454,249 |
+|                                      |                                            | `decoder_model.onnx`       | `ef776526…fa61f5e8`   | 117,480,262 |
+|                                      |                                            | `vocab.txt`                | `5cb5c558…4d6a36a3`   | 30,216      |
 
 (Full digests in `models.rs`; looked up 2026-11-11, both `main`
 branches last changed 2025-05-08.) There is no setting for another
@@ -692,42 +692,99 @@ a few hundred MB the first time you run an OCR test.
 
 ## Web client
 
-Text-capture mode (keybind `x`, or the chrome's "Highlight +
-capture text") is **bubble-aware**: entering the mode fires the
-text-regions query (`useIssuePageTextRegions`, `staleTime:
-Infinity`, `retry: false`) and `MarkerOverlay` renders the detected
-bubbles as dashed outlines. Tapping a bubble OCRs it directly
-(recognize-only — the region already is the detector's bbox);
-dragging a rectangle still works as the fallback for missed
-regions, and sends `detect: true` only when the regions fetch
-succeeded (cache warm ⇒ snap is cheap). While the detector runs, a
-non-blocking "Finding text regions…" pill shows — the drag surface
-is live the whole time. On 429/error/empty the outlines just don't
-appear.
+Two reader features use these endpoints: **Show page text** (`r`,
+`PageTextPanel.tsx`) and the markers tool's **Highlight + capture text**
+(`x`, `MarkerOverlay.tsx` + `marker-selection.ts` + `MarkerEditor.tsx`).
+Both are lazy chunks; the helpers below are imported only by them, so
+none of it is in the reader's first load.
 
-[`web/app/[locale]/read/[seriesSlug]/[issueSlug]/marker-selection.ts`](../../web/app/%5Blocale%5D/read/%5BseriesSlug%5D/%5BissueSlug%5D/marker-selection.ts)
-owns `ocrCroppedRegion(input, opts)`. The function:
+**Page size — one source.** The server crops the _original_ decoded
+page, so every pixel rectangle the client sends must be in original
+page pixels. `resolvePageSize` in
+[`web/lib/reader/page-size.ts`](../../web/lib/reader/page-size.ts) is
+the one definition, in order of trust: the text-regions response's
+`page_w` / `page_h` (the decode the server crops), the page list's
+`image_width` / `image_height`, and only then the `<img>`'s natural size
+— and that only when the element has no `srcset`. With width-descriptor
+variants (`pageBytesSrcSet`) the browser reports a density-corrected
+natural size that follows the variant and the layout; computing a
+rectangle from it sent a smaller rectangle shifted toward the top-left.
+The page list's size is not guaranteed to be the decoded size either
+(a tagger's stale ComicInfo page sizes, an EXIF-rotated JPEG), so the
+client does not rely on any size for what it sends: every OCR request
+carries `region_pct` (the percent region exactly as drawn, detected or
+stored), which the server maps onto the page it decodes, plus the pixel
+`region` computed with `resolvePageSize` only when a size is known, for a
+server that predates `region_pct`. With no size known, `region_pct`
+alone goes. A returned `refined_bbox` is converted back to percent with
+the response's `page_w` / `page_h`, falling back to `resolvePageSize`
+only for an older server that does not send them. The per-box query is
+keyed by the percent box (`textBoxKey`), never by a pixel rectangle.
+(`region_pct` and the response's `page_w` / `page_h` come with a
+separate server change; until it is merged they are typed locally in
+`marker-selection.ts`.) The image-hash highlight crops
+the original page bytes it loads itself, against that image's own size,
+so the same area always hashes the same pixels.
 
-1. Maps `MarkerRegion` (0–100% floats) to integer pixel rect
-   against `naturalSize`, clamping for rounding overshoot.
-2. POSTs via `apiFetch` with the user's CSRF token. `opts.lang`
-   and `opts.detect` are forwarded only when set — the server
-   resolves the language default.
-3. Returns `{ text, confidence, refinedBbox } | null`. `null`
-   covers every not-the-happy-path: non-2xx, network error,
-   malformed JSON, or empty text. The caller (`MarkerEditor` /
-   `MarkerOverlay`) treats `null` as "couldn't read text" and falls
-   back to a plain highlight. When `refinedBbox` comes back on a
-   new highlight, the pending marker's region snaps to it.
+**The text boxes of a page — one definition.** The detector returns
+block- and line-level boxes. `pageTextBoxes` in
+[`web/lib/reader/text-regions.ts`](../../web/lib/reader/text-regions.ts)
+keeps the enclosing box and drops boxes 80% inside a larger one;
+`readingOrderRegions` orders that set. Capture draws its outlines,
+hit-tests a tap, and renders its keyboard proxies from this set, and the
+panel reads it, so a tap, a key press and the panel read the same box
+(the same pixel rectangle, so one server cache entry). A tap or key press
+on a box goes through `boxTextQueryOptions` — the panel's query for that
+box — so a box the panel already read is captured without a request.
 
-The marker editor shows a copy-to-clipboard button, a
-low-confidence hint (< 0.6 — effectively western-only since
-manga-ocr reports a synthetic 1.0), and an Auto/Western/Japanese
-select for the Re-detect button.
+**Capture mode.** Entering it fetches the page's text regions
+(`useIssuePageTextRegions`, `staleTime: Infinity`) and draws the boxes.
+Tapping a box reads it recognizer-only; dragging reads the drawn
+rectangle and sends `detect: true` only when the regions fetch succeeded
+(cache warm ⇒ snap is cheap). One capture runs at a time; leaving the
+mode (Esc, the pill's Cancel) cancels it — the request finishes but its
+answer is ignored and no editor opens. A tap that hits no box (or lands
+before the boxes load) does nothing and stays in the mode. A live status
+says "Finding text regions…", why finding them failed (with Try again
+for transient failures), or that the page has none. In webtoon view the
+overlay keeps `touch-action: pan-y pinch-zoom` so the page still scrolls;
+on a touch screen a drag starts after a 350 ms press-and-hold, and a
+quick tap still taps a box (cost: a touch drag on a device whose primary
+pointer is fine, e.g. a touch laptop, scrolls instead of selecting).
 
-The image-hash path (`sha256CroppedRegion`) is unchanged — it still
-crops + hashes in the browser because the server has no equivalent
-endpoint.
+**Failures are not "no text".** `ocrCroppedRegion` resolves to the
+result, or `null` when the server read the region and found no text; any
+failure rejects with an `OcrRequestError` carrying the status, the
+envelope's `code` and `Retry-After`. The words for each code live in one
+place, `ocrFailureMessage` in
+[`web/lib/reader/ocr-errors.ts`](../../web/lib/reader/ocr-errors.ts)
+(unit-tested over every code). 503 / 429 / 408 and a dropped connection
+are transient: never cached as a result, retried by the panel on its own
+(three times for a read, twice for a detection, waiting `Retry-After` or
+2 / 4 / 8 s, capped at 30 s), and by the user in capture (the error toast
+carries Try again). The panel says how many regions failed and why, and
+offers Try again for transient ones.
+
+**Request hygiene.** Detection GETs carry TanStack's query `signal`, so
+one whose last observer goes away (page turned, panel closed) is aborted
+client-side; the server still finishes its run. In webtoon view neither
+the panel nor capture mode asks for a page's detection until that page
+has been current for `WEBTOON_DETECT_DELAY_MS` (600 ms), so scrolling
+past pages doesn't spend the 15-a-minute detection bucket. Detected boxes
+and read text stay cached for `PAGE_TEXT_GC_MS` (30 minutes) after the
+page is left.
+
+The marker editor shows a copy-to-clipboard button, a low-confidence
+hint (< 0.6 — effectively western-only since manga-ocr reports a
+synthetic 1.0), and an Auto / Western (English) / Japanese select for
+Detect text. Detect text on an existing marker saves at once, on the marker the read
+was started for (by id; a read that lands after the editor moved to
+another marker or closed is dropped), and the
+editor then counts that text as saved (Cancel does not offer to discard
+it, Save does not resend it). Detect text and Clear ask first when the
+captured text was typed or corrected by hand (it differs from what
+recognition produced); they do not ask when it is still exactly the
+recognized text.
 
 ## Test layout
 
@@ -747,8 +804,13 @@ endpoint.
 - Recognizer trait + heavy E2E (ignored by default):
   [`crates/server/tests/ocr_recognizer.rs`](../../crates/server/tests/ocr_recognizer.rs).
   Run with `cargo test -p server --test ocr_recognizer -- --ignored`.
-- Web client fetch shape + fallback paths:
-  [`web/tests/reader/marker-selection.test.ts`](../../web/tests/reader/marker-selection.test.ts).
+- Web client fetch shape + failure paths:
+  [`web/tests/reader/marker-selection.test.ts`](../../web/tests/reader/marker-selection.test.ts);
+  page size, box set and failure words:
+  [`web/tests/reader/text-capture-helpers.test.ts`](../../web/tests/reader/text-capture-helpers.test.ts);
+  request bodies for tap / drag / snapped box, same box for tap / key /
+  panel, one capture at a time, panel retries:
+  [`web/tests/dom/text-capture.test.tsx`](../../web/tests/dom/text-capture.test.tsx).
 
 ## Future work
 

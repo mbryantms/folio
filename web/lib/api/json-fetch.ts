@@ -26,6 +26,9 @@ export class HttpError extends Error {
     public readonly code: string | null = null,
     /** `error.details` field errors from a 422 (empty otherwise). */
     public readonly fields: { field: string; message: string }[] = [],
+    /** The response's `Retry-After` header, verbatim, when it sent one
+     *  (429 / 503), so a caller can wait as long as the server asked. */
+    public readonly retryAfter: string | null = null,
   ) {
     super(message);
     this.name = "HttpError";
@@ -48,12 +51,24 @@ export async function httpErrorFrom(
   } catch {
     /* ignore */
   }
-  return new HttpError(res.status, detail, code, fields);
+  return new HttpError(
+    res.status,
+    detail,
+    code,
+    fields,
+    res.headers.get("retry-after"),
+  );
 }
 
-export async function jsonFetch<T>(path: string): Promise<T> {
+/** `init.signal` aborts the request — pass TanStack's query `signal` so a
+ *  query that loses its last observer stops waiting for the answer. */
+export async function jsonFetch<T>(
+  path: string,
+  init?: { signal?: AbortSignal },
+): Promise<T> {
   const res = await apiFetch(path, {
     headers: { Accept: "application/json" },
+    signal: init?.signal,
   });
   if (!res.ok) throw await httpErrorFrom(res, path);
   return (await res.json()) as T;

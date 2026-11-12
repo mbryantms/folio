@@ -43,12 +43,12 @@ describe("parseCommandPrefix", () => {
 });
 
 describe("SEARCH_ACTIONS registry", () => {
-  it("has 44 actions: 24 for every user + 20 admin-gated, unique ids", () => {
+  it("has 43 actions: 24 for every user + 19 admin-gated, unique ids", () => {
     const ids = SEARCH_ACTIONS.map((a) => a.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(SEARCH_ACTIONS.length).toBe(44);
+    expect(SEARCH_ACTIONS.length).toBe(43);
     expect(SEARCH_ACTIONS.filter((a) => a.role === undefined).length).toBe(24);
-    expect(SEARCH_ACTIONS.filter((a) => a.role === "admin").length).toBe(20);
+    expect(SEARCH_ACTIONS.filter((a) => a.role === "admin").length).toBe(19);
     // Every `admin-*` id is gated and nothing else is.
     for (const a of SEARCH_ACTIONS) {
       expect(a.role === "admin", a.id).toBe(a.id.startsWith("admin-"));
@@ -181,6 +181,14 @@ describe("palette commands (folio-flair)", () => {
       keyHint: "?",
     });
     expect(byId.get("cmd-tour")?.href).toBe("/?tour=1");
+  });
+
+  it("an OCR search leads to the server page, which shows OCR state (there is no /admin/ocr)", () => {
+    expect(SEARCH_ACTIONS.some((a) => a.href === "/admin/ocr")).toBe(false);
+    expect(rankSearchActions("ocr", "admin")[0]).toMatchObject({
+      id: "admin-server",
+      href: "/admin/server",
+    });
   });
 
   it("fills the settings + admin gaps without duplicating routes", () => {
