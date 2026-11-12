@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { isCancelledError, useQueryClient } from "@tanstack/react-query";
 import {
   BookmarkCheck,
   Loader2,
@@ -66,12 +66,14 @@ const TOUCH_HOLD_MS = 350;
 /** Finger travel (CSS px) that turns a pending press into a scroll. */
 const TOUCH_SCROLL_SLOP_PX = 10;
 
-/** What a capture says when the server read the area and found nothing,
- *  and when the page's real size is not known (nothing can be sent). */
+/** What a capture says when the server read the area and found nothing. */
 const NO_TEXT_MESSAGE =
   "No text found in that area. The highlight editor opens without captured text; you can type it in.";
-const NO_SIZE_MESSAGE =
-  "The page's size isn't known yet, so its text wasn't read. Use Detect text in the editor once the page has loaded.";
+/** How long the detection status stays empty after it mounts, so the
+ *  screen reader has registered the live region before it is filled. */
+const LIVE_REGION_FILL_DELAY_MS = 150;
+/** Longest accessible name a saved region's proxy carries. */
+const REGION_LABEL_MAX = 240;
 
 /** Per-kind colors for the SVG rect markers. Translucent fill + solid
  *  stroke so highlights remain readable over the page content
@@ -229,11 +231,16 @@ export function MarkerOverlay({
   const queryClient = useQueryClient();
   const captureRef = React.useRef<symbol | null>(null);
   const captureToastRef = React.useRef<string | number | null>(null);
+  // The last failure toast (its Try again re-runs a capture), dismissed
+  // when the mode ends so a stale Try again can't open an editor later.
+  const failureToastRef = React.useRef<string | number | null>(null);
   const cancelCapture = React.useCallback(() => {
     captureRef.current = null;
-    if (captureToastRef.current != null) {
-      toast.dismiss(captureToastRef.current);
-      captureToastRef.current = null;
+    for (const ref of [captureToastRef, failureToastRef]) {
+      if (ref.current != null) {
+        toast.dismiss(ref.current);
+        ref.current = null;
+      }
     }
     setBusyRegion(null);
   }, []);
@@ -386,6 +393,17 @@ export function MarkerOverlay({
   React.useEffect(() => {
     if (markerMode === "idle") return;
     const onKey = (e: KeyboardEvent) => {
+      // While the marker editor (or its confirm dialog) is open, or the key
+      // comes from inside any dialog (the page-text panel), Esc belongs to
+      // that surface: the mode stays text capture while the editor is
+      // open, and taking the key here would cost the dialog a press.
+      if (
+        useReaderStore.getState().pendingMarker !== null ||
+        (e.target instanceof Element &&
+          e.target.closest('[role="dialog"], [role="alertdialog"]'))
+      ) {
+        return;
+      }
       if (e.key === "Escape") {
         // `stopImmediatePropagation` stops the Reader's bubble-phase
         // keybind handler from also running on this same event —
@@ -556,6 +574,11 @@ export function MarkerOverlay({
     return () => svg.removeEventListener("touchmove", onMove);
   }, [webtoonTouch, enabled]);
   React.useEffect(() => clearPress, []);
+  // A webtoon press-and-hold still waiting must not arm after the mode
+  // ended (Esc, the pill's Cancel).
+  React.useEffect(() => {
+    if (!enabled) clearPress();
+  }, [enabled]);
 
   function handleTouchStart(e: React.TouchEvent<SVGSVGElement>) {
     if (!enabled || !imgRef.current) return;
@@ -622,13 +645,29 @@ export function MarkerOverlay({
     setDrag(null);
   }
 
+  /** A capture may start or finish only in text capture with no editor
+   *  open. Read from the store, not this render: a toast's Try again runs
+   *  from an old closure. */
+  function captureAllowed(): boolean {
+    const st = useReaderStore.getState();
+    return st.markerMode === "select-text" && st.pendingMarker === null;
+  }
+
+  function showFailure(message: string, retry?: () => void) {
+    if (failureToastRef.current != null) toast.dismiss(failureToastRef.current);
+    failureToastRef.current = toast.error(
+      message,
+      retry ? { action: { label: "Try again", onClick: retry } } : undefined,
+    );
+  }
+
   /** Run one capture: nothing if another is in flight; open the editor on
    *  what it produced unless it was cancelled meanwhile. */
   async function runCapture(
     box: TextRegionView | null,
     work: (isCurrent: () => boolean) => Promise<PendingMarker | null>,
   ) {
-    if (captureRef.current) return;
+    if (captureRef.current || !captureAllowed()) return;
     const token = Symbol("capture");
     captureRef.current = token;
     const isCurrent = () => captureRef.current === token;
@@ -636,7 +675,9 @@ export function MarkerOverlay({
     captureToastRef.current = toast.loading("Reading text…");
     try {
       const pending = await work(isCurrent);
-      if (pending && isCurrent()) beginMarkerEdit(pending);
+      // Still capturing, still in the mode, and no editor opened meanwhile
+      // (a pending marker holds unsaved edits that must not be replaced).
+      if (pending && isCurrent() && captureAllowed()) beginMarkerEdit(pending);
     } finally {
       if (isCurrent()) {
         if (captureToastRef.current != null) {
@@ -656,11 +697,9 @@ export function MarkerOverlay({
   // server). A failure leaves the user in the mode with the reason; a
   // transient one offers Try again.
   async function captureTextBox(box: TextRegionView) {
+    if (!captureAllowed()) return;
+    // The size is only for the pixel fallback; the box goes as percent.
     const size = pageSizeNow();
-    if (!size) {
-      toast.message(NO_SIZE_MESSAGE);
-      return;
-    }
     await runCapture(box, async (isCurrent) => {
       const region: MarkerRegion = {
         x: box.x,
@@ -672,22 +711,22 @@ export function MarkerOverlay({
       let ocr: OcrResult | null;
       try {
         const { boxTextQueryOptions } = await import("./marker-selection");
-        ocr = await queryClient.fetchQuery(
-          boxTextQueryOptions(issueId, pageIndex, box, size),
-        );
+        const options = boxTextQueryOptions(issueId, pageIndex, box, size);
+        try {
+          ocr = await queryClient.fetchQuery(options);
+        } catch (err) {
+          // The page-text panel was closed while this tap shared its
+          // in-flight read: the query lost its last observer and was
+          // cancelled. Not a failure; ask once more.
+          if (!isCancelledError(err)) throw err;
+          ocr = await queryClient.fetchQuery(options);
+        }
       } catch (err) {
-        if (!isCurrent()) return null;
+        if (!isCurrent() || isCancelledError(err)) return null;
         const failure = toOcrRequestError(err);
-        toast.error(
+        showFailure(
           `Couldn't read the text. ${failure.message}`,
-          failure.transient
-            ? {
-                action: {
-                  label: "Try again",
-                  onClick: () => void captureTextBox(box),
-                },
-              }
-            : undefined,
+          failure.transient ? () => void captureTextBox(box) : undefined,
         );
         return null;
       }
@@ -731,12 +770,9 @@ export function MarkerOverlay({
     }
 
     if (markerMode === "select-text") {
+      // The drawn rectangle goes as percent; a known size only adds the
+      // pixel fallback for an older server.
       const size = pageSizeNow();
-      if (!size) {
-        toast.message(NO_SIZE_MESSAGE);
-        beginMarkerEdit(newHighlight(pageIndex, region, false));
-        return;
-      }
       // Snap-to-box only when the page's detect cache is known-warm (the
       // regions fetch succeeded) — never risk a cold detector run here.
       const detect = regionsQuery.isSuccess;
@@ -752,7 +788,7 @@ export function MarkerOverlay({
         } catch (err) {
           if (!isCurrent()) return null;
           const failure = toOcrRequestError(err);
-          toast.error(
+          showFailure(
             `Couldn't read the text. ${failure.message}${
               failure.transient
                 ? " Use Detect text in the editor to try again."
@@ -767,14 +803,18 @@ export function MarkerOverlay({
           return base;
         }
         // Snap the new marker to the detector's box when one came back:
-        // the saved region hugs the text instead of the rough drag.
-        // Converted back with the SAME size the rectangle was sent with.
-        const snapped = ocr.refinedBbox
-          ? {
-              ...pagePixelsToRegion(ocr.refinedBbox, size),
-              shape: region.shape,
-            }
-          : null;
+        // the saved region hugs the text instead of the rough drag. The
+        // box is in the pixels of the page the server decoded, so it is
+        // converted with the size the response reports; the client's own
+        // size only stands in for a server that does not report it.
+        const snapSize = ocr.pageSize ?? size;
+        const snapped =
+          ocr.refinedBbox && snapSize
+            ? {
+                ...pagePixelsToRegion(ocr.refinedBbox, snapSize),
+                shape: region.shape,
+              }
+            : null;
         return {
           ...base,
           region: snapped ?? region,
@@ -1013,12 +1053,16 @@ export function MarkerOverlay({
 function regionMarkerLabel(marker: MarkerView): string {
   const kind = marker.kind.charAt(0).toUpperCase() + marker.kind.slice(1);
   const text = marker.selection?.text?.replace(/\s+/g, " ").trim();
-  const quoted = text
-    ? `“${text.length > 200 ? `${text.slice(0, 199).trimEnd()}…` : text}”`
-    : "";
-  const body = marker.body?.trim();
-  const parts = [quoted, body].filter(Boolean);
-  return parts.length ? `${kind}: ${parts.join(" — ")}` : `${kind} region`;
+  const body = marker.body?.replace(/\s+/g, " ").trim();
+  const parts = [text ? `“${text}”` : "", body].filter(Boolean);
+  const label = parts.length
+    ? `${kind}: ${parts.join(" — ")}`
+    : `${kind} region`;
+  // The whole name is capped (captured text and caption alike): a screen
+  // reader reads it in one breath.
+  return label.length > REGION_LABEL_MAX
+    ? `${label.slice(0, REGION_LABEL_MAX - 1).trimEnd()}…`
+    : label;
 }
 
 type DragState = {
@@ -1087,12 +1131,20 @@ function DetectionStatus({
   boxCount: number | null;
   onRetry: () => void;
 }) {
+  // A live region announces changes, not its first content: for a page
+  // whose detection is already cached it would mount filled and say
+  // nothing. Mount it empty and fill it a moment later.
+  const [ready, setReady] = React.useState(false);
+  React.useEffect(() => {
+    const t = setTimeout(() => setReady(true), LIVE_REGION_FILL_DELAY_MS);
+    return () => clearTimeout(t);
+  }, []);
   const failure = error ? toOcrRequestError(error) : null;
   const pill =
     "bg-background/90 text-foreground absolute top-3 left-1/2 z-30 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-2 rounded-full px-3 py-1 text-xs shadow-md backdrop-blur";
   return (
     <div role="status" aria-live="polite">
-      {loading ? (
+      {!ready ? null : loading ? (
         <div className={cn(pill, "text-muted-foreground pointer-events-none")}>
           <Loader2 className="size-3 animate-spin" aria-hidden="true" />
           Finding text regions…

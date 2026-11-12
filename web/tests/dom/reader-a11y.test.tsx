@@ -161,7 +161,7 @@ describe("MarkerOverlay text-region keyboard proxies", () => {
     ).toBeNull();
   });
 
-  it("exposes one focusable proxy per bubble, in reading order", () => {
+  it("exposes one focusable proxy per bubble, in reading order", async () => {
     useReaderStore.setState({ markerMode: "select-text" } as never);
     renderOverlay();
     const group = screen.getByRole("group", {
@@ -183,8 +183,12 @@ describe("MarkerOverlay text-region keyboard proxies", () => {
       // Pointer input stays with the SVG drag surface.
       expect(p.className).toContain("pointer-events-none");
     }
-    expect(screen.getByRole("status").textContent).toContain(
-      "3 text regions found",
+    // The live region mounts empty and fills a moment later, so the
+    // count is announced.
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toContain(
+        "3 text regions found",
+      ),
     );
   });
 

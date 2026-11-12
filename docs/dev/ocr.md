@@ -459,11 +459,20 @@ the one definition, in order of trust: the text-regions response's
 variants (`pageBytesSrcSet`) the browser reports a density-corrected
 natural size that follows the variant and the layout; computing a
 rectangle from it sent a smaller rectangle shifted toward the top-left.
-When no size is known nothing is sent and the reader says why (in
-practice only for a page whose scanner record lacks a dimension before
-its detection answers). `regionToPagePixels` / `pagePixelsToRegion`
-convert both ways with the same size, so a snapped `refined_bbox` comes
-back to the percent box it describes. The image-hash highlight crops
+The page list's size is not guaranteed to be the decoded size either
+(a tagger's stale ComicInfo page sizes, an EXIF-rotated JPEG), so the
+client does not rely on any size for what it sends: every OCR request
+carries `region_pct` (the percent region exactly as drawn, detected or
+stored), which the server maps onto the page it decodes, plus the pixel
+`region` computed with `resolvePageSize` only when a size is known, for a
+server that predates `region_pct`. With no size known, `region_pct`
+alone goes. A returned `refined_bbox` is converted back to percent with
+the response's `page_w` / `page_h`, falling back to `resolvePageSize`
+only for an older server that does not send them. The per-box query is
+keyed by the percent box (`textBoxKey`), never by a pixel rectangle.
+(`region_pct` and the response's `page_w` / `page_h` come with a
+separate server change; until it is merged they are typed locally in
+`marker-selection.ts`.) The image-hash highlight crops
 the original page bytes it loads itself, against that image's own size,
 so the same area always hashes the same pixels.
 
@@ -518,7 +527,9 @@ page is left.
 The marker editor shows a copy-to-clipboard button, a low-confidence
 hint (< 0.6 — effectively western-only since manga-ocr reports a
 synthetic 1.0), and an Auto / Western (English) / Japanese select for
-Detect text. Detect text on an existing marker saves at once, and the
+Detect text. Detect text on an existing marker saves at once, on the marker the read
+was started for (by id; a read that lands after the editor moved to
+another marker or closed is dropped), and the
 editor then counts that text as saved (Cancel does not offer to discard
 it, Save does not resend it). Detect text and Clear ask first when the
 captured text was typed or corrected by hand (it differs from what
