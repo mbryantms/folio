@@ -44,19 +44,40 @@ COPY rust-toolchain.toml ./
 # native OpenSSL link path used by reqwest's default features.
 #
 # cmake + clang + libclang-dev are for the `tesseract-rs/build-tesseract`
-# feature: the build script downloads Leptonica 1.84.1 + Tesseract 5.3.4
-# and compiles both via cmake. clang/libclang-dev cover the bindgen pass
-# tesseract-rs runs against the freshly-built libtesseract. ca-certificates
-# is needed by the same build script — it fetches the source tarballs over
-# HTTPS during cargo build. One-time ~10 min compile cost; cargo-chef
-# caches the result across rebuilds.
+# feature: tesseract-rs 0.4.0 compiles Leptonica 1.87.0 + Tesseract 5.5.2
+# from source via cmake. clang/libclang-dev cover the bindgen pass
+# tesseract-rs runs against the freshly-built libtesseract. One-time
+# ~10 min compile cost; cargo-chef caches the result across rebuilds.
+# curl + unzip fetch and unpack those sources below (this stage only; the
+# runtime image is distroless and gets neither).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential pkg-config libssl-dev \
-    cmake clang libclang-dev ca-certificates \
+    cmake clang libclang-dev ca-certificates curl unzip \
     && rm -rf /var/lib/apt/lists/*
 RUN cargo install cargo-chef --locked
+# tesseract-rs's build script downloads the Leptonica and Tesseract source
+# archives and eng/tur traineddata (from tessdata_best's moving `main`
+# branch) without checking any of them, and skips each download when the
+# target already exists under ~/.tesseract-rs. So fetch the four files
+# here, check each against a pinned SHA-256 (a mismatch fails before
+# anything compiles) and lay them out where the build script looks; it
+# then downloads nothing. Pins, the layout and the update steps are in
+# scripts/docker/tesseract-inputs.sh and
+# docs/dev/dependency-management.md ("tesseract-rs build inputs").
+COPY scripts/docker/tesseract-inputs.sh /usr/local/bin/tesseract-inputs.sh
+RUN sh /usr/local/bin/tesseract-inputs.sh fetch
 COPY --from=planner /work/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json --bin server --bin migration
+# Drift guard: fetch the crate sources first (skeleton only, nothing is
+# compiled) and fail if the tesseract-rs build.rs in the registry would
+# download anything other than the pinned archives. Without it a Renovate
+# bump of tesseract-rs would silently compile the old pre-placed sources.
+RUN cargo chef cook --release --recipe-path recipe.json --bin server --bin migration --no-build \
+    && cargo fetch \
+    && sh /usr/local/bin/tesseract-inputs.sh check-crate
+# `verify` fails if the build script replaced the placed trees or added
+# tessdata, i.e. compiled or downloaded anything but the verified bytes.
+RUN cargo chef cook --release --recipe-path recipe.json --bin server --bin migration \
+    && sh /usr/local/bin/tesseract-inputs.sh verify
 
 # ───── Stage 1c: compile the workspace ─────
 FROM deps AS rust-builder
@@ -81,15 +102,11 @@ COPY crates ./crates
 RUN cargo build --release --bin server --bin migration \
     && strip /work/target/release/server /work/target/release/migration
 
-# The tesseract-rs build script fetches tessdata_best from its `main`
-# branch with no checksum. Pin the content baked into the image: a
-# changed upstream file fails the build here. Digests taken 2026-11-11
-# (tessdata_best main = e12c65a9, 2024-03-09); to update, download both
-# files from github.com/tesseract-ocr/tessdata_best and `sha256sum` them.
-RUN printf '%s  %s\n' \
-      8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba /root/.tesseract-rs/tessdata/eng.traineddata \
-      e0c3338dc17503dc7d335a507c9ae01b2b46cfd07561171e1e1ac55d85e8e438 /root/.tesseract-rs/tessdata/tur.traineddata \
-    | sha256sum -c -
+# Same check after the final build (it can re-run the tesseract-rs build
+# script): the sources are still the verified trees, and the tessdata the
+# runtime image copies below is exactly eng + tur at the pinned digests
+# (tessdata_best commit e12c65a9; see scripts/docker/tesseract-inputs.sh).
+RUN sh /usr/local/bin/tesseract-inputs.sh verify
 
 # ───── Stage 2: tini from Debian apt ─────
 FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS apt-source
@@ -132,10 +149,11 @@ COPY --from=rust-builder /work/target/release/migration /app/migration
 # tini as PID 1 — reaps zombies, forwards SIGTERM to the server for graceful drain.
 COPY --from=apt-source   /usr/bin/tini                  /sbin/tini
 
-# Tesseract LSTM models (text-detection-1.0 plan). The `tesseract-rs`
-# build script downloaded `eng.traineddata` from `tessdata_best` to
-# `/root/.tesseract-rs/tessdata/` while the rust-builder stage ran;
-# we bake that ~15 MB file into the image so the OCR endpoint works
+# Tesseract LSTM models (text-detection-1.0 plan). The deps stage
+# placed the pinned `eng` + `tur` traineddata from `tessdata_best` in
+# `/root/.tesseract-rs/tessdata/` (where the `tesseract-rs` build
+# script looks), and rust-builder re-checked them after the build;
+# we bake those files into the image so the OCR endpoint works
 # out of the box without a runtime download. The `TESSDATA_PREFIX`
 # env below points the recognizer here. Operators on air-gapped
 # deploys can override via `TESSDATA_PREFIX` to use a pre-staged

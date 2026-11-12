@@ -207,8 +207,97 @@ What is still unproven, in priority order:
 | MSRV                                                 | `Cargo.toml` `rust-version` = the `dtolnay/rust-toolchain@…` refs in `ci.yml` (bump together)                   |
 | Dev toolchain                                        | `rust-toolchain.toml` + Dockerfile `rust:` tag (Renovate group `rust-toolchain`)                                |
 | Node                                                 | `engines.node >=24` (floor), `.nvmrc`, `node-version: 26` in workflows, `node:26-…` + distroless `nodejs<major>` in `web/Dockerfile` (bump together) |
-| OCR model files (not Renovate-managed)               | `crates/server/src/ocr/models.rs` (Hugging Face commit + SHA-256 per file, checked at runtime) and the tessdata `sha256sum -c` line in `Dockerfile`; update steps in [ocr.md](ocr.md#pinned-model-files) |
+| OCR model files (not Renovate-managed)               | `crates/server/src/ocr/models.rs` (Hugging Face commit + SHA-256 per file, checked at runtime); update steps in [ocr.md](ocr.md#pinned-model-files) |
+| Leptonica + Tesseract sources and tessdata compiled/baked into the image (not Renovate-managed) | `scripts/docker/tesseract-inputs.sh` (URL + commit + SHA-256 per file), run by the `Dockerfile` `deps` stage; see "tesseract-rs build inputs" below |
 | `hf-hub` (Renovate updates disabled)                 | A direct dependency only so `ocr::models` uses the same cache path as `comic-text-detector` and `manga-ocr`, which holds while Cargo resolves one `hf-hub` for all three. Bump it by hand, together with those crates; a test in `ocr::models` fails if `Cargo.lock` holds two copies |
+
+## tesseract-rs build inputs
+
+`tesseract-rs` (feature `build-tesseract`) compiles Leptonica and
+Tesseract from source in its build script. The script downloads, with no
+checksum, the two GitHub tag archives named in its `build.rs`
+(0.4.0: Leptonica `1.87.0`, Tesseract `5.5.2`) and `eng` + `tur`
+traineddata from the moving `main` branch of `tessdata_best`, into
+`~/.tesseract-rs/`. It skips each download when the target already
+exists: `third_party/leptonica/` and `third_party/tesseract/` (a
+directory check) and `tessdata/<lang>.traineddata` (a file check).
+
+The image build uses that: `scripts/docker/tesseract-inputs.sh` runs in
+the `Dockerfile` `deps` stage before `cargo chef cook` and
+
+- **`fetch`** downloads the same two tag archives and the two
+  traineddata files from a pinned `tessdata_best` commit, checks every
+  file against its pinned SHA-256 (a mismatch fails the build before
+  anything is unpacked or compiled), unpacks each archive the way the
+  build script does (its single top-level folder becomes
+  `third_party/<name>/`) and records a per-file digest manifest of what
+  it placed;
+- **`check-crate`** runs after the crate sources are fetched (`cargo
+  chef cook --no-build` + `cargo fetch`, nothing compiled) and fails if
+  the registry's tesseract-rs `build.rs` contains any https URL other
+  than the pinned archives and the tessdata base, a language list other
+  than `eng` + `tur`, or no longer has the skip-if-present checks;
+- **`verify`** runs after `cargo chef cook` and again after the final
+  `cargo build`: every placed source file still has its manifest digest
+  (except `src/environ.h` and `prog/makefile.static`, which the build
+  script edits in place), and `tessdata/` holds exactly the two pinned
+  files, which the runtime image copies to `/app/tessdata`.
+
+What `verify` proves: the build script compiled from the verified trees
+and the image carries only the verified tessdata. If the script had
+fallen back to downloading, it would have had to replace a placed tree
+or add a file, and the check would fail. It does not prove that no
+network request was made, and it cannot cover the two edited Leptonica
+files beyond their presence. The image build cannot run without
+network access (cargo fetches crates and `ort-sys` downloads its
+SHA-256-checked ONNX Runtime binaries), so the build is not network
+isolated.
+
+**When Renovate bumps `tesseract-rs`** and the new `build.rs` names
+other versions, `check-crate` fails the image build. To move the pins:
+
+1. Copy the new archive URLs from the crate's `build.rs`
+   (`~/.cargo/registry/src/*/tesseract-rs-<ver>/build.rs`, the
+   `LEPTONICA_URL` / `TESSERACT_URL` constants) and re-read its
+   skip-if-present logic.
+2. `curl -fsSL -o l.zip <leptonica url> && sha256sum l.zip` (same for
+   Tesseract). Download each twice a few minutes apart and compare the
+   digests: GitHub tag archives are expected to be stable, but a changed
+   digest means investigate before pinning.
+3. Record the commit each tag points at: `git ls-remote <repo>
+   'refs/tags/<tag>*'` (for an annotated tag the `^{}` line is the
+   commit); `unzip -z l.zip` prints the same commit.
+4. Update `LEPTONICA_URL` / `LEPTONICA_SHA256` / `TESSERACT_URL` /
+   `TESSERACT_SHA256` and their comments in
+   `scripts/docker/tesseract-inputs.sh`, and the version line in the
+   `Dockerfile` `deps` comment.
+
+**Moving tessdata** (only if wanted; `tessdata_best` `main` has not
+changed since 2024-03-09): `git ls-remote
+https://github.com/tesseract-ocr/tessdata_best refs/heads/main` gives
+the commit; `curl -fsSL -O
+https://github.com/tesseract-ocr/tessdata_best/raw/<commit>/eng.traineddata`
+(and `tur`) then `sha256sum` gives the digests for `TESSDATA_COMMIT`,
+`ENG_SHA256` and `TUR_SHA256`.
+
+Renovate does not update any of this. The archive versions are dictated
+by the crate's `build.rs`, not chosen independently, and Renovate cannot
+recompute a file's SHA-256 for a regex-managed URL, so a bot PR could
+only move a reference and leave its digest stale.
+
+**Local builds are not covered.** A `cargo build` outside Docker runs
+upstream's build script as is: on the first build it downloads the four
+files unchecked into `~/.tesseract-rs/` and reuses them afterwards
+(the directory survives `cargo clean`). The script is upstream's and
+has no hook for a checksum. A developer who wants the verified bytes
+locally can run the same steps by hand (the digests are in
+`scripts/docker/tesseract-inputs.sh`) or compare an existing
+`~/.tesseract-rs/tessdata/*.traineddata` with `sha256sum`; the image
+build is the verified path. The CI jobs that compile the `server` crate
+on a runner (`ci.yml`: `rust-clippy` incl. its doctests, the `rust-test`
+shards, `sidecar-interop`, `openapi-drift`; `perf-plans.yml`:
+`perf-explain.sh`) download these inputs unverified too; none of them
+publishes a binary.
 
 ## Accepted advisories
 
