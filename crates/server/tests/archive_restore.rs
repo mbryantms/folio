@@ -13,7 +13,7 @@ use axum::{
 use common::TestApp;
 use common::seed::{IssueSeed, LibrarySeed, SeriesSeed};
 use sea_orm::{ActiveModelTrait, Set};
-use server::archive_rewrite::{self, RewriteError, RewriteStep};
+use server::archive_rewrite::{self, RewriteError, RewriteStep, mutex};
 use server::library::no_follow::LibraryRoot;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -321,11 +321,8 @@ async fn a_restore_whose_last_step_fails_is_reported_as_done_with_a_warning() {
 
     let resp = server::api::archive_edit::restore_issue(
         &app.state(),
-        row,
-        admin.id,
-        None,
-        None,
-        None,
+        request(row, admin.id, None),
+        server::api::archive_edit::RESTORE_RESPONSE_DEADLINE,
         |root, target| {
             archive_rewrite::restore_latest_backup_with_faults(root, target, false, |step| {
                 if step == RewriteStep::Swapped {
@@ -715,11 +712,23 @@ async fn a_corrupt_pre_conversion_backup_is_refused_and_nothing_changes() {
         body["error"]["code"], "archive.restore_conversion_failed",
         "{body}"
     );
+    assert_clean_message(&body);
     assert_eq!(snapshot(dir.path()), before, "nothing changed on disk");
 }
 
+/// The refusal message is the error kind plus a short reason: bounded, no
+/// control characters (the reader's own text, which can carry entry names
+/// from the archive, never reaches it).
+fn assert_clean_message(body: &serde_json::Value) {
+    let m = body["error"]["message"].as_str().unwrap();
+    assert!(m.chars().count() < 400, "{m}");
+    assert!(!m.chars().any(char::is_control), "{m:?}");
+    assert!(m.contains("nothing was changed"), "{m}");
+}
+
 /// A request can only name a backup the listing offers for this issue: not
-/// another issue's backup, not a path, not a link, not an older own slot.
+/// another issue's backup, not a path, not a link, not an older own slot,
+/// not a name with a NUL, not a directory.
 #[tokio::test]
 async fn restore_refuses_a_backup_the_listing_does_not_offer() {
     let app = TestApp::spawn().await;
@@ -736,6 +745,8 @@ async fn restore_refuses_a_backup_the_listing_does_not_offer() {
         dir.path().join("Thanos001.cbr.bak"),
     )
     .unwrap();
+    // A directory with a pre-conversion backup's name.
+    std::fs::create_dir(dir.path().join("Thanos001.cb7.bak")).unwrap();
     let before = snapshot(dir.path());
     for named in [
         "Other001.cbr.bak".to_owned(),
@@ -750,6 +761,8 @@ async fn restore_refuses_a_backup_the_listing_does_not_offer() {
             .into_owned(),
         "Thanos001.cbr.bak".to_owned(),
         "Thanos001.cbz.bak.1".to_owned(),
+        "Thanos001.cbr.bak\0".to_owned(),
+        "Thanos001.cb7.bak".to_owned(),
     ] {
         let (status, body) = restore_named(&app, &auth, &id, &named).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{named}: {body}");
@@ -777,6 +790,7 @@ fn rebuild_restore_without_exchange_ends_like_the_exchange() {
         &root,
         &path,
         std::ffi::OsStr::new("issue.cbr.bak"),
+        2,
         false,
         |io| {
             server::library::scanner::cbr_convert::rebuild_cbz_into(
@@ -825,6 +839,7 @@ fn a_rebuild_restore_that_fails_before_the_swap_changes_nothing() {
             &root,
             &path,
             std::ffi::OsStr::new("issue.cb7.bak"),
+            1,
             exchange,
             |io| {
                 server::library::scanner::cbr_convert::rebuild_cbz_into(
@@ -843,4 +858,496 @@ fn a_rebuild_restore_that_fails_before_the_swap_changes_nothing() {
         assert!(err.is_err(), "{step:?}");
         assert_eq!(snapshot(dir.path()), before, "{step:?} exchange={exchange}");
     }
+}
+
+fn request(
+    row: entity::issue::Model,
+    actor_id: uuid::Uuid,
+    rebuilt_from: Option<String>,
+) -> server::api::archive_edit::RestoreRequest {
+    server::api::archive_edit::RestoreRequest {
+        row,
+        actor_id,
+        actor_ip: None,
+        actor_ua: None,
+        rebuilt_from,
+    }
+}
+
+async fn admin_and_row(app: &TestApp, id: &str) -> (uuid::Uuid, entity::issue::Model) {
+    use sea_orm::EntityTrait;
+    let admin = entity::user::Entity::find()
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    let row = entity::issue::Entity::find_by_id(id.to_owned())
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    (admin.id, row)
+}
+
+async fn restore_audits(app: &TestApp, id: &str) -> usize {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+    entity::audit_log::Entity::find()
+        .filter(entity::audit_log::Column::Action.eq("admin.issue.archive_restore"))
+        .filter(entity::audit_log::Column::TargetId.eq(id.to_owned()))
+        .all(&app.state().db)
+        .await
+        .unwrap()
+        .len()
+}
+
+/// Whether the per-issue rewrite lock is free (claimed and released again).
+async fn lock_free(app: &TestApp, id: &str) -> bool {
+    let mut redis = app.state().jobs.redis.clone();
+    match mutex::try_claim(&mut redis, id, mutex::EDIT_TTL_SECS)
+        .await
+        .unwrap()
+    {
+        Some(token) => {
+            mutex::release(&mut redis, id, &token).await;
+            true
+        }
+        None => false,
+    }
+}
+
+/// Waits (up to 30 s) until `done` holds.
+async fn eventually<F, Fut>(what: &str, mut done: F)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    for _ in 0..150 {
+        if done().await {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    panic!("timed out waiting for: {what}");
+}
+
+async fn rescan_queued(app: &TestApp, id: &str) -> bool {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+    !entity::scan_run::Entity::find()
+        .filter(entity::scan_run::Column::IssueId.eq(id.to_owned()))
+        .all(&app.state().db)
+        .await
+        .unwrap()
+        .is_empty()
+}
+
+fn slow_restore(
+    delay: Duration,
+) -> impl FnOnce(&LibraryRoot, &Path) -> Result<archive_rewrite::RestoreOutcome, RewriteError>
++ Send
++ 'static {
+    move |root, target| {
+        std::thread::sleep(delay);
+        archive_rewrite::restore_latest_backup(root, target)
+    }
+}
+
+async fn json_of(resp: axum::response::Response) -> (StatusCode, serde_json::Value) {
+    let status = resp.status();
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap())
+}
+
+// ───────── restore outlives the response ─────────
+
+/// A restore that outlasts the handler's deadline answers `in_progress`
+/// and then finishes on its own: the archive is swapped, the audit row
+/// written, the rescan queued and the lock released.
+#[tokio::test]
+async fn a_restore_past_the_deadline_answers_in_progress_and_finishes() {
+    let app = TestApp::spawn().await;
+    let _auth = register_admin(&app).await;
+    let dir = tempdir().unwrap();
+    let (id, path) = seed(&app, dir.path(), 1, "issue.cbz", b"current").await;
+    std::fs::write(slot(&path, 0), b"backup-0").unwrap();
+    let (actor, row) = admin_and_row(&app, &id).await;
+
+    let resp = server::api::archive_edit::restore_issue(
+        &app.state(),
+        request(row, actor, None),
+        Duration::from_millis(200),
+        slow_restore(Duration::from_millis(1500)),
+    )
+    .await;
+    let (status, body) = json_of(resp).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(body["status"], "in_progress", "{body}");
+    assert_eq!(body["in_progress"], true, "{body}");
+    assert!(body["message"].as_str().unwrap().contains("still running"));
+    assert!(
+        !lock_free(&app, &id).await,
+        "the lock is held while it runs"
+    );
+
+    eventually("the audit row", || async {
+        restore_audits(&app, &id).await == 1
+    })
+    .await;
+    eventually("the lock released", || lock_free(&app, &id)).await;
+    assert!(rescan_queued(&app, &id).await, "the rescan was queued");
+    assert_eq!(std::fs::read(&path).unwrap(), b"backup-0");
+    assert_eq!(std::fs::read(slot(&path, 0)).unwrap(), b"current");
+}
+
+/// A restore that outlasts the deadline and then fails leaves the archive
+/// as it was and, with no response left to carry the failure, records it
+/// as a library event (and releases the lock).
+#[tokio::test]
+async fn a_restore_that_fails_after_the_response_records_a_library_event() {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+    let app = TestApp::spawn().await;
+    let _auth = register_admin(&app).await;
+    let dir = tempdir().unwrap();
+    let (id, path) = seed(&app, dir.path(), 1, "issue.cbz", b"current").await;
+    std::fs::write(slot(&path, 0), b"backup-0").unwrap();
+    let before = snapshot(dir.path());
+    let (actor, row) = admin_and_row(&app, &id).await;
+
+    let resp = server::api::archive_edit::restore_issue(
+        &app.state(),
+        request(row, actor, None),
+        Duration::from_millis(200),
+        |_root: &LibraryRoot, _target: &Path| {
+            std::thread::sleep(Duration::from_millis(1500));
+            Err(RewriteError::Io(std::io::Error::other(
+                "injected late failure",
+            )))
+        },
+    )
+    .await;
+    let (status, body) = json_of(resp).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(body["in_progress"], true, "{body}");
+
+    let events = || async {
+        entity::library_event::Entity::find()
+            .filter(entity::library_event::Column::EntityId.eq(id.clone()))
+            .filter(entity::library_event::Column::Action.eq("errored"))
+            .all(&app.state().db)
+            .await
+            .unwrap()
+    };
+    eventually("the library event", || async { !events().await.is_empty() }).await;
+    let ev = events().await;
+    assert_eq!(ev.len(), 1);
+    assert_eq!(ev[0].severity, "error");
+    assert!(ev[0].summary.contains("restore"), "{}", ev[0].summary);
+    eventually("the lock released", || lock_free(&app, &id)).await;
+    assert_eq!(restore_audits(&app, &id).await, 0, "no restore happened");
+    assert_eq!(snapshot(dir.path()), before, "the archive is unchanged");
+}
+
+/// Dropping the handler's future (the client went away, or the route
+/// timeout fired) does not stop what follows the swap: the audit row is
+/// still written.
+#[tokio::test]
+async fn a_dropped_request_still_records_the_restore() {
+    let app = TestApp::spawn().await;
+    let _auth = register_admin(&app).await;
+    let dir = tempdir().unwrap();
+    let (id, path) = seed(&app, dir.path(), 1, "issue.cbz", b"current").await;
+    std::fs::write(slot(&path, 0), b"backup-0").unwrap();
+    let (actor, row) = admin_and_row(&app, &id).await;
+
+    let state = app.state();
+    let dropped = tokio::time::timeout(
+        Duration::from_millis(300),
+        server::api::archive_edit::restore_issue(
+            &state,
+            request(row, actor, None),
+            Duration::from_secs(60),
+            slow_restore(Duration::from_millis(1500)),
+        ),
+    )
+    .await;
+    assert!(dropped.is_err(), "the request was cut off");
+
+    eventually("the audit row", || async {
+        restore_audits(&app, &id).await == 1
+    })
+    .await;
+    eventually("the lock released", || lock_free(&app, &id)).await;
+    assert_eq!(std::fs::read(&path).unwrap(), b"backup-0");
+}
+
+// ───────── rebuild-restore: slots, staging, failures ─────────
+
+/// A one-slot library keeps one ordinary backup however many
+/// rebuild-restores run, and the pre-conversion backup stays as it was.
+#[tokio::test]
+async fn rebuild_restores_keep_the_library_slot_count() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let dir = tempdir().unwrap();
+    let (id, path) = seed(&app, dir.path(), 1, "Thanos001.cbz", b"edited").await;
+    let rar = std::fs::read(fixture("synthetic-3page.cbr")).unwrap();
+    let pre = dir.path().join("Thanos001.cbr.bak");
+    std::fs::write(&pre, &rar).unwrap();
+    for round in 0..2 {
+        let (status, body) = restore_named(&app, &auth, &id, "Thanos001.cbr.bak").await;
+        assert_eq!(status, StatusCode::ACCEPTED, "round {round}: {body}");
+        assert!(body["warning"].is_null(), "round {round}: {body}");
+    }
+    assert!(slot(&path, 0).is_file());
+    assert!(!slot(&path, 1).exists(), "no second ordinary backup");
+    assert_eq!(
+        std::fs::read(&pre).unwrap(),
+        rar,
+        "pre-conversion backup unchanged"
+    );
+    assert_eq!(
+        page_bytes(&path),
+        page_bytes(&fixture("synthetic-3page.cbr"))
+    );
+    // The .bak is the first rebuild, not the original edit (dropped by the
+    // one-slot rotation).
+    assert_eq!(page_bytes(&slot(&path, 0)).len(), 3);
+}
+
+/// With every configured slot taken, the rotation drops the oldest as a
+/// rewrite's does; the replaced archive becomes `.bak`.
+#[test]
+fn rebuild_restore_with_every_slot_taken_rotates_like_a_rewrite() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("issue.cbz");
+    std::fs::write(&path, b"current").unwrap();
+    for n in 0..5 {
+        std::fs::write(slot(&path, n), format!("slot-{n}")).unwrap();
+    }
+    let rar = std::fs::read(fixture("synthetic-3page.cbr")).unwrap();
+    std::fs::write(dir.path().join("issue.cbr.bak"), &rar).unwrap();
+    let root = LibraryRoot::resolve(dir.path());
+    let out = archive_rewrite::restore_rebuilt(
+        &root,
+        &path,
+        std::ffi::OsStr::new("issue.cbr.bak"),
+        5,
+        true,
+        rebuild,
+        |_| Ok(()),
+    )
+    .unwrap();
+    assert!(out.warning.is_none(), "{:?}", out.warning);
+    assert_eq!(std::fs::read(slot(&path, 0)).unwrap(), b"current");
+    for n in 1..5 {
+        assert_eq!(
+            std::fs::read(slot(&path, n)).unwrap(),
+            format!("slot-{}", n - 1).into_bytes()
+        );
+    }
+    assert!(
+        !slot(&path, 5).exists(),
+        "slot-4 dropped, nothing past the window"
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("issue.cbr.bak")).unwrap(),
+        rar
+    );
+}
+
+fn rebuild(io: &archive_rewrite::RewriteIo<'_>) -> Result<(), RewriteError> {
+    server::library::scanner::cbr_convert::rebuild_cbz_into(io, archive::ArchiveLimits::default())
+}
+
+/// A failure after the swap is not a failure of the restore: the rebuilt
+/// archive is in place and the replaced one is kept under the second name,
+/// which the warning names.
+#[test]
+fn rebuild_restore_whose_last_step_fails_reports_where_the_replaced_archive_is() {
+    for exchange in [true, false] {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("issue.cbz");
+        std::fs::write(&path, b"current").unwrap();
+        std::fs::write(
+            dir.path().join("issue.cbr.bak"),
+            std::fs::read(fixture("synthetic-3page.cbr")).unwrap(),
+        )
+        .unwrap();
+        let root = LibraryRoot::resolve(dir.path());
+        let out = archive_rewrite::restore_rebuilt(
+            &root,
+            &path,
+            std::ffi::OsStr::new("issue.cbr.bak"),
+            1,
+            exchange,
+            rebuild,
+            |s| {
+                if s == RewriteStep::Swapped {
+                    Err(RewriteError::Io(std::io::Error::other("injected")))
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .unwrap();
+        let kept = out.kept.expect("kept");
+        let warning = out.warning.expect("a warning");
+        let kept_name = kept.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(warning.contains(&kept_name), "{warning}");
+        assert!(
+            !archive_rewrite::is_staging_name(&kept_name),
+            "never reaped"
+        );
+        assert!(!archive_rewrite::is_backup_name(&kept_name), "never pruned");
+        assert_eq!(std::fs::read(&kept).unwrap(), b"current");
+        assert_eq!(page_bytes(&path).len(), 3);
+        assert!(!slot(&path, 0).exists());
+    }
+}
+
+/// A backup over a limit, or with no pages, is refused and nothing changes.
+#[test]
+fn a_rebuild_over_a_limit_or_without_pages_changes_nothing() {
+    use std::io::Write;
+    // Over a limit: every page is bigger than the entry cap.
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("issue.cbz");
+    std::fs::write(&path, b"current").unwrap();
+    std::fs::write(
+        dir.path().join("issue.cb7.bak"),
+        std::fs::read(fixture("synthetic-3page.cb7")).unwrap(),
+    )
+    .unwrap();
+    let before = snapshot(dir.path());
+    let root = LibraryRoot::resolve(dir.path());
+    let limits = archive::ArchiveLimits {
+        max_entry_bytes: 4,
+        ..archive::ArchiveLimits::default()
+    };
+    let err = archive_rewrite::restore_rebuilt(
+        &root,
+        &path,
+        std::ffi::OsStr::new("issue.cb7.bak"),
+        1,
+        true,
+        |io| server::library::scanner::cbr_convert::rebuild_cbz_into(io, limits),
+        |_| Ok(()),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            RewriteError::ArchiveErr(_) | RewriteError::ValidationFailed(_)
+        ),
+        "{err:?}"
+    );
+    assert_eq!(snapshot(dir.path()), before);
+
+    // No pages: a ZIP holding only a text file.
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("issue.cbz");
+    std::fs::write(&path, b"current").unwrap();
+    let mut buf = std::io::Cursor::new(Vec::new());
+    let mut zw = zip::ZipWriter::new(&mut buf);
+    zw.start_file("readme.txt", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    zw.write_all(b"no pages here").unwrap();
+    zw.finish().unwrap();
+    std::fs::write(dir.path().join("issue.cbr.bak"), buf.into_inner()).unwrap();
+    let before = snapshot(dir.path());
+    let root = LibraryRoot::resolve(dir.path());
+    let err = archive_rewrite::restore_rebuilt(
+        &root,
+        &path,
+        std::ffi::OsStr::new("issue.cbr.bak"),
+        1,
+        true,
+        rebuild,
+        |_| Ok(()),
+    )
+    .unwrap_err();
+    assert!(matches!(err, RewriteError::ValidationFailed(_)), "{err:?}");
+    assert_eq!(snapshot(dir.path()), before);
+}
+
+/// Through the endpoint, a backup with no pages is the same 422 with a
+/// clean message, and nothing changes.
+#[tokio::test]
+async fn a_pre_conversion_backup_without_pages_is_refused() {
+    use std::io::Write;
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let dir = tempdir().unwrap();
+    let (id, _path) = seed(&app, dir.path(), 1, "Thanos001.cbz", b"current").await;
+    let mut buf = std::io::Cursor::new(Vec::new());
+    let mut zw = zip::ZipWriter::new(&mut buf);
+    zw.start_file("notes\u{7}.txt", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    zw.write_all(b"no pages here").unwrap();
+    zw.finish().unwrap();
+    std::fs::write(dir.path().join("Thanos001.cbr.bak"), buf.into_inner()).unwrap();
+    let before = snapshot(dir.path());
+    let (status, body) = restore_named(&app, &auth, &id, "Thanos001.cbr.bak").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["error"]["code"], "archive.restore_conversion_failed");
+    assert_clean_message(&body);
+    assert_eq!(snapshot(dir.path()), before);
+}
+
+/// A crash mid-rebuild leaves the staging file under a name the startup
+/// cleanup reaps; the cleanup removes it and nothing else in the folder.
+#[test]
+fn startup_cleanup_reaps_a_leftover_rebuild_staging_file() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("issue.cbz");
+    std::fs::write(&path, b"current").unwrap();
+    std::fs::write(slot(&path, 0), b"own backup").unwrap();
+    std::fs::write(
+        dir.path().join("issue.cbr.bak"),
+        std::fs::read(fixture("synthetic-3page.cbr")).unwrap(),
+    )
+    .unwrap();
+    let root = LibraryRoot::resolve(dir.path());
+    let staged = std::sync::Mutex::new(None);
+    let err = archive_rewrite::restore_rebuilt(
+        &root,
+        &path,
+        std::ffi::OsStr::new("issue.cbr.bak"),
+        1,
+        true,
+        |io| {
+            *staged.lock().unwrap() = Some(io.staging_path().to_path_buf());
+            rebuild(io)
+        },
+        |s| {
+            if s == RewriteStep::Staged {
+                Err(RewriteError::Io(std::io::Error::other("injected crash")))
+            } else {
+                Ok(())
+            }
+        },
+    );
+    assert!(err.is_err());
+    let staged = staged.into_inner().unwrap().expect("a staging path");
+    let staged_name = staged.file_name().unwrap().to_string_lossy().into_owned();
+    assert!(
+        archive_rewrite::is_staging_name(&staged_name),
+        "{staged_name}"
+    );
+    assert!(
+        !archive_rewrite::is_backup_name(&staged_name),
+        "{staged_name}"
+    );
+    // What a crash would have left: the file at that name.
+    std::fs::write(&staged, b"partial rebuild").unwrap();
+    // And a restore's second name, which must stay.
+    let hold = dir
+        .path()
+        .join("issue.cbz.bak.0123456789abcdef0123456789abcdef.tmp");
+    std::fs::write(&hold, b"replaced archive").unwrap();
+    let mut before = snapshot(dir.path());
+    before.retain(|(n, _)| *n != staged_name);
+
+    let removed = archive_rewrite::startup_cleanup([dir.path().to_path_buf()], Duration::ZERO);
+    assert_eq!(removed, 1);
+    assert_eq!(snapshot(dir.path()), before, "only the staging file went");
 }

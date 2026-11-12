@@ -3,7 +3,6 @@
 import { Loader2, PinOff, Plus, Trash2 } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
-import { toast } from "sonner";
 import { createContext, useContext, useMemo, useState } from "react";
 
 import {
@@ -107,6 +106,11 @@ const SERIES_STATUS_OPTIONS: Array<{ value: string; label: string }> = [
  * menu's "Read from beginning" item can switch label / behavior without
  * a client-side progress fetch.
  */
+/** After a restore answered `in_progress` (still running at the server's
+ *  deadline), the page refreshes again this long after, by when the
+ *  restore and its rescan have normally finished. */
+const RESTORE_IN_PROGRESS_REFRESH_MS = 20_000;
+
 export function IssueActions({
   issue,
   series,
@@ -283,14 +287,16 @@ export function IssueActions({
                   chosenBackup ? { backup: chosenBackup.name } : undefined,
                   {
                     onSuccess: (res) => {
-                      // Restored, but the replaced archive is kept under
-                      // another name than `.bak`: tell the admin where.
-                      if (res?.warning) toast.info(res.warning);
-                      // Rebuilt from a pre-conversion backup: say so and
-                      // where the replaced archive went.
-                      else if (res?.rebuilt_from) toast.info(res.message);
                       setConfirmRestore(false);
                       router.refresh();
+                      // Still running past the server's deadline: refresh
+                      // again once its rescan has had time to land.
+                      if (res?.in_progress) {
+                        window.setTimeout(
+                          () => router.refresh(),
+                          RESTORE_IN_PROGRESS_REFRESH_MS,
+                        );
+                      }
                     },
                   },
                 );

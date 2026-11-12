@@ -4948,6 +4948,7 @@
         ],
         "responses": {
           "202": {
+            "description": "restored, or (`in_progress: true`) still running at the response deadline and finishing on its own",
             "content": {
               "application/json": {
                 "schema": {
@@ -33094,9 +33095,14 @@
         "required": [
           "issue_id",
           "status",
+          "in_progress",
           "message"
         ],
         "properties": {
+          "in_progress": {
+            "type": "boolean",
+            "description": "True when the restore was still running when this response was\nsent: it finishes on its own (audit row, rescan, lock release), and\na failure is recorded as a library event. `kept_as`, `warning` and\n`rebuilt_from` are then not known yet."
+          },
           "issue_id": {
             "type": "string"
           },
@@ -33109,7 +33115,7 @@
           },
           "message": {
             "type": "string",
-            "description": "What the restore did, in one sentence for the admin."
+            "description": "What the restore did (or, `in_progress`, that it is still running),\nin one sentence for the admin."
           },
           "rebuilt_from": {
             "type": [
@@ -33119,7 +33125,8 @@
             "description": "Set when the restore rebuilt the archive from a pre-conversion\nbackup (`?backup=X.cbr.bak`): the backup's file name. The archive\nis then a CBZ rebuilt from that file, not its bytes."
           },
           "status": {
-            "type": "string"
+            "type": "string",
+            "description": "`restored`, or `in_progress` when the restore was still running at\nthe response deadline ([`RESTORE_RESPONSE_DEADLINE`])."
           },
           "warning": {
             "type": [

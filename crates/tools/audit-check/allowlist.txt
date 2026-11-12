@@ -72,7 +72,7 @@ api/admin_users.rs::enable                # POST /admin/users/{id}/enable — de
 api/archive_edit.rs::page_count           # GET /issues/{id}/archive/page-count — read-only live page count
 api/archive_edit.rs::edit                 # POST /issues/{id}/archive/edit — enqueues ArchiveEditJob; the worker writes audit_log (admin.issue.archive_edit) on completion
 api/archive_edit.rs::backups              # GET /issues/{id}/archive/backups — read-only listing of .bak files
-api/archive_edit.rs::restore              # POST /issues/{id}/archive/restore — delegate wrapper: restore_issue (same file) writes audit_log (admin.issue.archive_restore) on success
+api/archive_edit.rs::restore              # POST /issues/{id}/archive/restore — delegate wrapper: the audit row (admin.issue.archive_restore) is written by restore_locked (same file) inside the task restore_issue spawns, so it is written even when the response went out first (in_progress) or the request was dropped; the handler cannot write it itself. Guarded by archive_restore.rs::a_dropped_request_still_records_the_restore and ::restoring_a_pre_conversion_backup_rebuilds_it_as_a_cbz
 api/archive_edit.rs::upload               # POST /uploads — transient image staging (data_dir/uploads/<uuid>), not a mutation on domain data
 
 # ── audit.rs ────────────────────────────────────────────────

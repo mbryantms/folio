@@ -1515,30 +1515,6 @@ fn stamp_made_now(dir: &LibraryDir, name: &OsStr) {
     }
 }
 
-/// Make `<target>.bak` free without deleting anything: shift the archive's
-/// own backups up by one (`.bak` → `.bak.1`, …) as far as the first missing
-/// slot. `false` when every slot up to [`MAX_BACKUP_SLOT`] is taken; then
-/// nothing was renamed.
-fn free_newest_slot(dir: &LibraryDir, target: &OsStr) -> Result<bool, RewriteError> {
-    let mut free = None;
-    for slot in 0..=MAX_BACKUP_SLOT {
-        if dir.kind(&backup_slot_name(target, slot))? == EntryKind::Missing {
-            free = Some(slot);
-            break;
-        }
-    }
-    let Some(free) = free else {
-        return Ok(false);
-    };
-    for slot in (1..=free).rev() {
-        dir.rename(
-            &backup_slot_name(target, slot - 1),
-            &backup_slot_name(target, slot),
-        )?;
-    }
-    Ok(true)
-}
-
 /// Restore a converted archive from the backup of the file it was converted
 /// from (`X.cbr.bak[.n]` / `X.cb7.bak[.n]` beside `target`, `X.cbz`): the
 /// backup is **rebuilt as a CBZ** by `write_into` (the converter's repack,
@@ -1548,10 +1524,18 @@ fn free_newest_slot(dir: &LibraryDir, target: &OsStr) -> Result<bool, RewriteErr
 /// available, else a second name for the current archive (hard link or
 /// copy), the rename of the rebuilt file over `target`, and the move of the
 /// second name to `.bak`. The current archive becomes the newest backup
-/// `<target>.bak`; the archive's own older backups shift up by one as far
-/// as the first free slot ([`free_newest_slot`], nothing is deleted).
+/// `<target>.bak`; the archive's own older backups rotate as a rewrite's do
+/// ([`rotate_backups`] with `retain_count`, at least one: a restore always
+/// keeps the file it replaces, so with zero slots the one `.bak` stays until
+/// the retention sweep), so the slot count never grows past the library's.
 /// `source` (a bare file name in `target`'s folder) is read through its
-/// handle and never changed: the original bytes stay there.
+/// handle and never changed: the original bytes stay there, and the
+/// rotation names only `<target>.bak[.n]`, never `source`.
+///
+/// The rebuild is staged under a [`staging_name`] of `target` (reaped by
+/// [`startup_cleanup`] if the process dies mid-rebuild) and renamed to the
+/// second name `<target>.bak.<hex>.tmp` just before the swap, so after an
+/// exchange the replaced archive is under a name the cleanup never reaps.
 ///
 /// `source` must be what [`pre_conversion_backup_slot`] accepts for
 /// `target`'s name (else `InvalidInput`) and a regular file (a link is
@@ -1559,15 +1543,16 @@ fn free_newest_slot(dir: &LibraryDir, target: &OsStr) -> Result<bool, RewriteErr
 /// file takes the name removes the staging file (and the second name) and
 /// changes nothing else; a write or validation failure of the rebuild
 /// surfaces as [`RewriteError::ArchiveErr`] / [`RewriteError::ValidationFailed`].
-/// Past that point the restore has happened: a failure to give the
-/// replaced archive the `.bak` name (or every slot `.bak` … `.bak.5` taken)
-/// is reported in [`RestoreOutcome::warning`], with `kept` naming where it
-/// is (`<target>.bak.<hex>.tmp`, which neither the startup cleanup nor the
+/// Past that point the restore has happened: a failure to rotate or to give
+/// the replaced archive the `.bak` name is reported in
+/// [`RestoreOutcome::warning`], with `kept` naming where it is
+/// (`<target>.bak.<hex>.tmp`, which neither the startup cleanup nor the
 /// prune touches).
 pub fn restore_rebuilt<F, H>(
     root: &LibraryRoot,
     target: &Path,
     source: &OsStr,
+    retain_count: i32,
     try_exchange: bool,
     write_into: F,
     mut fault: H,
@@ -1576,6 +1561,9 @@ where
     F: FnOnce(&RewriteIo<'_>) -> Result<(), RewriteError>,
     H: FnMut(RewriteStep) -> Result<(), RewriteError>,
 {
+    if !(0..=MAX_BACKUP_SLOT).contains(&retain_count) {
+        return Err(RewriteError::InvalidRetainCount(retain_count));
+    }
     let (dir, name) = open_target(root, target)?;
     let accepted = match (name.to_str(), source.to_str()) {
         (Some(a), Some(s)) => pre_conversion_backup_slot(a, s).is_some(),
@@ -1595,10 +1583,9 @@ where
     };
     let current = open_original(&dir, &name, target)?;
     let bak = backup_slot_name(&name, 0);
-    // Named like a restore's second name (`<target>.bak.<hex>.tmp`), not a
-    // staging name: after an exchange it holds the replaced archive, which
-    // the startup cleanup must never reap.
-    let stage = staging_name(&bak);
+    // A staging name of the archive: a crash mid-rebuild leaves a file the
+    // startup cleanup reaps.
+    let stage = staging_name(&name);
     let (staging, mut guard) = Staged::create(&dir, &stage)?;
     let staging_path = dir.display(&stage);
     write_into(&RewriteIo {
@@ -1620,24 +1607,29 @@ where
         }
         Some(cur) => {
             confirm_unchanged(&dir, &name, Some(cur))?;
-            if try_exchange && dir.exchange(&stage, &name)? {
-                // The staging name now holds the replaced archive.
+            // The rebuilt file takes the second name first: after an
+            // exchange that name holds the replaced archive, which the
+            // startup cleanup must never reap.
+            let hold = staging_name(&bak);
+            dir.rename_noreplace(&stage, &hold)?;
+            guard.name = hold.clone();
+            if try_exchange && dir.exchange(&hold, &name)? {
                 guard.disarm();
-                Some(stage.clone())
+                Some(hold)
             } else {
-                let hold = staging_name(&bak);
-                link_or_copy(&dir, &name, &hold, cur, None)?;
-                let mut hold_guard = Staged {
+                let hold_old = staging_name(&bak);
+                link_or_copy(&dir, &name, &hold_old, cur, None)?;
+                let mut old_guard = Staged {
                     dir: &dir,
-                    identity: dir.identity(&hold).ok(),
-                    name: hold.clone(),
+                    identity: dir.identity(&hold_old).ok(),
+                    name: hold_old.clone(),
                 };
                 fault(RewriteStep::BackedUp)?;
                 confirm_unchanged(&dir, &name, Some(cur))?;
-                dir.rename(&stage, &name)?;
+                dir.rename(&hold, &name)?;
                 guard.disarm();
-                hold_guard.disarm();
-                Some(hold)
+                old_guard.disarm();
+                Some(hold_old)
             }
         }
     };
@@ -1649,13 +1641,8 @@ where
         });
     };
     let placed = fault(RewriteStep::Swapped).and_then(|()| {
-        if free_newest_slot(&dir, &name)? {
-            Ok(dir.rename(&kept, &bak)?)
-        } else {
-            Err(RewriteError::Io(io::Error::other(format!(
-                "every backup slot up to .bak.{MAX_BACKUP_SLOT} is taken"
-            ))))
-        }
+        rotate_backups(&dir, &name, retain_count.max(1))?;
+        Ok(dir.rename(&kept, &bak)?)
     });
     if let Err(e) = placed {
         let held = dir.display(&kept);

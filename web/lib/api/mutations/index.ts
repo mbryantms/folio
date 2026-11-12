@@ -1351,6 +1351,17 @@ export function useBulkArchiveEditMutation() {
  * omitted, or from the named backup (a file name the backups listing
  * returned; a pre-conversion backup is rebuilt as a CBZ).
  */
+/** The success toast of a restore: what happened, where the replaced
+ *  archive went when that needs saying, or that it is still running. */
+export function restoreSuccessMessage(data: RestoreResponse | null): string {
+  if (data?.in_progress) {
+    return "Archive restore still running: the issue refreshes when it is done";
+  }
+  if (data?.warning) return `Archive restored. ${data.warning}`;
+  if (data?.rebuilt_from) return data.message;
+  return "Archive restored";
+}
+
 export function useRestoreArchiveMutation(issueId: string) {
   return useApiMutation<RestoreResponse, { backup?: string } | void>(
     (vars) => ({
@@ -1359,7 +1370,11 @@ export function useRestoreArchiveMutation(issueId: string) {
         buildQuery({ backup: vars ? vars.backup : undefined }),
       method: "POST",
     }),
-    { successMessage: "Restore queued" },
+    {
+      // The restore runs while the request waits; past the server's
+      // deadline it answers `in_progress` and finishes on its own.
+      successMessage: restoreSuccessMessage,
+    },
   );
 }
 

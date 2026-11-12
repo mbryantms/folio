@@ -14219,6 +14219,13 @@ export interface components {
             skipped: number;
         };
         RestoreResponse: {
+            /**
+             * @description True when the restore was still running when this response was
+             *     sent: it finishes on its own (audit row, rescan, lock release), and
+             *     a failure is recorded as a library event. `kept_as`, `warning` and
+             *     `rebuilt_from` are then not known yet.
+             */
+            in_progress: boolean;
             issue_id: string;
             /**
              * @description Where the archive the restore replaced is kept: `<file>.bak`, the
@@ -14229,7 +14236,10 @@ export interface components {
              *     it is kept under instead, `<file>.bak.<hex>.tmp`; `warning` says so.
              */
             kept_as?: string | null;
-            /** @description What the restore did, in one sentence for the admin. */
+            /**
+             * @description What the restore did (or, `in_progress`, that it is still running),
+             *     in one sentence for the admin.
+             */
             message: string;
             /**
              * @description Set when the restore rebuilt the archive from a pre-conversion
@@ -14237,6 +14247,10 @@ export interface components {
              *     is then a CBZ rebuilt from that file, not its bytes.
              */
             rebuilt_from?: string | null;
+            /**
+             * @description `restored`, or `in_progress` when the restore was still running at
+             *     the response deadline ([`RESTORE_RESPONSE_DEADLINE`]).
+             */
             status: string;
             /**
              * @description Set when the restore happened but something about keeping the
@@ -21595,6 +21609,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description restored, or (`in_progress: true`) still running at the response deadline and finishing on its own */
             202: {
                 headers: {
                     [name: string]: unknown;

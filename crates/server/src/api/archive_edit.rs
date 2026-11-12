@@ -29,6 +29,7 @@ use crate::archive_rewrite::{self, mutex};
 use crate::audit::{self, AuditEntry};
 use crate::auth::RequireAdmin;
 use crate::jobs::archive_edit::{ArchiveEditJob, BulkArchiveOp, PageOp, simulate_ops};
+use crate::library::event_log::{self, Action, Category, NewEvent, Severity};
 use crate::middleware::RequestContext;
 use crate::state::AppState;
 use server_macros::handler;
@@ -490,7 +491,14 @@ pub async fn bulk_edit(
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RestoreResponse {
     pub issue_id: String,
+    /// `restored`, or `in_progress` when the restore was still running at
+    /// the response deadline ([`RESTORE_RESPONSE_DEADLINE`]).
     pub status: &'static str,
+    /// True when the restore was still running when this response was
+    /// sent: it finishes on its own (audit row, rescan, lock release), and
+    /// a failure is recorded as a library event. `kept_as`, `warning` and
+    /// `rebuilt_from` are then not known yet.
+    pub in_progress: bool,
     /// Where the archive the restore replaced is kept: `<file>.bak`, the
     /// newest backup (restore swaps the archive and its `.bak`, so
     /// restoring again undoes it). Null when there was no archive at the
@@ -505,7 +513,8 @@ pub struct RestoreResponse {
     /// backup (`?backup=X.cbr.bak`): the backup's file name. The archive
     /// is then a CBZ rebuilt from that file, not its bytes.
     pub rebuilt_from: Option<String>,
-    /// What the restore did, in one sentence for the admin.
+    /// What the restore did (or, `in_progress`, that it is still running),
+    /// in one sentence for the admin.
     pub message: String,
 }
 
@@ -521,12 +530,19 @@ pub struct RestoreQuery {
     pub backup: Option<String>,
 }
 
+/// How long the restore handler waits for the restore before answering
+/// `in_progress`; comfortably below the `/api` route timeout
+/// (`app::JSON_ROUTE_TIMEOUT`, 60 s), which would otherwise answer 408 for
+/// a restore that goes on to happen. The restore itself runs in its own
+/// task and is never cut short by either.
+pub const RESTORE_RESPONSE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(45);
+
 #[utoipa::path(
     operation_id = "archive_edit_restore",    post,
     path = "/issues/{id}/archive/restore",
     params(("id" = String, Path,), RestoreQuery),
     responses(
-        (status = 202, body = RestoreResponse),
+        (status = 202, body = RestoreResponse, description = "restored, or (`in_progress: true`) still running at the response deadline and finishing on its own"),
         (status = 403, description = "admin only"),
         (status = 404, description = "issue not found / no backup"),
         (status = 409, description = "another rewrite is in progress"),
@@ -541,7 +557,7 @@ pub async fn restore(
     AxPath(id): AxPath<String>,
     Query(q): Query<RestoreQuery>,
 ) -> Response {
-    let (row, _lib) = match preflight(&app, &id).await {
+    let (row, lib) = match preflight(&app, &id).await {
         Ok(v) => v,
         Err(resp) => return resp,
     };
@@ -551,14 +567,18 @@ pub async fn restore(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned());
     let named = q.backup.filter(|b| Some(b) != own_bak_name.as_ref());
+    let request = RestoreRequest {
+        row,
+        actor_id: actor.id,
+        actor_ip: ctx.ip_string(),
+        actor_ua: ctx.user_agent.clone(),
+        rebuilt_from: None,
+    };
     let Some(named) = named else {
         return restore_issue(
             &app,
-            row,
-            actor.id,
-            ctx.ip_string(),
-            ctx.user_agent.clone(),
-            None,
+            request,
+            RESTORE_RESPONSE_DEADLINE,
             archive_rewrite::restore_latest_backup,
         )
         .await;
@@ -579,19 +599,21 @@ pub async fn restore(
         );
     };
     let limits = app.cfg().archive_limits();
+    let retain = lib.archive_backup_retain_count;
     let source = std::ffi::OsString::from(found.name.clone());
     restore_issue(
         &app,
-        row,
-        actor.id,
-        ctx.ip_string(),
-        ctx.user_agent.clone(),
-        Some(found.name),
+        RestoreRequest {
+            rebuilt_from: Some(found.name),
+            ..request
+        },
+        RESTORE_RESPONSE_DEADLINE,
         move |root, target| {
             archive_rewrite::restore_rebuilt(
                 root,
                 target,
                 &source,
+                retain,
                 true,
                 |io| crate::library::scanner::cbr_convert::rebuild_cbz_into(io, limits),
                 |_| Ok(()),
@@ -601,19 +623,62 @@ pub async fn restore(
     .await
 }
 
-/// The restore after [`preflight`]: claim the per-issue rewrite lock (kept
-/// alive by a heartbeat while the swap runs, as the rewrite job and the page
-/// editor do: the three-step fallback can copy a whole archive), run
-/// `swap` on the blocking pool, then record the restore. `swap` is
-/// [`archive_rewrite::restore_latest_backup`] in production; tests pass the
-/// fault-injecting variant. Public for the integration tests.
+/// Who asked for a restore and of what. `rebuilt_from` names the
+/// pre-conversion backup a rebuild-restore reads (`None`: the ordinary
+/// restore); a rebuild also takes an archive-work permit.
+pub struct RestoreRequest {
+    pub row: entity::issue::Model,
+    pub actor_id: Uuid,
+    pub actor_ip: Option<String>,
+    pub actor_ua: Option<String>,
+    pub rebuilt_from: Option<String>,
+}
+
+/// A restore that did not happen: the response it would have been.
+#[derive(Debug)]
+pub struct RestoreFailure {
+    status: StatusCode,
+    code: &'static str,
+    message: String,
+}
+
+impl RestoreFailure {
+    fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            status,
+            code,
+            message: message.into(),
+        }
+    }
+}
+
+/// A restore that happened.
+#[derive(Debug)]
+pub struct RestoreDone {
+    kept_as: Option<String>,
+    warning: Option<String>,
+    rebuilt_from: Option<String>,
+    message: String,
+}
+
+/// The restore after [`preflight`], in a task of its own so nothing that
+/// must follow the swap depends on the client still waiting: the task
+/// claims the per-issue rewrite lock, keeps it alive with a heartbeat (as
+/// the rewrite job and the page editor do) and holds it through the swap,
+/// the cached-reader drop, the row stamp, the rescan enqueue and the audit
+/// row, then releases it. The handler waits up to `deadline` for the
+/// outcome; past it (or when the request is dropped, e.g. by the route
+/// timeout or a client that went away) it answers `in_progress` and the
+/// task finishes alone, logging a failure at ERROR and recording it as a
+/// library event, since no response is left to carry it.
+///
+/// `swap` is [`archive_rewrite::restore_latest_backup`] or a
+/// [`archive_rewrite::restore_rebuilt`] closure in production; tests pass
+/// fault-injecting or slow variants. Public for the integration tests.
 pub async fn restore_issue<F>(
     app: &AppState,
-    row: entity::issue::Model,
-    actor_id: Uuid,
-    actor_ip: Option<String>,
-    actor_ua: Option<String>,
-    rebuilt_from: Option<String>,
+    request: RestoreRequest,
+    deadline: std::time::Duration,
     swap: F,
 ) -> Response
 where
@@ -624,34 +689,237 @@ where
         + Send
         + 'static,
 {
+    let issue_id = request.row.id.clone();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let task_app = app.clone();
+    tokio::spawn(async move {
+        let library_id = request.row.library_id;
+        let slug = request.row.slug.clone();
+        let issue_id = request.row.id.clone();
+        let result = run_restore(&task_app, request, swap).await;
+        // Nobody is waiting any more: the handler answered `in_progress`
+        // or its request was dropped.
+        if let Err(unsent) = tx.send(result) {
+            match unsent {
+                Ok(done) => tracing::info!(
+                    issue_id = %issue_id,
+                    message = %done.message,
+                    "archive restore: finished after the response was sent",
+                ),
+                Err(failure) => {
+                    tracing::error!(
+                        issue_id = %issue_id,
+                        code = failure.code,
+                        error = %failure.message,
+                        "archive restore: failed after the response was sent",
+                    );
+                    event_log::record(
+                        &task_app.db,
+                        NewEvent::new(
+                            library_id,
+                            Category::Archive,
+                            Action::Errored,
+                            Severity::Error,
+                            format!(
+                                "Archive restore of {slug} failed after the request had \
+                                 returned: {}",
+                                failure.message
+                            ),
+                        )
+                        .entity("issue", issue_id.clone(), Some(slug))
+                        .detail(serde_json::json!({
+                            "code": failure.code,
+                            "status": failure.status.as_u16(),
+                        })),
+                    )
+                    .await;
+                }
+            }
+        }
+    });
+    match tokio::time::timeout(deadline, rx).await {
+        Ok(Ok(Ok(done))) => (
+            StatusCode::ACCEPTED,
+            Json(RestoreResponse {
+                issue_id,
+                status: "restored",
+                in_progress: false,
+                kept_as: done.kept_as,
+                warning: done.warning,
+                rebuilt_from: done.rebuilt_from,
+                message: done.message,
+            }),
+        )
+            .into_response(),
+        Ok(Ok(Err(failure))) => error(failure.status, failure.code, &failure.message),
+        Ok(Err(_)) => {
+            tracing::error!(issue_id = %issue_id, "archive restore: the restore task ended without an outcome");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+        }
+        Err(_) => (
+            StatusCode::ACCEPTED,
+            Json(RestoreResponse {
+                issue_id,
+                status: "in_progress",
+                in_progress: true,
+                kept_as: None,
+                warning: None,
+                rebuilt_from: None,
+                message: "The restore is still running; the issue is rescanned when it is \
+                          done. A failure is recorded in the library's events."
+                    .to_owned(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+/// The reason a backup could not be rebuilt, for the response and the
+/// log: the error kind and a short fixed reason. The reader's own text can
+/// carry entry names from an untrusted archive, so only our own validation
+/// messages pass through, bounded and without control characters.
+fn rebuild_failure_reason(e: &archive_rewrite::RewriteError) -> String {
+    use archive::ArchiveError as A;
+    use archive_rewrite::RewriteError as R;
+    match e {
+        R::ArchiveErr(A::Encrypted) => "archive error: the backup is encrypted".to_owned(),
+        R::ArchiveErr(A::CapExceeded(_)) => {
+            "archive error: the backup is over an archive size limit".to_owned()
+        }
+        R::ArchiveErr(A::UnsafeEntry(_)) => {
+            "archive error: the backup has an entry with an unsafe path".to_owned()
+        }
+        R::ArchiveErr(A::Io(_)) => "archive error: the backup could not be read".to_owned(),
+        R::ArchiveErr(_) => "archive error: the backup is damaged or unreadable".to_owned(),
+        R::ValidationFailed(m) => format!("validation failed: {}", bounded_text(m, 160)),
+        _ => "the rebuild failed".to_owned(),
+    }
+}
+
+/// `s` with control characters replaced by spaces, cut to at most `max`
+/// characters (an ellipsis marks the cut).
+fn bounded_text(s: &str, max: usize) -> String {
+    let mut out: String = s
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(max)
+        .collect();
+    if s.chars().count() > max {
+        out.push('…');
+    }
+    out
+}
+
+/// The body of [`restore_issue`]'s task: lock, swap, then everything that
+/// must follow the swap, then unlock.
+async fn run_restore<F>(
+    app: &AppState,
+    request: RestoreRequest,
+    swap: F,
+) -> Result<RestoreDone, RestoreFailure>
+where
+    F: FnOnce(
+            &crate::library::no_follow::LibraryRoot,
+            &std::path::Path,
+        ) -> Result<archive_rewrite::RestoreOutcome, archive_rewrite::RewriteError>
+        + Send
+        + 'static,
+{
+    let RestoreRequest {
+        row,
+        actor_id,
+        actor_ip,
+        actor_ua,
+        rebuilt_from,
+    } = request;
     let mut redis = app.jobs.redis.clone();
     let token = match mutex::try_claim(&mut redis, &row.id, mutex::EDIT_TTL_SECS).await {
         Ok(Some(t)) => t,
         Ok(None) => {
-            return error(
+            return Err(RestoreFailure::new(
                 StatusCode::CONFLICT,
                 "archive.rewrite_in_progress",
                 "another rewrite is in progress for this issue",
-            );
+            ));
         }
         Err(e) => {
             tracing::error!(error = %e, "archive restore: mutex claim failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            return Err(RestoreFailure::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal",
+            ));
         }
     };
-
+    // Held until the very end, through the bookkeeping after the swap.
     let heartbeat = mutex::Heartbeat::start(
         app.jobs.redis.clone(),
         row.id.clone(),
         token.clone(),
         mutex::EDIT_TTL_SECS,
     );
+    let result = restore_locked(
+        app,
+        row.clone(),
+        actor_id,
+        actor_ip,
+        actor_ua,
+        rebuilt_from,
+        swap,
+    )
+    .await;
+    drop(heartbeat);
+    let mut redis = app.jobs.redis.clone();
+    mutex::release(&mut redis, &row.id, &token).await;
+    result
+}
 
+/// [`run_restore`] with the lock held.
+async fn restore_locked<F>(
+    app: &AppState,
+    row: entity::issue::Model,
+    actor_id: Uuid,
+    actor_ip: Option<String>,
+    actor_ua: Option<String>,
+    rebuilt_from: Option<String>,
+    swap: F,
+) -> Result<RestoreDone, RestoreFailure>
+where
+    F: FnOnce(
+            &crate::library::no_follow::LibraryRoot,
+            &std::path::Path,
+        ) -> Result<archive_rewrite::RestoreOutcome, archive_rewrite::RewriteError>
+        + Send
+        + 'static,
+{
     // Relative to the folder handle from the no-follow walk; a link at the
-    // backup or the archive (or on the folder path) is refused.
+    // backup or the archive (or on the folder path) is refused. The library
+    // lookup comes first, so no database connection is held while waiting
+    // for the archive-work permit below.
     let target = std::path::PathBuf::from(&row.file_path);
     let restore_res = match crate::library::no_follow::library_root(app, row.library_id).await {
-        Ok(Some(root)) => tokio::task::spawn_blocking(move || swap(&root, &target)).await,
+        Ok(Some(root)) => {
+            // A rebuild reads and writes a whole archive: it takes an
+            // archive-work permit like the scan-time conversion.
+            let permit = if rebuilt_from.is_some() {
+                match app.archive_work_semaphore.clone().acquire_owned().await {
+                    Ok(p) => Some(p),
+                    Err(e) => {
+                        tracing::error!(error = %e, "archive restore: archive work semaphore closed");
+                        return Err(RestoreFailure::new(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "internal",
+                            "internal",
+                        ));
+                    }
+                }
+            } else {
+                None
+            };
+            let res = tokio::task::spawn_blocking(move || swap(&root, &target)).await;
+            drop(permit);
+            res
+        }
         Ok(None) => Ok(Err(archive_rewrite::RewriteError::Io(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             "library not found",
@@ -663,21 +931,16 @@ where
         ))),
     };
 
-    // Always release the mutex regardless of outcome.
-    drop(heartbeat);
-    let mut redis = app.jobs.redis.clone();
-    mutex::release(&mut redis, &row.id, &token).await;
-
     let restored = match restore_res {
         Ok(Ok(outcome)) => outcome,
         Ok(Err(archive_rewrite::RewriteError::Io(e)))
             if e.kind() == std::io::ErrorKind::NotFound =>
         {
-            return error(
+            return Err(RestoreFailure::new(
                 StatusCode::NOT_FOUND,
                 "archive.no_backup",
                 "no backup is available to restore",
-            );
+            ));
         }
         Ok(Err(e @ archive_rewrite::RewriteError::Refused(_))) => {
             // The backup or the archive is a symbolic link, is not a
@@ -685,12 +948,12 @@ where
             // restored. Not "no backup": there is something there, Folio
             // will not use it.
             tracing::warn!(issue_id = %row.id, error = %e, "archive restore: refused");
-            return error(
+            return Err(RestoreFailure::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "archive.restore_refused",
                 "the backup or the archive is a symbolic link or not a regular file; \
                  nothing was restored",
-            );
+            ));
         }
         Ok(Err(
             e @ (archive_rewrite::RewriteError::ArchiveErr(_)
@@ -699,32 +962,45 @@ where
             // Only the rebuild of a pre-conversion backup reads an archive:
             // a corrupt or unreadable backup, or one over a limit. Nothing
             // was swapped.
-            tracing::warn!(issue_id = %row.id, error = %e, "archive restore: the backup could not be rebuilt");
-            return error(
+            let reason = rebuild_failure_reason(&e);
+            tracing::warn!(
+                issue_id = %row.id,
+                error = %bounded_text(&e.to_string(), 300),
+                "archive restore: the backup could not be rebuilt",
+            );
+            return Err(RestoreFailure::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "archive.restore_conversion_failed",
-                &format!(
+                format!(
                     "the pre-conversion backup could not be rebuilt as a CBZ; nothing was \
-                     changed: {e}"
+                     changed ({reason})"
                 ),
-            );
+            ));
         }
         Ok(Err(archive_rewrite::RewriteError::Io(e)))
             if e.kind() == std::io::ErrorKind::InvalidInput =>
         {
-            return error(
+            return Err(RestoreFailure::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "archive.backup_not_restorable",
                 "the named backup is not a pre-conversion backup of this issue's archive",
-            );
+            ));
         }
         Ok(Err(e)) => {
             tracing::error!(error = %e, "archive restore: failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            return Err(RestoreFailure::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal",
+            ));
         }
         Err(e) => {
             tracing::error!(error = %e, "archive restore: join failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            return Err(RestoreFailure::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal",
+            ));
         }
     };
     let kept_as = restored
@@ -799,18 +1075,12 @@ where
     )
     .await;
 
-    (
-        StatusCode::ACCEPTED,
-        Json(RestoreResponse {
-            issue_id: row.id,
-            status: "restored",
-            kept_as,
-            warning,
-            rebuilt_from,
-            message,
-        }),
-    )
-        .into_response()
+    Ok(RestoreDone {
+        kept_as,
+        warning,
+        rebuilt_from,
+        message,
+    })
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
