@@ -1,0 +1,187 @@
+{
+ "book": "jumbo-comics-105-november-1947",
+ "page_index": 8,
+ "image": "pages/jumbo-comics-105-november-1947/p008.jpg",
+ "image_size": [
+  1280,
+  1890
+ ],
+ "tiles": "truth/tiles/jumbo-comics-105-november-1947/p008 (2 x 2, 15% overlap, native resolution)",
+ "bbox_note": "bbox_pct values are approximate (estimated by eye) and are only meant for matching regions; x, y = top-left, w, h = size, in percent of the page.",
+ "excluded": "Printed page number '7' (bottom right).",
+ "page_notes": "Sheena jungle adventure. All lettering is italic upper case. Thought balloons (regions 2 and 3) and speech balloons are white with dark lettering, set against very dark panels. Captions are small unboxed or white-boxed italic text with red decorated initials. Some hyphenated word breaks (EX- / PEDITION).",
+ "regions": [
+  {
+   "id": 1,
+   "kind": "caption",
+   "text": "WHILE BELOW...",
+   "bbox_pct": {
+    "x": 2.0,
+    "y": 0.8,
+    "w": 19.0,
+    "h": 2.2
+   },
+   "colour_case": "dark_on_light",
+   "notes": "On the page margin above the first panel; red decorated initial 'W'."
+  },
+  {
+   "id": 2,
+   "kind": "balloon",
+   "text": "TRAPPED! YET THERE MUST BE A PASSAGE LEADING OUT!",
+   "bbox_pct": {
+    "x": 4.5,
+    "y": 2.8,
+    "w": 12.0,
+    "h": 7.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Thought balloon (cloud with bubbles)."
+  },
+  {
+   "id": 3,
+   "kind": "balloon",
+   "text": "WHAT DEN OF HORROR IS THIS? THE BONES OF THE CHAINED HUMAN, AND THOSE OF THE LEOPARD TELL A GRISLY TALE! HARK... THOSE SOUNDS AHEAD...",
+   "bbox_pct": {
+    "x": 71.0,
+    "y": 3.0,
+    "w": 22.0,
+    "h": 13.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Thought balloon. Drawn 'HARK...THOSE' without a space."
+  },
+  {
+   "id": 4,
+   "kind": "caption",
+   "text": "AND SUDDENLY...",
+   "bbox_pct": {
+    "x": 2.5,
+    "y": 36.0,
+    "w": 12.0,
+    "h": 4.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "White box, two lines; red decorated initial 'A'."
+  },
+  {
+   "id": 5,
+   "kind": "balloon",
+   "text": "AT LAST!! YOU ARE SHEENA?",
+   "bbox_pct": {
+    "x": 3.5,
+    "y": 40.5,
+    "w": 12.5,
+    "h": 5.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Two exclamation marks."
+  },
+  {
+   "id": 6,
+   "kind": "balloon",
+   "text": "AYE. BUT WHO ARE YOU?",
+   "bbox_pct": {
+    "x": 19.0,
+    "y": 40.5,
+    "w": 11.0,
+    "h": 4.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 7,
+   "kind": "balloon",
+   "text": "I AM DOCTOR DAFFRON. MY EXPEDITION FOUND THIS TEMPLE A YEAR AGO, BUT A MAN CALLED BROOKS TRAPPED US HERE... TH-THOSE KEYS... WE CANNOT REACH THEM... TOO WEAK...",
+   "bbox_pct": {
+    "x": 60.0,
+    "y": 39.5,
+    "w": 21.5,
+    "h": 13.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Lettered 'EX-' / 'PEDITION' across a line break; written whole. 'TH-THOSE' is a stammer with an in-line hyphen, kept. Drawn 'THEM...TOO' without a space."
+  },
+  {
+   "id": 8,
+   "kind": "caption",
+   "text": "AS ABOVE...",
+   "bbox_pct": {
+    "x": 2.5,
+    "y": 65.5,
+    "w": 14.0,
+    "h": 2.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "White box; red decorated initial 'A'."
+  },
+  {
+   "id": 9,
+   "kind": "balloon",
+   "text": "I'VE WAITED A LONG TIME FOR THIS! I'VE OFTEN WONDERED HOW LONG IT TOOK FOR THAT FOOL DAFFRON TO DIE OF SLOW STARVATION.",
+   "bbox_pct": {
+    "x": 5.5,
+    "y": 68.0,
+    "w": 25.5,
+    "h": 9.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 10,
+   "kind": "balloon",
+   "text": "AH, YOU CHAINED THEM... LEFT KEYS DANGLING JUST OUT OF REACH... AN EXQUISITELY FIENDISH TORTURE, BWANA BROOKS!",
+   "bbox_pct": {
+    "x": 42.0,
+    "y": 64.5,
+    "w": 18.0,
+    "h": 9.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Drawn 'THEM...LEFT' without a space."
+  },
+  {
+   "id": 11,
+   "kind": "balloon",
+   "text": "SURE! BUT HURRY, WE'VE ANOTHER LOAD TO GET!",
+   "bbox_pct": {
+    "x": 42.0,
+    "y": 74.0,
+    "w": 14.5,
+    "h": 6.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 12,
+   "kind": "balloon",
+   "text": "HEAR THEM GLOAT, BROTHERS! THEY ARE THE EVIL ONES... NOT SHEENA! WE HAVE BEEN DUPED!",
+   "bbox_pct": {
+    "x": 69.0,
+    "y": 70.5,
+    "w": 21.0,
+    "h": 8.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Drawn 'ONES...NOT' without a space."
+  }
+ ],
+ "second_pass": {
+  "corrections": 0,
+  "details": []
+ },
+ "counts": {
+  "regions": 12,
+  "words": 141,
+  "by_kind": {
+   "caption": 3,
+   "balloon": 9
+  },
+  "by_colour_case": {
+   "dark_on_light": 12
+  },
+  "illegible_tokens": 0
+ }
+}

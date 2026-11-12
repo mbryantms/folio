@@ -1067,6 +1067,11 @@ recognized text.
   request bodies for tap / drag / snapped box, same box for tap / key /
   panel, one capture at a time, panel retries:
   [`web/tests/dom/text-capture.test.tsx`](../../web/tests/dom/text-capture.test.tsx).
+- Speed and accuracy on real pages:
+  [`crates/tools/ocr-bench`](../../crates/tools/ocr-bench/README.md), a
+  development-only harness that times this pipeline and candidate
+  engines and scores their text against reference transcriptions. Its
+  runs are manual; CI only compiles it and runs its unit tests.
 
 ## Future work
 

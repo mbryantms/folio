@@ -239,7 +239,10 @@ fn unmap(v: i32) -> f32 {
 /// Grayscale → 3× Lanczos3 upscale → Otsu binarization → polarity
 /// fix → white border pad. Returns a tightly packed 8-bit luma
 /// buffer ready for `TessBaseAPISetImage`.
-fn preprocess(image: &DynamicImage) -> image::GrayImage {
+///
+/// Public so `crates/tools/ocr-bench` can time this stage apart from
+/// the Tesseract call and check its own variants against it.
+pub fn preprocess(image: &DynamicImage) -> image::GrayImage {
     let gray = image.to_luma8();
     let (w, h) = gray.dimensions();
     let mut bin = image::imageops::resize(&gray, w * UPSCALE, h * UPSCALE, FilterType::Lanczos3);

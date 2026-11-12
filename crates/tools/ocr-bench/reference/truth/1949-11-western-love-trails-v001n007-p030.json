@@ -1,0 +1,227 @@
+{
+ "book": "1949-11-western-love-trails-v001n007",
+ "page_index": 30,
+ "image": "pages/1949-11-western-love-trails-v001n007/p030.jpg",
+ "image_size": [
+  795,
+  1100
+ ],
+ "tiles": "truth/tiles/1949-11-western-love-trails-v001n007/p030 (2 x 2, 15% overlap, enlarged 1.6x with LANCZOS because the source is only 795 px wide; enlargement adds no detail)",
+ "bbox_note": "bbox_pct values are approximate (estimated by eye) and are only meant for matching regions; x, y = top-left, w, h = size, in percent of the page.",
+ "excluded": "Printed page number '5' (bottom right).",
+ "page_notes": "LOW-RESOLUTION case: the only page image the item has is a 795 x 1100 JP2 derivative of a PDF upload; balloon letters are about 9-10 px tall at native size. All text was still legible after enlargement. Upright upper-case balloon lettering; captions are italic on pale yellow boxes (or on the page background for region 10). Western romance; several balloons sit on black panel backgrounds.",
+ "regions": [
+  {
+   "id": 1,
+   "kind": "caption",
+   "text": "THE NEXT MORNING WE STARTED FOR THE RANGE...",
+   "bbox_pct": {
+    "x": 3.5,
+    "y": 2.5,
+    "w": 44.5,
+    "h": 3.3
+   },
+   "colour_case": "on_colour",
+   "notes": "Italic, dark on a pale yellow caption box; red drop initial 'T'."
+  },
+  {
+   "id": 2,
+   "kind": "balloon",
+   "text": "TANA IS A WONDERFUL GIRL, CACTUS, BUT I'M STILL NOT SURE I DID THE RIGHT THING HIRIN' HER FOR THIS JOB...",
+   "bbox_pct": {
+    "x": 3.5,
+    "y": 6.0,
+    "w": 22.0,
+    "h": 11.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Lettered 'WONDER-' / 'FUL' across a line break; written as the whole word."
+  },
+  {
+   "id": 3,
+   "kind": "balloon",
+   "text": "YOU'LL GET OVER THAT FEELIN', GIL. MISS TANA'S A THOROUGHBRED AN' A THOROUGHBRED DON'T GIT STAMPEDED.",
+   "bbox_pct": {
+    "x": 27.0,
+    "y": 6.0,
+    "w": 21.0,
+    "h": 11.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Second THOROUGHBRED is lettered 'THOROUGH-' / 'BRED' across a line break; written whole."
+  },
+  {
+   "id": 4,
+   "kind": "caption",
+   "text": "I COOKED LUNCH FOR THE CREW OVER MESQUITE COALS AT A WATERING SPOT...",
+   "bbox_pct": {
+    "x": 51.5,
+    "y": 2.5,
+    "w": 44.0,
+    "h": 3.3
+   },
+   "colour_case": "on_colour",
+   "notes": "Italic, dark on pale blue-grey caption box. The first letter is a decorative initial that looks like a slashed 0; read as I from context (first-person narrator)."
+  },
+  {
+   "id": 5,
+   "kind": "balloon",
+   "text": "WE NEVER HAD A BISCUIT SHOOTER THAT DID THIS ANY EASIER, TANA. WHEN WE HIT THE RANGE TONIGHT, I'LL PUT UP THE GRUB TENT FOR YOU, AND THAT CAN BE YOUR CAMP.",
+   "bbox_pct": {
+    "x": 51.5,
+    "y": 6.0,
+    "w": 25.0,
+    "h": 13.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "The mark after TANA is printed blurred (comma or full stop); full stop chosen because WHEN starts a new sentence. Low-resolution source."
+  },
+  {
+   "id": 6,
+   "kind": "balloon",
+   "text": "THAT WILL BE FINE.",
+   "bbox_pct": {
+    "x": 79.0,
+    "y": 7.0,
+    "w": 13.5,
+    "h": 7.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 7,
+   "kind": "caption",
+   "text": "THAT NIGHT ON THE RANGE....",
+   "bbox_pct": {
+    "x": 3.5,
+    "y": 34.6,
+    "w": 41.0,
+    "h": 2.2
+   },
+   "colour_case": "on_colour",
+   "notes": "Italic, dark on pale yellow; red drop initial 'T'. Four dots, as drawn."
+  },
+  {
+   "id": 8,
+   "kind": "balloon",
+   "text": "I WONDER IF YOU KNOW HOW WONDERFUL YOU ARE, TANA.",
+   "bbox_pct": {
+    "x": 4.5,
+    "y": 37.0,
+    "w": 16.5,
+    "h": 9.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "On a black panel background."
+  },
+  {
+   "id": 9,
+   "kind": "balloon",
+   "text": "ARE YOU REALLY BEGINNING TO FEEL THAT IT WAS ALL RIGHT TO HIRE ME, GIL?",
+   "bbox_pct": {
+    "x": 21.5,
+    "y": 37.0,
+    "w": 25.5,
+    "h": 7.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": "On a black panel background."
+  },
+  {
+   "id": 10,
+   "kind": "caption",
+   "text": "GIL AND I SAT THERE WHILE THE FIRE DIED DOWN, LONG AFTER THE OTHERS ROLLED UP IN THEIR BLANKETS...",
+   "bbox_pct": {
+    "x": 51.5,
+    "y": 35.0,
+    "w": 43.5,
+    "h": 6.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Italic, unboxed, on the page background; red drop initial 'G'."
+  },
+  {
+   "id": 11,
+   "kind": "balloon",
+   "text": "TONIGHT HAS BEEN WONDERFUL--",
+   "bbox_pct": {
+    "x": 51.5,
+    "y": 41.5,
+    "w": 17.0,
+    "h": 6.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 12,
+   "kind": "balloon",
+   "text": "TONIGHT HAS BEEN WONDERFUL FOR ME, TOO. I NEVER REMEMBER THE RANGE BEING THIS BEAUTIFUL BEFORE.",
+   "bbox_pct": {
+    "x": 68.5,
+    "y": 41.5,
+    "w": 27.0,
+    "h": 8.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Lettered 'RE-' / 'MEMBER' across a line break; written as the whole word."
+  },
+  {
+   "id": 13,
+   "kind": "balloon",
+   "text": "OH, TANA! THIS IS WHAT I WAS AFRAID OF.",
+   "bbox_pct": {
+    "x": 18.5,
+    "y": 69.0,
+    "w": 22.5,
+    "h": 6.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "On a black panel background."
+  },
+  {
+   "id": 14,
+   "kind": "balloon",
+   "text": "I HAD NO RIGHT TO DO THAT. FORGIVE ME. I--I'M ENGAGED.",
+   "bbox_pct": {
+    "x": 51.5,
+    "y": 69.0,
+    "w": 19.0,
+    "h": 6.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": "'I--' ends a line and 'I'M' starts the next; joined as 'I--I'M'."
+  },
+  {
+   "id": 15,
+   "kind": "balloon",
+   "text": "I--I KNOW--SO--SO IT WAS AS MUCH MY FAULT AS YOURS.",
+   "bbox_pct": {
+    "x": 74.0,
+    "y": 71.0,
+    "w": 21.5,
+    "h": 9.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Line 2 starts with '--SO--SO'; joined to KNOW without spaces as a reader would read the stammer."
+  }
+ ],
+ "second_pass": {
+  "corrections": 0,
+  "details": []
+ },
+ "counts": {
+  "regions": 15,
+  "words": 193,
+  "by_kind": {
+   "caption": 4,
+   "balloon": 11
+  },
+  "by_colour_case": {
+   "on_colour": 3,
+   "dark_on_light": 12
+  },
+  "illegible_tokens": 0
+ }
+}

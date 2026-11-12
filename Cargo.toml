@@ -9,6 +9,7 @@ members = [
     "crates/archive",
     "crates/shared",
     "crates/tools/audit-check",
+    "crates/tools/ocr-bench",
 ]
 
 [workspace.package]

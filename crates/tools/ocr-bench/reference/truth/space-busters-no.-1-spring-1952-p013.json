@@ -1,0 +1,108 @@
+{
+ "book": "space-busters-no.-1-spring-1952",
+ "page_index": 13,
+ "image": "pages/space-busters-no.-1-spring-1952/p013.jpg",
+ "image_size": [
+  1440,
+  1963
+ ],
+ "tiles": "truth/tiles/space-busters-no.-1-spring-1952/p013 (2 x 2, 15% overlap, native resolution)",
+ "bbox_note": "bbox_pct values are approximate (estimated by eye) and are only meant for matching regions; x, y = top-left, w, h = size, in percent of the page.",
+ "excluded": "Printed page number '4' (bottom right).",
+ "page_notes": "Science fiction. FEW-BALLOONS case: 6 balloons, no captions. Clean upper-case lettering with bold-italic emphasis words (WE, TOUGH!, WOMEN, I'VE GOT AN IDEA!). The question mark after THEY in region 6 is drawn in a stylised zig-zag form.",
+ "regions": [
+  {
+   "id": 1,
+   "kind": "balloon",
+   "text": "SO THESE ARE THE TERRIBLE SPACE-BUSTERS, EH? YOU'LL BE AS TAME AS KITTENS WHEN WE GET THROUGH WITH YOU!",
+   "bbox_pct": {
+    "x": 6.5,
+    "y": 3.5,
+    "w": 34.5,
+    "h": 7.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Lettered 'SPACE-' / 'BUSTERS' across a line break; the team name is hyphenated, so the hyphen is kept (SPACE-BUSTERS). 'WE' is bold italic."
+  },
+  {
+   "id": 2,
+   "kind": "balloon",
+   "text": "I'M EXHAUSTED! NOT A WORD OUT OF ANY OF THEM! AS SOON AS IT'S DAYLIGHT, WE'LL SHOOT THE VERMIN!",
+   "bbox_pct": {
+    "x": 58.5,
+    "y": 3.5,
+    "w": 34.5,
+    "h": 6.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 3,
+   "kind": "balloon",
+   "text": "WHAT A WORKING-OVER! IT'LL BE A PLEASURE TO BE SHOT!",
+   "bbox_pct": {
+    "x": 6.5,
+    "y": 35.0,
+    "w": 16.5,
+    "h": 7.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Lettered 'WORKING-' / 'OVER!' across a line break; kept as the hyphenated compound WORKING-OVER."
+  },
+  {
+   "id": 4,
+   "kind": "balloon",
+   "text": "I'M NOT LETTING THESE BLASTED AMAZONS SHOOT ME WITHOUT TRYING TO DO SOMETHING ABOUT IT FIRST!",
+   "bbox_pct": {
+    "x": 23.0,
+    "y": 35.0,
+    "w": 25.5,
+    "h": 7.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 5,
+   "kind": "balloon",
+   "text": "NOT A CHANCE, CAPTAIN! THEY'VE GOT GUARDS ALL OVER THE PLACE! AND THESE BABES ARE TOUGH!",
+   "bbox_pct": {
+    "x": 63.5,
+    "y": 35.0,
+    "w": 29.0,
+    "h": 8.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "'TOUGH!' is bold italic, on its own line."
+  },
+  {
+   "id": 6,
+   "kind": "balloon",
+   "text": "SURE, THEY'RE TOUGH! BUT THEY'RE WOMEN, AREN'T THEY? I'VE GOT AN IDEA!",
+   "bbox_pct": {
+    "x": 12.5,
+    "y": 67.5,
+    "w": 31.0,
+    "h": 5.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": "'WOMEN' and 'I'VE GOT AN IDEA!' are bold italic. The '?' after THEY is a stylised glyph that can look like a 'z' with a dot."
+  }
+ ],
+ "second_pass": {
+  "corrections": 0,
+  "details": []
+ },
+ "counts": {
+  "regions": 6,
+  "words": 92,
+  "by_kind": {
+   "balloon": 6
+  },
+  "by_colour_case": {
+   "dark_on_light": 6
+  },
+  "illegible_tokens": 0
+ }
+}
