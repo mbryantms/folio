@@ -34,6 +34,10 @@ import {
   subtreeHeight,
   subtreeViews,
   treeOrder,
+  GROUP_DROP_EDGE,
+  hasDisplayOnlyParents,
+  planGroupDrop,
+  restoredGroupLayout,
 } from "@/lib/saved-views/view-board";
 
 function v(
@@ -588,5 +592,147 @@ describe("carryUnknownIds", () => {
       ungrouped: ["a"],
     });
     expect(carryUnknownIds(layout, undefined, known)).toBe(layout);
+  });
+});
+
+describe("planGroupDrop (one plan for line, label, announcement, drop)", () => {
+  // R ⊃ [S, T ⊃ [U]]; Q. A 48px folder row at y = 100.
+  const b = nested();
+  const row = { top: 100, height: 48 };
+  const at = (f: number) => 100 + 48 * f;
+  const over = (groupId: string) => ({ kind: "row" as const, groupId });
+  const zone = (f: number, target = "T", held = "Q") =>
+    planGroupDrop(b, held, over(target), at(f), row).plan?.zone;
+
+  it("reads the pointer against the row: top before, middle into, bottom after", () => {
+    expect([0, 0.1, 0.29].map((f) => zone(f))).toEqual([
+      "before",
+      "before",
+      "before",
+    ]);
+    expect([0.3, 0.4, 0.5, 0.6, 0.7].map((f) => zone(f))).toEqual([
+      "into",
+      "into",
+      "into",
+      "into",
+      "into",
+    ]);
+    expect([0.71, 0.9, 1].map((f) => zone(f))).toEqual([
+      "after",
+      "after",
+      "after",
+    ]);
+    expect(GROUP_DROP_EDGE).toEqual({ BEFORE: 0.3, AFTER: 0.7 });
+  });
+
+  it("states the parent and sibling slot each zone means", () => {
+    expect(planGroupDrop(b, "Q", over("T"), at(0.5), row).plan).toEqual({
+      parentId: "T",
+      index: undefined,
+      target: "T",
+      zone: "into",
+    });
+    expect(planGroupDrop(b, "Q", over("T"), at(0.1), row).plan).toEqual({
+      parentId: "R",
+      index: 1,
+      target: "T",
+      zone: "before",
+    });
+    expect(planGroupDrop(b, "Q", over("S"), at(0.9), row).plan).toEqual({
+      parentId: "R",
+      index: 1,
+      target: "S",
+      zone: "after",
+    });
+    // A section means into; the root means the end of the top level;
+    // no pointer (keyboard) means into the row's folder.
+    expect(
+      planGroupDrop(b, "Q", { kind: "section", groupId: "U" }, null, null).plan
+        ?.parentId,
+    ).toBe("U");
+    expect(planGroupDrop(b, "U", { kind: "root" }, 5, row).plan).toEqual({
+      parentId: null,
+      index: undefined,
+      target: null,
+      zone: "into",
+    });
+    expect(planGroupDrop(b, "Q", over("T"), null, null).plan?.zone).toBe(
+      "into",
+    );
+    expect(planGroupDrop(b, "Q", null, 5, row)).toEqual({
+      plan: null,
+      refusal: null,
+    });
+  });
+
+  it("refuses its own subtree and a fifth level, with the reason", () => {
+    expect(planGroupDrop(b, "R", over("U"), at(0.5), row)).toEqual({
+      plan: null,
+      refusal: "self",
+    });
+    expect(planGroupDrop(b, "T", over("T"), at(0.1), row).refusal).toBe("self");
+    // R spans three levels: into Q makes four (fine), into S five.
+    expect(planGroupDrop(b, "R", over("Q"), at(0.5), row).plan?.zone).toBe(
+      "into",
+    );
+    const deep = moveGroupTo(b, "Q", "U"); // Q on level 4
+    expect(planGroupDrop(deep, "S", over("Q"), at(0.5), row)).toEqual({
+      plan: null,
+      refusal: "depth",
+    });
+    // Beside Q (level 4) is fine for a leaf.
+    expect(
+      planGroupDrop(deep, "S", over("Q"), at(0.9), row).plan?.parentId,
+    ).toBe("U");
+  });
+});
+
+describe("display-only parents are never saved", () => {
+  it("flags a group re-rooted for display, and a hand placement clears it", () => {
+    const b = buildViewBoard(many, [
+      gp("A", [], 0, "gone"),
+      gp("B", [], 1, null),
+    ]);
+    expect(b.groups.find((x) => x.id === "A")!.displayOnlyParent).toBe(true);
+    expect(hasDisplayOnlyParents(b)).toBe(true);
+    // Any other change keeps the fallback in the board: refused.
+    expect(hasDisplayOnlyParents(moveView(b, "a", "B"))).toBe(true);
+    // Placing A by hand states a real parent.
+    expect(hasDisplayOnlyParents(moveGroupTo(b, "A", "B"))).toBe(false);
+    expect(hasDisplayOnlyParents(nested())).toBe(false);
+  });
+});
+
+describe("restoredGroupLayout never exceeds four levels", () => {
+  it("lifts a group made since to the deepest ancestor that allows it", () => {
+    // Before: L1 ⊃ D ⊃ C ⊃ E. Delete D (C, E move up), then N is made
+    // under E (level 4). Restoring D pushes E to level 4 and N to 5.
+    const before = {
+      groups: [
+        gp("L1", [], 0, null),
+        gp("D", [], 0, "L1"),
+        gp("C", [], 0, "D"),
+        gp("E", [], 0, "C"),
+      ],
+    };
+    const current = {
+      groups: [
+        gp("L1", [], 0, null),
+        gp("C", [], 0, "L1"),
+        gp("E", [], 0, "C"),
+        gp("N", ["v"], 0, "E"),
+        gp("D2", [], 1, null),
+      ],
+      ungrouped_ids: [],
+    };
+    const out = restoredGroupLayout("cbl", before, "D", "D2", current);
+    expect(out.groups.map((x) => [x.id, x.parent_id])).toEqual([
+      ["L1", null],
+      ["D2", "L1"],
+      ["C", "D2"],
+      ["E", "C"],
+      ["N", "C"],
+    ]);
+    expect(out.groups.find((x) => x.id === "N")!.view_ids).toEqual(["v"]);
   });
 });

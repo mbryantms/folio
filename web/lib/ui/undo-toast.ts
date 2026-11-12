@@ -47,6 +47,11 @@ export type UndoToastOptions = {
   tone?: "success" | "neutral";
 };
 
+/** Thrown by an `onUndo` that failed in a way worth saying more about
+ *  than `failedMessage` (e.g. what was cleaned up): its message is the
+ *  error toast. */
+export class UndoFailedError extends Error {}
+
 /** Pop the shared "done — Undo" toast. Returns the sonner toast id. */
 export function showUndoToast({
   message,
@@ -76,8 +81,10 @@ export function showUndoToast({
           try {
             await onUndo();
             if (restoredMessage !== null) toast.success(restoredMessage);
-          } catch {
-            toast.error(failedMessage);
+          } catch (err) {
+            toast.error(
+              err instanceof UndoFailedError ? err.message : failedMessage,
+            );
           }
         })();
       },

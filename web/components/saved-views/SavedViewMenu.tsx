@@ -216,7 +216,7 @@ export function SavedViewMenu({
               >
                 {/* The group tree, indented by level; a list can go into
                     a group at any depth. */}
-                {board.groups.map((g) => (
+                {board.groups.map((g, _i, all) => (
                   <DropdownMenuItem
                     key={g.id}
                     disabled={currentGroup === g.id}
@@ -234,7 +234,12 @@ export function SavedViewMenu({
                         <Check className="size-4" />
                       ) : null}
                     </span>
-                    <span className="truncate">{g.name}</span>
+                    <span className="truncate">
+                      {/* Two groups of one name show their paths. */}
+                      {all.filter((o) => o.name === g.name).length > 1
+                        ? g.path.join(" / ")
+                        : g.name}
+                    </span>
                   </DropdownMenuItem>
                 ))}
                 {board.groups.length > 0 ? (

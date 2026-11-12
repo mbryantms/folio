@@ -1887,7 +1887,12 @@ export function useReplaceViewGroupLayout(scope: ViewGroupScope) {
             groups: input.groups.flatMap((g) => {
               const prev = byId.get(g.id);
               if (!prev) return [];
-              const parent = g.parent_id ?? null;
+              // Absent keeps the stored parent (the server's rule);
+              // the board always states it.
+              const parent =
+                g.parent_id === undefined
+                  ? (prev.parent_id ?? null)
+                  : g.parent_id;
               const position = next.get(parent) ?? 0;
               next.set(parent, position + 1);
               return [

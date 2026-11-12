@@ -161,7 +161,9 @@ import {
   groupDepth,
   groupMoveRefusal,
   groupPath,
+  hasDisplayOnlyParents,
   layoutKeepingCustom,
+  planGroupDrop,
   listWithoutGroup,
   moveGroup,
   moveGroupAmongSiblings,
@@ -175,6 +177,9 @@ import {
   type BoardLayout,
   type BoardRow,
   type BuiltinViewSort,
+  type GroupDropPlan,
+  type GroupDropState,
+  type GroupDropTarget,
   type GroupMoveRefusal,
   type ViewBoard,
   type ViewCompare,
@@ -192,7 +197,7 @@ import {
   useSpringSort,
 } from "@/lib/ui/springy-drag";
 import { useReducedMotion } from "@/lib/visual-effects";
-import { showUndoToast } from "@/lib/ui/undo-toast";
+import { UndoFailedError, showUndoToast } from "@/lib/ui/undo-toast";
 
 // ──────────────────── delete + undo ────────────────────
 
@@ -239,7 +244,7 @@ function useDeleteGroupWithUndo(scope: ViewGroupScope, noun: string) {
       ].filter((p): p is string => p !== null);
       const moved =
         parts.length > 0
-          ? `Its ${parts.join(" and ")} moved up a level.`
+          ? `Its ${parts.join(" and ")} moved up one level.`
           : undefined;
       mutate(group.id, {
         onSuccess: () =>
@@ -249,19 +254,21 @@ function useDeleteGroupWithUndo(scope: ViewGroupScope, noun: string) {
             restoredMessage: `Restored group "${group.name}"`,
             failedMessage: "Couldn't restore the group",
             onUndo: async () => {
+              let created: ViewGroupView | null = null;
               try {
                 if (!before) throw new Error("nothing to restore");
                 // Created empty at the top level; the layout PUT below
                 // puts it, its members and its children back.
-                const created = await apiMutate<ViewGroupView>({
+                created = await apiMutate<ViewGroupView>({
                   path: "/me/view-groups",
                   method: "POST",
                   body: { scope, name: group.name, view_ids: [] },
                 });
                 if (!created) throw new Error("create returned null");
+                const newId = created.id;
                 if (group.collapsed) {
                   await apiMutate({
-                    path: apiPath`/me/view-groups/${created.id}`,
+                    path: apiPath`/me/view-groups/${newId}`,
                     method: "PATCH",
                     body: { collapsed: true },
                   });
@@ -276,10 +283,30 @@ function useDeleteGroupWithUndo(scope: ViewGroupScope, noun: string) {
                     scope,
                     before,
                     group.id,
-                    created.id,
+                    newId,
                     current,
                   ),
                 });
+              } catch (err) {
+                // The re-created group must not stay behind, empty, when
+                // the restore itself was refused (another tab changed
+                // the tree in between, say).
+                if (created) {
+                  const cleaned = await apiMutate({
+                    path: apiPath`/me/view-groups/${created.id}`,
+                    method: "DELETE",
+                  }).then(
+                    () => true,
+                    () => false,
+                  );
+                  throw new UndoFailedError(
+                    cleaned
+                      ? "Couldn't restore the group. Nothing was changed."
+                      : `Couldn't restore the group. An empty "${group.name}" was left at the top level.`,
+                    { cause: err },
+                  );
+                }
+                throw err;
               } finally {
                 qc.invalidateQueries({ queryKey: key });
               }
@@ -316,15 +343,7 @@ function parseDndId(
   return null;
 }
 
-/** Where a held folder will land (rows presentation). */
-type FolderDrop = {
-  parentId: string | null;
-  /** Sibling index under `parentId` (end when undefined). */
-  index: number | undefined;
-  /** The folder row the line or ring shows on (`null`: the root). */
-  target: string | null;
-  zone: "before" | "after" | "into";
-};
+type FolderDrop = GroupDropPlan;
 
 // ──────────────────── card-side actions context ────────────────────
 
@@ -480,6 +499,7 @@ export function GroupedViewsBoard({
   size = "compact",
 }: GroupedViewsBoardProps) {
   const groupsQ = useViewGroups(scope);
+  const qc = useQueryClient();
   const replaceLayout = useReplaceViewGroupLayout(scope);
   const createGroup = useCreateViewGroup();
   const updateGroup = useUpdateViewGroup(scope);
@@ -548,9 +568,11 @@ export function GroupedViewsBoard({
   const [dragFrom, setDragFrom] = React.useState<string | null>(null);
   // Where a held folder will land (rows), or why it can't, for the line /
   // ring on the target row and the label on the lifted row.
-  const [folderDrag, setFolderDrag] = React.useState<FolderDragState | null>(
+  const [folderDrag, setFolderDrag] = React.useState<GroupDropState | null>(
     null,
   );
+  const folderPlan = React.useRef<GroupDropState | null>(null);
+  const [grabOffset, setGrabOffset] = React.useState(0);
   const [newGroupOpen, setNewGroupOpen] = React.useState(false);
   const [newGroupSeedView, setNewGroupSeedView] = React.useState<string | null>(
     null,
@@ -575,6 +597,15 @@ export function GroupedViewsBoard({
   const serverList = groupsQ.data;
   const commit = React.useCallback(
     (next: ViewBoard) => {
+      if (hasDisplayOnlyParents(next)) {
+        // The cache holds a parent the board couldn't place (deleted
+        // elsewhere, say) and shows that group at the top level. That
+        // is a display fallback, not a tree to save: drop the move and
+        // fetch the real tree.
+        setDraft(null);
+        void qc.invalidateQueries({ queryKey: queryKeys.viewGroups(scope) });
+        return;
+      }
       const send = (layout: BoardLayout, shown: ViewBoard) => {
         setDraft(shown);
         // Ids this page doesn't know ride along in place, so a list filed
@@ -624,6 +655,7 @@ export function GroupedViewsBoard({
       sortInside,
       serverList,
       knownIds,
+      qc,
     ],
   );
 
@@ -674,7 +706,32 @@ export function GroupedViewsBoard({
         });
       }
       if (active?.type === "group") {
-        return folderCollisions(args, subtreeIds(board, active.id));
+        // The held folder's plan is computed here, once per move, from
+        // the pointer against the hit row's current rect; the line, the
+        // label, the announcement and the drop all read it.
+        const hits = folderCollisions(args);
+        const hit = hits[0];
+        const p = hit ? parseDndId(hit.id) : null;
+        const target: GroupDropTarget | null =
+          p?.type === "head"
+            ? { kind: "row", groupId: p.id }
+            : p?.type === "group"
+              ? { kind: "section", groupId: p.id }
+              : p?.type === "ungrouped"
+                ? { kind: "root" }
+                : null;
+        const rect = args.collisionRect;
+        const pointerY =
+          args.pointerCoordinates?.y ??
+          (rect ? rect.top + rect.height / 2 : null);
+        folderPlan.current = planGroupDrop(
+          board,
+          active.id,
+          target,
+          pointerY,
+          hit ? (args.droppableRects.get(hit.id) ?? null) : null,
+        );
+        return hits;
       }
       // A held row: never the folder rows themselves (their sections
       // stand for them).
@@ -700,78 +757,46 @@ export function GroupedViewsBoard({
     [board, nesting],
   );
 
-  /** Where the held folder `id` lands when over `over` (rows). */
-  const planFolderDrop = React.useCallback(
-    (
-      id: string,
-      over: { id: UniqueIdentifier; rect: { top: number; height: number } },
-      held: { top: number; height: number } | null,
-    ): FolderDragState => {
-      const o = parseDndId(over.id);
-      let plan: FolderDrop | null = null;
-      if (o?.type === "ungrouped") {
-        plan = { parentId: null, index: undefined, target: null, zone: "into" };
-      } else if (o?.type === "group") {
-        plan = { parentId: o.id, index: undefined, target: o.id, zone: "into" };
-      } else if (o?.type === "head") {
-        const target = findGroup(board, o.id);
-        if (target) {
-          const center = held ? held.top + held.height / 2 : null;
-          const rel =
-            center === null || over.rect.height === 0
-              ? 0.5
-              : (center - over.rect.top) / over.rect.height;
-          const zone = rel < 0.3 ? "before" : rel > 0.7 ? "after" : "into";
-          if (zone === "into") {
-            plan = {
-              parentId: target.id,
-              index: undefined,
-              target: o.id,
-              zone,
-            };
-          } else {
-            const siblings = childGroups(board, target.parentId).filter(
-              (g) => g.id !== id,
-            );
-            const at = siblings.findIndex((g) => g.id === target.id);
-            plan = {
-              parentId: target.parentId,
-              index: at + (zone === "after" ? 1 : 0),
-              target: o.id,
-              zone,
-            };
-          }
-        }
-      }
-      if (!plan) return { plan: null, refusal: null };
-      const refusal = groupMoveRefusal(board, id, plan.parentId);
-      return refusal ? { plan: null, refusal } : { plan, refusal: null };
-    },
-    [board],
-  );
-
   function onDragStart(ev: DragStartEvent) {
     const a = parseDndId(ev.active.id);
+    // Where the pointer took hold, from the held row's left edge (the
+    // drop label goes under it). The rect dnd-kit measures isn't ready
+    // yet for a plain draggable, so read the row the press landed in.
+    const pointer = ev.activatorEvent as Partial<PointerEvent> | null;
+    const row =
+      pointer?.target instanceof Element
+        ? pointer.target.closest("[data-board-row], [data-folder-row]")
+        : null;
+    setGrabOffset(
+      row && typeof pointer?.clientX === "number"
+        ? pointer.clientX - row.getBoundingClientRect().left
+        : 0,
+    );
     setDragFrom(a?.type === "view" ? containerOf(board, a.id) : null);
     setActiveId(ev.active.id);
+    folderPlan.current = null;
     setFolderDrag(null);
     setDraft(board);
   }
 
-  function onDragMove(ev: DragMoveEvent) {
-    const a = parseDndId(ev.active.id);
-    if (!nesting || a?.type !== "group") return;
-    const next = ev.over
-      ? planFolderDrop(a.id, ev.over, ev.active.rect.current.translated)
-      : { plan: null, refusal: null };
+  /** Show the held folder's current plan (computed in collision
+   *  detection) on the target row and the lifted row. */
+  function showFolderPlan() {
+    const next = folderPlan.current;
     setFolderDrag((prev) =>
       JSON.stringify(prev) === JSON.stringify(next) ? prev : next,
     );
   }
 
+  function onDragMove(ev: DragMoveEvent) {
+    const a = parseDndId(ev.active.id);
+    if (nesting && a?.type === "group") showFolderPlan();
+  }
+
   function onDragOver(ev: DragOverEvent) {
     const { active, over } = ev;
     const a = parseDndId(active.id);
+    if (nesting && a?.type === "group") showFolderPlan();
     if (!over || a?.type !== "view") return;
     const overContainer = resolveContainer(over.id);
     const fromContainer = containerOf(board, a.id);
@@ -803,18 +828,16 @@ export function GroupedViewsBoard({
   function onDragEnd(ev: DragEndEvent) {
     const { active, over } = ev;
     const a = parseDndId(active.id);
-    const held = folderDrag;
+    const held = folderPlan.current;
     finishDrag();
     if (!over || !a) {
       setDraft(null);
       return;
     }
     if (a.type === "group" && nesting) {
-      // Rows: the folder lands where its lifted row said; a refused drop
-      // (into itself, too deep) changes nothing.
-      const { plan } =
-        held ??
-        planFolderDrop(a.id, over, active.rect.current.translated ?? null);
+      // Rows: the folder lands where its lifted row said (the same plan);
+      // a refused drop (into itself, too deep) changes nothing.
+      const plan = held?.plan ?? null;
       const next = plan
         ? moveGroupTo(board, a.id, plan.parentId, plan.index)
         : board;
@@ -944,7 +967,8 @@ export function GroupedViewsBoard({
     if (p.type === "group" || p.type === "head") return groupName(p.id);
     return views.find((v) => v.id === p.id)?.name ?? `a ${noun}`;
   };
-  const describePlan = (state: FolderDragState): string => {
+  const describePlan = (state: GroupDropState | null): string => {
+    if (!state) return "is not over a drop area";
     if (!state.plan) {
       return state.refusal === "depth"
         ? `can't go there: groups nest at most ${MAX_GROUP_DEPTH} levels`
@@ -966,9 +990,9 @@ export function GroupedViewsBoard({
       const a = parseDndId(active.id);
       if (!over) return `${nameOf(active.id)} is no longer over a drop area.`;
       if (a?.type === "group" && nesting) {
-        return `${nameOf(active.id)} ${describePlan(
-          planFolderDrop(a.id, over, active.rect.current.translated),
-        )}.`;
+        // Said by the board's own live region (`folderAnnouncement`),
+        // which also speaks when the zone changes on the same row.
+        return undefined;
       }
       if (a?.type === "view") {
         return `${nameOf(active.id)} is over ${containerName(resolveContainer(over.id))}.`;
@@ -979,12 +1003,8 @@ export function GroupedViewsBoard({
       const a = parseDndId(active.id);
       if (!over) return `${nameOf(active.id)} was dropped.`;
       if (a?.type === "group" && nesting) {
-        const state = planFolderDrop(
-          a.id,
-          over,
-          active.rect.current.translated,
-        );
-        return state.plan
+        const state = folderPlan.current;
+        return state?.plan
           ? `${nameOf(active.id)} was moved: it ${describePlan(state).replace(/^will move/, "now sits")}.`
           : `${nameOf(active.id)} was put back: it ${describePlan(state)}.`;
       }
@@ -1007,6 +1027,13 @@ export function GroupedViewsBoard({
       `Dragging was cancelled. ${nameOf(active.id)} was put back.`,
   };
   const renderView = renderCard ?? renderNothing;
+  // A held folder's plan changes as the pointer crosses a row's zones
+  // without `over` changing, which dnd-kit doesn't announce; this region
+  // says each plan as it changes, from the same state the label shows.
+  const folderAnnouncement =
+    activeGroup && nesting && folderDrag
+      ? `${nameOf(groupDndId(activeGroup.id))} ${describePlan(folderDrag)}.`
+      : "";
 
   /** The per-group callbacks both presentations wire up the same way. */
   function groupHandlers(id: string): GroupHandlers {
@@ -1269,6 +1296,9 @@ export function GroupedViewsBoard({
                 </div>
               )}
 
+              <div role="status" aria-live="polite" className="sr-only">
+                {folderAnnouncement}
+              </div>
               {portal(
                 <DragOverlay dropAnimation={reduced ? null : DROP_ANIMATION}>
                   {activeView && rows ? (
@@ -1300,7 +1330,9 @@ export function GroupedViewsBoard({
                           overlay: true,
                         })}
                       </div>
-                      {heldRowLabel ? <DropLabel label={heldRowLabel} /> : null}
+                      {heldRowLabel ? (
+                        <DropLabel label={heldRowLabel} offset={grabOffset} />
+                      ) : null}
                     </div>
                   ) : activeView ? (
                     // A lifted copy of the card itself, at its own size, so
@@ -1314,20 +1346,51 @@ export function GroupedViewsBoard({
                     >
                       {renderView(activeView)}
                     </div>
-                  ) : activeGroup ? (
-                    <div>
-                      <DragGhost
-                        icon={nesting ? Folder : GripVertical}
-                        label={activeGroup.name}
-                        meta={`${subtreeViews(board, activeGroup.id).length} ${plural(noun, subtreeViews(board, activeGroup.id).length)}`}
-                      />
+                  ) : activeGroup && nesting ? (
+                    // The held folder row at its own width, so the spot
+                    // the pointer holds stays under it.
+                    <div className="pointer-events-none">
+                      <div
+                        className={cn(
+                          ROW_PAD,
+                          "bg-popover text-popover-foreground border-border flex items-center gap-2 rounded-md border shadow-xl",
+                          DRAG_LIFT_CLASS,
+                        )}
+                        style={{ transition: LIFT_TRANSITION }}
+                      >
+                        <GripVertical
+                          className="text-muted-foreground size-4 shrink-0"
+                          aria-hidden="true"
+                        />
+                        <Folder
+                          className="text-muted-foreground size-4 shrink-0"
+                          aria-hidden="true"
+                        />
+                        <span className="truncate text-sm font-semibold">
+                          {activeGroup.name}
+                        </span>
+                        <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
+                          {subtreeViews(board, activeGroup.id).length}{" "}
+                          {plural(
+                            noun,
+                            subtreeViews(board, activeGroup.id).length,
+                          )}
+                        </span>
+                      </div>
                       {heldFolderLabel ? (
                         <DropLabel
                           label={heldFolderLabel}
                           refused={folderDrag?.plan === null}
+                          offset={grabOffset}
                         />
                       ) : null}
                     </div>
+                  ) : activeGroup ? (
+                    <DragGhost
+                      icon={GripVertical}
+                      label={activeGroup.name}
+                      meta={`${activeGroup.views.length} ${plural(noun, activeGroup.views.length)}`}
+                    />
                   ) : null}
                 </DragOverlay>,
               )}
@@ -1363,11 +1426,6 @@ export function GroupedViewsBoard({
   );
 }
 
-type FolderDragState = {
-  plan: FolderDrop | null;
-  refusal: GroupMoveRefusal | null;
-};
-
 /** One "Move to…" destination of a group's menu. */
 type MoveTarget = {
   /** `null`: the top level. */
@@ -1382,14 +1440,10 @@ type MoveTarget = {
 };
 
 /** The collision of a held folder (rows): the folder row under the
- *  pointer (its top / middle / bottom picks before / into / after),
- *  else the innermost section, else the root. Nothing while the pointer
- *  is over the held folder's own subtree. Keyboard drags (no pointer)
- *  take the nearest folder row. */
-function folderCollisions(
-  args: Parameters<CollisionDetection>[0],
-  inside: ReadonlySet<string>,
-) {
+ *  pointer, else the innermost section, else the root. Its own rows
+ *  count too (the plan refuses them, so the label can say why).
+ *  Keyboard drags (no pointer) take the nearest folder row. */
+function folderCollisions(args: Parameters<CollisionDetection>[0]) {
   const folderish = args.droppableContainers.filter((c) => {
     const t = parseDndId(c.id)?.type;
     return t === "head" || t === "group" || t === "ungrouped";
@@ -1397,18 +1451,12 @@ function folderCollisions(
   if (!args.pointerCoordinates) {
     return closestCenter({
       ...args,
-      droppableContainers: folderish.filter((c) => {
-        const p = parseDndId(c.id);
-        return p?.type === "head" && !inside.has(p.id);
-      }),
+      droppableContainers: folderish.filter(
+        (c) => parseDndId(c.id)?.type === "head",
+      ),
     });
   }
   const hits = pointerWithin({ ...args, droppableContainers: folderish });
-  const own = (c: { id: UniqueIdentifier }) => {
-    const p = parseDndId(c.id);
-    return (p?.type === "head" || p?.type === "group") && inside.has(p.id);
-  };
-  if (hits.some(own)) return [];
   const head = hits.find((c) => parseDndId(c.id)?.type === "head");
   if (head) return [head];
   const section = innermost(
@@ -1439,11 +1487,22 @@ function innermost<T extends { id: UniqueIdentifier }>(
 }
 
 /** Under the lifted row or folder: where it will land. */
-function DropLabel({ label, refused }: { label: string; refused?: boolean }) {
+function DropLabel({
+  label,
+  refused,
+  offset,
+}: {
+  label: string;
+  refused?: boolean;
+  /** Where the pointer took hold of the lifted row, from its left edge:
+   *  the label sits under the pointer, wherever the row was grabbed. */
+  offset: number;
+}) {
   return (
     <p
+      style={{ marginLeft: Math.max(0, offset - 12) }}
       className={cn(
-        "bg-popover border-border mt-1 inline-block max-w-xs truncate rounded-md border px-2 py-0.5 text-xs shadow-md",
+        "bg-popover border-border mt-1 block w-max max-w-xs truncate rounded-md border px-2 py-0.5 text-xs shadow-md",
         refused ? "text-destructive" : "text-muted-foreground",
       )}
     >
@@ -1698,7 +1757,7 @@ function GroupMenu({
               icon={<FolderInput className="size-4" />}
               label="Move to…"
             >
-              {moveTargets.map((t) => (
+              {withDistinctLabels(moveTargets).map((t) => (
                 <DropdownMenuItem
                   key={t.id ?? "top"}
                   disabled={t.current || t.refusal !== null}
@@ -1759,6 +1818,16 @@ function GroupMenu({
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+/** Destinations whose names collide show their path instead, so two
+ *  "Annuals" in different groups can be told apart. */
+function withDistinctLabels(targets: MoveTarget[]): MoveTarget[] {
+  const count = new Map<string, number>();
+  for (const t of targets) count.set(t.label, (count.get(t.label) ?? 0) + 1);
+  return targets.map((t) =>
+    (count.get(t.label) ?? 0) > 1 ? { ...t, label: t.path } : t,
   );
 }
 
@@ -2475,6 +2544,7 @@ function FolderSection({
     >
       <div
         ref={setRowRef}
+        data-folder-row=""
         className={cn(
           ROW_GRID,
           ROW_PAD,

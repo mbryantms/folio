@@ -40,6 +40,9 @@ const state = vi.hoisted(() => ({
   ungrouped: [] as string[],
   calls: [] as Array<{ path: string; method: string; body: unknown }>,
   undo: [] as Array<() => unknown>,
+  /** Refuse the next layout PUT with this 422 message. */
+  refusePut: null as string | null,
+  toastError: vi.fn(),
 }));
 
 function json(body: unknown, status = 200) {
@@ -77,6 +80,11 @@ vi.mock("@/lib/api/auth-refresh", () => ({
       return new Response(null, { status: 204 });
     }
     if (path === "/me/view-groups/layout" && method === "PUT") {
+      if (state.refusePut) {
+        const message = state.refusePut;
+        state.refusePut = null;
+        return json({ error: { code: "validation", message } }, 422);
+      }
       const byId = new Map(state.groups.map((g) => [g.id, g]));
       const next = new Map<string | null, number>();
       state.groups = body.groups.map(
@@ -116,9 +124,20 @@ vi.mock("@/lib/ui/use-coarse-pointer", async (orig) => ({
   ...(await orig<typeof CoarsePointer>()),
   useTouchDevice: () => true,
 }));
+vi.mock("sonner", () => ({
+  toast: Object.assign(vi.fn(), {
+    success: vi.fn(),
+    error: state.toastError,
+    message: vi.fn(),
+    info: vi.fn(),
+    loading: vi.fn(),
+    dismiss: vi.fn(),
+  }),
+}));
 // Capture the Undo of a group delete instead of rendering a toast.
 vi.mock("@/lib/ui/undo-toast", () => ({
   UNDO_TOAST_DURATION_MS: 8000,
+  UndoFailedError: class UndoFailedError extends Error {},
   showUndoToast: (o: { onUndo: () => unknown }) => {
     state.undo.push(o.onUndo);
     return 1;
@@ -220,6 +239,8 @@ beforeEach(() => {
   window.localStorage.clear();
   state.calls = [];
   state.undo = [];
+  state.refusePut = null;
+  state.toastError.mockClear();
   // Stored by hand: Events = [Crisis, Watchmen]; the root = [Zeta, Alpha].
   // Most read: Watchmen (0.6) before Crisis (0.2); Alpha (1.0) before
   // Zeta (0.5). Recently updated: Watchmen (1 day) before Crisis (3).
@@ -545,6 +566,63 @@ describe("nested groups", () => {
       parent_id: null,
       view_ids: ["v1", "v-other-tab", "v4"],
     });
+  });
+
+  it("Undo removes the group it re-created when the restore is refused", async () => {
+    await ready(false);
+    openMenu("Actions for group Events");
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: /Delete group/ }),
+    );
+    await waitFor(() => expect(state.undo).toHaveLength(1));
+    state.calls = [];
+    // Another tab changed the tree between the fetch and the PUT.
+    state.refusePut = "groups must list every group in this scope exactly once";
+    await expect(state.undo[0]!()).rejects.toThrow(
+      "Couldn't restore the group. Nothing was changed.",
+    );
+    expect(state.calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      "POST /me/view-groups",
+      "PUT /me/view-groups/layout",
+      "DELETE /me/view-groups/g-new",
+    ]);
+    expect(state.groups.some((g) => g.id === "g-new")).toBe(false);
+  });
+
+  it("a refused nesting move rolls the page back and shows the error", async () => {
+    await ready(false);
+    state.refusePut = "groups nest at most 4 levels deep";
+    openMenu("Actions for group DC");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Big" }));
+    await waitFor(() =>
+      expect(state.toastError).toHaveBeenCalledWith(
+        "groups nest at most 4 levels deep",
+        expect.anything(),
+      ),
+    );
+    // DC is back at the top level, not under Big.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("region", { name: "Group DC" }).closest("li"),
+      ).toBeNull(),
+    );
+    expect(state.groups.find((g) => g.id === "d")!.parent_id).toBeNull();
+  });
+
+  it("names colliding groups by their path in the move menus", async () => {
+    state.groups = [
+      ...state.groups,
+      group("m2", "Annuals", "m", 1, []),
+      group("d2", "Annuals", "d", 0, []),
+    ];
+    await ready(false);
+    openMenu("Actions for Alpha");
+    expect(
+      await screen.findByRole("menuitem", { name: "Marvel / Annuals" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "DC / Annuals" })).toBeTruthy();
+    // A unique name stays short.
+    expect(screen.getByRole("menuitem", { name: "Big" })).toBeTruthy();
   });
 
   it("disables what the depth cap rules out, with the reason", async () => {

@@ -52,6 +52,10 @@ export type BoardGroup = {
   collapsed: boolean;
   /** The enclosing group, `null` at the top level. */
   parentId: string | null;
+  /** Set when the stored parent couldn't be placed (unknown to this
+   *  cache, or on a cycle) and the group is shown at the top level
+   *  instead: a display fallback that must never be saved. */
+  displayOnlyParent?: true;
   views: SavedViewView[];
 };
 
@@ -189,6 +193,9 @@ export function buildViewBoard(
       name: g.name,
       collapsed: g.collapsed,
       parentId,
+      ...(parentId !== (g.parent_id ?? null)
+        ? { displayOnlyParent: true as const }
+        : {}),
       views: members,
     };
   });
@@ -414,6 +421,98 @@ export function groupMoveRefusal(
   return null;
 }
 
+/** What a held group is over (rows presentation): a folder row, the
+ *  section under a folder (its rows), or the root. */
+export type GroupDropTarget =
+  | { kind: "row"; groupId: string }
+  | { kind: "section"; groupId: string }
+  | { kind: "root" };
+
+/** Where a held group will land. */
+export type GroupDropPlan = {
+  parentId: string | null;
+  /** Sibling index under `parentId` (end when undefined). */
+  index: number | undefined;
+  /** The folder row the line or ring shows on (`null`: the root). */
+  target: string | null;
+  zone: "before" | "after" | "into";
+};
+
+export type GroupDropState = {
+  plan: GroupDropPlan | null;
+  refusal: GroupMoveRefusal | null;
+};
+
+/** Fractions of a folder row's height: above `BEFORE` the held group
+ *  goes before it, below `AFTER` after it, in between inside it. */
+export const GROUP_DROP_EDGE = { BEFORE: 0.3, AFTER: 0.7 } as const;
+
+/**
+ * The one plan for a held group: what the drop line / ring, the label on
+ * the lifted row, the announcement and the commit all read. Over a
+ * folder row the pointer's height in that row (`pointerY` against the
+ * row's current `rowRect`) picks before / into / after; over a section,
+ * into it; over the root, the end of the top level. `pointerY` is
+ * `null` without a pointer (keyboard): "into". A plan that would put
+ * the group inside itself or past four levels comes back refused.
+ */
+export function planGroupDrop(
+  board: ViewBoard,
+  id: string,
+  over: GroupDropTarget | null,
+  pointerY: number | null,
+  rowRect: { top: number; height: number } | null,
+): GroupDropState {
+  if (!over) return { plan: null, refusal: null };
+  let plan: GroupDropPlan | null = null;
+  if (over.kind === "root") {
+    plan = { parentId: null, index: undefined, target: null, zone: "into" };
+  } else if (subtreeIds(board, id).has(over.groupId)) {
+    return { plan: null, refusal: "self" };
+  } else if (over.kind === "section") {
+    plan = {
+      parentId: over.groupId,
+      index: undefined,
+      target: over.groupId,
+      zone: "into",
+    };
+  } else {
+    const target = findGroup(board, over.groupId);
+    if (!target) return { plan: null, refusal: null };
+    const rel =
+      pointerY === null || !rowRect || rowRect.height <= 0
+        ? 0.5
+        : (pointerY - rowRect.top) / rowRect.height;
+    const zone =
+      rel < GROUP_DROP_EDGE.BEFORE
+        ? "before"
+        : rel > GROUP_DROP_EDGE.AFTER
+          ? "after"
+          : "into";
+    if (zone === "into") {
+      plan = {
+        parentId: target.id,
+        index: undefined,
+        target: target.id,
+        zone,
+      };
+    } else {
+      const siblings = childGroups(board, target.parentId).filter(
+        (g) => g.id !== id,
+      );
+      const at = siblings.findIndex((g) => g.id === target.id);
+      plan = {
+        parentId: target.parentId,
+        index: at + (zone === "after" ? 1 : 0),
+        target: target.id,
+        zone,
+      };
+    }
+  }
+  const refusal = groupMoveRefusal(board, id, plan.parentId);
+  return refusal ? { plan: null, refusal } : { plan, refusal: null };
+}
+
 /** Can a new group be made inside `parentId`? */
 export function canNestInside(board: ViewBoard, parentId: string): boolean {
   return groupDepth(board, parentId) < MAX_GROUP_DEPTH;
@@ -442,7 +541,9 @@ export function moveGroupTo(
     index === undefined || index < 0 || index > siblings.length
       ? siblings.length
       : index;
-  const moved = { ...group, parentId };
+  // Placed by hand: whatever its stored parent was, this one is real.
+  const { displayOnlyParent: _fallback, ...placed } = group;
+  const moved = { ...placed, parentId };
   const before = siblings[at];
   const arranged = before
     ? rest.flatMap((g) => (g.id === before.id ? [moved, g] : [g]))
@@ -530,6 +631,12 @@ export function removeGroupLiftingContents(
     ungrouped:
       parent === null ? [...board.ungrouped, ...group.views] : board.ungrouped,
   };
+}
+
+/** Does the board show a group somewhere only as a display fallback? A
+ *  layout built from it would save that fallback as the tree. */
+export function hasDisplayOnlyParents(board: ViewBoard): boolean {
+  return board.groups.some((g) => g.displayOnlyParent === true);
 }
 
 export function countViews(board: ViewBoard): number {
@@ -868,7 +975,52 @@ export function restoredGroupLayout(
   const grouped = new Set(groups.flatMap((g) => g.view_ids));
   return {
     scope,
-    groups,
+    groups: capDepth(groups),
     ungrouped: current.ungrouped_ids.filter((id) => !grouped.has(id)),
   };
+}
+
+/**
+ * Keep a restored tree within four levels. A group that would sit deeper
+ * (one made inside a lifted group after the delete, say, which the
+ * restore pushes back down a level) moves up to its deepest ancestor
+ * that still allows it: it lands on level 4, after that ancestor's own
+ * children. Order among the rest is unchanged.
+ */
+function capDepth(groups: LayoutGroupReq[]): LayoutGroupReq[] {
+  const byId = new Map(groups.map((g) => [g.id, g]));
+  const chain = (id: string | null | undefined): string[] => {
+    const out: string[] = [];
+    let cur = id ?? null;
+    while (cur !== null && out.length <= groups.length) {
+      out.unshift(cur);
+      cur = byId.get(cur)?.parent_id ?? null;
+    }
+    return out;
+  };
+  // Parents first, so a moved parent's children are measured from its
+  // new place.
+  const ordered = treeOrder(
+    groups.map((g, i) => ({
+      id: g.id,
+      parentId: g.parent_id ?? null,
+      position: i,
+    })),
+  );
+  const lifted: LayoutGroupReq[] = [];
+  for (const { id } of ordered) {
+    const g = byId.get(id)!;
+    const ancestors = chain(g.parent_id); // top → parent
+    if (ancestors.length + 1 > MAX_GROUP_DEPTH) {
+      const parent = ancestors[MAX_GROUP_DEPTH - 2] ?? null;
+      const moved = { ...g, parent_id: parent };
+      byId.set(id, moved);
+      lifted.push(moved);
+    }
+  }
+  const liftedIds = new Set(lifted.map((g) => g.id));
+  return [
+    ...groups.filter((g) => !liftedIds.has(g.id)).map((g) => byId.get(g.id)!),
+    ...lifted,
+  ];
 }
