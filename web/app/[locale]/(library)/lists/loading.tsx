@@ -2,17 +2,19 @@ import { LoadingWatchdog } from "@/components/LoadingWatchdog";
 import {
   LoadingRegion,
   PageHeaderSkeleton,
-  TextLineSkeleton,
 } from "@/components/skeletons/LoadingShapes";
 import {
   BoardToolbarControlsSkeleton,
-  ViewCardsSkeleton,
+  ViewRowsSkeleton,
 } from "@/components/skeletons/SettingsShapes";
+import { Skeleton } from "@/components/ui/skeleton";
 
 /**
  * Reading-lists fallback, shaped like `ReadingListsIndex`: the PageHeader,
- * then `GroupedViewsBoard`'s toolbar (blurb on the left; search · sort ·
- * New group on the right) over the compact card grid.
+ * then `GroupedViewsBoard`'s toolbar (no blurb here: search · sort ·
+ * density · New group · Updates · Import CBL) over the rows
+ * table (`ViewRowsSkeleton`, the same shape the board shows while its
+ * queries load).
  */
 export default function ReadingListsLoading() {
   return (
@@ -23,14 +25,15 @@ export default function ReadingListsLoading() {
           titleClassName="w-40"
           descriptionClassName="w-[36rem]"
         />
-        <div className="space-y-4">
+        <div className="@container/board space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <TextLineSkeleton className="w-56" />
             <div className="flex flex-wrap items-center gap-2 max-sm:w-full">
-              <BoardToolbarControlsSkeleton />
+              <BoardToolbarControlsSkeleton density />
+              <Skeleton className="h-9 w-9 rounded-md sm:w-24" />
+              <Skeleton className="h-9 w-28 rounded-md" />
             </div>
           </div>
-          <ViewCardsSkeleton />
+          <ViewRowsSkeleton />
         </div>
       </LoadingRegion>
     </>

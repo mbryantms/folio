@@ -97,6 +97,7 @@ const SWEEP_VIEW_NAME = "A11y sweep view";
 const SWEEP_COLLECTION_NAME = "A11y sweep collection";
 const SWEEP_LIST_NAME = "A11y sweep reading list";
 const SWEEP_PAGE_NAME = "A11y sweep page";
+const SWEEP_LIST_GROUP_NAME = "A11y sweep folder";
 
 /** Entity names `fixtures/make-library.mjs` writes into Relay (2011). */
 const FIXTURE_ENTITIES = {
@@ -282,6 +283,10 @@ const ROUTES: Route[] = [
   { path: "/settings/privacy", label: "settings, privacy" },
   { path: "/settings/downloads", label: "settings, downloads" },
   { path: "/settings/views", label: "settings, views" },
+  {
+    path: "/settings/views?type=reading-lists",
+    label: "settings, views, reading lists table",
+  },
   { path: "/settings/pages", label: "settings, pages" },
   { path: "/settings/sidebar", label: "settings, sidebar" },
   {
@@ -476,6 +481,25 @@ async function resolveIds(page: Page, context: BrowserContext): Promise<Ids> {
       page.request.post("/api/me/saved-views", {
         headers: csrf,
         data: { kind: "cbl", name: SWEEP_LIST_NAME, cbl_list_id: list.id },
+      }),
+    );
+  }
+
+  // A reading-list group holding it, so the lists table shows a folder
+  // row with its roll-ups as well as a list row.
+  type GroupList = { groups: { name: string }[] };
+  const listGroups = await json<GroupList>(
+    page.request.get("/api/me/view-groups?scope=cbl"),
+  );
+  if (!listGroups.groups.some((g) => g.name === SWEEP_LIST_GROUP_NAME)) {
+    await json(
+      page.request.post("/api/me/view-groups", {
+        headers: csrf,
+        data: {
+          scope: "cbl",
+          name: SWEEP_LIST_GROUP_NAME,
+          view_ids: [readingList.id],
+        },
       }),
     );
   }
