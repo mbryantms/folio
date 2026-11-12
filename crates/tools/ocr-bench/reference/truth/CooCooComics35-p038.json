@@ -1,0 +1,254 @@
+{
+ "book": "CooCooComics35",
+ "page_index": 38,
+ "image": "pages/CooCooComics35/p038.jpg",
+ "image_size": [
+  957,
+  1413
+ ],
+ "tiles": "truth/tiles/CooCooComics35/p038 (2 x 2, 15% overlap, enlarged 1.3x with LANCZOS; the source is 957 px wide)",
+ "bbox_note": "bbox_pct values are approximate (estimated by eye) and are only meant for matching regions; x, y = top-left, w, h = size, in percent of the page.",
+ "excluded": "Printed page number '3' (bottom centre). Four small stacked 'Z' sleep marks above the walking ducklings in panels 3 and 4 (each a vertical stack of 4 shrinking Z's, letters about 8-12 px at native size; the number of Z's is not reliably countable) are excluded as tiny background lettering. The larger 'Z Z Z' stack in panel 1 is included.",
+ "page_notes": "Funny-animal. SOUND-EFFECT-HEAVY case: 10 sound effects in several lettering styles (outlined, black brush, italic, slanted, one in a white motion trail). Also two park signs with stacked words. Speech balloons are rounded cartoon upper case.",
+ "regions": [
+  {
+   "id": 1,
+   "kind": "balloon",
+   "text": "THAT'S RIGHT--YOU SHOULD NEVER AWAKEN A SLEEP-WALKER! BUT I'LL HAVE TO FOLLOW THEM!",
+   "bbox_pct": {
+    "x": 5.0,
+    "y": 2.5,
+    "w": 40.0,
+    "h": 8.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "'SLEEP-' / 'WALKER!' across a line break. Kept with the hyphen (SLEEP-WALKER) because the 1940s spelling is hyphenated; a reader might write SLEEPWALKER. The double dash is drawn '-->'-like; written as '--'."
+  },
+  {
+   "id": 2,
+   "kind": "sound_effect",
+   "text": "ZZZ",
+   "bbox_pct": {
+    "x": 5.5,
+    "y": 11.5,
+    "w": 4.0,
+    "h": 8.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Three Z's stacked vertically next to the sleeping duck."
+  },
+  {
+   "id": 3,
+   "kind": "balloon",
+   "text": "YEOW! THEY'RE HEADED FOR THE STREET!",
+   "bbox_pct": {
+    "x": 70.5,
+    "y": 2.5,
+    "w": 26.0,
+    "h": 7.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 4,
+   "kind": "balloon",
+   "text": "I'VE GOT TO PROTECT THEM!",
+   "bbox_pct": {
+    "x": 18.5,
+    "y": 31.0,
+    "w": 14.5,
+    "h": 6.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": "'PROTECT' is bold."
+  },
+  {
+   "id": 5,
+   "kind": "sound_effect",
+   "text": "HONK!",
+   "bbox_pct": {
+    "x": 10.5,
+    "y": 36.5,
+    "w": 9.0,
+    "h": 4.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Outlined letters, slanted upward, on light blue sky."
+  },
+  {
+   "id": 6,
+   "kind": "sound_effect",
+   "text": "HONK!",
+   "bbox_pct": {
+    "x": 12.5,
+    "y": 40.0,
+    "w": 13.5,
+    "h": 4.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Heavy black brush letters, slanted upward."
+  },
+  {
+   "id": 7,
+   "kind": "sound_effect",
+   "text": "HONK!",
+   "bbox_pct": {
+    "x": 25.5,
+    "y": 40.5,
+    "w": 9.0,
+    "h": 2.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Small outlined letters inside a white speed band."
+  },
+  {
+   "id": 8,
+   "kind": "sound_effect",
+   "text": "CRASH!",
+   "bbox_pct": {
+    "x": 40.5,
+    "y": 31.0,
+    "w": 9.0,
+    "h": 3.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Italic letters in a white band, slanted."
+  },
+  {
+   "id": 9,
+   "kind": "sound_effect",
+   "text": "SCREETCH!",
+   "bbox_pct": {
+    "x": 37.5,
+    "y": 49.0,
+    "w": 13.5,
+    "h": 4.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Italic letters in a white band, slanted downward. Spelled SCREETCH as lettered."
+  },
+  {
+   "id": 10,
+   "kind": "balloon",
+   "text": "SHH! QUIET! WE MUSTN'T WAKE THEM!",
+   "bbox_pct": {
+    "x": 51.5,
+    "y": 34.0,
+    "w": 19.0,
+    "h": 6.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Whisper balloon with a dotted outline. Drawn 'SHH!QUIET!' without a space."
+  },
+  {
+   "id": 11,
+   "kind": "sound_effect",
+   "text": "HONK!",
+   "bbox_pct": {
+    "x": 79.0,
+    "y": 37.0,
+    "w": 11.0,
+    "h": 3.0
+   },
+   "colour_case": "on_colour",
+   "notes": "Black letters on the pale yellow building wall, between two speed lines."
+  },
+  {
+   "id": 12,
+   "kind": "sound_effect",
+   "text": "BEEP!",
+   "bbox_pct": {
+    "x": 79.0,
+    "y": 40.5,
+    "w": 11.0,
+    "h": 3.0
+   },
+   "colour_case": "on_colour",
+   "notes": "Bold black letters on pale yellow."
+  },
+  {
+   "id": 13,
+   "kind": "sound_effect",
+   "text": "HONK!",
+   "bbox_pct": {
+    "x": 84.0,
+    "y": 44.5,
+    "w": 11.0,
+    "h": 2.8
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Italic black letters on pale pink, with a speed line."
+  },
+  {
+   "id": 14,
+   "kind": "balloon",
+   "text": "HE CAN'T FOLLOW US IN HERE!",
+   "bbox_pct": {
+    "x": 5.0,
+    "y": 67.0,
+    "w": 10.5,
+    "h": 9.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Whisper/dotted balloon."
+  },
+  {
+   "id": 15,
+   "kind": "sign_or_label",
+   "text": "CITY PARK NO DOGS ALLOWED DUCKS WELCOME",
+   "bbox_pct": {
+    "x": 33.5,
+    "y": 70.0,
+    "w": 11.5,
+    "h": 15.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Hand-lettered sign on a park gatepost; one or two words per line; NO and ALLOWED underlined."
+  },
+  {
+   "id": 16,
+   "kind": "sign_or_label",
+   "text": "SEE THE WILD ANIMALS TIGERS, BEAR ELEPHANTS ETC. NO DOGS ALLOWED",
+   "bbox_pct": {
+    "x": 46.5,
+    "y": 71.0,
+    "w": 16.0,
+    "h": 13.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Second sign, partly hidden at its right edge by the next panel border: the word after TIGERS, shows as BEA plus a cut letter (most likely BEARS; only BEAR is written because the last letter is not visible), and the final S of ELEPHANTS and DOGS is partly cut but readable. ETC is followed by a small dot."
+  },
+  {
+   "id": 17,
+   "kind": "sound_effect",
+   "text": "SWISH",
+   "bbox_pct": {
+    "x": 70.0,
+    "y": 87.5,
+    "w": 20.0,
+    "h": 4.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Black italic letters in a white motion trail, tilted downward; a small tick follows the H (not an exclamation mark)."
+  }
+ ],
+ "second_pass": {
+  "corrections": 0,
+  "details": []
+ },
+ "counts": {
+  "regions": 17,
+  "words": 64,
+  "by_kind": {
+   "balloon": 5,
+   "sound_effect": 10,
+   "sign_or_label": 2
+  },
+  "by_colour_case": {
+   "dark_on_light": 15,
+   "on_colour": 2
+  },
+  "illegible_tokens": 0
+ }
+}

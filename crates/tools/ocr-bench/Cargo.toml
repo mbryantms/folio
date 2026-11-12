@@ -1,0 +1,36 @@
+[package]
+name = "ocr-bench"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Development-only benchmark harness for the OCR pipeline (text detection
+# + recognition): per-stage timings and text accuracy against reference
+# transcriptions. Drives `server::ocr` directly; never starts the HTTP
+# server, Postgres or Redis. Nothing depends on it and the image build
+# (`--bin server --bin migration`) does not compile it. See README.md.
+
+[[bin]]
+name = "ocr-bench"
+path = "src/main.rs"
+
+[dependencies]
+server = { path = "../../server" }
+anyhow = { workspace = true }
+clap = { version = "4.6", features = ["derive"] }
+image = { workspace = true }
+imageproc = { workspace = true }
+# The ONNX Runtime binding and array crate the server already links
+# (through comic-text-detector); exact pin so no second runtime is pulled.
+ndarray = "0.16"
+ort = "=2.0.0-rc.10"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tesseract-rs = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

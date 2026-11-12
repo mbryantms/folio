@@ -1,0 +1,293 @@
+{
+ "book": "gangsters-and-gun-molls-04-1952-06.-realistic-jvj-2by-nation-ia",
+ "page_index": 4,
+ "image": "pages/gangsters-and-gun-molls-04-1952-06.-realistic-jvj-2by-nation-ia/p004.jpg",
+ "image_size": [
+  1979,
+  2851
+ ],
+ "tiles": "truth/tiles/gangsters-and-gun-molls-04-1952-06.-realistic-jvj-2by-nation-ia/p004 (2 x 3, 15% overlap, native resolution)",
+ "bbox_note": "bbox_pct values are approximate (estimated by eye) and are only meant for matching regions; x, y = top-left, w, h = size, in percent of the page.",
+ "excluded": "Printed page number '3' (bottom right) and the car's licence plate (unreadable, under 12 px).",
+ "page_notes": "Crime story, upright mechanical-looking upper-case lettering with some bold italic emphasis. Captions are tinted boxes (green, pink, cream).",
+ "regions": [
+  {
+   "id": 1,
+   "kind": "balloon",
+   "text": "YOU! GET THAT VAULT OPEN!",
+   "bbox_pct": {
+    "x": 3.5,
+    "y": 2.0,
+    "w": 11.7,
+    "h": 3.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 2,
+   "kind": "balloon",
+   "text": "I--I CAN'T! IT WORKS ON A TIME LOCK! IT WON'T OPEN TILL NINE-THIRTY!",
+   "bbox_pct": {
+    "x": 12.0,
+    "y": 2.0,
+    "w": 13.6,
+    "h": 8.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "'NINE-' ends a line and 'THIRTY!' starts the next; the hyphen belongs to the compound and is kept."
+  },
+  {
+   "id": 3,
+   "kind": "balloon",
+   "text": "WE'LL WAIT! WATCH THE DOORS, MIKE. IT'S ONLY TEN MINUTES!",
+   "bbox_pct": {
+    "x": 25.6,
+    "y": 2.0,
+    "w": 13.0,
+    "h": 9.2
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 4,
+   "kind": "sign_or_label",
+   "text": "MANAGER",
+   "bbox_pct": {
+    "x": 18.4,
+    "y": 31.1,
+    "w": 8.0,
+    "h": 1.4
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Desk nameplate, letters about 15 px tall; included because it is above the 12 px threshold."
+  },
+  {
+   "id": 5,
+   "kind": "caption",
+   "text": "FINALLY, THE LOCK OPENED..",
+   "bbox_pct": {
+    "x": 40.0,
+    "y": 2.0,
+    "w": 28.0,
+    "h": 2.0
+   },
+   "colour_case": "on_colour",
+   "notes": "Dark text on a pale green caption box. Two dots, as drawn."
+  },
+  {
+   "id": 6,
+   "kind": "balloon",
+   "text": "JUST HAND OUT GREENBACKS! WE DON'T WANT SILVER!",
+   "bbox_pct": {
+    "x": 40.3,
+    "y": 3.9,
+    "w": 28.0,
+    "h": 3.6
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 7,
+   "kind": "balloon",
+   "text": "I'LL GET IT! I'LL GET IT!",
+   "bbox_pct": {
+    "x": 72.0,
+    "y": 2.0,
+    "w": 15.2,
+    "h": 3.2
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 8,
+   "kind": "caption",
+   "text": "AS THE MANAGER FILLED THE BAG ONE OF THE CUSTOMERS COULD STAND IT NO LONGER...",
+   "bbox_pct": {
+    "x": 3.5,
+    "y": 34.8,
+    "w": 43.0,
+    "h": 3.0
+   },
+   "colour_case": "on_colour",
+   "notes": "Dark text on a pink caption box. 'COULD STAND' is drawn almost joined ('COULDSTAND'); written as two words."
+  },
+  {
+   "id": 9,
+   "kind": "balloon",
+   "text": "LET ME OUT! EEEE! LET ME OUT!",
+   "bbox_pct": {
+    "x": 3.5,
+    "y": 38.0,
+    "w": 21.3,
+    "h": 3.4
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 10,
+   "kind": "balloon",
+   "text": "SHUT UP! I'M WARNING YOU!...",
+   "bbox_pct": {
+    "x": 25.6,
+    "y": 38.0,
+    "w": 20.0,
+    "h": 3.4
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 11,
+   "kind": "balloon",
+   "text": "I OUGHT TO KILL YOU!",
+   "bbox_pct": {
+    "x": 47.7,
+    "y": 34.8,
+    "w": 18.0,
+    "h": 2.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 12,
+   "kind": "balloon",
+   "text": "AHHHH!",
+   "bbox_pct": {
+    "x": 50.4,
+    "y": 36.7,
+    "w": 12.0,
+    "h": 2.4
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Four H's."
+  },
+  {
+   "id": 13,
+   "kind": "balloon",
+   "text": "MARA! WHAT HAPPENED?",
+   "bbox_pct": {
+    "x": 3.5,
+    "y": 66.4,
+    "w": 8.5,
+    "h": 5.2
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 14,
+   "kind": "balloon",
+   "text": "TAKE IT EASY! IT WAS JUST A DAME THAT WENT OFF HER ROCKER.",
+   "bbox_pct": {
+    "x": 12.5,
+    "y": 66.4,
+    "w": 18.7,
+    "h": 5.8
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 15,
+   "kind": "caption",
+   "text": "AFTER THAT JOB THE TWO HID OUT NEAR TOPEKA. THE POLICE OF FIVE STATES AND THE F.B.I. WERE ON THEIR TRAIL! IN THE NEXT CABIN...",
+   "bbox_pct": {
+    "x": 33.6,
+    "y": 66.4,
+    "w": 36.8,
+    "h": 6.9
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Pale cream caption box."
+  },
+  {
+   "id": 16,
+   "kind": "balloon",
+   "text": "WHERE DID I SEE THEM BEFORE? PAPERS? THAT'S WHERE IT WAS! I BETTER PHONE THE POLICE!",
+   "bbox_pct": {
+    "x": 35.2,
+    "y": 72.8,
+    "w": 35.2,
+    "h": 5.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "'PAPERS ?' is drawn with a space before the question mark. 'THAT'S WHERE IT WAS!' is bold italic."
+  },
+  {
+   "id": 17,
+   "kind": "sign_or_label",
+   "text": "CABINS",
+   "bbox_pct": {
+    "x": 33.6,
+    "y": 89.4,
+    "w": 5.6,
+    "h": 5.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Hand-painted sign with an arrow, drawn at an angle."
+  },
+  {
+   "id": 18,
+   "kind": "sign_or_label",
+   "text": "OFFICE",
+   "bbox_pct": {
+    "x": 58.9,
+    "y": 85.3,
+    "w": 3.9,
+    "h": 1.3
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Small sign with an arrow; letters about 20 px; first letter partly hidden by the sign edge."
+  },
+  {
+   "id": 19,
+   "kind": "caption",
+   "text": "MOMENTS LATER...",
+   "bbox_pct": {
+    "x": 72.0,
+    "y": 66.4,
+    "w": 24.0,
+    "h": 2.0
+   },
+   "colour_case": "on_colour",
+   "notes": "Pale green caption box."
+  },
+  {
+   "id": 20,
+   "kind": "balloon",
+   "text": "...I'M SURE! THEY FIT THE DESCRIPTIONS PERFECTLY! THEY'RE THE BANK-ROBBERS, ALL RIGHT. YOU'RE SENDIN' MEN OUT? GOOD, I'LL BE WAITIN'!",
+   "bbox_pct": {
+    "x": 72.8,
+    "y": 68.0,
+    "w": 23.2,
+    "h": 9.8
+   },
+   "colour_case": "dark_on_light",
+   "notes": "'BANK-ROBBERS' is hyphenated mid-line (not a line break). 'WAITIN' !' is drawn with a gap before the '!'."
+  }
+ ],
+ "second_pass": {
+  "corrections": 0,
+  "details": []
+ },
+ "counts": {
+  "regions": 20,
+  "words": 161,
+  "by_kind": {
+   "balloon": 13,
+   "sign_or_label": 3,
+   "caption": 4
+  },
+  "by_colour_case": {
+   "dark_on_light": 17,
+   "on_colour": 3
+  },
+  "illegible_tokens": 0
+ }
+}

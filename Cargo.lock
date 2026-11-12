@@ -4874,6 +4874,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "ocr-bench"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "image",
+ "imageproc 0.27.0",
+ "ndarray",
+ "ort",
+ "serde",
+ "serde_json",
+ "server",
+ "sha2 0.11.1",
+ "tesseract-rs",
+ "tokio",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

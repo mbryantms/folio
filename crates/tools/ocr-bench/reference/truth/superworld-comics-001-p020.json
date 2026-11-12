@@ -1,0 +1,204 @@
+{
+ "book": "superworld-comics-001",
+ "page_index": 20,
+ "image": "pages/superworld-comics-001/p020.jpg",
+ "image_size": [
+  2886,
+  3950
+ ],
+ "tiles": "truth/tiles/superworld-comics-001/p020 (3 x 5, 15% overlap, native resolution; high-resolution scan)",
+ "bbox_note": "bbox_pct values are approximate (estimated by eye) and are only meant for matching regions; x, y = top-left, w, h = size, in percent of the page.",
+ "excluded": "A tiny printed line in the right gutter of the explosion panel (vertical, under 12 px, unreadable) and the small-print body text of the newspaper (illegible lines).",
+ "page_notes": "1940 lettering: hand-drawn italic upper case with idiosyncratic apostrophes (drawn as tick marks above the letters, e.g. LET'S, YOU'VE, NEEDN'T). Story title in large display type. Includes a two-part newspaper headline partly hidden by a hand and the panel edge, and a large BOOM! sound effect.",
+ "regions": [
+  {
+   "id": 1,
+   "kind": "title",
+   "text": "BUZZ ALLEN the INVISIBLE AVENGER!",
+   "bbox_pct": {
+    "x": 3.6,
+    "y": 2.7,
+    "w": 92.0,
+    "h": 6.5
+   },
+   "colour_case": "on_colour",
+   "notes": "Red outlined block letters (BUZZ ALLEN), a black italic lower-case 'the', and black block INVISIBLE / AVENGER! on two lines, all on a yellow banner. The lower case of 'the' is as printed."
+  },
+  {
+   "id": 2,
+   "kind": "balloon",
+   "text": "LET'S TRY THIS ONE",
+   "bbox_pct": {
+    "x": 6.4,
+    "y": 11.5,
+    "w": 15.0,
+    "h": 5.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": "No end punctuation."
+  },
+  {
+   "id": 3,
+   "kind": "balloon",
+   "text": "WE'RE FALLING! LET'S GET OUT OF HERE!",
+   "bbox_pct": {
+    "x": 24.5,
+    "y": 11.5,
+    "w": 21.0,
+    "h": 6.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 4,
+   "kind": "balloon",
+   "text": "HURRY! OVER THE EDGE!",
+   "bbox_pct": {
+    "x": 55.0,
+    "y": 11.5,
+    "w": 34.5,
+    "h": 3.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 5,
+   "kind": "caption",
+   "text": "OVER THE EDGE!",
+   "bbox_pct": {
+    "x": 38.4,
+    "y": 61.5,
+    "w": 11.3,
+    "h": 6.0
+   },
+   "colour_case": "on_colour",
+   "notes": "Small boxed caption, upright letters, three lines, dark on a pale orange halftone."
+  },
+  {
+   "id": 6,
+   "kind": "sound_effect",
+   "text": "BOOM!",
+   "bbox_pct": {
+    "x": 70.0,
+    "y": 54.0,
+    "w": 25.0,
+    "h": 13.0
+   },
+   "colour_case": "on_colour",
+   "notes": "Large green outlined display letters set on a diagonal over a yellow and red explosion."
+  },
+  {
+   "id": 7,
+   "kind": "balloon",
+   "text": "WHY LOOK SO GLUM? YOU'VE DESTROYED YATES AND HIS HIDEOUT-",
+   "bbox_pct": {
+    "x": 3.8,
+    "y": 70.0,
+    "w": 13.0,
+    "h": 11.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Lettered 'DES-' / 'TROYED' across a line break; written as the whole word. The apostrophe in YOU'VE is drawn as a tick over the U-V. Ends with a single dash."
+  },
+  {
+   "id": 8,
+   "kind": "balloon",
+   "text": "YES, BUT HIS GANG ESCAPED! I CAN'T REST UNTIL I BRING THEM TO JUSTICE",
+   "bbox_pct": {
+    "x": 16.0,
+    "y": 70.0,
+    "w": 16.5,
+    "h": 11.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "No end punctuation. The '!' after ESCAPED is drawn as a short slanted stroke with a dot."
+  },
+  {
+   "id": 9,
+   "kind": "balloon",
+   "text": "WELL, BUZZ, OL' BOY-YOU NEEDN'T WORRY ABOUT YATES' HENCHMEN ANY MORE. SEE THAT HEADLINE? WE MUST HAVE SCARED THEM OFF BEFORE THEY COULD REFUEL",
+   "bbox_pct": {
+    "x": 35.0,
+    "y": 70.0,
+    "w": 28.0,
+    "h": 13.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": "'HEAD-' / 'LINE?' and 'BE-' / 'FORE' are broken across lines; written as whole words. 'BOY-YOU' is a single dash joining two words, kept as drawn. No end punctuation after REFUEL."
+  },
+  {
+   "id": 10,
+   "kind": "sign_or_label",
+   "text": "THE DAILY",
+   "bbox_pct": {
+    "x": 44.0,
+    "y": 87.2,
+    "w": 12.0,
+    "h": 1.6
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Newspaper masthead, tilted and partly smudged; letters about 30 px tall. Reading fairly certain."
+  },
+  {
+   "id": 11,
+   "kind": "sign_or_label",
+   "text": "PLANE CRAS 5 MEN KILLE",
+   "bbox_pct": {
+    "x": 45.0,
+    "y": 89.5,
+    "w": 13.5,
+    "h": 4.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Newspaper headline on two lines. The final letters (CRASH, KILLED) and possibly a character before '5' are hidden behind the reader's head and hand; only the visible letters are transcribed. The intended headline is clearly 'PLANE CRASH / 5 MEN KILLED'."
+  },
+  {
+   "id": 12,
+   "kind": "balloon",
+   "text": "I PLEDGE MY LIFE TO HELP DESTROY ORGANIZED CRIME WITH THIS GREAT POWER THAT GOD HAS GIVEN ME!",
+   "bbox_pct": {
+    "x": 65.0,
+    "y": 70.0,
+    "w": 17.5,
+    "h": 10.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 13,
+   "kind": "balloon",
+   "text": "COUNT ME IN ON THAT, BUZZ! AND THIS IS ONLY THE BEGINNING!",
+   "bbox_pct": {
+    "x": 82.0,
+    "y": 70.0,
+    "w": 13.5,
+    "h": 10.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  }
+ ],
+ "second_pass": {
+  "corrections": 0,
+  "details": []
+ },
+ "counts": {
+  "regions": 13,
+  "words": 109,
+  "by_kind": {
+   "title": 1,
+   "balloon": 8,
+   "caption": 1,
+   "sound_effect": 1,
+   "sign_or_label": 2
+  },
+  "by_colour_case": {
+   "on_colour": 3,
+   "dark_on_light": 10
+  },
+  "illegible_tokens": 0
+ }
+}
