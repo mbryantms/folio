@@ -339,12 +339,43 @@ replaced file went; the audit row carries it too.
   timeout, a client that went away) is the same: nothing after the swap
   depends on the request. A failure after the response is gone is logged at
   ERROR and recorded as an `archive` / `errored` library event on the issue
-  (`event_log::record`), since no response is left to carry it. The web
-  dialog says the restore is still running and refreshes the issue again
-  after 20 s. Tests:
+  (`event_log::record`), since no response is left to carry it. A panic
+  in the task is caught (`catch_unwind`) and handled as such a failure, so
+  the lock is still released. In the web app an `info` toast says the
+  restore is still running, and the issue page refreshes again after 20 s.
+  Tests:
   `archive_restore.rs::a_restore_past_the_deadline_answers_in_progress_and_finishes`,
   `::a_restore_that_fails_after_the_response_records_a_library_event`,
   `::a_dropped_request_still_records_the_restore`.
+- **Checked again under the lock.** The handler's preflight (issue row,
+  writeback on, format) and the `?backup=` check run before the lock is
+  claimed. Once the task holds the lock it loads the row and the library
+  again and repeats them (`preflight_checked`, `listed_backups`). If writeback
+  is off, the format is refused or the named backup is no longer listed, it
+  gives the handler's own error. If the row's `file_path` changed (a page
+  edit converted `X.cbr` to `X.cbz` in between) it gives 409
+  `archive.issue_changed`. Nothing is changed in either case; without this, the stale
+  `X.cbr` would have taken the conversion's `X.cbr.bak` and a second
+  archive would have appeared beside the `.cbz`. Tests:
+  `archive_restore.rs::a_restore_refuses_when_the_row_changed_before_the_lock`,
+  `::a_restore_refuses_when_writeback_was_turned_off_before_the_lock`,
+  `::a_rebuild_refuses_when_the_backup_is_no_longer_listed`.
+- **Shutdown.** On SIGTERM / Ctrl-C, `app::serve` stops accepting connections
+  (axum graceful shutdown), waits for in-flight requests, then for the
+  apalis monitor and the file watcher, and returns from `main`. A restore
+  whose handler is still waiting (under `RESTORE_RESPONSE_DEADLINE`) is an
+  in-flight request, so it completes with all its bookkeeping. A restore
+  task the handler no longer waits for (answered `in_progress`, or the
+  request was dropped) is not awaited. When the runtime is dropped its
+  async tasks stop at their next `.await`, while the runtime waits for
+  blocking threads (tokio's `BlockingPool` drop has no timeout). So a swap
+  already running on the blocking pool finishes, and the files on disk
+  are consistent (the archive name always holds a file). What follows the
+  swap can be lost: the audit row, the cached-reader drop (moot after a
+  restart) and the rescan may be missing, and the lock lapses by its TTL.
+  A container manager that kills the process after its stop timeout
+  (SIGKILL) cuts even the swap short; the swap rules above still leave a
+  file at the archive's name.
 - **Age.** The kept file's change time is stamped at the restore (a
   `chmod` to its own mode), so the retention sweep ages it from the
   restore, not from the rewrite that made it.
@@ -431,8 +462,9 @@ replaced file went; the audit row carries it too.
     `message` saying the archive was rebuilt as a CBZ from that backup,
     that the original bytes stay available in it, and where the replaced
     file is kept; the audit row (`admin.issue.archive_restore`) carries
-    both. The restore dialog shows the same sentence when a
-    pre-conversion backup is chosen.
+    both. Before the restore, the dialog's description says the same
+    when a pre-conversion backup is chosen; after it, the success toast
+    shows `message`.
   - Anchors: exactly as for an ordinary restore. Neither touches
     markers or progress directly; both queue the forced scoped rescan,
     which re-anchors them by page hash (`page_remap::Authority::Hash`,
