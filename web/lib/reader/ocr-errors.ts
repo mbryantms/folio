@@ -136,12 +136,12 @@ export function ocrFailureMessage(status: number, code: string | null): string {
 /** Automatic retries the page-text panel makes for a transient failure. */
 export const OCR_AUTO_RETRIES = 3;
 
-/** TanStack `retryDelay`: wait before retry number `failureCount`
- *  (1-based): the server's `Retry-After` when it sent one, else 2 s, 4 s,
- *  8 s; never over 30 s. */
+/** TanStack `retryDelay`: TanStack passes the number of failures BEFORE
+ *  the one being retried (0 for the first retry). Waits the server's
+ *  `Retry-After` when it sent one, else 2 s, 4 s, 8 s; never over 30 s. */
 export function ocrRetryDelayMs(failureCount: number, err: unknown): number {
   const e = toOcrRequestError(err);
-  const backoff = 2_000 * 2 ** Math.max(0, failureCount - 1);
+  const backoff = 2_000 * 2 ** Math.max(0, failureCount);
   return Math.min(MAX_RETRY_AFTER_MS, e.retryAfterMs ?? backoff);
 }
 

@@ -195,9 +195,11 @@ describe("failure words (D5)", () => {
   });
 
   it("waits Retry-After when given, else backs off, never over 30 s", () => {
-    expect(ocrRetryDelayMs(1, new OcrRequestError(503, null, 7000))).toBe(7000);
-    expect(ocrRetryDelayMs(1, new OcrRequestError(503, null))).toBe(2000);
-    expect(ocrRetryDelayMs(2, new OcrRequestError(503, null))).toBe(4000);
+    expect(ocrRetryDelayMs(0, new OcrRequestError(503, null, 7000))).toBe(7000);
+    // TanStack passes 0 for the first retry: 2 s, 4 s, 8 s.
+    expect(ocrRetryDelayMs(0, new OcrRequestError(503, null))).toBe(2000);
+    expect(ocrRetryDelayMs(1, new OcrRequestError(503, null))).toBe(4000);
+    expect(ocrRetryDelayMs(2, new OcrRequestError(503, null))).toBe(8000);
     expect(ocrRetryDelayMs(10, new OcrRequestError(503, null))).toBe(30_000);
   });
 });
