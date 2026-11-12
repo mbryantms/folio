@@ -102,9 +102,13 @@ async fn ocr_permit(
     permits: &Semaphore,
     wait: Duration,
 ) -> Result<SemaphorePermit<'_>, Box<Response>> {
-    match tokio::time::timeout(wait, permits.acquire()).await {
+    let started = std::time::Instant::now();
+    let acquired = tokio::time::timeout(wait, permits.acquire()).await;
+    metrics::histogram!("folio_ocr_permit_wait_seconds").record(started.elapsed().as_secs_f64());
+    match acquired {
         Ok(Ok(permit)) => Ok(permit),
         Ok(Err(_)) | Err(_) => {
+            metrics::counter!("folio_ocr_busy_total").increment(1);
             let mut resp = super::respond(
                 StatusCode::SERVICE_UNAVAILABLE,
                 shared::error::ApiErrorCode::ServiceUnavailable,
@@ -720,6 +724,7 @@ async fn read_and_decode_holding<P: Send + 'static>(
                 .entry(claim.key().content_hash().to_owned())
                 .or_default() += 1;
         }
+        let started = std::time::Instant::now();
         let bytes = {
             let mut cbz = lock_reader(&reader).map_err(ReadDecodeError::Read)?;
             cbz.read_entry_range(&entry, 0, entry.uncompressed_size)
@@ -729,6 +734,8 @@ async fn read_and_decode_holding<P: Send + 'static>(
             crate::util::image_decode::decode_limited(&bytes)
                 .map_err(|e| ReadDecodeError::Decode(e.to_string()))?,
         );
+        metrics::histogram!("folio_ocr_page_decode_seconds")
+            .record(started.elapsed().as_secs_f64());
         claim.fulfil(Arc::clone(&page));
         Ok(page)
     })

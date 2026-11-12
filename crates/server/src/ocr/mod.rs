@@ -29,3 +29,30 @@ pub mod page_cache;
 pub mod pipeline;
 pub mod postprocess;
 pub mod recognizer;
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+/// Record `folio_ocr_model_load_seconds{model}`: one model's verified
+/// download (when needed) and session build, once per process.
+pub(crate) fn record_model_load(model: &'static str, took: Duration) {
+    metrics::histogram!("folio_ocr_model_load_seconds", "model" => model)
+        .record(took.as_secs_f64());
+}
+
+/// Records `folio_ocr_model_first_use_seconds{model}` for the first
+/// inference of a loaded model only (session warm-up included).
+pub(crate) struct FirstUse(AtomicBool);
+
+impl FirstUse {
+    pub(crate) const fn new() -> Self {
+        Self(AtomicBool::new(false))
+    }
+
+    pub(crate) fn record(&self, model: &'static str, took: Duration) {
+        if !self.0.swap(true, Ordering::Relaxed) {
+            metrics::histogram!("folio_ocr_model_first_use_seconds", "model" => model)
+                .record(took.as_secs_f64());
+        }
+    }
+}

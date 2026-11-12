@@ -82,7 +82,10 @@ pub trait PageDetector: Send + Sync {
 
 impl PageDetector for Detector {
     fn detect(&self, page: &DynamicImage) -> anyhow::Result<CachedDetection> {
-        run_detector_blocking(self, page)
+        let started = std::time::Instant::now();
+        let detection = run_detector_blocking(self, page)?;
+        self.note_inference(started.elapsed());
+        Ok(detection)
     }
 }
 

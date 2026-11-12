@@ -71,6 +71,7 @@ const SOURCE_PPI: i32 = 300;
 /// [`WesternOcr::shared`]; subsequent calls share the same API.
 pub struct WesternOcr {
     api: Mutex<TesseractAPI>,
+    first_use: crate::ocr::FirstUse,
 }
 
 impl WesternOcr {
@@ -78,9 +79,11 @@ impl WesternOcr {
     pub async fn shared() -> anyhow::Result<&'static Self> {
         static CELL: OnceCell<WesternOcr> = OnceCell::const_new();
         CELL.get_or_try_init(|| async {
+            let started = std::time::Instant::now();
             let me = tokio::task::spawn_blocking(Self::new)
                 .await
                 .map_err(|e| anyhow::anyhow!("tesseract init task panicked: {e}"))??;
+            crate::ocr::record_model_load("western", started.elapsed());
             Ok(me)
         })
         .await
@@ -99,12 +102,22 @@ impl WesternOcr {
             .map_err(|e| anyhow::anyhow!("tesseract set_page_seg_mode: {e}"))?;
         Ok(WesternOcr {
             api: Mutex::new(api),
+            first_use: crate::ocr::FirstUse::new(),
         })
     }
 }
 
 impl Recognizer for WesternOcr {
     fn recognize(&self, image: &DynamicImage) -> anyhow::Result<Recognition> {
+        let started = std::time::Instant::now();
+        let out = self.recognize_inner(image)?;
+        self.first_use.record("western", started.elapsed());
+        Ok(out)
+    }
+}
+
+impl WesternOcr {
+    fn recognize_inner(&self, image: &DynamicImage) -> anyhow::Result<Recognition> {
         let prepared = preprocess(image);
         let (width, height) = prepared.dimensions();
         // 1 byte per pixel (8-bit grayscale). bytes_per_line == width.
