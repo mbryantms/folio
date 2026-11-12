@@ -78,6 +78,17 @@ re-validates each redirect target. Apply the same guard to the periodic
 refresh path. For belt-and-suspenders, also add a per-user import rate
 limit (e.g., 10/hour).
 
+**Stored refresh state (2026-11).** Each reading list records the outcome
+of its last refresh (`cbl_lists.last_refresh_error_kind` and a detail
+built only from a status number or a limit), visible to everyone who can
+see the list; it holds no remote text, host name or address, and every
+refusal by the address guard, and every failure to vet or resolve a
+redirect target, is stored as the same `address_refused` with no detail.
+It therefore does not reveal which internal addresses or names exist; the
+one distinction it keeps is whether the list's own URL resolves, which
+the person who entered that URL already learns from the import and the
+manual refresh.
+
 ---
 
 ## High

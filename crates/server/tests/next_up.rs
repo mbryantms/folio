@@ -394,6 +394,7 @@ async fn seed_cbl_list(app: &TestApp, name: &str, entries: &[(i32, &str)]) -> Uu
         created_at: Set(now),
         updated_at: Set(now),
         preserve_canonical_order: Set(false),
+        ..Default::default()
     }
     .insert(&db)
     .await

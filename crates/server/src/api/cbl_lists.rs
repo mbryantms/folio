@@ -181,6 +181,28 @@ pub struct CblListView {
     /// Counts derived from `cbl_entries` for this list. Populated on
     /// list + detail responses.
     pub stats: CblStatsView,
+    /// When the last refresh attempt (scheduled or manual) finished,
+    /// whether or not it succeeded. `None` until the first one.
+    pub last_refresh_attempt_at: Option<String>,
+    /// Set while the list's refreshes are failing; `None` when the last
+    /// attempt succeeded or there has been none. A failure never changes
+    /// the entries or `last_refreshed_at`.
+    pub refresh_failure: Option<CblRefreshFailureView>,
+}
+
+/// Why a list's refreshes are failing. Every field is composed by the
+/// server: no remote response text, host or address.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CblRefreshFailureView {
+    pub kind: entity::cbl_list::CblRefreshErrorKind,
+    /// A short note built from safe values, e.g. `HTTP 503` or
+    /// `over the 4 MiB limit`. `None` when the kind says it all; always
+    /// `None` for `address_refused`.
+    pub detail: Option<String>,
+    /// The first failed attempt of the current run of failures.
+    pub failing_since: String,
+    /// Failed attempts in a row.
+    pub consecutive_failures: i32,
 }
 
 #[derive(Debug, Default, Serialize, utoipa::ToSchema)]
@@ -507,7 +529,25 @@ fn list_to_view(m: &cbl_list::Model, stats: CblStatsView) -> CblListView {
         created_at: m.created_at.to_rfc3339(),
         updated_at: m.updated_at.to_rfc3339(),
         stats,
+        last_refresh_attempt_at: m.last_refresh_attempt_at.map(|d| d.to_rfc3339()),
+        refresh_failure: refresh_failure_view(m),
     }
+}
+
+fn refresh_failure_view(m: &cbl_list::Model) -> Option<CblRefreshFailureView> {
+    let kind = m.last_refresh_error_kind?;
+    Some(CblRefreshFailureView {
+        kind,
+        detail: m.last_refresh_error_detail.clone(),
+        // The CHECK pairs a kind with a start time; fall back to the
+        // attempt time rather than drop the failure.
+        failing_since: m
+            .refresh_failing_since
+            .or(m.last_refresh_attempt_at)
+            .unwrap_or(m.updated_at)
+            .to_rfc3339(),
+        consecutive_failures: m.refresh_failure_count,
+    })
 }
 
 fn entry_to_view(e: &cbl_entry::Model) -> CblEntryView {
@@ -1562,7 +1602,10 @@ async fn create_from_url(
     let fetched =
         match crate::cbl::fetch::fetch_cbl_url(&url, crate::cbl::fetch::REQUEST_BUDGET).await {
             Ok(fetched) => fetched,
-            Err(crate::util::ssrf::FetchBytesError::Ssrf(e)) => {
+            Err(
+                crate::util::ssrf::FetchBytesError::Ssrf(e)
+                | crate::util::ssrf::FetchBytesError::RedirectRefused(e),
+            ) => {
                 return error(StatusCode::BAD_REQUEST, "invalid_url", &e.to_string());
             }
             Err(crate::util::ssrf::FetchBytesError::TooLarge { .. }) => {
@@ -1654,7 +1697,8 @@ async fn create_from_catalog(
     };
     let blob = match fetched {
         Ok(b) => b,
-        Err(catalog::CatalogError::NotFound(m)) => {
+        Err(e) if e.not_found_message().is_some() => {
+            let m = e.not_found_message().unwrap_or_default();
             return error(StatusCode::NOT_FOUND, "not_found", &m);
         }
         Err(catalog::CatalogError::RateLimited) => {
@@ -1762,6 +1806,7 @@ async fn create_list_from_parsed(
         created_at: Set(now),
         updated_at: Set(now),
         preserve_canonical_order: Set(false),
+        ..Default::default()
     };
     match source {
         SourceMeta::Upload {
@@ -1990,7 +2035,7 @@ pub async fn refresh_one(
             }
             Json(summary).into_response()
         }
-        Err(refresh::RefreshError::TooManyEntries) => error(
+        Err(refresh::RefreshError::TooManyEntries { .. }) => error(
             StatusCode::PAYLOAD_TOO_LARGE,
             "too_many_entries",
             &crate::cbl::too_many_entries_message(),
@@ -2184,7 +2229,7 @@ pub async fn check_one(
     .await
     {
         Ok(outcome) => Json(item_from_check(&row, &outcome)).into_response(),
-        Err(crate::cbl::refresh::RefreshError::TooManyEntries) => error(
+        Err(crate::cbl::refresh::RefreshError::TooManyEntries { .. }) => error(
             StatusCode::PAYLOAD_TOO_LARGE,
             "too_many_entries",
             &crate::cbl::too_many_entries_message(),

@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 
 import { CblDetail, CblInfoRow } from "@/components/cbl/cbl-detail";
+import { RefreshFailureNotice } from "@/components/cbl/RefreshFailureNotice";
 import { CblIssueCard } from "@/components/cbl/cbl-issue-card";
 import { CblStatsPills } from "@/components/cbl/CblStatsPills";
 import {
@@ -674,6 +675,19 @@ function CblViewDetailInner({
       <div className="hidden md:block">
         <CblInfoRow list={list} />
       </div>
+      {/* A failing refresh shows at every width: it is the one thing
+       *  here the reader cannot learn elsewhere on the page. */}
+      <RefreshFailureNotice
+        list={list}
+        onRefresh={
+          canRefresh
+            ? () => {
+                if (!refresh.isPending) refresh.mutate({});
+              }
+            : undefined
+        }
+        refreshing={refresh.isPending}
+      />
 
       <SelectionToolbar
         open={selection.selectMode}

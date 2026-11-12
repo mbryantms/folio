@@ -3,6 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import {
+  AlertTriangle,
   List,
   Lock,
   MoreHorizontal,
@@ -35,12 +36,14 @@ import {
   compareByRefreshed,
   gapParts,
   inLibraryLabel,
+  listDate,
+  listDateTitle,
   readCaption,
   readLabel,
   rollupStats,
   type RowStats,
 } from "@/lib/cbl/list-rows";
-import { formatRelativeDate } from "@/lib/format";
+import { refreshFailureLabel } from "@/lib/cbl/refresh-failure";
 import { cn } from "@/lib/utils";
 
 /**
@@ -87,27 +90,6 @@ export function readingListRows(
   };
 }
 
-function listDate(list: CblListView | null): string | null {
-  return list ? (list.last_refreshed_at ?? list.imported_at) : null;
-}
-
-/** "Updated 3 days ago" / "Imported 12 Mar 2025": the list's date, in
- *  the words the old card used to tell a refresh from an import. */
-function dateTitle(list: CblListView | null): string | undefined {
-  const iso = listDate(list);
-  const relative = formatRelativeDate(iso);
-  if (!list || !iso || !relative) return undefined;
-  const full = new Date(iso).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-  const verb = list.last_refreshed_at ? "Updated" : "Imported";
-  return relative === full
-    ? `${verb} ${full}`
-    : `${verb} ${relative} (${full})`;
-}
-
 /** A list row's cells after the board's grip. */
 function ReadingListRowCells({
   view,
@@ -120,9 +102,22 @@ function ReadingListRowCells({
   const list = view.cbl_list_id ? (lists?.get(view.cbl_list_id) ?? null) : null;
   const stats = list?.stats ?? null;
   const compact = ctx.density === "compact";
-  const title = dateTitle(list);
+  const title = listDateTitle(list);
   const pinnedCount = (view.pinned_on_pages ?? []).length;
   const builtIn = isBuiltInView(view, false);
+  const failure = list?.refresh_failure ?? null;
+  // The refresh warning shows at every width: unlike the flags below, the
+  // menu does not repeat it.
+  const failing = failure ? (
+    <span className="ml-1.5 inline-flex align-[-0.125em]">
+      <Flag
+        icon={AlertTriangle}
+        label={refreshFailureLabel(failure)}
+        className="text-warning"
+        data-row-refresh-failing=""
+      />
+    </span>
+  ) : null;
   const flags =
     builtIn || pinnedCount > 0 || view.show_in_sidebar ? (
       // Only on rows they apply to, right after the name; a row without
@@ -177,6 +172,7 @@ function ReadingListRowCells({
           )}
         >
           {view.name}
+          {failing}
           {flags}
         </span>
         {view.description ? (
@@ -315,14 +311,24 @@ function Dash() {
 
 /** A small status icon with its meaning in a tooltip and, for assistive
  *  tech, in its name. Not a tab stop: the menu says the same. */
-function Flag({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
+function Flag({
+  icon: Icon,
+  label,
+  className,
+  ...rest
+}: {
+  icon: LucideIcon;
+  label: string;
+  className?: string;
+} & React.HTMLAttributes<HTMLSpanElement>) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <span
+          {...rest}
           role="img"
           aria-label={label}
-          className="text-muted-foreground inline-flex"
+          className={cn("text-muted-foreground inline-flex", className)}
         >
           <Icon className="size-3.5" aria-hidden="true" />
         </span>
