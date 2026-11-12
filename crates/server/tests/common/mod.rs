@@ -1099,7 +1099,6 @@ impl TestApp {
             archive_max_total_bytes: 8 * 1024 * 1024 * 1024,
             archive_max_entry_bytes: 512 * 1024 * 1024,
             archive_max_ratio: 200,
-            archive_max_nesting: 1,
             comicvine_api_key: opts.comicvine_api_key.clone(),
             comicvine_enabled: opts.comicvine_enabled,
             metron_username: opts.metron_username.clone(),

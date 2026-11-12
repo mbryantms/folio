@@ -906,7 +906,6 @@ pub(crate) async fn rewrite_one_issue(
         max_total_bytes: limits.max_total_bytes,
         max_entry_bytes: limits.max_entry_bytes,
         max_compression_ratio: limits.max_compression_ratio,
-        max_nesting_depth: limits.max_nesting_depth,
     };
     let source_ext = source_path
         .extension()

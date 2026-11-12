@@ -255,7 +255,7 @@ Confirmed across the audit:
   avoiding existence leaks.
 - **Input bounds.** OPDS search caps query at 200 chars; people
   search caps at `MAX_QUERY_LEN`; CBL imports cap at 4 MiB / 5000
-  entries; archive limits (entries, total bytes, ratio, nesting) are
+  entries; archive limits (entries, total bytes, ratio) are
   env-tunable and enforced at parse time.
 - **Path traversal.** Scanner canonicalizes folders and enforces
   `starts_with(library_root)`. Archive entry names reject `..`,

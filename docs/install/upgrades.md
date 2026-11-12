@@ -149,6 +149,18 @@ docker compose -f compose.prod.yml up -d --no-deps app
 
 ## Breaking changes by version
 
+### Unreleased — `COMIC_ARCHIVE_MAX_NESTING` removed
+
+- The `COMIC_ARCHIVE_MAX_NESTING` setting ("nested-archive depth") never
+  had an effect: no archive reader read it. It is removed. A value left
+  in your environment or `config.toml` is ignored and the server starts
+  normally; you can delete the line.
+- Folio does not open nested archives. An archive stored inside a comic
+  archive is an ordinary entry, not a page: it is never opened as an
+  archive, and one saved under an image name fails the image content
+  check and is skipped like any other non-image entry. The entry-count,
+  size and compression-ratio limits are unchanged.
+
 ### Unreleased — series age ratings come from their issues
 
 - **Series ratings follow their issues** (migration
