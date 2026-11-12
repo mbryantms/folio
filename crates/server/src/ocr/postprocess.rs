@@ -9,7 +9,8 @@
 //!   rules that do not depend on an engine's mistakes. The recogniser
 //!   returns one string per text line; the lines are joined into one
 //!   utterance with the line-end hyphen rule (W2 below) and single
-//!   spaces (W6). Nothing is dropped and no character is rewritten: the
+//!   spaces (W6). Nothing is dropped, and the only character ever
+//!   rewritten is a U+2010 hyphen at a W2 join, which becomes `-`: the
 //!   debris rules below were written for what Tesseract makes of balloon
 //!   borders, and on this recogniser's output they would delete real
 //!   text (a `|`, a low-scored word, a symbol outside the allowlist).
@@ -137,8 +138,11 @@ pub fn clean_for(rec: Recognition, lang: Language, engines: EngineSet) -> Cleane
 /// utterance. A line ending in a word and one hyphen joins the next
 /// line's first word (W2: `SPACE-` / `BUSTERS` → `SPACE-BUSTERS`); every
 /// other line break and every run of whitespace becomes one space (W6).
-/// No token is dropped or altered, and the confidence is kept. The line
-/// entries in `words` keep their own text, with whitespace collapsed.
+/// No token is dropped, and the confidence is kept. One character can
+/// change: at such a join a typographic hyphen (U+2010) ending the line
+/// is written as the ASCII `-`, as W2 always did. Nothing else is
+/// rewritten. The line entries in `words` keep their own text, with
+/// whitespace collapsed.
 pub fn clean_lines(rec: Recognition) -> Cleaned {
     let raw = rec.text;
     let lines: Vec<Vec<Token>> = raw
@@ -846,6 +850,10 @@ mod tests {
     fn the_line_end_hyphen_rule_is_the_same_one() {
         for (input, want) in [
             ("SPIDER-\nMAN", "SPIDER-MAN"),
+            // The one rewrite: a U+2010 hyphen at the join becomes `-`.
+            // Anywhere else it stays as read.
+            ("SPIDER\u{2010}\nMAN", "SPIDER-MAN"),
+            ("A\u{2010}B C\u{2010}", "A\u{2010}B C\u{2010}"),
             ("WAIT--\nNO", "WAIT-- NO"),
             ("WAIT -\nNO", "WAIT - NO"),
             ("ROUTE-\n66", "ROUTE- 66"),

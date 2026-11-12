@@ -12,10 +12,14 @@ path = "src/main.rs"
 
 [features]
 default = []
-# Opt-in GPU build of ONNX Runtime for the OCR pipeline: `ort/cuda`,
-# directly and through `comic-text-detector/cuda`. Default builds stay
-# CPU-only — enabling this requires CUDA Toolkit + the `onnxruntime` GPU
-# shared library on the operator's box.
+# Links a CUDA-enabled ONNX Runtime build (`ort/cuda`, directly and
+# through `comic-text-detector/cuda`). That is all it does today: no
+# session registers the CUDA execution provider (neither the ones Folio
+# builds in `ocr::session` nor the upstream crates' own), so inference
+# still runs on the CPU with this feature on. It is kept so a GPU path
+# can be added without a manifest change; building with it needs the
+# CUDA toolkit and the GPU `onnxruntime` library. Default builds do not
+# use it.
 cuda = ["ort/cuda", "comic-text-detector/cuda"]
 
 [dependencies]
