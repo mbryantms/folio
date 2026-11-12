@@ -12515,6 +12515,29 @@ export interface components {
             /** Format: int32 */
             y: number;
         };
+        /** @description A region in percent (0–100) of the decoded page. */
+        OcrRegionPct: {
+            /**
+             * Format: double
+             * @description Height, percent of page height; above 0.
+             */
+            h: number;
+            /**
+             * Format: double
+             * @description Width, percent of page width; above 0.
+             */
+            w: number;
+            /**
+             * Format: double
+             * @description Left edge, percent of page width.
+             */
+            x: number;
+            /**
+             * Format: double
+             * @description Top edge, percent of page height.
+             */
+            y: number;
+        };
         OcrRequest: {
             /**
              * @description When `true`, run `comic-text-detector` over the page to snap
@@ -12546,12 +12569,8 @@ export interface components {
              * @description 0-based page index, matching the reader's URL convention.
              */
             page: number;
-            /**
-             * @description User's drag rectangle in page-pixel coordinates. All four
-             *     fields are unsigned pixels; w/h must be > 0 and the rect
-             *     must fit inside the decoded page bounds.
-             */
-            region: components["schemas"]["OcrRegion"];
+            region?: components["schemas"]["OcrRegion"] | null;
+            region_pct?: components["schemas"]["OcrRegionPct"] | null;
         };
         OcrResponse: {
             /**
@@ -12569,6 +12588,18 @@ export interface components {
              *     before this field existed still deserialize.
              */
             lang?: string;
+            /**
+             * Format: int32
+             * @description Decoded page height in pixels.
+             */
+            page_h: number;
+            /**
+             * Format: int32
+             * @description Decoded page width in pixels, the space `refined_bbox` and
+             *     `words` are in (and `region_pct` was converted with). Always
+             *     sent; `default` only so older cached payloads still deserialize.
+             */
+            page_w: number;
             /**
              * @description Engine output before cleanup. Present only when cleanup
              *     changed the text — a debugging aid, and the raw material for
@@ -24261,6 +24292,13 @@ export interface operations {
             };
             /** @description the issue's file is missing (`archive_missing`) or not a readable archive (`archive_unreadable`) */
             410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description invalid region or lang (`invalid_region`, `invalid_lang`), or a `region_pct` / missing region failing validation (`validation`, with field details) */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

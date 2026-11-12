@@ -495,3 +495,222 @@ async fn a_changed_content_hash_is_a_page_cache_miss() {
     );
     assert_eq!(server::api::issue_ocr::ocr_page_reads_for(&id), 1);
 }
+
+// ─── S7: regions in percent of the decoded page ──────────────────
+
+/// A recognizer that reads the crop's size, so a test can tell which
+/// rectangle it was handed.
+struct EchoSize {
+    calls: AtomicUsize,
+}
+
+impl Recognizer for EchoSize {
+    fn recognize(&self, image: &DynamicImage) -> anyhow::Result<Recognition> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(Recognition {
+            text: format!("{}x{}", image.width(), image.height()),
+            confidence: 0.9,
+            words: None,
+        })
+    }
+}
+
+async fn echo_issue(
+    app: &TestApp,
+    root: &std::path::Path,
+    w: u32,
+    h: u32,
+) -> (String, &'static EchoSize) {
+    let id = seed(app, root, w, h).await;
+    let echo: &'static EchoSize = Box::leak(Box::new(EchoSize {
+        calls: AtomicUsize::new(0),
+    }));
+    test_models::install(
+        &id,
+        test_models::Stub {
+            detector: None,
+            recognizer: Some(echo),
+        },
+    );
+    (id, echo)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_percent_region_reads_the_pixel_crop_and_shares_its_cache_entry() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "ocr-work-pct@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (id, echo) = echo_issue(&app, &tmp.path().join("lib"), 200, 100).await;
+
+    let (status, px) = send(
+        &app,
+        ocr_request(
+            &admin,
+            &id,
+            serde_json::json!({ "page": 0, "lang": "western",
+                "region": { "x": 20, "y": 10, "w": 50, "h": 30 } }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{px}");
+    assert_eq!(px["text"], "50x30");
+    assert_eq!(
+        (px["page_w"].as_u64(), px["page_h"].as_u64()),
+        (Some(200), Some(100))
+    );
+
+    // 10 % / 10 % / 25 % / 30 % of 200 × 100 is the same rectangle: the
+    // cached entry answers, nothing is recognized again.
+    let (status, pct) = send(
+        &app,
+        ocr_request(
+            &admin,
+            &id,
+            serde_json::json!({ "page": 0, "lang": "western",
+                "region_pct": { "x": 10.0, "y": 10.0, "w": 25.0, "h": 30.0 } }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{pct}");
+    assert_eq!(pct["text"], "50x30");
+    assert_eq!(pct["page_w"], 200);
+    assert_eq!(echo.calls.load(Ordering::SeqCst), 1, "same cache entry");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_percent_region_is_clamped_and_wins_over_a_pixel_region() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "ocr-work-pct-clamp@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (id, _echo) = echo_issue(&app, &tmp.path().join("lib"), 201, 100).await;
+
+    // Overshoots the right and bottom edges: cut to the page.
+    let (status, body) = send(
+        &app,
+        ocr_request(
+            &admin,
+            &id,
+            serde_json::json!({ "page": 0, "lang": "western",
+                "region_pct": { "x": 90.0, "y": 80.0, "w": 20.0, "h": 30.0 } }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // x: round(180.9)=181 .. 201, y: 80 .. 100.
+    assert_eq!(body["text"], "20x20");
+
+    // Overshoot at the left and top edges too.
+    let (status, body) = send(
+        &app,
+        ocr_request(
+            &admin,
+            &id,
+            serde_json::json!({ "page": 0, "lang": "western",
+                "region_pct": { "x": -5.0, "y": -10.0, "w": 10.0, "h": 20.0 } }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["text"], "10x10");
+
+    // Both sent: the percent region is used (a pixel region that would
+    // be out of bounds is not even looked at).
+    let (status, body) = send(
+        &app,
+        ocr_request(
+            &admin,
+            &id,
+            serde_json::json!({ "page": 0, "lang": "western",
+                "region": { "x": 500, "y": 500, "w": 7, "h": 7 },
+                "region_pct": { "x": 0.0, "y": 0.0, "w": 50.0, "h": 50.0 } }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["text"], "101x50");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn bad_percent_regions_are_422_with_field_details() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "ocr-work-pct-bad@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (id, echo) = echo_issue(&app, &tmp.path().join("lib"), 202, 100).await;
+
+    for (pct, field) in [
+        (
+            serde_json::json!({ "x": 10.0, "y": 10.0, "w": 0.0, "h": 5.0 }),
+            "region_pct.w",
+        ),
+        (
+            serde_json::json!({ "x": 10.0, "y": 10.0, "w": 5.0, "h": -3.0 }),
+            "region_pct.h",
+        ),
+        (
+            serde_json::json!({ "x": 150.0, "y": 10.0, "w": 5.0, "h": 5.0 }),
+            "region_pct",
+        ),
+        (
+            serde_json::json!({ "x": -50.0, "y": 10.0, "w": 20.0, "h": 5.0 }),
+            "region_pct",
+        ),
+        (
+            serde_json::json!({ "x": 10.0, "y": 100.0, "w": 5.0, "h": 5.0 }),
+            "region_pct",
+        ),
+    ] {
+        let (status, body) = send(
+            &app,
+            ocr_request(
+                &admin,
+                &id,
+                serde_json::json!({ "page": 0, "lang": "western", "region_pct": pct }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{pct}: {body}");
+        assert_eq!(body["error"]["code"], "validation", "{body}");
+        let fields: Vec<&str> = body["error"]["details"]
+            .as_array()
+            .unwrap_or_else(|| panic!("details for {pct}: {body}"))
+            .iter()
+            .filter_map(|d| d["field"].as_str())
+            .collect();
+        assert!(fields.contains(&field), "{pct}: {body}");
+    }
+
+    // JSON has no NaN or infinity; a number too large for f64 is
+    // refused as a malformed body (garde's finiteness rule is unit-tested).
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/api/me/issues/{id}/ocr"))
+        .header(header::COOKIE, cookie_header(&admin))
+        .header("X-CSRF-Token", &admin.csrf)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            r#"{"page":0,"region_pct":{"x":1e999,"y":0,"w":5,"h":5}}"#,
+        ))
+        .unwrap();
+    let (status, _) = send(&app, req).await;
+    assert!(
+        matches!(
+            status,
+            StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY
+        ),
+        "{status}"
+    );
+
+    // Neither region.
+    let (status, body) = send(
+        &app,
+        ocr_request(
+            &admin,
+            &id,
+            serde_json::json!({ "page": 0, "lang": "western" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["error"]["details"][0]["field"], "region", "{body}");
+    assert_eq!(echo.calls.load(Ordering::SeqCst), 0);
+}

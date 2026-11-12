@@ -7826,6 +7826,9 @@
           "410": {
             "description": "the issue's file is missing (`archive_missing`) or not a readable archive (`archive_unreadable`)"
           },
+          "422": {
+            "description": "invalid region or lang (`invalid_region`, `invalid_lang`), or a `region_pct` / missing region failing validation (`validation`, with field details)"
+          },
           "500": {
             "description": "ocr pipeline failure"
           },
@@ -29084,11 +29087,42 @@
           }
         }
       },
+      "OcrRegionPct": {
+        "type": "object",
+        "description": "A region in percent (0–100) of the decoded page.",
+        "required": [
+          "x",
+          "y",
+          "w",
+          "h"
+        ],
+        "properties": {
+          "h": {
+            "type": "number",
+            "format": "double",
+            "description": "Height, percent of page height; above 0."
+          },
+          "w": {
+            "type": "number",
+            "format": "double",
+            "description": "Width, percent of page width; above 0."
+          },
+          "x": {
+            "type": "number",
+            "format": "double",
+            "description": "Left edge, percent of page width."
+          },
+          "y": {
+            "type": "number",
+            "format": "double",
+            "description": "Top edge, percent of page height."
+          }
+        }
+      },
       "OcrRequest": {
         "type": "object",
         "required": [
-          "page",
-          "region"
+          "page"
         ],
         "properties": {
           "detect": {
@@ -29112,8 +29146,26 @@
             "minimum": 0
           },
           "region": {
-            "$ref": "#/components/schemas/OcrRegion",
-            "description": "User's drag rectangle in page-pixel coordinates. All four\nfields are unsigned pixels; w/h must be > 0 and the rect\nmust fit inside the decoded page bounds."
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/OcrRegion",
+                "description": "User's drag rectangle in page-pixel coordinates of the decoded\npage. All four fields are unsigned pixels; w/h must be > 0 and\nthe rect must fit inside the decoded page bounds. Send this or\n`region_pct`; when both are present `region_pct` is used."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "region_pct": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/OcrRegionPct",
+                "description": "The same rectangle in percent (0–100) of the decoded page, the\nreader's marker representation, so the client needs no page\nsize. Converted after the decode with the decoded width and\nheight, rounded to whole pixels and clamped to the page; it must\noverlap the page. Wins over `region` when both are sent."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -29121,7 +29173,9 @@
         "type": "object",
         "required": [
           "text",
-          "confidence"
+          "confidence",
+          "page_w",
+          "page_h"
         ],
         "properties": {
           "confidence": {
@@ -29132,6 +29186,18 @@
           "lang": {
             "type": "string",
             "description": "Recognizer the pipeline actually ran (`\"western\"` |\n`\"manga\"`) — the request override or the server-side\nresolution chain. `default` so result-cache payloads written\nbefore this field existed still deserialize."
+          },
+          "page_h": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Decoded page height in pixels.",
+            "minimum": 0
+          },
+          "page_w": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Decoded page width in pixels, the space `refined_bbox` and\n`words` are in (and `region_pct` was converted with). Always\nsent; `default` only so older cached payloads still deserialize.",
+            "minimum": 0
           },
           "raw_text": {
             "type": [

@@ -357,6 +357,7 @@ pub async fn run_ocr<P: Send + 'static>(
 
     let redis = input.redis.clone();
     let result_key = input.result_key.clone();
+    let page_size = (input.page_image.width(), input.page_image.height());
     let work = tokio::spawn(async move {
         let ((detection_to_cache, output), permit) = blocking_with_permit(permit, move || {
             run_blocking(
@@ -376,7 +377,7 @@ pub async fn run_ocr<P: Send + 'static>(
         if let (Some(key), Some(detection)) = (detect_key, detection_to_cache) {
             cache::put_detect(&redis, &key, &detection).await;
         }
-        let response = OcrResponse::from_output(output?, lang_label);
+        let response = OcrResponse::from_output(output?, lang_label, page_size);
         // Best-effort: a failed write only means the next call reruns.
         cache::put(&redis, &result_key, &response).await;
         metrics::histogram!("folio_ocr_pipeline_seconds", "lang" => lang_label)

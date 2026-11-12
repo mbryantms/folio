@@ -62,6 +62,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use super::error;
+use super::extractors::Validated;
 use super::page_source::{PageUnavailable, issue_not_found, no_store};
 use crate::auth::CurrentUser;
 use crate::library::zip_lru::{CachedReader, lock_reader};
@@ -135,19 +136,32 @@ pub fn routes() -> OpenApiRouter<AppState> {
     ocr.merge(detect)
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct OcrRequest {
     /// 0-based page index, matching the reader's URL convention.
+    #[garde(skip)]
     pub page: u32,
-    /// User's drag rectangle in page-pixel coordinates. All four
-    /// fields are unsigned pixels; w/h must be > 0 and the rect
-    /// must fit inside the decoded page bounds.
-    pub region: OcrRegion,
+    /// User's drag rectangle in page-pixel coordinates of the decoded
+    /// page. All four fields are unsigned pixels; w/h must be > 0 and
+    /// the rect must fit inside the decoded page bounds. Send this or
+    /// `region_pct`; when both are present `region_pct` is used.
+    #[serde(default)]
+    #[garde(skip)]
+    pub region: Option<OcrRegion>,
+    /// The same rectangle in percent (0–100) of the decoded page, the
+    /// reader's marker representation, so the client needs no page
+    /// size. Converted after the decode with the decoded width and
+    /// height, rounded to whole pixels and clamped to the page; it must
+    /// overlap the page. Wins over `region` when both are sent.
+    #[serde(default)]
+    #[garde(dive, custom(pct_on_page))]
+    pub region_pct: Option<OcrRegionPct>,
     /// `"western"` or `"manga"`. Omitted → the server resolves a
     /// default: `series.text_language` if set, else `manga` when the
     /// series reads right-to-left, else `western`. The response
     /// echoes the resolved value in `lang`.
     #[serde(default)]
+    #[garde(skip)]
     pub lang: Option<String>,
     /// When `true`, run `comic-text-detector` over the page to snap
     /// the user's drag rect to the tightest enclosing speech-bubble
@@ -165,7 +179,74 @@ pub struct OcrRequest {
     /// tesseract.js delivered, just better quality (real Tesseract
     /// 5 + tessdata_best, not the in-browser fast variant).
     #[serde(default)]
+    #[garde(skip)]
     pub detect: Option<bool>,
+}
+
+/// A region in percent (0–100) of the decoded page.
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, garde::Validate, utoipa::ToSchema)]
+pub struct OcrRegionPct {
+    /// Left edge, percent of page width.
+    #[garde(custom(finite))]
+    pub x: f64,
+    /// Top edge, percent of page height.
+    #[garde(custom(finite))]
+    pub y: f64,
+    /// Width, percent of page width; above 0.
+    #[garde(custom(positive))]
+    pub w: f64,
+    /// Height, percent of page height; above 0.
+    #[garde(custom(positive))]
+    pub h: f64,
+}
+
+fn finite(v: &f64, _: &()) -> garde::Result {
+    if v.is_finite() {
+        Ok(())
+    } else {
+        Err(garde::Error::new("must be a finite number"))
+    }
+}
+
+fn positive(v: &f64, ctx: &()) -> garde::Result {
+    finite(v, ctx)?;
+    if *v > 0.0 {
+        Ok(())
+    } else {
+        Err(garde::Error::new("must be above 0"))
+    }
+}
+
+/// The percent box must overlap the page (0–100 on both axes). Checked
+/// only once its numbers are valid; their own rules report the rest.
+fn pct_on_page(r: &Option<OcrRegionPct>, _: &()) -> garde::Result {
+    let Some(r) = r else { return Ok(()) };
+    let valid = [r.x, r.y, r.w, r.h].iter().all(|v| v.is_finite()) && r.w > 0.0 && r.h > 0.0;
+    if valid && (r.x >= 100.0 || r.y >= 100.0 || r.x + r.w <= 0.0 || r.y + r.h <= 0.0) {
+        return Err(garde::Error::new("region lies entirely outside the page"));
+    }
+    Ok(())
+}
+
+impl OcrRegionPct {
+    /// Whole-pixel rect on a `page_w × page_h` page: edges rounded, then
+    /// clamped to the page (an edge overshoot is cut, not refused).
+    /// `None` when nothing of it is left on the page.
+    pub fn to_pixels(self, page_w: u32, page_h: u32) -> Option<OcrRegion> {
+        let edge = |pct: f64, size: u32| -> u32 {
+            (pct / 100.0 * f64::from(size))
+                .round()
+                .clamp(0.0, f64::from(size)) as u32
+        };
+        let (x0, x1) = (edge(self.x, page_w), edge(self.x + self.w, page_w));
+        let (y0, y1) = (edge(self.y, page_h), edge(self.y + self.h, page_h));
+        (x1 > x0 && y1 > y0).then_some(OcrRegion {
+            x: x0,
+            y: y0,
+            w: x1 - x0,
+            h: y1 - y0,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, utoipa::ToSchema)]
@@ -210,6 +291,16 @@ pub struct OcrResponse {
     /// iterator yielded nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub words: Option<Vec<OcrWord>>,
+    /// Decoded page width in pixels, the space `refined_bbox` and
+    /// `words` are in (and `region_pct` was converted with). Always
+    /// sent; `default` only so older cached payloads still deserialize.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub page_w: u32,
+    /// Decoded page height in pixels.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub page_h: u32,
 }
 
 /// One recognized word: cleaned text + confidence + page-pixel box.
@@ -256,8 +347,10 @@ pub struct TextRegionView {
 impl OcrResponse {
     /// The response for one finished pipeline run (`lang` is the
     /// recognizer that ran).
-    pub(crate) fn from_output(out: OcrOutput, lang: &str) -> Self {
+    pub(crate) fn from_output(out: OcrOutput, lang: &str, (page_w, page_h): (u32, u32)) -> Self {
         OcrResponse {
+            page_w,
+            page_h,
             text: out.recognition.text,
             confidence: out.recognition.confidence,
             refined_bbox: out.refined_bbox.map(|r| OcrRegion {
@@ -330,6 +423,7 @@ impl From<CachedDetection> for TextRegionsView {
         (status = 404, description = "issue or page not found"),
         (status = 409, description = "the issue's file is a CBR / CB7 that must be converted to CBZ first (`archive_needs_conversion`)"),
         (status = 410, description = "the issue's file is missing (`archive_missing`) or not a readable archive (`archive_unreadable`)"),
+        (status = 422, description = "invalid region or lang (`invalid_region`, `invalid_lang`), or a `region_pct` / missing region failing validation (`validation`, with field details)"),
         (status = 500, description = "ocr pipeline failure"),
         (status = 503, description = "OCR busy (`service_unavailable`), the library's folder is offline (`library_offline`), or the file could not be read; carries Retry-After"),
     )
@@ -339,16 +433,35 @@ pub async fn serve(
     State(app): State<AppState>,
     user: CurrentUser,
     AxPath(id): AxPath<String>,
-    Json(req): Json<OcrRequest>,
+    Validated(req): Validated<OcrRequest>,
 ) -> Response {
     // ─── Validate ────────────────────────────────────────────────
-    if req.region.w == 0 || req.region.h == 0 {
-        return error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "invalid_region",
-            "region w/h must be > 0",
-        );
-    }
+    // `region_pct` (checked by garde on extraction) wins over `region`;
+    // the pixel `region` keeps its own checks.
+    let pixel_region = match (&req.region_pct, req.region) {
+        (Some(_), _) => None,
+        (None, Some(r)) => {
+            if r.w == 0 || r.h == 0 {
+                return error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "invalid_region",
+                    "region w/h must be > 0",
+                );
+            }
+            Some(r)
+        }
+        (None, None) => {
+            return super::respond_with_field_errors(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                shared::error::ApiErrorCode::Validation,
+                "region: region or region_pct is required",
+                vec![shared::error::FieldError {
+                    field: "region".to_owned(),
+                    message: "region or region_pct is required".to_owned(),
+                }],
+            );
+        }
+    };
     let lang_override = match req.lang.as_deref() {
         None => None,
         Some("western") => Some(Language::Western),
@@ -397,7 +510,11 @@ pub async fn serve(
     // page size) but anything we hand back from the cache passed
     // bounds at write time and the content_hash binding makes that
     // promise stick.
-    let region_hash = cache::region_hash(req.region.x, req.region.y, req.region.w, req.region.h);
+    //
+    // A `region_pct` request only knows its pixel rect after the
+    // decode, so its lookup happens below, under the permit (with the
+    // decoded-page cache that costs a map lookup). Both kinds key on
+    // the pixel rect, so they share entries.
     let lang_str = match language {
         Language::Western => "western",
         Language::Manga => "manga",
@@ -405,8 +522,13 @@ pub async fn serve(
     // The keys carry the engine fingerprint (`ocr::cache`), computed once
     // per process off the async runtime.
     cache::warm_fingerprints().await;
-    let key = cache::cache_key(&row.content_hash, req.page, lang_str, detect, &region_hash);
-    if let Some(hit) = cache::get(&app.jobs.redis, &key).await {
+    let result_key = |r: &OcrRegion| {
+        let region_hash = cache::region_hash(r.x, r.y, r.w, r.h);
+        cache::cache_key(&row.content_hash, req.page, lang_str, detect, &region_hash)
+    };
+    if let Some(r) = &pixel_region
+        && let Some(hit) = cache::get(&app.jobs.redis, &result_key(r)).await
+    {
         return Json(hit).into_response();
     }
 
@@ -430,24 +552,52 @@ pub async fn serve(
         Err(resp) => return *resp,
     };
     let (page_w, page_h) = (decoded.width(), decoded.height());
-    if req.region.x.saturating_add(req.region.w) > page_w
-        || req.region.y.saturating_add(req.region.h) > page_h
+    let region = match (pixel_region, &req.region_pct) {
+        (Some(r), _) => {
+            if r.x.saturating_add(r.w) > page_w || r.y.saturating_add(r.h) > page_h {
+                return error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "invalid_region",
+                    "region extends outside page bounds",
+                );
+            }
+            r
+        }
+        (None, Some(pct)) => match pct.to_pixels(page_w, page_h) {
+            Some(r) => r,
+            // Overlaps the page in percent but rounds to no whole pixel.
+            None => {
+                return error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "invalid_region",
+                    "region_pct covers no whole pixel of the page",
+                );
+            }
+        },
+        // Refused before the ACL; kept as an answer, not a panic.
+        (None, None) => {
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_region",
+                "region or region_pct is required",
+            );
+        }
+    };
+    let key = result_key(&region);
+    if pixel_region.is_none()
+        && let Some(hit) = cache::get(&app.jobs.redis, &key).await
     {
-        return error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "invalid_region",
-            "region extends outside page bounds",
-        );
+        return Json(hit).into_response();
     }
 
     // ─── Run OCR ─────────────────────────────────────────────────
     let input = OcrInput {
         page_image: decoded,
         region: Rect {
-            x: req.region.x,
-            y: req.region.y,
-            w: req.region.w,
-            h: req.region.h,
+            x: region.x,
+            y: region.y,
+            w: region.w,
+            h: region.h,
         },
         language,
         content_hash: row.content_hash.clone(),
@@ -785,6 +935,41 @@ async fn resolve_series_language(app: &AppState, series_id: uuid::Uuid) -> Langu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use garde::Validate;
+
+    fn pct(x: f64, y: f64, w: f64, h: f64) -> OcrRegionPct {
+        OcrRegionPct { x, y, w, h }
+    }
+
+    #[test]
+    fn region_pct_rules() {
+        for bad in [
+            pct(f64::NAN, 0.0, 5.0, 5.0),
+            pct(0.0, f64::INFINITY, 5.0, 5.0),
+            pct(0.0, 0.0, f64::NEG_INFINITY, 5.0),
+            pct(0.0, 0.0, 5.0, 0.0),
+            pct(0.0, 0.0, -1.0, 5.0),
+        ] {
+            assert!(bad.validate().is_err(), "{bad:?}");
+        }
+        assert!(pct(0.0, 0.0, 5.0, 5.0).validate().is_ok());
+        assert!(pct_on_page(&Some(pct(100.0, 0.0, 5.0, 5.0)), &()).is_err());
+        assert!(pct_on_page(&Some(pct(-5.0, 0.0, 5.0, 5.0)), &()).is_err());
+        assert!(pct_on_page(&Some(pct(-5.0, 0.0, 6.0, 5.0)), &()).is_ok());
+        assert!(pct_on_page(&None, &()).is_ok());
+    }
+
+    #[test]
+    fn region_pct_converts_rounds_and_clamps() {
+        let r = pct(10.0, 10.0, 25.0, 30.0).to_pixels(200, 100).unwrap();
+        assert_eq!((r.x, r.y, r.w, r.h), (20, 10, 50, 30));
+        let r = pct(90.0, 80.0, 20.0, 30.0).to_pixels(200, 100).unwrap();
+        assert_eq!((r.x, r.y, r.w, r.h), (180, 80, 20, 20));
+        let r = pct(-5.0, -5.0, 10.0, 10.0).to_pixels(200, 100).unwrap();
+        assert_eq!((r.x, r.y, r.w, r.h), (0, 0, 10, 5));
+        // Less than half a pixel: nothing left.
+        assert!(pct(50.0, 50.0, 0.1, 0.1).to_pixels(200, 100).is_none());
+    }
 
     /// Over the limit a request waits, then gets 503 + Retry-After, not a
     /// 500; a permit freed in time is taken.
