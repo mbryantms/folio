@@ -13,6 +13,9 @@
 //!     confirmation and gets a series rescan; a series whose folder holds
 //!     archives again is kept the same way
 //!   - a library whose root fails validation is skipped whole
+//!   - kept (unknown) rows at the front of the order do not hide the
+//!     purgeable rows behind them (keyset paging), and the per-run cap
+//!     counts deletes, oldest confirmation first
 //!   - every FK into `issues` / `series` is CASCADE or SET NULL, so the
 //!     sweep's DELETE can never be blocked by a RESTRICT reference
 
@@ -1007,4 +1010,167 @@ async fn empty_root_is_skipped_by_both_sweeps() {
     assert_eq!(purge.libraries_skipped, 1, "{purge:?}");
     assert_eq!(purge.issues, 0, "{purge:?}");
     assert!(issue_exists(db, &m2).await);
+}
+
+/// A library with `kept` confirmed issues at the front of the purge order
+/// whose disk answer is unknown, and `gone` confirmed issues behind them
+/// whose files are really gone. Returns `(state, kept ids, gone ids)`, each
+/// oldest confirmation first.
+///
+/// The unknown answer comes from a folder link that points at itself (every
+/// stat through it fails with `ELOOP`, which is not the not-found class), so
+/// unlike a chmod-ed folder it holds when the tests run as root.
+async fn kept_front_fixture(
+    app: &TestApp,
+    root: &Path,
+    kept: usize,
+    gone: usize,
+) -> (server::state::AppState, Vec<String>, Vec<String>) {
+    let nu = root.join("Nu (2020)");
+    let xi = root.join("Xi (2021)");
+    let omicron = root.join("Omicron (2022)");
+    for d in [&nu, &xi, &omicron] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    for k in 1..=kept {
+        write_cbz(&nu.join(format!("Nu {k:03}.cbz")), 100 + k as u32);
+    }
+    for k in 1..=gone {
+        write_cbz(&xi.join(format!("Xi {k:03}.cbz")), 200 + k as u32);
+    }
+    write_cbz(&omicron.join("Omicron 001.cbz"), 300);
+    let lib_id = create_library(app, root, 10).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let db = &state.db;
+
+    std::os::unix::fs::symlink("Loop", root.join("Loop")).unwrap();
+    let mut kept_ids = Vec::new();
+    for k in 1..=kept {
+        let name = format!("Nu {k:03}.cbz");
+        let (id, ..) = issue_by_file(db, &name).await;
+        // Confirmed 100, 99, … days ago: ahead of every `gone` row.
+        set_removal(
+            db,
+            "issues",
+            id.clone().into(),
+            Some(120),
+            Some(100 - k as i64),
+        )
+        .await;
+        exec(
+            db,
+            "UPDATE issues SET file_path = $1 WHERE id = $2",
+            vec![
+                root.join("Loop")
+                    .join(&name)
+                    .to_string_lossy()
+                    .into_owned()
+                    .into(),
+                id.clone().into(),
+            ],
+        )
+        .await;
+        kept_ids.push(id);
+    }
+    let mut gone_ids = Vec::new();
+    for k in 1..=gone {
+        let name = format!("Xi {k:03}.cbz");
+        let (id, ..) = issue_by_file(db, &name).await;
+        std::fs::remove_file(xi.join(&name)).unwrap();
+        // Confirmed 50, 49, … days ago: all past the 20-day window.
+        set_removal(
+            db,
+            "issues",
+            id.clone().into(),
+            Some(60),
+            Some(50 - k as i64),
+        )
+        .await;
+        gone_ids.push(id);
+    }
+    (state, kept_ids, gone_ids)
+}
+
+/// More kept (unknown) candidates at the front of the order than fit in one
+/// page must not hide the purgeable rows behind them: one run pages past the
+/// kept rows, purges every gone row, and leaves the kept rows confirmed.
+#[tokio::test]
+async fn purge_pages_past_kept_rows_at_the_front() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (state, kept, gone) = kept_front_fixture(&app, tmp.path(), 7, 4).await;
+    let db = &state.db;
+
+    let limits = hard_purge::PurgeLimits {
+        page: 3,
+        max_issue_deletes: 100,
+    };
+    let stats = hard_purge::run_with_limits(&state, 2, Utc::now().fixed_offset(), limits)
+        .await
+        .unwrap();
+    assert_eq!(
+        stats.issues, 4,
+        "every gone row behind the kept ones: {stats:?}"
+    );
+    assert_eq!(stats.kept_unknown, 7, "{stats:?}");
+    assert_eq!(stats.kept_present, 0, "{stats:?}");
+    for id in &gone {
+        assert!(!issue_exists(db, id).await, "{id}: really gone → purged");
+    }
+    for id in &kept {
+        assert!(issue_exists(db, id).await, "{id}: unknown → kept");
+        assert!(
+            removal_confirmed(db, id).await,
+            "{id}: unknown keeps its confirmation"
+        );
+    }
+
+    // The next run only re-examines the kept rows.
+    let stats = hard_purge::run_with_limits(&state, 2, Utc::now().fixed_offset(), limits)
+        .await
+        .unwrap();
+    assert_eq!(stats.issues, 0, "{stats:?}");
+    assert_eq!(stats.kept_unknown, 7, "{stats:?}");
+}
+
+/// The per-run cap counts deletes, oldest confirmation first, and holds even
+/// when it falls inside a page; kept rows do not count against it, and the
+/// rest go on the next run.
+#[tokio::test]
+async fn purge_deletes_at_most_the_cap_per_run() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (state, kept, gone) = kept_front_fixture(&app, tmp.path(), 2, 5).await;
+    let db = &state.db;
+
+    // Page 1: two kept + gone[0..2]; page 2: gone[2..5], cut off after one.
+    let limits = hard_purge::PurgeLimits {
+        page: 4,
+        max_issue_deletes: 3,
+    };
+    let stats = hard_purge::run_with_limits(&state, 2, Utc::now().fixed_offset(), limits)
+        .await
+        .unwrap();
+    assert_eq!(stats.issues, 3, "the cap: {stats:?}");
+    assert_eq!(stats.kept_unknown, 2, "{stats:?}");
+    for id in &gone[..3] {
+        assert!(!issue_exists(db, id).await, "{id}: oldest first → purged");
+    }
+    for id in &gone[3..] {
+        assert!(issue_exists(db, id).await, "{id}: past the cap → next run");
+        assert!(removal_confirmed(db, id).await, "{id}: still confirmed");
+    }
+
+    let stats = hard_purge::run_with_limits(&state, 2, Utc::now().fixed_offset(), limits)
+        .await
+        .unwrap();
+    assert_eq!(stats.issues, 2, "the rest: {stats:?}");
+    for id in &gone {
+        assert!(!issue_exists(db, id).await, "{id}: purged by now");
+    }
+    for id in &kept {
+        assert!(issue_exists(db, id).await, "{id}: unknown → kept");
+        assert!(removal_confirmed(db, id).await, "{id}: still confirmed");
+    }
 }
