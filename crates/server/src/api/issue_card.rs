@@ -15,9 +15,12 @@
 //! (detail views, metadata editors, the scanner).
 //! `docs/dev/load-testing.md` records the plans this was measured against.
 
-use entity::issue;
-use sea_orm::DerivePartialModel;
+use std::collections::HashMap;
+
+use entity::{issue, progress_record};
 use sea_orm::prelude::DateTimeWithTimeZone;
+use sea_orm::{ColumnTrait, ConnectionTrait, DerivePartialModel, EntityTrait, QueryFilter};
+use serde::Serialize;
 use uuid::Uuid;
 
 use crate::api::series::IssueSummaryView;
@@ -93,7 +96,88 @@ impl IssueCardRow {
             special_type: self.special_type,
             created_at: self.created_at.to_rfc3339(),
             updated_at: self.updated_at.to_rfc3339(),
+            progress: None,
         }
+    }
+}
+
+/// The caller's own reading progress on one issue card
+/// (`IssueSummaryView.progress`): the read check and the progress bar a
+/// card draws, without the client loading every progress record of the
+/// user (`GET /progress`).
+#[derive(Clone, Debug, Serialize, utoipa::ToSchema)]
+pub struct IssueCardProgress {
+    pub finished: bool,
+    /// Last viewed page index (0-based).
+    pub page: i32,
+    /// 0.0–1.0 fraction read.
+    pub percent: f64,
+    /// RFC 3339 time of the record's last write. Lets a client tell a
+    /// card that is older than a write it made since.
+    pub updated_at: String,
+}
+
+#[derive(DerivePartialModel)]
+#[sea_orm(entity = "progress_record::Entity")]
+struct CardProgressRow {
+    issue_id: String,
+    last_page: i32,
+    percent: f64,
+    finished: bool,
+    updated_at: DateTimeWithTimeZone,
+}
+
+/// Fill `progress` on a page of issue cards with `user_id`'s own records:
+/// one `progress_records` lookup on its `(user_id, issue_id)` primary key
+/// for the whole page, whatever query built the cards. A card the user
+/// has no record for gets `Some(None)` (serialized `null`), so the client
+/// can tell "unread" from "not loaded".
+///
+/// Purely decorative: it never adds, drops or reorders cards. A failed
+/// lookup is logged and leaves `progress` unset (the field is then absent
+/// and clients fall back to `GET /progress`), rather than failing a page
+/// that rendered fine before the field existed.
+pub(crate) async fn attach_progress<'a, C: ConnectionTrait>(
+    db: &C,
+    user_id: Uuid,
+    cards: impl IntoIterator<Item = &'a mut IssueSummaryView>,
+) {
+    let mut cards: Vec<&'a mut IssueSummaryView> = cards.into_iter().collect();
+    if cards.is_empty() {
+        return;
+    }
+    let mut ids: Vec<String> = cards.iter().map(|c| c.id.clone()).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let rows = match progress_record::Entity::find()
+        .filter(progress_record::Column::UserId.eq(user_id))
+        .filter(progress_record::Column::IssueId.is_in(ids))
+        .into_partial_model::<CardProgressRow>()
+        .all(db)
+        .await
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::warn!(error = %e, "issue card progress lookup failed");
+            return;
+        }
+    };
+    let by_issue: HashMap<String, IssueCardProgress> = rows
+        .into_iter()
+        .map(|r| {
+            (
+                r.issue_id,
+                IssueCardProgress {
+                    finished: r.finished,
+                    page: r.last_page,
+                    percent: r.percent,
+                    updated_at: r.updated_at.to_rfc3339(),
+                },
+            )
+        })
+        .collect();
+    for card in &mut cards {
+        card.progress = Some(by_issue.get(&card.id).cloned());
     }
 }
 

@@ -23,6 +23,7 @@ use tokio::sync::OnceCell;
 /// [`Detector::shared`] call; subsequent calls reuse the same session.
 pub struct Detector {
     inner: Mutex<ComicTextDetector>,
+    first_use: super::FirstUse,
 }
 
 impl Detector {
@@ -34,6 +35,7 @@ impl Detector {
     pub async fn shared() -> anyhow::Result<&'static Self> {
         static CELL: OnceCell<Detector> = OnceCell::const_new();
         CELL.get_or_try_init(|| async {
+            let started = std::time::Instant::now();
             // Fetch (if needed) and verify the pinned model; a mismatch
             // fails here, before the session ever reads the file.
             super::models::ensure_pinned(super::models::DETECTOR_FILES).await?;
@@ -43,11 +45,19 @@ impl Detector {
             let detector = tokio::task::spawn_blocking(ComicTextDetector::new)
                 .await
                 .map_err(|e| anyhow::anyhow!("detector init task panicked: {e}"))??;
+            super::record_model_load("detector", started.elapsed());
             Ok(Detector {
                 inner: Mutex::new(detector),
+                first_use: super::FirstUse::new(),
             })
         })
         .await
+    }
+
+    /// Note one inference's time; only the first is recorded
+    /// (`folio_ocr_model_first_use_seconds{model="detector"}`).
+    pub fn note_inference(&self, took: std::time::Duration) {
+        self.first_use.record("detector", took);
     }
 
     /// Sync lock — only call inside [`tokio::task::spawn_blocking`],

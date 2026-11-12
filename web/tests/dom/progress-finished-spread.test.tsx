@@ -16,6 +16,7 @@ vi.mock("@/lib/api/auth-refresh", () => ({
   getCsrfToken: () => "csrf",
 }));
 vi.mock("@/lib/api/mutations/rails", () => ({
+  invalidateIssueCards: vi.fn(),
   invalidateRails: vi.fn(),
   invalidateSeriesProgress: vi.fn(),
 }));

@@ -255,6 +255,43 @@ describe("reading lists tree table", () => {
     );
   });
 
+  it("marks a list whose refresh is failing, and only that one", async () => {
+    const since = "2026-11-03T09:00:00Z";
+    (state.lists[1] as Record<string, unknown>).refresh_failure = {
+      kind: "unreachable",
+      detail: null,
+      failing_since: since,
+      consecutive_failures: 4,
+    };
+    renderIndex();
+    const watchmen = await rowOf("Watchmen");
+    const name = watchmen.querySelector("[data-row-name]") as HTMLElement;
+    const day = new Date(since).toLocaleDateString(undefined, {
+      day: "numeric",
+      month: "short",
+      ...(new Date(since).getFullYear() === new Date().getFullYear()
+        ? {}
+        : { year: "numeric" }),
+    });
+    const label = `Refresh failing since ${day}: the source could not be reached`;
+    const marker = within(name).getByRole("img", { name: label });
+    expect(marker.hasAttribute("data-row-refresh-failing")).toBe(true);
+    // The In library tooltip does not claim a fresh update.
+    const library = watchmen.querySelector("[data-row-caption]")!;
+    const title = library.getAttribute("title") ?? "";
+    expect(title).toMatch(/^Last updated /);
+    expect(title).toContain(`Refresh failing since ${day}`);
+    // A healthy list shows nothing new.
+    const crisis = await rowOf("Crisis order");
+    expect(crisis.querySelector("[data-row-refresh-failing]")).toBeNull();
+    expect(
+      within(crisis).queryByRole("img", { name: /Refresh failing/ }),
+    ).toBeNull();
+    expect(
+      crisis.querySelector("[data-row-caption]")!.getAttribute("title"),
+    ).toMatch(/^Updated /);
+  });
+
   it("calls the missing count out only when there is one", async () => {
     renderIndex();
     const crisis = await rowOf("Crisis order");

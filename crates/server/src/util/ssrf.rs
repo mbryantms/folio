@@ -70,8 +70,16 @@ pub enum SsrfError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum FetchBytesError {
+    /// The address guard refused the URL the caller asked for.
     #[error("{0}")]
     Ssrf(#[from] SsrfError),
+    /// The address guard refused, or could not resolve, a redirect target.
+    /// Same message as [`Self::Ssrf`]; kept apart so a caller that records
+    /// failures can treat every redirect-target refusal alike (a stored
+    /// "does not resolve" vs "resolves privately" would reveal internal
+    /// DNS through an attacker-chosen redirect).
+    #[error("{0}")]
+    RedirectRefused(SsrfError),
     #[error("transport error: {0}")]
     Transport(String),
     #[error("upstream returned status {0}")]
@@ -299,7 +307,9 @@ async fn fetch_hops(
 
     for hop in 0..=opts.max_redirects {
         // Vet the host and capture the exact address we approved.
-        let pinned = validate_and_resolve(&current, opts.require_https, refuse).await?;
+        let pinned = validate_and_resolve(&current, opts.require_https, refuse)
+            .await
+            .map_err(|e| vet_error(hop, e))?;
         let host = current
             .host_str()
             .ok_or(FetchBytesError::Ssrf(SsrfError::MissingHost))?;
@@ -349,7 +359,8 @@ async fn fetch_hops(
             let next = current
                 .join(location)
                 .map_err(|_| FetchBytesError::InvalidRedirect)?;
-            current = validate_public_url_with(next.as_str(), opts.require_https, refuse)?;
+            current = validate_public_url_with(next.as_str(), opts.require_https, refuse)
+                .map_err(|e| vet_error(hop + 1, e))?;
             continue;
         }
 
@@ -367,6 +378,16 @@ async fn fetch_hops(
     }
 
     Err(FetchBytesError::TooManyRedirects(opts.max_redirects))
+}
+
+/// A vetting failure on hop `hop`: the caller's own URL (hop 0) or a
+/// redirect target.
+fn vet_error(hop: usize, e: SsrfError) -> FetchBytesError {
+    if hop == 0 {
+        FetchBytesError::Ssrf(e)
+    } else {
+        FetchBytesError::RedirectRefused(e)
+    }
 }
 
 /// The client for one hop: no redirects of its own, and in
@@ -980,6 +1001,26 @@ mod tests {
     }
 
     #[test]
+    fn redirect_target_refusals_are_their_own_variant_with_the_same_message() {
+        let private = || SsrfError::PrivateAddress("10.0.0.1".parse().unwrap());
+        assert!(matches!(vet_error(0, private()), FetchBytesError::Ssrf(_)));
+        for hop in [1, 2] {
+            assert!(matches!(
+                vet_error(hop, private()),
+                FetchBytesError::RedirectRefused(SsrfError::PrivateAddress(_))
+            ));
+            assert!(matches!(
+                vet_error(hop, SsrfError::Unresolvable("x".into())),
+                FetchBytesError::RedirectRefused(SsrfError::Unresolvable(_))
+            ));
+        }
+        assert_eq!(
+            vet_error(0, private()).to_string(),
+            vet_error(1, private()).to_string()
+        );
+    }
+
+    #[test]
     fn refusal_message_names_no_address() {
         let err = validate_outbound_url("https://169.254.169.254/latest").unwrap_err();
         let msg = err.to_string();
@@ -1228,7 +1269,10 @@ mod tests {
                     .await
                     .unwrap_err();
                 assert!(
-                    matches!(err, FetchBytesError::Ssrf(SsrfError::PrivateAddress(_))),
+                    matches!(
+                        err,
+                        FetchBytesError::RedirectRefused(SsrfError::PrivateAddress(_))
+                    ),
                     "{target} conditional={conditional:?}: {err:?}"
                 );
                 assert!(!err.to_string().contains("169.254"), "{err}");

@@ -17,13 +17,14 @@ vi.mock("@/lib/api/queries", async (importOriginal) => ({
 import {
   applyOptimisticProgress,
   capturePriorProgress,
-  issueProgressKey,
   restoreProgress,
   rollbackProgress,
   type ProgressMap,
 } from "@/lib/api/mutations/progress";
 import { queryKeys } from "@/lib/api/queries";
 import type { ContinueReadingView, ProgressView } from "@/lib/api/types";
+
+const issueRec = (id: string) => qc.getQueryData(queryKeys.issueProgress(id));
 
 const rec = (
   issue_id: string,
@@ -72,14 +73,12 @@ describe("optimistic progress", () => {
       qc.getQueryData<ContinueReadingView>(queryKeys.continueReading)!.items[0]!
         .progress.percent,
     ).toBe(1);
-    expect(qc.getQueryData(issueProgressKey("a"))).toMatchObject({
-      finished: true,
-    });
+    expect(issueRec("a")).toMatchObject({ finished: true });
 
     rollbackProgress(qc, snap);
-    expect(qc.getQueryData(queryKeys.userProgress)).toBe(map);
+    expect(qc.getQueryData(queryKeys.userProgress)).toEqual(map);
     expect(qc.getQueryData(queryKeys.continueReading)).toEqual(cr);
-    expect(qc.getQueryData(issueProgressKey("a"))).toBeUndefined();
+    expect(issueRec("a")).toBeUndefined();
   });
 
   it("doesn't seed a progress map that was never loaded", async () => {
@@ -87,7 +86,7 @@ describe("optimistic progress", () => {
       { issue_id: "a", page: 0, finished: false },
     ]);
     expect(qc.getQueryData(queryKeys.userProgress)).toBeUndefined();
-    expect(qc.getQueryData(issueProgressKey("a"))).toMatchObject({
+    expect(issueRec("a")).toMatchObject({
       finished: false,
       percent: 0,
     });
@@ -136,9 +135,6 @@ describe("optimistic progress", () => {
         body: { issue_id: "mid", page: 5, finished: false },
       },
     ]);
-    expect(qc.getQueryData(issueProgressKey("mid"))).toMatchObject({
-      page: 5,
-      finished: false,
-    });
+    expect(issueRec("mid")).toMatchObject({ page: 5, finished: false });
   });
 });

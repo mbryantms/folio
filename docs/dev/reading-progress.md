@@ -144,6 +144,70 @@ resume position just falls back to its ordinal.
 **Not affected:** the OCR cache key stays `content_hash` + ordinal
 (`ocr::cache::cache_key`). A content change already invalidates it.
 
+## Issue card badges
+
+Every issue card's read check and progress bar come from the card itself.
+The issue-card lists embed the viewer's own record as
+`IssueSummaryView.progress` (`{finished, page, percent, updated_at}`, or
+`null` when there is none), filled by
+[`issue_card::attach_progress`](../../crates/server/src/api/issue_card.rs):
+one `progress_records` lookup on its `(user_id, issue_id)` primary key per
+page, always for the authenticated caller, after the page is built (it
+never changes which cards, their order, cursors or totals). Covered: the
+series issue list (both modes), `/issues`, `/issues/search`, the New
+issues, On this day and New in series rails, saved-view issue results and
+previews, collection and reading-list entries, entity issue grids and
+insights. Elsewhere the field is **absent**, and the web card falls back
+to the all-records map (`GET /progress`, `useUserProgress`), which a page
+whose lists all embed progress therefore never requests.
+
+Which surfaces draw a badge from what:
+
+- `IssueCard` and `CblIssueCard` read `progress` off the card. Every list
+  they are rendered from today embeds it, so none of them requests
+  `GET /progress`. A card from a response without the field (an endpoint
+  added later without `attach_progress`) falls back to it.
+- Continue reading and Recently read (`ProgressIssueCard`), On deck, and
+  the reading-list and collection *window* rails carry their own progress
+  fields in their responses and never read the all-records map; the
+  similar-series and random-picks rails draw series cards
+  (`progress_summary`). The issue page's previous / next cards draw no
+  badge. So no home rail requests `GET /progress`.
+- The one remaining caller of the full list is Undo's prior capture
+  (`capturePriorProgress`) for more than eight issues that no cached
+  card list, issue page or loaded map knows (a selection of cards on
+  screen is always known).
+
+On the web the query cache is the only copy: a card reads `progress` from
+the list it was rendered from
+([`useCardProgress`](../../web/lib/api/card-progress.ts)). A mark, bulk
+mark or Undo patches that copy in every cached card list, as a standard
+TanStack optimistic update
+([`card-list-cache.ts`](../../web/lib/api/card-list-cache.ts); which
+queries are card lists is defined once, by `isCardListKey` in
+`mutations/rails.ts`). It first cancels in-flight card-list fetches, so a
+response that started before the write cannot land on top of it, and
+re-runs exactly those fetches (where the list is still mounted) when the
+write settles, success or failure; an infinite list keeps the patched
+pages when it fetches the next one. A patch keeps the list's age: its
+`dataUpdatedAt` and, for a list already marked stale, the stale flag. A
+failure rolls back per issue, and only where the cached copy is still the
+mutation's own write, so a later write to the same issue stands. On
+success the result is written into every cached card list again (a single
+mark's reply; the records of an Undo or of a bulk mark with no refusals),
+which reaches a list that mounted while the request was in flight, and
+card-list fetches in flight at that moment are re-run, since they may have
+read the state from before the commit. Nothing in the badge path compares
+times.
+
+After a write that names its issues, the card lists are marked stale and
+refetch on their next mount. A series-level mark, "select all matching", a
+bulk mark whose reply counts any issue as forbidden, not found or failed
+(it counts them without naming them), a failed Undo and an outbox replay
+refetch the mounted lists instead, and reset the issue page's per-issue record, so the issue page
+shows the server's state. The reader only marks the lists stale, and
+updates the issue page's record when one is cached.
+
 ## What this deliberately changes
 
 Before WP-1.3 the last write won. A jump back through the page strip used

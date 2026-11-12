@@ -411,6 +411,7 @@ async fn seed_cbl_list(db: &DatabaseConnection, owner: Option<Uuid>, name: &str)
         created_at: Set(now),
         updated_at: Set(now),
         preserve_canonical_order: Set(false),
+        ..Default::default()
     }
     .insert(db)
     .await

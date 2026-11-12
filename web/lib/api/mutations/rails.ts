@@ -85,3 +85,59 @@ export function invalidateSeriesProgress(
     refetchType: "none",
   });
 }
+
+/** THE definition of a card list: a query whose data carries issue cards
+ *  with the viewer's progress embedded (`IssueSummaryView.progress`).
+ *  Invalidation here, and the patching and scanning in
+ *  [`card-list-cache.ts`](../card-list-cache.ts), all use it — add a new
+ *  card-list key here and every one of them follows. */
+export function isCardListKey(key: readonly unknown[]): boolean {
+  switch (key[0]) {
+    case "series":
+      return key[2] === "issues"; // queryKeys.seriesIssues
+    case "issues":
+      return true; // issuesCrossList, issueSearch
+    case "entities":
+      return key[3] === "issues" || key[3] === "insights";
+    case "rails":
+      return (
+        key[1] === "recent-issues" ||
+        key[1] === "on-this-day" ||
+        key[1] === "new-in-series"
+      );
+    case "saved-views":
+      return key[1] === "issue-results" || key[1] === "issue-results-infinite";
+    case "cbl-lists":
+      return key[1] === "entries";
+    case "collections":
+      return key[1] === "entries" || key[1] === "entries-infinite";
+    default:
+      return false;
+  }
+}
+
+/** Mark every card list ([`isCardListKey`]) stale.
+ *
+ *  A write that names its issues (a mark, a bulk mark) has already
+ *  patched the cards' embedded progress in these caches, and the reader's
+ *  page writes have no cards on screen, so the default only marks them
+ *  stale: the next mount refetches, and no mounted infinite list
+ *  re-requests every loaded page for one write.
+ *
+ *  A write that names no issues (mark a whole series, "select all
+ *  matching", series bulk, an outbox replay, a failed Undo) passes
+ *  `refetchActive: true`: mounted lists refetch, and the per-issue read
+ *  state the issue page keeps (`queryKeys.issueProgress`) is reset so no
+ *  earlier write outlives it — the page falls back to its server state. */
+export function invalidateIssueCards(
+  qc: ReturnType<typeof useQueryClient>,
+  opts: { refetchActive?: boolean } = {},
+) {
+  qc.invalidateQueries({
+    predicate: (q) => isCardListKey(q.queryKey),
+    refetchType: opts.refetchActive ? "active" : "none",
+  });
+  if (opts.refetchActive) {
+    void qc.resetQueries({ queryKey: queryKeyPrefixes.issueProgress });
+  }
+}

@@ -214,6 +214,7 @@ async fn conditional_refresh_to_a_host_resolving_internally_is_refused() {
         created_at: Set(now),
         updated_at: Set(now),
         preserve_canonical_order: Set(false),
+        ..Default::default()
     }
     .insert(&db)
     .await

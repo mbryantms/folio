@@ -7826,6 +7826,9 @@
           "410": {
             "description": "the issue's file is missing (`archive_missing`) or not a readable archive (`archive_unreadable`)"
           },
+          "422": {
+            "description": "invalid region or lang (`invalid_region`, `invalid_lang`), or a `region_pct` / missing region failing validation (`validation`, with field details)"
+          },
           "500": {
             "description": "ocr pipeline failure"
           },
@@ -17955,6 +17958,13 @@
               "null"
             ]
           },
+          "last_refresh_attempt_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When the last refresh attempt (scheduled or manual) finished,\nwhether or not it succeeded. `None` until the first one."
+          },
           "last_refreshed_at": {
             "type": [
               "string",
@@ -17980,6 +17990,17 @@
           "parsed_name": {
             "type": "string"
           },
+          "refresh_failure": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CblRefreshFailureView",
+                "description": "Set while the list's refreshes are failing; `None` when the last\nattempt succeeded or there has been none. A failure never changes\nthe entries or `last_refreshed_at`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "refresh_schedule": {
             "type": [
               "string",
@@ -18001,6 +18022,50 @@
           },
           "updated_at": {
             "type": "string"
+          }
+        }
+      },
+      "CblRefreshErrorKind": {
+        "type": "string",
+        "description": "Why a reading list's last refresh failed. Each failure path of a refresh\nmaps onto exactly one kind (`server::cbl::refresh::RefreshError::failure`).",
+        "enum": [
+          "unreachable",
+          "http_status",
+          "missing",
+          "address_refused",
+          "too_large",
+          "too_many_entries",
+          "invalid_list",
+          "other"
+        ]
+      },
+      "CblRefreshFailureView": {
+        "type": "object",
+        "description": "Why a list's refreshes are failing. Every field is composed by the\nserver: no remote response text, host or address.",
+        "required": [
+          "kind",
+          "failing_since",
+          "consecutive_failures"
+        ],
+        "properties": {
+          "consecutive_failures": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Failed attempts in a row."
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A short note built from safe values, e.g. `HTTP 503` or\n`over the 4 MiB limit`. `None` when the kind says it all; always\n`None` for `address_refused`."
+          },
+          "failing_since": {
+            "type": "string",
+            "description": "The first failed attempt of the current run of failures."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CblRefreshErrorKind"
           }
         }
       },
@@ -25091,6 +25156,35 @@
           }
         }
       },
+      "IssueCardProgress": {
+        "type": "object",
+        "description": "The caller's own reading progress on one issue card\n(`IssueSummaryView.progress`): the read check and the progress bar a\ncard draws, without the client loading every progress record of the\nuser (`GET /progress`).",
+        "required": [
+          "finished",
+          "page",
+          "percent",
+          "updated_at"
+        ],
+        "properties": {
+          "finished": {
+            "type": "boolean"
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Last viewed page index (0-based)."
+          },
+          "percent": {
+            "type": "number",
+            "format": "double",
+            "description": "0.0–1.0 fraction read."
+          },
+          "updated_at": {
+            "type": "string",
+            "description": "RFC 3339 time of the record's last write. Lets a client tell a\ncard that is older than a write it made since."
+          }
+        }
+      },
       "IssueCastView": {
         "type": "object",
         "description": "The issue's cast and setting from the junction tables\n(`issue_characters` / `issue_teams` / `issue_locations` / `issue_arcs`).",
@@ -26149,6 +26243,17 @@
               "null"
             ],
             "format": "int32"
+          },
+          "progress": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IssueCardProgress",
+                "description": "The caller's own reading progress on this issue, so a card draws\nits read check / progress bar without `GET /progress`. `null`\nwhen the caller has no record (unread); absent on endpoints that\ndon't load it, where clients fall back to `GET /progress`. Never\nanother user's progress."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "series_id": {
             "type": "string"
@@ -29084,11 +29189,42 @@
           }
         }
       },
+      "OcrRegionPct": {
+        "type": "object",
+        "description": "A region in percent (0–100) of the decoded page.",
+        "required": [
+          "x",
+          "y",
+          "w",
+          "h"
+        ],
+        "properties": {
+          "h": {
+            "type": "number",
+            "format": "double",
+            "description": "Height, percent of page height; above 0."
+          },
+          "w": {
+            "type": "number",
+            "format": "double",
+            "description": "Width, percent of page width; above 0."
+          },
+          "x": {
+            "type": "number",
+            "format": "double",
+            "description": "Left edge, percent of page width."
+          },
+          "y": {
+            "type": "number",
+            "format": "double",
+            "description": "Top edge, percent of page height."
+          }
+        }
+      },
       "OcrRequest": {
         "type": "object",
         "required": [
-          "page",
-          "region"
+          "page"
         ],
         "properties": {
           "detect": {
@@ -29113,7 +29249,11 @@
           },
           "region": {
             "$ref": "#/components/schemas/OcrRegion",
-            "description": "User's drag rectangle in page-pixel coordinates. All four\nfields are unsigned pixels; w/h must be > 0 and the rect\nmust fit inside the decoded page bounds."
+            "description": "User's drag rectangle in page-pixel coordinates of the decoded\npage. All four fields are unsigned pixels; w/h must be > 0 and\nthe rect must fit inside the decoded page bounds. Send this or\n`region_pct`; when both are present `region_pct` is used."
+          },
+          "region_pct": {
+            "$ref": "#/components/schemas/OcrRegionPct",
+            "description": "The same rectangle in percent (0–100) of the decoded page, the\nreader's marker representation, so the client needs no page\nsize. Converted after the decode with the decoded width and\nheight, rounded to whole pixels and clamped to the page; it must\noverlap the page. Wins over `region` when both are sent."
           }
         }
       },
@@ -29121,7 +29261,9 @@
         "type": "object",
         "required": [
           "text",
-          "confidence"
+          "confidence",
+          "page_w",
+          "page_h"
         ],
         "properties": {
           "confidence": {
@@ -29132,6 +29274,18 @@
           "lang": {
             "type": "string",
             "description": "Recognizer the pipeline actually ran (`\"western\"` |\n`\"manga\"`) — the request override or the server-side\nresolution chain. `default` so result-cache payloads written\nbefore this field existed still deserialize."
+          },
+          "page_h": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Decoded page height in pixels.",
+            "minimum": 0
+          },
+          "page_w": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Decoded page width in pixels, the space `refined_bbox` and\n`words` are in (and `region_pct` was converted with). Always\nsent; a cached payload without it is malformed (a miss).",
+            "minimum": 0
           },
           "raw_text": {
             "type": [

@@ -22,7 +22,7 @@ import { CoverMorph } from "@/components/library/CoverMorph";
 import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
 import { Badge } from "@/components/ui/badge";
 import { useUpsertIssueProgress } from "@/lib/api/mutations";
-import { useUserProgress } from "@/lib/api/queries";
+import { cardBadge, useCardProgress } from "@/lib/api/card-progress";
 import { issueCardTitle, issueLabel } from "@/lib/format";
 import { issueStateHint, issueStateLabel } from "@/lib/library/issue-state";
 import { cn } from "@/lib/utils";
@@ -94,17 +94,10 @@ function IssueCardImpl({
   const cardTitle = issueCardTitle(issue);
   const router = useRouter();
   const upsertProgress = useUpsertIssueProgress();
-  // Shared `/progress` query — one network call regardless of grid size,
-  // TanStack dedupes by queryKey. Absent (undefined) means unread or
-  // still loading; we render no badge in either case so the cover
-  // doesn't flicker once data arrives.
-  const progressMap = useUserProgress().data;
-  const progress = progressMap?.get(issue.id);
-  const finished = progress?.finished ?? false;
-  const inProgress = !!progress && !finished && progress.percent > 0;
-  const percent = inProgress
-    ? Math.max(0, Math.min(100, Math.round(progress.percent * 100)))
-    : 0;
+  // The viewer's progress rides on the card (`issue.progress`); a card
+  // from a response without it falls back to the shared `/progress` map.
+  // No record (or still loading) draws no badge.
+  const { finished, inProgress, percent } = cardBadge(useCardProgress(issue));
   const collectionActions = useCoverMenuCollectionActions({
     entry_kind: "issue",
     ref_id: issue.id,
