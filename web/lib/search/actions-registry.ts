@@ -26,7 +26,6 @@ import {
   FolderClosed,
   Gauge,
   History,
-  Image as ImageIcon,
   Keyboard,
   LayoutDashboard,
   Library,
@@ -480,7 +479,16 @@ export const SEARCH_ACTIONS: readonly SearchAction[] = [
     icon: Server,
     href: "/admin/server",
     role: "admin",
-    keywords: ["config", "log level", "workers"],
+    // The server page also carries the OCR models card (there is no
+    // separate OCR page), so OCR searches land here.
+    keywords: [
+      "config",
+      "log level",
+      "workers",
+      "ocr",
+      "ocr models",
+      "text detection",
+    ],
   },
   {
     id: "admin-auth",
@@ -499,15 +507,6 @@ export const SEARCH_ACTIONS: readonly SearchAction[] = [
     href: "/admin/email",
     role: "admin",
     keywords: ["smtp", "recovery"],
-  },
-  {
-    id: "admin-ocr",
-    label: "OCR queue",
-    group: "Admin",
-    icon: ImageIcon,
-    href: "/admin/ocr",
-    role: "admin",
-    keywords: ["text detection", "scanner"],
   },
   {
     id: "admin-api-docs",
