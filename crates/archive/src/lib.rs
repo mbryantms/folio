@@ -143,7 +143,6 @@ pub struct ArchiveLimits {
     pub max_total_bytes: u64,
     pub max_entry_bytes: u64,
     pub max_compression_ratio: u32,
-    pub max_nesting_depth: u8,
     // Every reader runs in process (CBR through the UnRAR library), so there
     // is no wall-clock or memory (RSS) cap on archive work; the byte and
     // entry caps above are the defenses. (The unused `subprocess_*` limits
@@ -158,7 +157,6 @@ impl Default for ArchiveLimits {
             max_total_bytes: 8 * 1024 * 1024 * 1024,
             max_entry_bytes: 512 * 1024 * 1024,
             max_compression_ratio: 200,
-            max_nesting_depth: 1,
         }
     }
 }
