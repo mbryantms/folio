@@ -542,9 +542,17 @@ async fn issue_candidate_page(
     );
     let limit = i64::try_from(limit).unwrap_or(i64::MAX);
     let stmt = match after {
+        // The first page uses the same keyset form from before every row
+        // (`-infinity`, and every id is longer than ''), so the planner
+        // range-scans `issues_purge_keyset_idx` for it too: without the row
+        // comparison it misjudges how many confirmed rows pass the cutoff
+        // and reads every removed row of the library to sort them.
         None => Statement::from_sql_and_values(
             DbBackend::Postgres,
-            format!("{select} ORDER BY removal_confirmed_at, id LIMIT $3"),
+            format!(
+                "{select} AND (removal_confirmed_at, id) > ('-infinity'::timestamptz, '') \
+                 ORDER BY removal_confirmed_at, id LIMIT $3"
+            ),
             [library_id.into(), cutoff.into(), limit.into()],
         ),
         Some((at, id)) => Statement::from_sql_and_values(

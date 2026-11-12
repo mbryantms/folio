@@ -155,6 +155,7 @@ mod m20271111_000001_series_rating_from_issues;
 mod m20271111_000002_health_issue_scan_idx;
 mod m20271112_000001_entity_list_indexes;
 mod m20271113_000001_auth_session_refresh_grace;
+mod m20271114_000001_issues_purge_keyset_idx;
 
 /// The series-rating migration's frozen ladder and statement, exposed so
 /// the server's tests can check they agree with the runtime derivation.
@@ -325,6 +326,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20271111_000002_health_issue_scan_idx::Migration),
             Box::new(m20271112_000001_entity_list_indexes::Migration),
             Box::new(m20271113_000001_auth_session_refresh_grace::Migration),
+            Box::new(m20271114_000001_issues_purge_keyset_idx::Migration),
         ]
     }
 }
