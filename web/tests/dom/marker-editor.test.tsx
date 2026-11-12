@@ -7,6 +7,7 @@
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type * as Queries from "@/lib/api/queries";
 import type * as Mutations from "@/lib/api/mutations/markers";
 
@@ -32,23 +33,35 @@ const { PERSISTED } = vi.hoisted(() => ({
     updated_at: "2026-09-01T10:00:00+00:00",
   },
 }));
-const { toast, createMutate, updateMutate, deleteMutate, restoreMutate } =
-  vi.hoisted(() => ({
-    toast: Object.assign(vi.fn(), {
-      error: vi.fn(),
-      success: vi.fn(),
-      loading: vi.fn(),
-      dismiss: vi.fn(),
-      message: vi.fn(),
-      info: vi.fn(),
-      warning: vi.fn(),
-    }),
-    createMutate: vi.fn(),
-    updateMutate: vi.fn(),
-    deleteMutate: vi.fn(),
-    restoreMutate: vi.fn(),
-  }));
+const {
+  toast,
+  createMutate,
+  updateMutate,
+  deleteMutate,
+  restoreMutate,
+  apiFetch,
+} = vi.hoisted(() => ({
+  toast: Object.assign(vi.fn(), {
+    error: vi.fn(),
+    success: vi.fn(),
+    loading: vi.fn(),
+    dismiss: vi.fn(),
+    message: vi.fn(),
+    info: vi.fn(),
+    warning: vi.fn(),
+  }),
+  createMutate: vi.fn(),
+  updateMutate: vi.fn(),
+  deleteMutate: vi.fn(),
+  restoreMutate: vi.fn(),
+  apiFetch: vi.fn(),
+}));
 vi.mock("sonner", () => ({ toast }));
+// The OCR request is asserted at the network seam (its body).
+vi.mock("@/lib/api/auth-refresh", () => ({
+  apiFetch,
+  getCsrfToken: () => "csrf",
+}));
 
 vi.mock("@/lib/api/queries", async (importOriginal) => ({
   ...(await importOriginal<typeof Queries>()),
@@ -92,12 +105,33 @@ function openNote(body = "") {
   );
 }
 
+/** Page 2 is 1988 x 3056 on the server. */
+const SERVER_SIZE = { width: 1988, height: 3056 };
+
 function renderEditor() {
-  const sizes = {
-    current: new Map<number, { width: number; height: number }>(),
-  };
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <MarkerEditor issueId="issue-1" pageNaturalSize={sizes as never} />,
+    <QueryClientProvider client={qc}>
+      <MarkerEditor
+        issueId="issue-1"
+        pageSizeSources={() => ({ server: SERVER_SIZE, measured: null })}
+      />
+    </QueryClientProvider>,
+  );
+}
+
+function ocrReplies(...responses: Response[]) {
+  for (const r of responses) apiFetch.mockResolvedValueOnce(r);
+}
+function json(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+function ocrBodies() {
+  return apiFetch.mock.calls.map(
+    ([, init]) => JSON.parse((init as RequestInit).body as string) as unknown,
   );
 }
 
@@ -116,6 +150,8 @@ afterEach(() => {
   toast.mockReset();
   toast.error.mockReset();
   toast.success.mockReset();
+  toast.message.mockReset();
+  apiFetch.mockReset();
 });
 
 describe("MarkerEditor (jsdom)", () => {
@@ -318,6 +354,129 @@ describe("MarkerEditor (jsdom)", () => {
       fireEvent.click(screen.getByRole("button", { name: "Save" }));
       expect(toast.error).toHaveBeenCalledWith(
         "Captured text is too long (max 8 KB).",
+      );
+      expect(updateMutate).not.toHaveBeenCalled();
+    });
+
+    it("Detect text sends the region in the page's original pixels (D1)", async () => {
+      ocrReplies(json(200, { text: "AGAIN", confidence: 0.9 }));
+      openHighlight({ text: "OLD", ocr_confidence: 0.9 }, "m-4");
+      renderEditor();
+      fireEvent.click(
+        await screen.findByRole("button", { name: /re-detect text/i }),
+      );
+      await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
+      // 1% / 20% / 10% of 1988 x 3056 — not of a variant's natural size.
+      expect(ocrBodies()[0]).toEqual({
+        page: 2,
+        region: { x: 20, y: 31, w: 398, h: 306 },
+      });
+    });
+
+    it("after a Re-detect that saved, the editor is not dirty for that text (D7)", async () => {
+      ocrReplies(json(200, { text: "FRESH TEXT", confidence: 0.95 }));
+      openHighlight(
+        { text: "OLD", ocr_confidence: 0.9, image_hash: "h" },
+        "m-5",
+      );
+      renderEditor();
+      fireEvent.click(
+        await screen.findByRole("button", { name: /re-detect text/i }),
+      );
+      await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
+      // Saved at once, keeping the other selection fields.
+      expect(updateMutate.mock.calls[0]?.[0]).toEqual({
+        selection: {
+          text: "FRESH TEXT",
+          ocr_confidence: 0.95,
+          image_hash: "h",
+        },
+      });
+      // The patch lands.
+      React.act(() => updateMutate.mock.calls[0]?.[1]?.onSuccess?.());
+      expect(
+        (screen.getByLabelText("Captured text") as HTMLTextAreaElement).value,
+      ).toBe("FRESH TEXT");
+
+      // Save does not send the saved text again …
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(2));
+      expect(updateMutate.mock.calls[1]?.[0]).not.toHaveProperty("selection");
+    });
+
+    it("Cancel after a Re-detect that saved closes without 'Discarded unsaved changes' (D7)", async () => {
+      ocrReplies(json(200, { text: "FRESH TEXT", confidence: 0.95 }));
+      openHighlight({ text: "OLD", ocr_confidence: 0.9 }, "m-6");
+      renderEditor();
+      fireEvent.click(
+        await screen.findByRole("button", { name: /re-detect text/i }),
+      );
+      await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
+      React.act(() => updateMutate.mock.calls[0]?.[1]?.onSuccess?.());
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(useReaderStore.getState().pendingMarker).toBeNull();
+      expect(toast).not.toHaveBeenCalledWith(
+        "Discarded unsaved changes",
+        expect.anything(),
+      );
+    });
+
+    it("asks before Re-detect replaces hand-edited text, and not before replacing recognized text (D7)", async () => {
+      openHighlight({ text: "OCR TEXT", ocr_confidence: 0.9 }, "m-7");
+      renderEditor();
+      const field = (await screen.findByLabelText(
+        "Captured text",
+      )) as HTMLTextAreaElement;
+      fireEvent.change(field, { target: { value: "My corrected text" } });
+      fireEvent.click(screen.getByRole("button", { name: /re-detect text/i }));
+      const dialog = await screen.findByRole("alertdialog");
+      expect(dialog.textContent).toContain("Replace the text you edited?");
+      expect(apiFetch).not.toHaveBeenCalled();
+      // Keep: nothing runs, the text stays.
+      fireEvent.click(screen.getByRole("button", { name: "Keep my text" }));
+      await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+      expect(apiFetch).not.toHaveBeenCalled();
+      expect(field.value).toBe("My corrected text");
+
+      // Replace: now it reads.
+      ocrReplies(json(200, { text: "OCR TEXT 2", confidence: 0.9 }));
+      fireEvent.click(screen.getByRole("button", { name: /re-detect text/i }));
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Replace text" }),
+      );
+      await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
+    });
+
+    it("Clear on recognized text runs at once; on hand-typed text it asks (D7)", async () => {
+      openHighlight({ text: "OCR TEXT", ocr_confidence: 0.9 }, null);
+      renderEditor();
+      fireEvent.click(await screen.findByRole("button", { name: "Clear" }));
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+      expect(screen.queryByLabelText("Captured text")).toBeNull();
+
+      // Stored text without a confidence was written by hand.
+      useReaderStore.getState().beginMarkerEdit(null, null);
+      openHighlight({ text: "typed by me" }, null);
+      fireEvent.click(await screen.findByRole("button", { name: "Clear" }));
+      expect((await screen.findByRole("alertdialog")).textContent).toContain(
+        "Clear the text you edited?",
+      );
+    });
+
+    it("says why Detect text failed, by the server's error code (D5)", async () => {
+      ocrReplies(
+        json(409, {
+          error: { code: "archive_needs_conversion", message: "convert" },
+        }),
+      );
+      openHighlight(null, "m-8");
+      renderEditor();
+      fireEvent.click(
+        await screen.findByRole("button", { name: /detect text/i }),
+      );
+      await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1));
+      expect(toast.error.mock.calls[0]?.[0]).toBe(
+        "Couldn't read the text. This issue's file has to be converted to CBZ before its text can be read.",
       );
       expect(updateMutate).not.toHaveBeenCalled();
     });

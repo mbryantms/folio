@@ -1,15 +1,18 @@
 "use client";
 
 import * as React from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   BookmarkCheck,
   Loader2,
   MessageSquareText,
+  RotateCcw,
   Star,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { Button } from "@/components/ui/button";
 import {
   Tooltip,
   TooltipContent,
@@ -28,7 +31,20 @@ import {
   type MarkerMode,
   type PendingMarker,
 } from "@/lib/reader/store";
-import { readingOrderRegions } from "@/lib/reader/page-text";
+import { toOcrRequestError } from "@/lib/reader/ocr-errors";
+import {
+  measuredOriginalSize,
+  pagePixelsToRegion,
+  resolvePageSize,
+  type PageSize,
+} from "@/lib/reader/page-size";
+import {
+  PAGE_TEXT_GC_MS,
+  WEBTOON_DETECT_DELAY_MS,
+  hitTestBox,
+  readingOrderRegions,
+} from "@/lib/reader/text-regions";
+import { useSettledFlag } from "@/lib/reader/use-settled-flag";
 import { cn } from "@/lib/utils";
 import type {
   MarkerKind,
@@ -36,11 +52,26 @@ import type {
   MarkerView,
   TextRegionView,
 } from "@/lib/api/types";
+import type { OcrResult } from "./marker-selection";
 
 /** Pointer travel (percent of image size) below which a release
  *  counts as a tap rather than a drag. ~0.8% of a 1000px-wide page
  *  is 8px — forgiving enough for touch, far below any real drag. */
 const TAP_TRAVEL_MAX = 0.8;
+
+/** Webtoon + touch: how long a finger must rest before a drag starts.
+ *  Until then the page scrolls natively (the overlay is `pan-y` there);
+ *  a quick tap still taps a box. */
+const TOUCH_HOLD_MS = 350;
+/** Finger travel (CSS px) that turns a pending press into a scroll. */
+const TOUCH_SCROLL_SLOP_PX = 10;
+
+/** What a capture says when the server read the area and found nothing,
+ *  and when the page's real size is not known (nothing can be sent). */
+const NO_TEXT_MESSAGE =
+  "No text found in that area. The highlight editor opens without captured text; you can type it in.";
+const NO_SIZE_MESSAGE =
+  "The page's size isn't known yet, so its text wasn't read. Use Detect text in the editor once the page has loaded.";
 
 /** Per-kind colors for the SVG rect markers. Translucent fill + solid
  *  stroke so highlights remain readable over the page content
@@ -87,7 +118,7 @@ export function MarkerOverlay({
   issueId,
   pageIndex,
   imgRef,
-  naturalSize,
+  serverPageSize,
 }: {
   issueId: string;
   pageIndex: number;
@@ -103,9 +134,12 @@ export function MarkerOverlay({
    *  layout effect fires — the bug that left webtoon-mode overlays
    *  stuck at `inset:0`. */
   imgRef: React.RefObject<HTMLImageElement | null>;
-  /** Image's natural pixel dimensions — fed to the OCR / image-hash
-   *  paths so they sample the source image at native resolution. */
-  naturalSize: { width: number; height: number } | null;
+  /** The page's pixel size from the server's page list
+   *  (`image_width` / `image_height`), or `null` when the scanner did not
+   *  record it. One of the sources of `resolvePageSize`; the `<img>`'s own
+   *  natural size is NOT passed in, because with a `srcSet` it follows the
+   *  loaded variant and the layout rather than the original page. */
+  serverPageSize: PageSize | null;
 }) {
   const markerMode = useReaderStore((s) => s.markerMode);
   const setMarkerMode = useReaderStore((s) => s.setMarkerMode);
@@ -143,23 +177,33 @@ export function MarkerOverlay({
     viewMode === "double"
       ? Math.abs(pageIndex - currentPage) <= 1
       : pageIndex === currentPage;
+  // Webtoon: only a page that stays current for a moment is detected, so
+  // scrolling through the issue in capture mode does not start a
+  // detection for every page passed (the bucket allows 15 a minute).
+  const detectEnabled = useSettledFlag(
+    markerMode === "select-text" && pageVisible,
+    viewMode === "webtoon" ? WEBTOON_DETECT_DELAY_MS : 0,
+  );
   const regionsQuery = useIssuePageTextRegions(
     issueId,
     pageIndex,
-    markerMode === "select-text" && pageVisible,
+    detectEnabled,
+    {
+      gcTime: PAGE_TEXT_GC_MS,
+    },
   );
-  const textRegions = React.useMemo(
-    () =>
-      markerMode === "select-text" ? (regionsQuery.data?.regions ?? []) : [],
-    [markerMode, regionsQuery.data],
-  );
-  // Reading-order, de-duplicated view of the same regions for the
-  // keyboard proxies — Tab should walk bubbles the way the page reads,
-  // not in detector output order.
+  // THE text boxes of this page (`text-regions.ts`): nested line boxes
+  // collapsed into their block, in reading order. The outlines drawn, the
+  // pointer hit-test and the keyboard proxies all use this one set, and
+  // the page-text panel reads the same set, so a tap, a key press and the
+  // panel read the same box.
   const direction = useReaderStore((s) => s.direction);
-  const orderedTextRegions = React.useMemo(
-    () => readingOrderRegions(textRegions, direction),
-    [textRegions, direction],
+  const textBoxes = React.useMemo(
+    () =>
+      markerMode === "select-text"
+        ? readingOrderRegions(regionsQuery.data?.regions ?? [], direction)
+        : [],
+    [markerMode, regionsQuery.data, direction],
   );
   // Bubble the user is hovering (pointer) and the one whose OCR is
   // in flight after a tap. Outline rects are `pointer-events: none`
@@ -177,6 +221,42 @@ export function MarkerOverlay({
       setHoverRegion(null);
     }
   }, [markerMode]);
+
+  // One capture at a time (D4). The token is a ref, not state, so two
+  // taps inside one render frame still see each other. Leaving the mode
+  // (Esc, the pill's Cancel) drops the token: the in-flight request still
+  // finishes, but its answer is ignored and no editor opens.
+  const queryClient = useQueryClient();
+  const captureRef = React.useRef<symbol | null>(null);
+  const captureToastRef = React.useRef<string | number | null>(null);
+  const cancelCapture = React.useCallback(() => {
+    captureRef.current = null;
+    if (captureToastRef.current != null) {
+      toast.dismiss(captureToastRef.current);
+      captureToastRef.current = null;
+    }
+    setBusyRegion(null);
+  }, []);
+  React.useEffect(() => {
+    if (markerMode === "select-text") return;
+    // Leaving the mode drops the in-flight capture (clears its busy
+    // outline); bounded by the mode check above.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    cancelCapture();
+  }, [markerMode, cancelCapture]);
+  React.useEffect(() => () => cancelCapture(), [cancelCapture]);
+
+  /** The page's real pixel size, from the one resolver (`page-size.ts`):
+   *  the detection's decode size, else the server's page list, else the
+   *  `<img>` only when it loaded the original bytes. */
+  function pageSizeNow(): PageSize | null {
+    const d = regionsQuery.data;
+    return resolvePageSize({
+      detected: d ? { width: d.page_w, height: d.page_h } : null,
+      server: serverPageSize,
+      measured: measuredOriginalSize(imgRef.current),
+    });
+  }
 
   const pageMarkers = React.useMemo(
     () =>
@@ -389,6 +469,8 @@ export function MarkerOverlay({
   function handlePointerDown(e: React.PointerEvent<SVGSVGElement>) {
     if (!enabled || !imgRef.current) return;
     e.preventDefault();
+    // A capture is reading: no second one until it lands.
+    if (captureRef.current) return;
     const { x, y } = clientToImagePercent(e.clientX, e.clientY);
     setDrag({ startX: x, startY: y, currentX: x, currentY: y });
     (e.target as SVGSVGElement).setPointerCapture(e.pointerId);
@@ -398,11 +480,11 @@ export function MarkerOverlay({
     if (!imgRef.current) return;
     const { x, y } = clientToImagePercent(e.clientX, e.clientY);
     if (!drag) {
-      // Idle hover in text mode: light up the bubble under the
-      // pointer. The rects can't take CSS :hover themselves (they're
+      // Idle hover in text mode: light up the box under the pointer.
+      // The rects can't take CSS :hover themselves (they're
       // pointer-events: none so dragging stays unobstructed).
-      if (textRegions.length > 0) {
-        setHoverRegion(hitTestRegion(textRegions, x, y));
+      if (textBoxes.length > 0) {
+        setHoverRegion(hitTestBox(textBoxes, x, y));
       }
       return;
     }
@@ -414,25 +496,97 @@ export function MarkerOverlay({
     if (!drag) return;
     e.preventDefault();
     (e.target as SVGSVGElement).releasePointerCapture(e.pointerId);
-    void completeDrag();
+    const release = drag;
+    setDrag(null);
+    void completeDrag(release);
   }
 
   // Touch-path equivalents, bound instead of the pointer handlers on
   // coarse-pointer devices (standalone-PWA WebKit wedge — see
   // lib/reader/coarse-pointer.ts). Touch events implicitly capture to
   // the element the touch started on, so there is no pointer-capture
-  // dance; the `touch-action: none` the SVG carries while a select
-  // mode is live keeps native pan/pinch from stealing the drag.
-  // React's root-level touch listeners are passive, so no
-  // preventDefault here — scroll suppression is entirely the
-  // touch-action's job. No hover path: touch has no hover, and
-  // tap-to-OCR hit-tests at release inside `completeDrag`.
+  // dance. React's root-level touch listeners are passive, so no
+  // preventDefault here. No hover path: touch has no hover, and
+  // tap-to-capture hit-tests at release inside `completeDrag`.
+  //
+  // Paged views: the SVG carries `touch-action: none` while a select
+  // mode is live, so a drag starts at once.
+  // Webtoon: the SVG carries `pan-y pinch-zoom`, so the page keeps
+  // scrolling under a finger. A press becomes a drag only after the
+  // finger rests for TOUCH_HOLD_MS (then a native non-passive
+  // `touchmove` listener cancels the scroll); a press that moves first
+  // is a scroll; a quick press-and-release is a tap.
+  const webtoonTouch = touchInput && viewMode === "webtoon";
+  const svgRef = React.useRef<SVGSVGElement>(null);
+  const pressRef = React.useRef<{
+    x: number;
+    y: number;
+    clientX: number;
+    clientY: number;
+    armed: boolean;
+    timer: ReturnType<typeof setTimeout> | null;
+  } | null>(null);
+  const clearPress = () => {
+    const p = pressRef.current;
+    if (p?.timer) clearTimeout(p.timer);
+    pressRef.current = null;
+  };
+  React.useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg || !webtoonTouch || !enabled) return;
+    const onMove = (e: TouchEvent) => {
+      const p = pressRef.current;
+      if (!p) return;
+      if (p.armed) {
+        if (e.cancelable) e.preventDefault();
+        return;
+      }
+      const t = e.touches[0];
+      if (
+        t &&
+        Math.hypot(t.clientX - p.clientX, t.clientY - p.clientY) >
+          TOUCH_SCROLL_SLOP_PX
+      ) {
+        // Moved before the hold: a scroll, not a selection.
+        if (p.timer) clearTimeout(p.timer);
+        pressRef.current = null;
+      }
+    };
+    svg.addEventListener("touchmove", onMove, { passive: false });
+    return () => svg.removeEventListener("touchmove", onMove);
+  }, [webtoonTouch, enabled]);
+  React.useEffect(() => clearPress, []);
+
   function handleTouchStart(e: React.TouchEvent<SVGSVGElement>) {
     if (!enabled || !imgRef.current) return;
-    if (e.touches.length !== 1) return;
+    if (e.touches.length !== 1) {
+      clearPress();
+      setDrag(null);
+      return;
+    }
+    if (captureRef.current) return;
     const t = e.touches[0]!;
     const { x, y } = clientToImagePercent(t.clientX, t.clientY);
-    setDrag({ startX: x, startY: y, currentX: x, currentY: y });
+    if (!webtoonTouch) {
+      setDrag({ startX: x, startY: y, currentX: x, currentY: y });
+      return;
+    }
+    clearPress();
+    const press = {
+      x,
+      y,
+      clientX: t.clientX,
+      clientY: t.clientY,
+      armed: false,
+      timer: null as ReturnType<typeof setTimeout> | null,
+    };
+    press.timer = setTimeout(() => {
+      press.timer = null;
+      if (pressRef.current !== press) return;
+      press.armed = true;
+      setDrag({ startX: x, startY: y, currentX: x, currentY: y });
+    }, TOUCH_HOLD_MS);
+    pressRef.current = press;
   }
 
   function handleTouchMove(e: React.TouchEvent<SVGSVGElement>) {
@@ -444,93 +598,213 @@ export function MarkerOverlay({
   }
 
   function handleTouchEnd() {
-    void completeDrag();
-  }
-
-  // Tap-to-OCR on a detected bubble. Shared by the pointer/touch tap
-  // path and the keyboard proxies below (WP-4.8): the region IS the
-  // detector's bbox, so the request runs recognizer-only
-  // (`detect: false`) and is fast.
-  async function captureTextRegion(hit: TextRegionView) {
-    const region: MarkerRegion = {
-      x: hit.x,
-      y: hit.y,
-      w: hit.w,
-      h: hit.h,
-      shape: "text",
-    };
-    // The regions payload carries the decoded page dims, so a tap
-    // works even before the <img> has reported naturalSize.
-    const size =
-      naturalSize ??
-      (regionsQuery.data
-        ? {
-            width: regionsQuery.data.page_w,
-            height: regionsQuery.data.page_h,
-          }
-        : null);
-    setBusyRegion(hit);
-    try {
-      const pending = await finalizePending(
-        "select-text",
-        pageIndex,
-        region,
-        issueId,
-        size,
-        { detect: false },
-      );
-      beginMarkerEdit(pending);
-    } finally {
-      setBusyRegion(null);
+    const press = pressRef.current;
+    clearPress();
+    if (drag) {
+      const release = drag;
+      setDrag(null);
+      void completeDrag(release);
+      return;
+    }
+    // Webtoon quick tap: released before the hold armed, without moving.
+    if (press && !press.armed) {
+      void completeDrag({
+        startX: press.x,
+        startY: press.y,
+        currentX: press.x,
+        currentY: press.y,
+      });
     }
   }
 
-  // Release path shared by both event bindings: tap-to-OCR on a
+  function handleTouchCancel() {
+    clearPress();
+    setDrag(null);
+  }
+
+  /** Run one capture: nothing if another is in flight; open the editor on
+   *  what it produced unless it was cancelled meanwhile. */
+  async function runCapture(
+    box: TextRegionView | null,
+    work: (isCurrent: () => boolean) => Promise<PendingMarker | null>,
+  ) {
+    if (captureRef.current) return;
+    const token = Symbol("capture");
+    captureRef.current = token;
+    const isCurrent = () => captureRef.current === token;
+    setBusyRegion(box);
+    captureToastRef.current = toast.loading("Reading text…");
+    try {
+      const pending = await work(isCurrent);
+      if (pending && isCurrent()) beginMarkerEdit(pending);
+    } finally {
+      if (isCurrent()) {
+        if (captureToastRef.current != null) {
+          toast.dismiss(captureToastRef.current);
+        }
+        captureToastRef.current = null;
+        captureRef.current = null;
+        setBusyRegion(null);
+      }
+    }
+  }
+
+  // Tap / Enter on a detected box. Shared by the pointer/touch tap path
+  // and the keyboard proxies: the region IS the detector's box, so the
+  // request runs recognizer-only and goes through the same query the
+  // page-text panel uses for that box (one cache entry, client and
+  // server). A failure leaves the user in the mode with the reason; a
+  // transient one offers Try again.
+  async function captureTextBox(box: TextRegionView) {
+    const size = pageSizeNow();
+    if (!size) {
+      toast.message(NO_SIZE_MESSAGE);
+      return;
+    }
+    await runCapture(box, async (isCurrent) => {
+      const region: MarkerRegion = {
+        x: box.x,
+        y: box.y,
+        w: box.w,
+        h: box.h,
+        shape: "text",
+      };
+      let ocr: OcrResult | null;
+      try {
+        const { boxTextQueryOptions } = await import("./marker-selection");
+        ocr = await queryClient.fetchQuery(
+          boxTextQueryOptions(issueId, pageIndex, box, size),
+        );
+      } catch (err) {
+        if (!isCurrent()) return null;
+        const failure = toOcrRequestError(err);
+        toast.error(
+          `Couldn't read the text. ${failure.message}`,
+          failure.transient
+            ? {
+                action: {
+                  label: "Try again",
+                  onClick: () => void captureTextBox(box),
+                },
+              }
+            : undefined,
+        );
+        return null;
+      }
+      if (!isCurrent()) return null;
+      const base = newHighlight(pageIndex, region, true);
+      if (!ocr) {
+        toast.message(NO_TEXT_MESSAGE);
+        return base;
+      }
+      return {
+        ...base,
+        selection: { text: ocr.text, ocr_confidence: ocr.confidence },
+      };
+    });
+  }
+
+  // Release path shared by both event bindings: tap-to-capture on a
   // near-zero drag, otherwise finalize the dragged region into a
   // PendingMarker and open the editor.
-  async function completeDrag() {
-    if (!drag) return;
-    const release = drag;
-    setDrag(null);
-
-    // Tap-to-OCR: a near-zero drag that lands on a detected bubble
-    // OCRs that bubble. The region IS the detector's bbox, so the
-    // request runs recognizer-only (`detect: false`) and is fast.
+  async function completeDrag(release: DragState) {
+    if (captureRef.current) return;
     const travel = Math.hypot(
       release.currentX - release.startX,
       release.currentY - release.startY,
     );
-    if (travel < TAP_TRAVEL_MAX && textRegions.length > 0) {
-      const hit = hitTestRegion(
-        textRegions,
-        release.currentX,
-        release.currentY,
-      );
+    if (travel < TAP_TRAVEL_MAX && textBoxes.length > 0) {
+      const hit = hitTestBox(textBoxes, release.currentX, release.currentY);
       if (hit) {
-        await captureTextRegion(hit);
+        await captureTextBox(hit);
         return;
       }
     }
 
     const region = dragToRegion(release, markerModeShape(markerMode));
     if (!region) {
-      setMarkerMode("idle");
+      // A tap that hit no box (or landed before the outlines loaded) in
+      // text capture: stay in the mode, nothing to do. Other modes keep
+      // the old "a tap leaves the mode" exit.
+      if (markerMode !== "select-text") setMarkerMode("idle");
       return;
     }
-    const pending = await finalizePending(
-      markerMode,
-      pageIndex,
-      region,
-      issueId,
-      naturalSize,
-      {
-        // Snap-to-bubble on manual drags only when the page's
-        // detect cache is known-warm (the regions fetch succeeded) —
-        // never risk a cold detector run from the drag path.
-        detect: markerMode === "select-text" && regionsQuery.isSuccess,
-      },
-    );
-    beginMarkerEdit(pending);
+
+    if (markerMode === "select-text") {
+      const size = pageSizeNow();
+      if (!size) {
+        toast.message(NO_SIZE_MESSAGE);
+        beginMarkerEdit(newHighlight(pageIndex, region, false));
+        return;
+      }
+      // Snap-to-box only when the page's detect cache is known-warm (the
+      // regions fetch succeeded) — never risk a cold detector run here.
+      const detect = regionsQuery.isSuccess;
+      await runCapture(null, async (isCurrent) => {
+        const base = newHighlight(pageIndex, region, false);
+        let ocr: OcrResult | null;
+        try {
+          const { ocrCroppedRegion } = await import("./marker-selection");
+          ocr = await ocrCroppedRegion(
+            { issueId, pageIndex, region, pageSize: size },
+            { detect },
+          );
+        } catch (err) {
+          if (!isCurrent()) return null;
+          const failure = toOcrRequestError(err);
+          toast.error(
+            `Couldn't read the text. ${failure.message}${
+              failure.transient
+                ? " Use Detect text in the editor to try again."
+                : ""
+            }`,
+          );
+          return base;
+        }
+        if (!isCurrent()) return null;
+        if (!ocr) {
+          toast.message(NO_TEXT_MESSAGE);
+          return base;
+        }
+        // Snap the new marker to the detector's box when one came back:
+        // the saved region hugs the text instead of the rough drag.
+        // Converted back with the SAME size the rectangle was sent with.
+        const snapped = ocr.refinedBbox
+          ? {
+              ...pagePixelsToRegion(ocr.refinedBbox, size),
+              shape: region.shape,
+            }
+          : null;
+        return {
+          ...base,
+          region: snapped ?? region,
+          regionFitted: !!snapped,
+          selection: { text: ocr.text, ocr_confidence: ocr.confidence },
+        };
+      });
+      return;
+    }
+
+    if (markerMode === "select-image") {
+      const base = newHighlight(pageIndex, region, false);
+      try {
+        const { sha256CroppedRegion } = await import("./marker-selection");
+        const hash = await sha256CroppedRegion({
+          issueId,
+          pageIndex,
+          region,
+        });
+        beginMarkerEdit(
+          hash ? { ...base, selection: { image_hash: hash } } : base,
+        );
+      } catch (err) {
+        console.warn("markers: image hash failed", err);
+        beginMarkerEdit(base);
+      }
+      return;
+    }
+
+    beginMarkerEdit(newHighlight(pageIndex, region, false));
   }
 
   const cursorClass =
@@ -556,19 +830,29 @@ export function MarkerOverlay({
   return (
     <TooltipProvider delayDuration={250}>
       <svg
+        ref={svgRef}
         aria-hidden={markerMode === "idle" ? "true" : undefined}
         viewBox="0 0 100 100"
         preserveAspectRatio="none"
         style={{
           position: "absolute",
           ...svgPositionStyle,
-          // While a select mode is live the SVG owns the drag outright:
-          // opting out of native touch handling keeps the reader's
-          // pan-y / pinch-zoom from cancelling a selection mid-drag.
-          // Matters for both bindings — the touch path has no pointer
-          // capture at all, and the pointer path otherwise loses
-          // near-vertical drags to native scroll via pointercancel.
-          touchAction: enabled ? "none" : undefined,
+          // While a select mode is live in a paged view the SVG owns the
+          // drag outright: opting out of native touch handling keeps the
+          // reader's pan-y / pinch-zoom from cancelling a selection
+          // mid-drag (the touch path has no pointer capture at all, and
+          // the pointer path otherwise loses near-vertical drags to native
+          // scroll via pointercancel).
+          // Webtoon is one long scroll, so there the page keeps vertical
+          // panning and pinch; a touch drag starts after a press-and-hold
+          // instead (see the touch handlers). The cost: on a touch screen
+          // whose primary pointer is fine (a touch laptop), a touch drag
+          // in webtoon scrolls instead of selecting — use the mouse there.
+          touchAction: enabled
+            ? viewMode === "webtoon"
+              ? "pan-y pinch-zoom"
+              : "none"
+            : undefined,
         }}
         className={cn("z-20 select-none", cursorClass)}
         {...(touchInput
@@ -576,7 +860,7 @@ export function MarkerOverlay({
               onTouchStart: handleTouchStart,
               onTouchMove: handleTouchMove,
               onTouchEnd: handleTouchEnd,
-              onTouchCancel: () => setDrag(null),
+              onTouchCancel: handleTouchCancel,
             }
           : {
               onPointerDown: handlePointerDown,
@@ -593,7 +877,7 @@ export function MarkerOverlay({
             onEdit={() => editExistingMarker(marker)}
           />
         ))}
-        {textRegions.map((region, i) => (
+        {textBoxes.map((region, i) => (
           <TextRegionOutline
             key={`text-region-${i}`}
             region={region}
@@ -646,26 +930,23 @@ export function MarkerOverlay({
           stay `pointer-events-none` themselves: the SVG must keep sole
           ownership of pointer input so drag-select still works, and
           keyboard activation doesn't need hit-testing. */}
-      {markerMode === "select-text" && orderedTextRegions.length > 0 ? (
+      {markerMode === "select-text" && textBoxes.length > 0 ? (
         <div
           role="group"
           aria-label={`Detected text on page ${pageIndex + 1}`}
           className="pointer-events-none absolute z-20"
           style={{ position: "absolute", ...svgPositionStyle }}
         >
-          <p className="sr-only" aria-live="polite">
-            {`${orderedTextRegions.length} text ${orderedTextRegions.length === 1 ? "region" : "regions"} found. Tab to a region and press Enter to capture its text.`}
-          </p>
-          {orderedTextRegions.map((region, i) => (
+          {textBoxes.map((region, i) => (
             <button
               key={`text-region-proxy-${i}`}
               type="button"
-              aria-label={`Capture text region ${i + 1} of ${orderedTextRegions.length}`}
+              aria-label={`Capture text region ${i + 1} of ${textBoxes.length}`}
               aria-busy={region === busyRegion || undefined}
               onClick={() => {
-                // One capture at a time; don't `disabled` the button —
-                // that would drop keyboard focus mid-OCR.
-                if (busyRegion === null) void captureTextRegion(region);
+                // One capture at a time (`runCapture`); the button is not
+                // `disabled` — that would drop keyboard focus mid-OCR.
+                void captureTextBox(region);
               }}
               onFocus={() => setHoverRegion(region)}
               onBlur={() => setHoverRegion(null)}
@@ -681,14 +962,16 @@ export function MarkerOverlay({
         </div>
       ) : null}
 
-      {markerMode === "select-text" && pageVisible && regionsQuery.isLoading ? (
-        // Non-blocking detection progress: drag-to-select works the
-        // whole time, the pill just explains why outlines haven't
-        // appeared yet (a cold detector run takes seconds).
-        <div className="bg-background/85 text-muted-foreground pointer-events-none absolute top-3 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-full px-3 py-1 text-xs shadow-md backdrop-blur">
-          <Loader2 className="size-3 animate-spin" aria-hidden="true" />
-          Finding text regions…
-        </div>
+      {markerMode === "select-text" && pageVisible ? (
+        <DetectionStatus
+          pageNumber={pageIndex + 1}
+          loading={
+            detectEnabled && regionsQuery.isFetching && !regionsQuery.data
+          }
+          error={regionsQuery.isError ? regionsQuery.error : null}
+          boxCount={regionsQuery.data ? textBoxes.length : null}
+          onRetry={() => void regionsQuery.refetch()}
+        />
       ) : null}
 
       {pagePins.length > 0 ? (
@@ -729,8 +1012,13 @@ export function MarkerOverlay({
  *  the kind so the announcement is useful even when the note is empty. */
 function regionMarkerLabel(marker: MarkerView): string {
   const kind = marker.kind.charAt(0).toUpperCase() + marker.kind.slice(1);
+  const text = marker.selection?.text?.replace(/\s+/g, " ").trim();
+  const quoted = text
+    ? `“${text.length > 200 ? `${text.slice(0, 199).trimEnd()}…` : text}”`
+    : "";
   const body = marker.body?.trim();
-  return body ? `${kind}: ${body}` : `${kind} region`;
+  const parts = [quoted, body].filter(Boolean);
+  return parts.length ? `${kind}: ${parts.join(" — ")}` : `${kind} region`;
 }
 
 type DragState = {
@@ -764,40 +1052,13 @@ function markerModeShape(mode: MarkerMode): MarkerRegion["shape"] {
   }
 }
 
-/** Smallest detected region containing the point, or `null`. The
- *  smallest-wins rule disambiguates nested detections (the detector
- *  emits both block- and line-level boxes that can overlap). */
-function hitTestRegion(
-  regions: readonly TextRegionView[],
-  x: number,
-  y: number,
-): TextRegionView | null {
-  let best: TextRegionView | null = null;
-  let bestArea = Infinity;
-  for (const r of regions) {
-    if (x < r.x || x > r.x + r.w || y < r.y || y > r.y + r.h) continue;
-    const area = r.w * r.h;
-    if (area < bestArea) {
-      bestArea = area;
-      best = r;
-    }
-  }
-  return best;
-}
-
-/** Branch on selection mode to populate `selection` from the cropped
- *  pixels. Falls back to plain rect when OCR / hashing isn't
- *  available. OCR runs synchronously here (worst-case 2-4 seconds)
- *  with a toast so the user knows the editor will pop in a moment. */
-async function finalizePending(
-  mode: MarkerMode,
+/** A new highlight on `region`, without a selection yet. */
+function newHighlight(
   pageIndex: number,
   region: MarkerRegion,
-  issueId: string,
-  naturalSize: { width: number; height: number } | null,
-  opts: { detect?: boolean } = {},
-): Promise<PendingMarker> {
-  const base: PendingMarker = {
+  regionFitted: boolean,
+): PendingMarker {
+  return {
     kind: "highlight",
     page_index: pageIndex,
     region,
@@ -805,80 +1066,66 @@ async function finalizePending(
     body: "",
     is_favorite: false,
     tags: [],
+    ...(regionFitted ? { regionFitted: true } : {}),
   };
+}
 
-  if (mode === "select-text" && naturalSize) {
-    const ocrToast = toast.loading("Reading text…");
-    try {
-      // Lazy-load the canvas-crop + OCR path (audit G6) — only users who
-      // actually capture text pull these bytes; they stay out of the
-      // reader's first-load JS.
-      const { ocrCroppedRegion } = await import("./marker-selection");
-      const ocr = await ocrCroppedRegion(
-        {
-          issueId,
-          pageIndex,
-          region,
-          naturalSize,
-        },
-        { detect: opts.detect },
-      );
-      toast.dismiss(ocrToast);
-      if (ocr && ocr.text.trim()) {
-        // Snap the new marker to the detector's bubble outline when
-        // one came back — the saved region hugs the bubble instead
-        // of the rough drag. New pending markers only; re-detect on
-        // an existing marker never rewrites stored geometry.
-        // w / h are clamped to what's left of the page so the region
-        // always fits (the server rejects x + w or y + h past 100).
-        const snapped = ocr.refinedBbox
-          ? (() => {
-              const bbox = ocr.refinedBbox;
-              const x = clamp((bbox.x / naturalSize.width) * 100, 0, 100);
-              const y = clamp((bbox.y / naturalSize.height) * 100, 0, 100);
-              return {
-                x,
-                y,
-                w: clamp((bbox.w / naturalSize.width) * 100, 0, 100 - x),
-                h: clamp((bbox.h / naturalSize.height) * 100, 0, 100 - y),
-                shape: region.shape,
-              };
-            })()
-          : region;
-        return {
-          ...base,
-          region: snapped,
-          selection: { text: ocr.text, ocr_confidence: ocr.confidence },
-        };
-      }
-      toast.message(
-        "Couldn't read any text in that region — saved as a plain highlight.",
-      );
-    } catch (err) {
-      toast.dismiss(ocrToast);
-      console.warn("markers: OCR failed", err);
-    }
-    return base;
-  }
-
-  if (mode === "select-image" && naturalSize) {
-    try {
-      const { sha256CroppedRegion } = await import("./marker-selection");
-      const hash = await sha256CroppedRegion({
-        issueId,
-        pageIndex,
-        region,
-        naturalSize,
-      });
-      if (hash) {
-        return { ...base, selection: { image_hash: hash } };
-      }
-    } catch (err) {
-      console.warn("markers: image hash failed", err);
-    }
-  }
-
-  return base;
+/** Text-capture detection state for one page, as a live region: finding
+ *  the boxes, why finding them failed (with Try again when that can help),
+ *  that there are none, or (to screen readers only) how many there are.
+ *  Drag-to-select works throughout; this only explains the outlines. */
+function DetectionStatus({
+  pageNumber,
+  loading,
+  error,
+  boxCount,
+  onRetry,
+}: {
+  pageNumber: number;
+  loading: boolean;
+  error: unknown;
+  boxCount: number | null;
+  onRetry: () => void;
+}) {
+  const failure = error ? toOcrRequestError(error) : null;
+  const pill =
+    "bg-background/90 text-foreground absolute top-3 left-1/2 z-30 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-2 rounded-full px-3 py-1 text-xs shadow-md backdrop-blur";
+  return (
+    <div role="status" aria-live="polite">
+      {loading ? (
+        <div className={cn(pill, "text-muted-foreground pointer-events-none")}>
+          <Loader2 className="size-3 animate-spin" aria-hidden="true" />
+          Finding text regions…
+        </div>
+      ) : failure ? (
+        <div className={cn(pill, "pointer-events-auto rounded-2xl py-1.5")}>
+          <span>
+            {`Couldn't find the text on page ${pageNumber}. ${failure.message} You can still drag around text.`}
+          </span>
+          {failure.transient ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={onRetry}
+            >
+              <RotateCcw className="size-3.5" aria-hidden="true" />
+              Try again
+            </Button>
+          ) : null}
+        </div>
+      ) : boxCount === 0 ? (
+        <div className={cn(pill, "text-muted-foreground pointer-events-none")}>
+          {`No text found on page ${pageNumber}. Drag around text to capture it.`}
+        </div>
+      ) : boxCount != null ? (
+        <span className="sr-only">
+          {`${boxCount} text ${boxCount === 1 ? "region" : "regions"} found. Tap one, or Tab to it and press Enter, to capture its text.`}
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
 function RegionMarkerRect({

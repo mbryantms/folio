@@ -110,10 +110,11 @@ export async function probePageFailure(url: string): Promise<PageProbe> {
  * fire `load` events lazily for already-decoded images, so without the
  * layout-effect probe we'd race and flash empty for one frame.
  *
- * `onNaturalSize` is the marker-overlay hook: when the image's natural
- * (intrinsic) pixel dimensions are known, the parent caches them so the
- * marker overlay can sample the source image at native resolution for
- * OCR / image-hash workflows.
+ * `onNaturalSize` fires once the image has decoded, with its natural size
+ * and whether that size is the original page's (`original`: the element
+ * has no `srcset`). With width-descriptor variants the browser reports a
+ * density-corrected size that follows the variant and the layout, so the
+ * parent only trusts it as a page size when `original` is true.
  */
 export function PageImage({
   src,
@@ -143,7 +144,7 @@ export function PageImage({
   /** Browser fetch priority. The visible page passes `"high"` so it never
    *  queues behind the low-priority prefetch warms. */
   fetchPriority?: "high" | "low" | "auto";
-  onNaturalSize?: (width: number, height: number) => void;
+  onNaturalSize?: (width: number, height: number, original: boolean) => void;
   /** Optional ref the parent can use to align overlays (marker SVG)
    *  with the actually-rendered image bounds rather than the wider
    *  flex wrapper. Critical at fit=height where the image is narrower
@@ -240,7 +241,11 @@ export function PageImage({
     if (el.naturalWidth > 0) {
       setStatus("loaded");
       setNaturalAspect(el.naturalWidth / el.naturalHeight);
-      onNaturalSize?.(el.naturalWidth, el.naturalHeight);
+      onNaturalSize?.(
+        el.naturalWidth,
+        el.naturalHeight,
+        !el.getAttribute("srcset"),
+      );
     } else {
       // A server-rendered image can also fail before hydration, when React
       // isn't listening for its `error` event yet.
@@ -413,7 +418,11 @@ export function PageImage({
           const img = e.currentTarget;
           if (img.naturalWidth > 0) {
             setNaturalAspect(img.naturalWidth / img.naturalHeight);
-            onNaturalSize?.(img.naturalWidth, img.naturalHeight);
+            onNaturalSize?.(
+              img.naturalWidth,
+              img.naturalHeight,
+              !img.getAttribute("srcset"),
+            );
           }
         }}
         onError={handleError}

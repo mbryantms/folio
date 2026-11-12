@@ -4,9 +4,9 @@
  *
  * Pre-M6 this function loaded `tesseract.js` in the browser; now it
  * POSTs to `/api/me/issues/{id}/ocr` and returns the server's
- * response. These tests pin the wire shape and the fallback paths
- * so a future refactor can't silently regress the reader's
- * "Couldn't read any text" toast UX.
+ * response. These tests pin the wire shape, and that "the server found
+ * no text" (`null`) stays distinct from "the request failed" (a rejected
+ * `OcrRequestError` carrying the reason and whether a retry can help).
  *
  * The function lives in
  * `web/app/[locale]/read/[seriesSlug]/[issueSlug]/marker-selection.ts`
@@ -22,6 +22,7 @@ vi.mock("@/lib/api/auth-refresh", () => ({
 
 import { ocrCroppedRegion } from "@/app/[locale]/read/[seriesSlug]/[issueSlug]/marker-selection";
 import { apiFetch } from "@/lib/api/auth-refresh";
+import { OcrRequestError } from "@/lib/reader/ocr-errors";
 
 const mockedFetch = vi.mocked(apiFetch);
 
@@ -40,7 +41,7 @@ function input(
     pageIndex: 2,
     // Region is in 0-100% so 25/30/10/8 ⇒ pixels (250, 300, 100, 80) on a 1000×1000 page.
     region: { x: 25, y: 30, w: 10, h: 8, shape: "rect" as const },
-    naturalSize: { width: 1000, height: 1000 },
+    pageSize: { width: 1000, height: 1000 },
     ...overrides,
   };
 }
@@ -138,31 +139,56 @@ describe("ocrCroppedRegion — server-side OCR", () => {
     expect(result).toBeNull();
   });
 
-  it("returns null + logs on a server error envelope", async () => {
-    // Folio's standard error envelope: `{ error: { code, message } }`.
-    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("rejects with the reason on a failure, never a silent null", async () => {
     mockedFetch.mockResolvedValueOnce(
       jsonResponse(429, {
         error: { code: "rate_limited", message: "slow down" },
       }),
     );
-    const result = await ocrCroppedRegion(input());
-    expect(result).toBeNull();
-    expect(consoleWarn).toHaveBeenCalledWith(expect.stringContaining("429"));
-    consoleWarn.mockRestore();
+    const err = await ocrCroppedRegion(input()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OcrRequestError);
+    expect(err).toMatchObject({ status: 429, code: "rate_limited" });
+    expect((err as OcrRequestError).transient).toBe(true);
   });
 
-  it("returns null on a network rejection", async () => {
-    // Offline / DNS / TLS — apiFetch rejects.
-    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    mockedFetch.mockRejectedValueOnce(new Error("offline"));
-    const result = await ocrCroppedRegion(input());
-    expect(result).toBeNull();
-    expect(consoleWarn).toHaveBeenCalledWith(
-      "markers: server OCR network error",
-      expect.any(Error),
+  it("carries Retry-After on a busy answer", async () => {
+    mockedFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          error: { code: "service_unavailable", message: "busy" },
+        }),
+        { status: 503, headers: { "retry-after": "7" } },
+      ),
     );
-    consoleWarn.mockRestore();
+    const err = (await ocrCroppedRegion(input()).catch(
+      (e: unknown) => e,
+    )) as OcrRequestError;
+    expect(err.retryAfterMs).toBe(7000);
+    expect(err.transient).toBe(true);
+  });
+
+  it("a 409 is a final failure with its reason", async () => {
+    mockedFetch.mockResolvedValueOnce(
+      jsonResponse(409, {
+        error: { code: "archive_needs_conversion", message: "convert" },
+      }),
+    );
+    const err = (await ocrCroppedRegion(input()).catch(
+      (e: unknown) => e,
+    )) as OcrRequestError;
+    expect(err.transient).toBe(false);
+    expect(err.message).toContain("converted to CBZ");
+  });
+
+  it("rejects with a network failure when the request never answers", async () => {
+    // Offline / DNS / TLS — apiFetch rejects.
+    mockedFetch.mockRejectedValueOnce(new Error("offline"));
+    const err = (await ocrCroppedRegion(input()).catch(
+      (e: unknown) => e,
+    )) as OcrRequestError;
+    expect(err).toBeInstanceOf(OcrRequestError);
+    expect(err.status).toBe(0);
+    expect(err.transient).toBe(true);
   });
 
   it("clamps region to page bounds — rounding overshoot can't escape", async () => {
@@ -174,7 +200,7 @@ describe("ocrCroppedRegion — server-side OCR", () => {
     );
     await ocrCroppedRegion(
       input({
-        naturalSize: { width: 100, height: 100 },
+        pageSize: { width: 100, height: 100 },
         region: { x: 99.5, y: 99.5, w: 1, h: 1, shape: "rect" },
       }),
     );
@@ -188,20 +214,15 @@ describe("ocrCroppedRegion — server-side OCR", () => {
     expect(body.region.h).toBeGreaterThanOrEqual(1);
   });
 
-  it("returns null when the server response isn't valid JSON", async () => {
-    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("rejects when the server response isn't valid JSON", async () => {
     mockedFetch.mockResolvedValueOnce(
       new Response("not json", {
         status: 200,
         headers: { "content-type": "text/plain" },
       }),
     );
-    const result = await ocrCroppedRegion(input());
-    expect(result).toBeNull();
-    expect(consoleWarn).toHaveBeenCalledWith(
-      "markers: server OCR returned malformed JSON",
-      expect.any(Error),
+    await expect(ocrCroppedRegion(input())).rejects.toBeInstanceOf(
+      OcrRequestError,
     );
-    consoleWarn.mockRestore();
   });
 });

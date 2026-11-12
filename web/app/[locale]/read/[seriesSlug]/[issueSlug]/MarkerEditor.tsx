@@ -1,9 +1,20 @@
 "use client";
 
 import * as React from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Copy, Pencil, Sparkles, Star, X } from "lucide-react";
 import { toast } from "sonner";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { useCopyToClipboard } from "@/components/folio/copy-button";
 import { NativeSelect } from "@/components/folio/native-select";
@@ -18,6 +29,7 @@ import {
 } from "@/components/folio/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { useIssueMarkers, useMarkerTags } from "@/lib/api/queries";
+import { queryKeys } from "@/lib/api/query-keys";
 import { showUndoToast } from "@/lib/ui/undo-toast";
 import {
   useCreateMarker,
@@ -25,7 +37,9 @@ import {
   useRestoreMarkers,
   useUpdateMarker,
 } from "@/lib/api/mutations/markers";
-import type { MarkerSelection } from "@/lib/api/types";
+import type { MarkerSelection, TextRegionsView } from "@/lib/api/types";
+import { toOcrRequestError } from "@/lib/reader/ocr-errors";
+import { resolvePageSize, type PageSize } from "@/lib/reader/page-size";
 import { useReaderStore } from "@/lib/reader/store";
 import { statusToneText } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
@@ -43,15 +57,18 @@ export const MAX_CAPTURED_TEXT_BYTES = 8 * 1024;
  *  so all paths converge through `beginMarkerEdit`. */
 export function MarkerEditor({
   issueId,
-  pageNaturalSize,
+  pageSizeSources,
 }: {
   issueId: string;
-  /** Lookup-by-page natural pixel dimensions, threaded through from
-   *  the parent so the "Detect text" button can re-run OCR against an
-   *  existing region without re-fetching the source image's metadata. */
-  pageNaturalSize: React.RefObject<
-    Map<number, { width: number; height: number }>
-  >;
+  /** The reader's sources for a page's real pixel size: the server's page
+   *  list and the `<img>`'s size when it loaded the original bytes. The
+   *  editor adds the detection's size when the text-regions query has it
+   *  and resolves them with `resolvePageSize`, the same as capture, so
+   *  Detect text sends its rectangle in original page pixels. */
+  pageSizeSources: (page: number) => {
+    server: PageSize | null;
+    measured: PageSize | null;
+  };
 }) {
   const pendingMarker = useReaderStore((s) => s.pendingMarker);
   const editingMarkerId = useReaderStore((s) => s.editingMarkerId);
@@ -69,6 +86,7 @@ export function MarkerEditor({
   }, [open, setChromePinned]);
 
   const { copy: copyText } = useCopyToClipboard();
+  const queryClient = useQueryClient();
   const create = useCreateMarker();
   const restore = useRestoreMarkers();
   // The overlay already holds this query; reading it here costs no
@@ -89,6 +107,21 @@ export function MarkerEditor({
   // direction → western).
   const [ocrLang, setOcrLang] = React.useState("");
   const [ocrPending, setOcrPending] = React.useState(false);
+  // The captured text as the server has it for this marker (what Cancel
+  // and Save compare against). Starts as the text the editor opened
+  // with; Detect text / Clear on an existing marker save at once, so they
+  // move it when their patch succeeds (D7).
+  const [baselineText, setBaselineText] = React.useState("");
+  // The text exactly as recognition produced it, or null when the current
+  // text was typed or corrected by hand (stored text without a confidence
+  // is hand-written: a hand edit drops the confidence). Replacing text
+  // that differs from this asks first.
+  const [recognizedText, setRecognizedText] = React.useState<string | null>(
+    null,
+  );
+  const [confirmReplace, setConfirmReplace] = React.useState<
+    "detect" | "clear" | null
+  >(null);
   // Whether the editable captured-text field is shown: on open when the
   // marker already carries text, after an OCR pass, or when the user
   // chooses to type the text by hand (WP-5.3).
@@ -108,6 +141,13 @@ export function MarkerEditor({
       setBody(pendingMarker.body ?? "");
       setDetectedText(pendingMarker.selection?.text ?? null);
       setDetectedConfidence(pendingMarker.selection?.ocr_confidence ?? null);
+      setBaselineText(pendingMarker.selection?.text ?? "");
+      setRecognizedText(
+        pendingMarker.selection?.ocr_confidence != null
+          ? (pendingMarker.selection?.text ?? null)
+          : null,
+      );
+      setConfirmReplace(null);
       setCapturedOpen(!!pendingMarker.selection?.text);
       setOcrLang("");
       setIsFavorite(pendingMarker.is_favorite);
@@ -153,11 +193,7 @@ export function MarkerEditor({
     if (body.trim() !== (pendingMarker.body?.trim() ?? "")) return true;
     if (isFavorite !== pendingMarker.is_favorite) return true;
     if (tags.join(" ") !== pendingMarker.tags.join(" ")) return true;
-    if (
-      detectedText !== null &&
-      detectedText !== (pendingMarker.selection?.text ?? null)
-    )
-      return true;
+    if (detectedText !== null && detectedText !== baselineText) return true;
     return false;
   }
 
@@ -226,8 +262,7 @@ export function MarkerEditor({
       // Only send `selection` when the captured text was edited here, so
       // a plain caption/tag edit never rewrites it.
       const textChanged =
-        detectedText !== null &&
-        detectedText !== (pendingMarker.selection?.text ?? "");
+        detectedText !== null && detectedText !== baselineText;
       update.mutate(
         {
           body: trimmedBody || null,
@@ -240,12 +275,12 @@ export function MarkerEditor({
       return;
     }
 
-    // Stamp the page's natural pixel size onto the region so the saved-markers
-    // grid renders the crop at its true aspect (no decode, no reflow). Only
-    // region-bearing markers (highlights) need it; page-level markers already
-    // crop with object-cover. Absent natural size (image still loading) → omit
-    // and fall back to the 2:3 assumption.
-    const natural = pageNaturalSize.current?.get(pendingMarker.page_index);
+    // Stamp the page's pixel size onto the region so the saved-markers grid
+    // renders the crop at its true aspect (no decode, no reflow). Only
+    // region-bearing markers (highlights) need it; page-level markers
+    // already crop with object-cover. Unknown size → omit and fall back to
+    // the 2:3 assumption.
+    const natural = pageSizeFor(pendingMarker.page_index);
     const regionWithDims =
       pendingMarker.region && natural
         ? {
@@ -306,30 +341,52 @@ export function MarkerEditor({
     });
   }
 
-  /** Re-run OCR against the pending marker's region. For new
-   *  highlights this populates the local detected-text preview which
-   *  gets saved through the regular `selection` payload. For existing
-   *  highlights it patches the row in place so the global feed picks
-   *  up the new text without re-creating the marker. */
+  /** The page's real pixel size, resolved like capture does it. */
+  function pageSizeFor(page: number): PageSize | null {
+    const detected = queryClient.getQueryData<TextRegionsView>(
+      queryKeys.issuePageTextRegions(issueId, page),
+    );
+    return resolvePageSize({
+      detected: detected
+        ? { width: detected.page_w, height: detected.page_h }
+        : null,
+      ...pageSizeSources(page),
+    });
+  }
+
+  /** Whether the captured text in the field was typed or corrected by
+   *  hand (it is not exactly what recognition produced). */
+  function textIsHandEdited(): boolean {
+    const current = detectedText ?? pendingMarker?.selection?.text ?? "";
+    return current.trim() !== "" && current !== recognizedText;
+  }
+
+  /** Re-run OCR against the pending marker's region. For new highlights
+   *  this fills the captured-text field, saved with the marker. For an
+   *  existing highlight it patches the row at once, and the editor then
+   *  counts that text as saved. */
   async function handleDetectText() {
     if (!pendingMarker?.region) {
       toast.error("Detect text needs a region — try Highlight a region first.");
       return;
     }
-    const natural = pageNaturalSize.current?.get(pendingMarker.page_index);
-    if (!natural) {
-      toast.error("Image still loading — try again in a moment.");
+    const size = pageSizeFor(pendingMarker.page_index);
+    if (!size) {
+      toast.error(
+        "The page's size isn't known yet, so its text can't be read. Try again once the page has loaded.",
+      );
       return;
     }
+    const opened = pendingMarker;
     setOcrPending(true);
     const toastId = toast.loading("Reading text…");
     try {
       const ocr = await ocrCroppedRegion(
         {
           issueId,
-          pageIndex: pendingMarker.page_index,
-          region: pendingMarker.region,
-          naturalSize: natural,
+          pageIndex: opened.page_index,
+          region: opened.region!,
+          pageSize: size,
         },
         {
           lang:
@@ -337,28 +394,32 @@ export function MarkerEditor({
         },
       );
       toast.dismiss(toastId);
-      if (!ocr || !ocr.text.trim()) {
-        toast.message("Couldn't read any text in that region.");
+      if (!ocr) {
+        toast.message("No text found in that area.");
         return;
       }
       setDetectedText(ocr.text);
       setDetectedConfidence(ocr.confidence);
+      setRecognizedText(ocr.text);
       setCapturedOpen(true);
       if (editingMarkerId) {
         // The hook toasts "Text captured" for a selection-only patch.
-        update.mutate({
-          selection: {
-            text: ocr.text,
-            ocr_confidence: ocr.confidence,
+        update.mutate(
+          {
+            selection: withCapturedText(
+              opened.selection,
+              ocr.text,
+              ocr.confidence,
+            ),
           },
-        });
+          { onSuccess: () => setBaselineText(ocr.text) },
+        );
       } else {
         toast.success("Text captured — save the marker to keep it.");
       }
     } catch (err) {
       toast.dismiss(toastId);
-      console.warn("markers: detect text failed", err);
-      toast.error("OCR failed — see console for details.");
+      toast.error(`Couldn't read the text. ${toOcrRequestError(err).message}`);
     } finally {
       setOcrPending(false);
     }
@@ -371,13 +432,27 @@ export function MarkerEditor({
   function handleClearText() {
     setDetectedText("");
     setDetectedConfidence(null);
+    setRecognizedText(null);
     setCapturedOpen(false);
     if (editingMarkerId) {
       // The hook toasts "Detected text cleared" for this patch.
-      update.mutate({
-        selection: selectionWithoutText(pendingMarker?.selection),
-      });
+      update.mutate(
+        { selection: selectionWithoutText(pendingMarker?.selection) },
+        { onSuccess: () => setBaselineText("") },
+      );
     }
+  }
+
+  /** Detect / Clear replace the captured text: ask first when the text in
+   *  the field was written or corrected by hand, never when it is still
+   *  exactly what recognition produced. */
+  function replaceCapturedText(action: "detect" | "clear") {
+    if (textIsHandEdited()) {
+      setConfirmReplace(action);
+      return;
+    }
+    if (action === "detect") void handleDetectText();
+    else handleClearText();
   }
 
   if (!pendingMarker) return null;
@@ -397,7 +472,11 @@ export function MarkerEditor({
     pendingMarker.kind === "note"
       ? "Markdown-friendly. Saved to this user only."
       : pendingMarker.kind === "highlight"
-        ? "Optional caption. The region is preserved as you drew it."
+        ? editingMarkerId
+          ? "Optional caption."
+          : pendingMarker.regionFitted
+            ? "Optional caption. The highlight covers the detected text box."
+            : "Optional caption. The highlight covers the area you drew."
         : `Page ${pendingMarker.page_index + 1}.`;
 
   const capturedText = detectedText ?? pendingMarker.selection?.text ?? "";
@@ -447,11 +526,14 @@ export function MarkerEditor({
                   Captured text
                 </Label>
                 <span className="flex items-center gap-1">
+                  {/* Small visible boxes; on touch each carries the
+                      invisible 44px tap area (`folio-tap` / the button
+                      data-slot rule), widened to 44px across. */}
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="size-6"
+                    className="size-6 [--folio-tap-x:10px]"
                     onClick={handleCopyText}
                     aria-label="Copy detected text"
                   >
@@ -459,9 +541,9 @@ export function MarkerEditor({
                   </Button>
                   <button
                     type="button"
-                    onClick={handleClearText}
+                    onClick={() => replaceCapturedText("clear")}
                     disabled={ocrPending || update.isPending}
-                    className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs disabled:opacity-50"
+                    className="folio-tap text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs disabled:opacity-50"
                   >
                     <X className="size-3" />
                     Clear
@@ -501,7 +583,7 @@ export function MarkerEditor({
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={handleDetectText}
+                onClick={() => replaceCapturedText("detect")}
                 disabled={ocrPending}
               >
                 <Sparkles className="mr-2 size-4" />
@@ -525,7 +607,7 @@ export function MarkerEditor({
                 onChange={setOcrLang}
                 options={[
                   { value: "", label: "Auto" },
-                  { value: "western", label: "Western" },
+                  { value: "western", label: "Western (English)" },
                   { value: "manga", label: "Japanese" },
                 ]}
               />
@@ -591,7 +673,7 @@ export function MarkerEditor({
                       type="button"
                       onClick={() => removeTag(t)}
                       aria-label={`Remove ${t}`}
-                      className="text-muted-foreground hover:text-foreground"
+                      className="folio-tap text-muted-foreground hover:text-foreground [--folio-tap-x:16px]"
                     >
                       <X className="size-3" />
                     </button>
@@ -668,6 +750,40 @@ export function MarkerEditor({
           </div>
         </div>
       </SheetContent>
+      <AlertDialog
+        open={confirmReplace !== null}
+        onOpenChange={(next) => {
+          if (!next) setConfirmReplace(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirmReplace === "clear"
+                ? "Clear the text you edited?"
+                : "Replace the text you edited?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmReplace === "clear"
+                ? "The captured text was typed or corrected by hand. Clearing it can't be undone here."
+                : "The captured text was typed or corrected by hand. Detecting again replaces it with what the recognizer reads."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep my text</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const action = confirmReplace;
+                setConfirmReplace(null);
+                if (action === "detect") void handleDetectText();
+                else if (action === "clear") handleClearText();
+              }}
+            >
+              {confirmReplace === "clear" ? "Clear text" : "Replace text"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Sheet>
   );
 }

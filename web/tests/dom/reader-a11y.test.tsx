@@ -43,6 +43,7 @@ const { toast, ocr, regionsState } = vi.hoisted(() => ({
       isLoading?: boolean;
       isError?: boolean;
       isSuccess?: boolean;
+      error?: unknown;
     },
   },
 }));
@@ -62,7 +63,28 @@ vi.mock("@/lib/api/mutations", async (importOriginal) => ({
 }));
 vi.mock(
   "@/app/[locale]/read/[seriesSlug]/[issueSlug]/marker-selection",
-  () => ({ ocrCroppedRegion: ocr, sha256CroppedRegion: vi.fn() }),
+  () => ({
+    ocrCroppedRegion: ocr,
+    sha256CroppedRegion: vi.fn(),
+    // Same shape as the real options, reading through the mocked `ocr`.
+    boxTextQueryOptions: (
+      issueId: string,
+      pageIndex: number,
+      box: { x: number; y: number; w: number; h: number },
+      pageSize: { width: number; height: number },
+    ) => ({
+      queryKey: [
+        "ocr",
+        "region-text",
+        issueId,
+        pageIndex,
+        [box.x, box.y, box.w, box.h].join(","),
+      ],
+      queryFn: () =>
+        ocr({ issueId, pageIndex, region: { ...box }, pageSize }, {}),
+      staleTime: Infinity,
+    }),
+  }),
 );
 
 import { MarkerOverlay } from "@/app/[locale]/read/[seriesSlug]/[issueSlug]/MarkerOverlay";
@@ -125,7 +147,7 @@ describe("MarkerOverlay text-region keyboard proxies", () => {
             issueId="issue-1"
             pageIndex={0}
             imgRef={imgRef}
-            naturalSize={{ width: 1000, height: 1500 }}
+            serverPageSize={{ width: 1000, height: 1500 }}
           />
         </div>,
       ),
@@ -161,7 +183,9 @@ describe("MarkerOverlay text-region keyboard proxies", () => {
       // Pointer input stays with the SVG drag surface.
       expect(p.className).toContain("pointer-events-none");
     }
-    expect(group.textContent).toContain("3 text regions found");
+    expect(screen.getByRole("status").textContent).toContain(
+      "3 text regions found",
+    );
   });
 
   it("follows RTL reading order", () => {
@@ -198,12 +222,15 @@ describe("MarkerOverlay text-region keyboard proxies", () => {
     );
     expect(ocr).toHaveBeenCalledOnce();
     const [input, opts] = ocr.mock.calls[0]!;
+    // The box itself, against the detection's page size, recognizer-only
+    // (no detector snap).
     expect(input).toMatchObject({
       issueId: "issue-1",
       pageIndex: 0,
-      region: { x: 10, y: 11, w: 30, h: 10, shape: "text" },
+      region: { x: 10, y: 11, w: 30, h: 10 },
+      pageSize: { width: 1000, height: 1500 },
     });
-    expect(opts).toEqual({ detect: false });
+    expect(opts).not.toHaveProperty("detect");
     expect(useReaderStore.getState().pendingMarker?.selection).toEqual({
       text: "HELLO THERE",
       ocr_confidence: 0.9,
@@ -332,12 +359,16 @@ describe("PageTextPanel", () => {
   });
 
   it("offers a retry when detection fails", async () => {
-    regionsState.current = { data: undefined, isError: true };
+    regionsState.current = {
+      data: undefined,
+      isError: true,
+      error: { status: 503, code: "service_unavailable" },
+    };
     renderPanel();
     act(() => usePageTextPanel.getState().setOpen(true));
     const dialog = await screen.findByRole("dialog", { name: "Page text" });
     expect(within(dialog).getByRole("status").textContent).toBe(
-      "Couldn't detect text on page 1.",
+      "Couldn't find the text on page 1. The server is busy reading other text. Try again in a moment.",
     );
     expect(
       within(dialog).getByRole("button", { name: "Try again" }),
