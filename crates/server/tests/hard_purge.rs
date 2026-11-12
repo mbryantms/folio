@@ -1105,6 +1105,7 @@ async fn purge_pages_past_kept_rows_at_the_front() {
     let limits = hard_purge::PurgeLimits {
         page: 3,
         max_issue_deletes: 100,
+        ..hard_purge::PurgeLimits::default()
     };
     let stats = hard_purge::run_with_limits(&state, 2, Utc::now().fixed_offset(), limits)
         .await
@@ -1148,6 +1149,7 @@ async fn purge_deletes_at_most_the_cap_per_run() {
     let limits = hard_purge::PurgeLimits {
         page: 4,
         max_issue_deletes: 3,
+        ..hard_purge::PurgeLimits::default()
     };
     let log = hard_purge_log();
     let stats = hard_purge::run_with_limits(&state, 2, Utc::now().fixed_offset(), limits)
@@ -1308,6 +1310,7 @@ async fn purge_counts_committed_deletes_when_a_later_page_fails() {
     let limits = hard_purge::PurgeLimits {
         page: 2,
         max_issue_deletes: 100,
+        ..hard_purge::PurgeLimits::default()
     };
     let stats = hard_purge::run_with_limits(&state, 2, Utc::now().fixed_offset(), limits)
         .await
@@ -1349,6 +1352,7 @@ async fn purge_pages_through_equal_confirmation_times() {
     let limits = hard_purge::PurgeLimits {
         page: 2,
         max_issue_deletes: 100,
+        ..hard_purge::PurgeLimits::default()
     };
     let stats = hard_purge::run_with_limits(&state, 2, Utc::now().fixed_offset(), limits)
         .await
@@ -1360,4 +1364,181 @@ async fn purge_pages_through_equal_confirmation_times() {
     }
     assert!(issue_exists(db, &kept[0]).await);
     assert!(removal_confirmed(db, &kept[0]).await);
+}
+
+/// The series purge's export counts (`collection_entries`, `ratings` in each
+/// `purged` event) bind one parameter per candidate; they are taken a chunk
+/// of ids at a time, so any number of candidate series stays under
+/// Postgres's 65,535 bind parameters. With a chunk of 2 over five series
+/// (three statements each), every event carries exactly the counts one
+/// statement over all five returns.
+#[tokio::test]
+async fn purge_counts_series_exports_across_statements() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let live = tmp.path().join("Live (2020)");
+    std::fs::create_dir_all(&live).unwrap();
+    write_cbz(&live.join("Live 001.cbz"), 400);
+    let lib_id = create_library(&app, tmp.path(), 10).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let db = &state.db;
+
+    // Three users, each with one collection.
+    let mut users = Vec::new();
+    let mut views = Vec::new();
+    for u in 0..3 {
+        let user = Uuid::now_v7();
+        exec(
+            db,
+            "INSERT INTO users (id, external_id, display_name) VALUES ($1, $2, $2)",
+            vec![user.into(), format!("chunk-user-{u}-{user}").into()],
+        )
+        .await;
+        let view = Uuid::now_v7();
+        exec(
+            db,
+            "INSERT INTO saved_views (id, kind, name, user_id) VALUES ($1, 'collection', $2, $3)",
+            vec![view.into(), format!("Chunk {u}").into(), user.into()],
+        )
+        .await;
+        users.push(user);
+        views.push(view);
+    }
+
+    // Five empty confirmed-removed series past the 20-day window; series k
+    // is rated by, and sits in the collections of, the first `refs[k]` users.
+    let refs = [3usize, 0, 1, 2, 3];
+    let now = Utc::now().fixed_offset();
+    let mut series = Vec::new();
+    for (k, n) in refs.iter().enumerate() {
+        let id = Uuid::now_v7();
+        exec(
+            db,
+            "INSERT INTO series (id, library_id, name, normalized_name, slug, folder_path, \
+                                 removed_at, removal_confirmed_at) \
+             VALUES ($1, $2, $3, $3, $3, $4, $5, $6)",
+            vec![
+                id.into(),
+                lib_id.into(),
+                format!("Chunked {k} {id}").into(),
+                tmp.path()
+                    .join(format!("Chunked {k}"))
+                    .to_string_lossy()
+                    .into_owned()
+                    .into(),
+                (now - Duration::days(60)).into(),
+                (now - Duration::days(50)).into(),
+            ],
+        )
+        .await;
+        for u in 0..*n {
+            exec(
+                db,
+                "INSERT INTO user_ratings (user_id, target_type, target_id, rating, \
+                                           created_at, updated_at) \
+                 VALUES ($1, 'series', $2, 4.0, now(), now())",
+                vec![users[u].into(), id.to_string().into()],
+            )
+            .await;
+            exec(
+                db,
+                "INSERT INTO collection_entries (id, saved_view_id, position, entry_kind, \
+                                                 series_id) \
+                 VALUES ($1, $2, $3, 'series', $4)",
+                vec![
+                    Uuid::now_v7().into(),
+                    views[u].into(),
+                    i32::try_from(k).unwrap().into(),
+                    id.into(),
+                ],
+            )
+            .await;
+        }
+        series.push(id);
+    }
+
+    // What one statement over all five ids says.
+    let one_statement = |sql: &'static str| {
+        let ids: Vec<sea_orm::Value> = series.iter().map(|id| id.to_string().into()).collect();
+        async move {
+            db.query_all_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                sql,
+                ids,
+            ))
+            .await
+            .unwrap()
+            .iter()
+            .map(|r| {
+                (
+                    r.try_get_by_index::<String>(0).unwrap(),
+                    r.try_get_by_index::<i64>(1).unwrap(),
+                )
+            })
+            .collect::<std::collections::HashMap<String, i64>>()
+        }
+    };
+    let entries = one_statement(
+        "SELECT series_id::text, count(*) FROM collection_entries \
+         WHERE series_id::text IN ($1, $2, $3, $4, $5) GROUP BY series_id",
+    )
+    .await;
+    let ratings = one_statement(
+        "SELECT target_id, count(*) FROM user_ratings \
+         WHERE target_type = 'series' AND target_id IN ($1, $2, $3, $4, $5) GROUP BY target_id",
+    )
+    .await;
+    // The fixture is what it says, so the comparison below is not vacuous.
+    for (k, id) in series.iter().enumerate() {
+        let want = i64::try_from(refs[k]).unwrap();
+        let got = |m: &std::collections::HashMap<String, i64>| {
+            m.get(&id.to_string()).copied().unwrap_or(0)
+        };
+        assert_eq!(got(&entries), want, "series {k} entries");
+        assert_eq!(got(&ratings), want, "series {k} ratings");
+    }
+
+    let limits = hard_purge::PurgeLimits {
+        count_chunk: 2,
+        ..hard_purge::PurgeLimits::default()
+    };
+    let stats = hard_purge::run_with_limits(&state, 2, Utc::now().fixed_offset(), limits)
+        .await
+        .unwrap();
+    assert_eq!(stats.series, 5, "{stats:?}");
+    assert_eq!(stats.libraries_aborted, 0, "{stats:?}");
+
+    let rows = db
+        .query_all_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT entity_id, detail FROM library_events \
+             WHERE library_id = $1 AND action = 'purged' AND category = 'series'",
+            [lib_id.into()],
+        ))
+        .await
+        .unwrap();
+    let events: std::collections::HashMap<String, serde_json::Value> = rows
+        .iter()
+        .map(|r| {
+            (
+                r.try_get_by_index(0).unwrap(),
+                r.try_get_by_index(1).unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(events.len(), 5, "{events:?}");
+    for (k, id) in series.iter().enumerate() {
+        let key = id.to_string();
+        let detail = events
+            .get(&key)
+            .unwrap_or_else(|| panic!("no purged event for series {k}: {events:?}"));
+        let one = |m: &std::collections::HashMap<String, i64>| m.get(&key).copied().unwrap_or(0);
+        assert_eq!(
+            detail["collection_entries"],
+            one(&entries),
+            "series {k}: {detail}"
+        );
+        assert_eq!(detail["ratings"], one(&ratings), "series {k}: {detail}");
+    }
 }
