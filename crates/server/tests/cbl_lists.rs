@@ -1288,6 +1288,7 @@ async fn entries_endpoint_walks_past_old_500_cap() {
         created_at: Set(now),
         updated_at: Set(now),
         preserve_canonical_order: Set(false),
+        ..Default::default()
     }
     .insert(&db)
     .await
@@ -1571,6 +1572,7 @@ async fn remote_list_cap_rejects_new_url_import_without_fetching() {
             created_at: Set(now),
             updated_at: Set(now),
             preserve_canonical_order: Set(false),
+            ..Default::default()
         }
         .insert(&db)
         .await
@@ -2706,7 +2708,8 @@ async fn make_url_list(db: &sea_orm::DatabaseConnection, id: Uuid, url: &str, ra
 }
 
 /// (sorted entries, list row, refresh-log row count) — everything a failed
-/// refresh must leave alone.
+/// refresh must leave alone. The row's refresh-outcome fields (what a
+/// failure records) are blanked; [`outcome`] reads them.
 async fn stored_state(
     db: &sea_orm::DatabaseConnection,
     id: Uuid,
@@ -2720,11 +2723,16 @@ async fn stored_state(
         .map(|e| (e.position, e.series_name, e.issue_number))
         .collect();
     entries.sort();
-    let row = cbl_list::Entity::find_by_id(id)
+    let mut row = cbl_list::Entity::find_by_id(id)
         .one(db)
         .await
         .unwrap()
         .unwrap();
+    row.last_refresh_attempt_at = None;
+    row.last_refresh_error_kind = None;
+    row.last_refresh_error_detail = None;
+    row.refresh_failing_since = None;
+    row.refresh_failure_count = 0;
     let logs = cbl_refresh_log::Entity::find()
         .filter(cbl_refresh_log::Column::CblListId.eq(id))
         .count(db)
@@ -2891,4 +2899,414 @@ async fn a_stalled_host_hits_the_request_budget_before_the_route_timeout() {
         "{took:?}"
     );
     assert_eq!(stored_state(&db, list_id).await, before);
+}
+
+// ───── refresh outcome: last attempt, failure kind, backoff ─────
+
+use entity::cbl_list::CblRefreshErrorKind;
+use server::util::ssrf::FetchBytesError;
+
+/// The refresh-outcome fields of a list row.
+#[derive(Debug, Clone, PartialEq)]
+struct Outcome {
+    attempt_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+    kind: Option<CblRefreshErrorKind>,
+    detail: Option<String>,
+    failing_since: Option<chrono::DateTime<chrono::FixedOffset>>,
+    count: i32,
+}
+
+async fn outcome(db: &sea_orm::DatabaseConnection, id: Uuid) -> Outcome {
+    let row = cbl_list::Entity::find_by_id(id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    Outcome {
+        attempt_at: row.last_refresh_attempt_at,
+        kind: row.last_refresh_error_kind,
+        detail: row.last_refresh_error_detail,
+        failing_since: row.refresh_failing_since,
+        count: row.refresh_failure_count,
+    }
+}
+
+async fn post_refresh(app: &TestApp, auth: &Authed, id: Uuid) -> (StatusCode, serde_json::Value) {
+    http(
+        app,
+        Method::POST,
+        &format!("/api/me/cbl-lists/{id}/refresh"),
+        Some(auth),
+        None,
+    )
+    .await
+}
+
+/// Every failure kind a refresh can hit is recorded with its detail, the
+/// attempt time, the start of the run and the count; the entries, the
+/// last-refreshed date and the refresh log stay as they were. A second
+/// failure adds to the count and keeps the start.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn each_refresh_failure_is_recorded_and_leaves_the_list_alone() {
+    use CblRefreshErrorKind as K;
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "outcome-kinds@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    // (stub, or None for a real fetch the address guard refuses; kind; detail)
+    let cases: Vec<(&str, Option<TestSource>, K, Option<&str>)> = vec![
+        (
+            "status",
+            Some(TestSource::Fail(|| {
+                FetchBytesError::HttpStatus(reqwest::StatusCode::SERVICE_UNAVAILABLE)
+            })),
+            K::HttpStatus,
+            Some("HTTP 503"),
+        ),
+        (
+            "gone",
+            Some(TestSource::Fail(|| {
+                FetchBytesError::HttpStatus(reqwest::StatusCode::NOT_FOUND)
+            })),
+            K::Missing,
+            Some("HTTP 404"),
+        ),
+        (
+            "unreachable",
+            Some(TestSource::Fail(|| {
+                FetchBytesError::Transport("connection refused by 203.0.113.9".into())
+            })),
+            K::Unreachable,
+            None,
+        ),
+        (
+            "large",
+            Some(TestSource::Fail(|| FetchBytesError::TooLarge {
+                max_bytes: server::cbl::fetch::MAX_URL_CBL_BYTES,
+            })),
+            K::TooLarge,
+            Some("over the 4 MiB limit"),
+        ),
+        (
+            "redirects",
+            Some(TestSource::Fail(|| FetchBytesError::TooManyRedirects(2))),
+            K::Other,
+            Some("more than 2 redirects"),
+        ),
+        (
+            "cap",
+            Some(TestSource::Body(over_cap_xml().into_bytes())),
+            K::TooManyEntries,
+            Some("5001 entries, over the 5000 limit"),
+        ),
+        (
+            "invalid",
+            Some(TestSource::Body(
+                b"<ReadingList><Books></Nope></ReadingList>".to_vec(),
+            )),
+            K::InvalidList,
+            None,
+        ),
+        ("refused", None, K::AddressRefused, None),
+    ];
+    for (name, stub, kind, detail) in cases {
+        let list_id = upload_sample(&app, &auth).await;
+        let url = match &stub {
+            Some(_) => format!("https://lists.example.test/{list_id}/{name}.cbl"),
+            None => "https://10.0.0.1/list.cbl".to_owned(),
+        };
+        make_url_list(&db, list_id, &url, None).await;
+        if let Some(stub) = stub {
+            stub_source_for_tests(&url, stub);
+        }
+        let before = stored_state(&db, list_id).await;
+        assert_eq!(outcome(&db, list_id).await.count, 0, "{name}");
+
+        let started = Utc::now();
+        let (status, body) = post_refresh(&app, &auth, list_id).await;
+        assert!(
+            status.is_client_error() || status.is_server_error(),
+            "{name}: {body}"
+        );
+        let first = outcome(&db, list_id).await;
+        assert_eq!(first.kind, Some(kind), "{name}");
+        assert_eq!(first.detail.as_deref(), detail, "{name}");
+        assert_eq!(first.count, 1, "{name}");
+        let at = first.attempt_at.expect("attempt time");
+        assert!(at >= started, "{name}");
+        assert_eq!(first.failing_since, Some(at), "{name}");
+        assert_eq!(
+            stored_state(&db, list_id).await,
+            before,
+            "{name}: list untouched"
+        );
+
+        post_refresh(&app, &auth, list_id).await;
+        let second = outcome(&db, list_id).await;
+        assert_eq!(second.count, 2, "{name}");
+        assert_eq!(second.kind, Some(kind), "{name}");
+        assert_eq!(second.failing_since, first.failing_since, "{name}");
+        assert!(second.attempt_at > first.attempt_at, "{name}");
+        assert_eq!(
+            stored_state(&db, list_id).await,
+            before,
+            "{name}: list untouched"
+        );
+    }
+}
+
+/// A success after failures clears the failure and resets the count. The
+/// success also changes the stored list, which is the negative control
+/// for the "untouched" comparison above: `stored_state` does see a change.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_successful_refresh_clears_the_failure() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "outcome-clear@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let list_id = upload_sample(&app, &auth).await;
+    let url = format!("https://lists.example.test/{list_id}/flaky.cbl");
+    make_url_list(&db, list_id, &url, None).await;
+    stub_source_for_tests(
+        &url,
+        TestSource::Fail(|| FetchBytesError::HttpStatus(reqwest::StatusCode::BAD_GATEWAY)),
+    );
+    let before = stored_state(&db, list_id).await;
+    for _ in 0..3 {
+        post_refresh(&app, &auth, list_id).await;
+    }
+    let failing = outcome(&db, list_id).await;
+    assert_eq!(failing.count, 3);
+    assert_eq!(failing.kind, Some(CblRefreshErrorKind::HttpStatus));
+    assert_eq!(stored_state(&db, list_id).await, before);
+
+    stub_source_for_tests(&url, TestSource::Body(TINY_CBL.as_bytes().to_vec()));
+    let (status, body) = post_refresh(&app, &auth, list_id).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let cleared = outcome(&db, list_id).await;
+    assert_eq!(cleared.kind, None);
+    assert_eq!(cleared.detail, None);
+    assert_eq!(cleared.failing_since, None);
+    assert_eq!(cleared.count, 0);
+    assert!(cleared.attempt_at > failing.attempt_at);
+
+    let after = stored_state(&db, list_id).await;
+    assert_ne!(after.0, before.0, "negative control: entries did change");
+    assert!(after.1.last_refreshed_at > before.1.last_refreshed_at);
+    assert_eq!(after.2, before.2 + 1, "one refresh-log row for the success");
+}
+
+/// Refusals by the address guard read the same whatever the internal
+/// reason (private range, loopback, link-local, IPv6 ULA, plain http) and
+/// store no address. No connection is made: each is refused before it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn address_guard_refusals_read_the_same_and_store_no_address() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "outcome-guard@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let targets = [
+        ("https://10.20.30.40/list.cbl", "10.20.30.40"),
+        ("https://127.0.0.1:8443/list.cbl", "127.0.0.1"),
+        ("https://169.254.169.254/latest/list.cbl", "169.254"),
+        ("https://[fd12:3456::1]/list.cbl", "fd12"),
+        ("http://lists.example.test/plain.cbl", "lists.example.test"),
+    ];
+    let mut seen = Vec::new();
+    for (url, address) in targets {
+        let list_id = upload_sample(&app, &auth).await;
+        make_url_list(&db, list_id, url, None).await;
+        let (status, _) = post_refresh(&app, &auth, list_id).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY, "{url}");
+        let o = outcome(&db, list_id).await;
+        assert_eq!(o.kind, Some(CblRefreshErrorKind::AddressRefused), "{url}");
+        assert_eq!(o.detail, None, "{url}");
+
+        let (status, view) = http(
+            &app,
+            Method::GET,
+            &format!("/api/me/cbl-lists/{list_id}"),
+            Some(&auth),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let failure = view["refresh_failure"].clone();
+        let text = failure.to_string();
+        assert!(!text.contains(address), "{url}: {text}");
+        seen.push((failure["kind"].clone(), failure["detail"].clone()));
+    }
+    assert!(seen.windows(2).all(|w| w[0] == w[1]), "{seen:?}");
+}
+
+/// The hourly sweep records the outcome like a manual refresh, writes no
+/// audit row, and backs off a failing list while a healthy one stays due.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_sweep_records_failures_and_backs_off() {
+    use sea_orm::sea_query::Expr;
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "outcome-sweep@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let failing = upload_sample(&app, &auth).await;
+    let healthy = upload_sample(&app, &auth).await;
+    let url = format!("https://lists.example.test/{failing}/dead.cbl");
+    make_url_list(&db, failing, &url, None).await;
+    stub_source_for_tests(
+        &url,
+        TestSource::Fail(|| FetchBytesError::Transport("x".into())),
+    );
+    let two_hours_ago = (Utc::now() - chrono::Duration::hours(2)).fixed_offset();
+    cbl_list::Entity::update_many()
+        .col_expr(cbl_list::Column::RefreshSchedule, Expr::value("@hourly"))
+        .col_expr(
+            cbl_list::Column::LastRefreshedAt,
+            Expr::value(two_hours_ago),
+        )
+        .filter(cbl_list::Column::Id.is_in([failing, healthy]))
+        .exec(&db)
+        .await
+        .unwrap();
+    let audit_rows = || async {
+        entity::audit_log::Entity::find()
+            .filter(entity::audit_log::Column::Action.like("admin.cbl_list.%"))
+            .count(&db)
+            .await
+            .unwrap()
+    };
+    let audits_before = audit_rows().await;
+
+    let mut due = server::cbl::refresh::due_lists(&db, Utc::now())
+        .await
+        .unwrap();
+    due.sort();
+    let mut both = vec![failing, healthy];
+    both.sort();
+    assert_eq!(due, both);
+    let before = stored_state(&db, failing).await;
+    server::cbl::refresh::run_sweep(&db, vec![failing]).await;
+    let o = outcome(&db, failing).await;
+    assert_eq!(o.kind, Some(CblRefreshErrorKind::Unreachable));
+    assert_eq!(o.count, 1);
+    assert_eq!(stored_state(&db, failing).await, before);
+    assert_eq!(
+        audit_rows().await,
+        audits_before,
+        "the sweep writes no audit row"
+    );
+
+    // One failure: the next hourly tick still tries it.
+    let next_tick = Utc::now() + chrono::Duration::hours(1);
+    let due = server::cbl::refresh::due_lists(&db, next_tick)
+        .await
+        .unwrap();
+    assert!(due.contains(&failing) && due.contains(&healthy), "{due:?}");
+
+    // Three failures in a row: four hours between attempts.
+    cbl_list::Entity::update_many()
+        .col_expr(cbl_list::Column::RefreshFailureCount, Expr::value(3))
+        .filter(cbl_list::Column::Id.eq(failing))
+        .exec(&db)
+        .await
+        .unwrap();
+    let due = server::cbl::refresh::due_lists(&db, next_tick)
+        .await
+        .unwrap();
+    assert_eq!(
+        due,
+        vec![healthy],
+        "backed off; the healthy list is still due"
+    );
+    let later = Utc::now() + chrono::Duration::hours(4);
+    let due = server::cbl::refresh::due_lists(&db, later).await.unwrap();
+    assert!(due.contains(&failing), "{due:?}");
+}
+
+/// The failure state reaches every user who may see the list (a shared
+/// list: every user) on the list and detail responses, in the shape the
+/// OpenAPI document declares.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn refresh_failure_is_returned_to_everyone_who_sees_the_list() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "outcome-admin@example.com").await;
+    let reader = register(&app, "outcome-reader@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let list_id = upload_sample(&app, &admin).await;
+    let url = format!("https://lists.example.test/{list_id}/shared.cbl");
+    make_url_list(&db, list_id, &url, None).await;
+    stub_source_for_tests(
+        &url,
+        TestSource::Fail(|| FetchBytesError::HttpStatus(reqwest::StatusCode::FORBIDDEN)),
+    );
+    cbl_list::Entity::update_many()
+        .col_expr(
+            cbl_list::Column::OwnerUserId,
+            sea_orm::sea_query::Expr::value(Option::<Uuid>::None),
+        )
+        .filter(cbl_list::Column::Id.eq(list_id))
+        .exec(&db)
+        .await
+        .unwrap();
+    let (status, body) = post_refresh(&app, &admin, list_id).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    let since = outcome(&db, list_id).await.failing_since.unwrap();
+
+    let spec = serde_json::to_value(server::app::openapi_spec()).unwrap();
+    let props = |name: &str| -> std::collections::BTreeSet<String> {
+        spec["components"]["schemas"][name]["properties"]
+            .as_object()
+            .unwrap_or_else(|| panic!("{name} in the spec"))
+            .keys()
+            .cloned()
+            .collect()
+    };
+    let kinds = spec["components"]["schemas"]["CblRefreshErrorKind"]["enum"].clone();
+
+    for who in [&admin, &reader] {
+        let (status, list) = http(&app, Method::GET, "/api/me/cbl-lists", Some(who), None).await;
+        assert_eq!(status, StatusCode::OK);
+        let item = list["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["id"] == list_id.to_string())
+            .cloned()
+            .expect("shared list listed");
+        let (status, detail) = http(
+            &app,
+            Method::GET,
+            &format!("/api/me/cbl-lists/{list_id}"),
+            Some(who),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        for view in [&item, &detail] {
+            let failure = &view["refresh_failure"];
+            assert_eq!(failure["kind"], "http_status");
+            assert_eq!(failure["detail"], "HTTP 403");
+            assert_eq!(failure["consecutive_failures"], 1);
+            let at =
+                chrono::DateTime::parse_from_rfc3339(failure["failing_since"].as_str().unwrap())
+                    .unwrap();
+            assert_eq!(at, since);
+            assert!(view["last_refresh_attempt_at"].is_string());
+            let keys: std::collections::BTreeSet<String> =
+                failure.as_object().unwrap().keys().cloned().collect();
+            assert_eq!(keys, props("CblRefreshFailureView"));
+            assert!(kinds.as_array().unwrap().contains(&failure["kind"]));
+        }
+        let keys: std::collections::BTreeSet<String> =
+            item.as_object().unwrap().keys().cloned().collect();
+        assert_eq!(keys, props("CblListView"));
+    }
+
+    // A list nobody has refreshed since the upgrade carries neither.
+    let fresh = upload_sample(&app, &admin).await;
+    let (_, view) = http(
+        &app,
+        Method::GET,
+        &format!("/api/me/cbl-lists/{fresh}"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert!(view["refresh_failure"].is_null());
+    assert!(view["last_refresh_attempt_at"].is_null());
 }

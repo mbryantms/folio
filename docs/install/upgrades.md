@@ -149,6 +149,20 @@ docker compose -f compose.prod.yml up -d --no-deps app
 
 ## Breaking changes by version
 
+### Unreleased — reading lists show a failing refresh
+
+- Migration `m20271117_000001_cbl_refresh_outcome` adds five columns to
+  `cbl_lists` (last refresh attempt, failure kind and short detail, start
+  of the failing run, failures in a row) with CHECK constraints. Nothing
+  to do; existing lists start with no recorded attempt.
+- A reading list whose refresh fails now says so: a warning icon on
+  `/lists` and a notice on the list's page with the reason, since when
+  and what to do. The list keeps its last good copy.
+- The hourly refresh sweep retries a failing list less often: after the
+  second failure in a row it waits 2 h, then 4, 8, 16 and at most 24 h
+  between attempts (it used to retry every hour forever). A successful
+  refresh resets this; Refresh now always tries at once.
+
 ### Unreleased — `COMIC_ARCHIVE_MAX_NESTING` removed
 
 - The `COMIC_ARCHIVE_MAX_NESTING` setting ("nested-archive depth") never

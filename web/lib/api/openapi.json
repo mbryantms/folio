@@ -17955,6 +17955,13 @@
               "null"
             ]
           },
+          "last_refresh_attempt_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When the last refresh attempt (scheduled or manual) finished,\nwhether or not it succeeded. `None` until the first one."
+          },
           "last_refreshed_at": {
             "type": [
               "string",
@@ -17980,6 +17987,17 @@
           "parsed_name": {
             "type": "string"
           },
+          "refresh_failure": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CblRefreshFailureView",
+                "description": "Set while the list's refreshes are failing; `None` when the last\nattempt succeeded or there has been none. A failure never changes\nthe entries or `last_refreshed_at`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "refresh_schedule": {
             "type": [
               "string",
@@ -18001,6 +18019,50 @@
           },
           "updated_at": {
             "type": "string"
+          }
+        }
+      },
+      "CblRefreshErrorKind": {
+        "type": "string",
+        "description": "Why a reading list's last refresh failed. Each failure path of a refresh\nmaps onto exactly one kind (`server::cbl::refresh::RefreshError::failure`).",
+        "enum": [
+          "unreachable",
+          "http_status",
+          "missing",
+          "address_refused",
+          "too_large",
+          "too_many_entries",
+          "invalid_list",
+          "other"
+        ]
+      },
+      "CblRefreshFailureView": {
+        "type": "object",
+        "description": "Why a list's refreshes are failing. Every field is composed by the\nserver: no remote response text, host or address.",
+        "required": [
+          "kind",
+          "failing_since",
+          "consecutive_failures"
+        ],
+        "properties": {
+          "consecutive_failures": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Failed attempts in a row."
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A short note built from safe values, e.g. `HTTP 503` or\n`over the 4 MiB limit`. `None` when the kind says it all; always\n`None` for `address_refused`."
+          },
+          "failing_since": {
+            "type": "string",
+            "description": "The first failed attempt of the current run of failures."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CblRefreshErrorKind"
           }
         }
       },
