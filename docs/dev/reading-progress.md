@@ -186,18 +186,25 @@ TanStack optimistic update
 ([`card-list-cache.ts`](../../web/lib/api/card-list-cache.ts); which
 queries are card lists is defined once, by `isCardListKey` in
 `mutations/rails.ts`). It first cancels in-flight card-list fetches, so a
-response that started before the write cannot land on top of it; an
-infinite list keeps the patched pages when it fetches the next one. A
+response that started before the write cannot land on top of it, and
+re-runs exactly those fetches (where the list is still mounted) when the
+write settles, success or failure; an infinite list keeps the patched
+pages when it fetches the next one. A patch keeps the list's age: its
+`dataUpdatedAt` and, for a list already marked stale, the stale flag. A
 failure rolls back per issue, and only where the cached copy is still the
-mutation's own write, so a later write to the same issue stands. A single
-mark's reply replaces its optimistic copy. Nothing in the badge path
-compares times.
+mutation's own write, so a later write to the same issue stands. On
+success the result is written into every cached card list again (a single
+mark's reply; the records of an Undo or of a bulk mark with no refusals),
+which reaches a list that mounted while the request was in flight, and
+card-list fetches in flight at that moment are re-run, since they may have
+read the state from before the commit. Nothing in the badge path compares
+times.
 
 After a write that names its issues, the card lists are marked stale and
 refetch on their next mount. A series-level mark, "select all matching", a
-bulk mark the server partly refused (its reply counts refusals without
-naming them), a failed Undo and an outbox replay refetch the mounted lists
-instead, and reset the issue page's per-issue record, so the issue page
+bulk mark whose reply counts any issue as forbidden, not found or failed
+(it counts them without naming them), a failed Undo and an outbox replay
+refetch the mounted lists instead, and reset the issue page's per-issue record, so the issue page
 shows the server's state. The reader only marks the lists stale, and
 updates the issue page's record when one is cached.
 
