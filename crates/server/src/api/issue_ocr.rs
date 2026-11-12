@@ -64,7 +64,7 @@ use crate::library::zip_lru::{CachedReader, lock_reader};
 use crate::middleware::rate_limit;
 use crate::ocr::cache::{self, CachedDetection};
 use crate::ocr::pipeline::{
-    OcrInput, Rect, blocking_with_permit, detect_and_cache_regions, prepare_detector,
+    OcrInput, OcrOutput, Rect, blocking_with_permit, detect_and_cache_regions, prepare_detector,
     prepare_models, run_ocr,
 };
 use crate::ocr::recognizer::Language;
@@ -244,6 +244,37 @@ pub struct TextRegionView {
     pub class: u32,
 }
 
+impl OcrResponse {
+    /// The response for one finished pipeline run (`lang` is the
+    /// recognizer that ran).
+    pub(crate) fn from_output(out: OcrOutput, lang: &str) -> Self {
+        OcrResponse {
+            text: out.recognition.text,
+            confidence: out.recognition.confidence,
+            refined_bbox: out.refined_bbox.map(|r| OcrRegion {
+                x: r.x,
+                y: r.y,
+                w: r.w,
+                h: r.h,
+            }),
+            lang: lang.to_owned(),
+            raw_text: out.recognition.raw_text,
+            words: out.recognition.words.map(|ws| {
+                ws.into_iter()
+                    .map(|w| OcrWord {
+                        text: w.text,
+                        confidence: w.confidence,
+                        x: w.xmin.max(0.0).round() as u32,
+                        y: w.ymin.max(0.0).round() as u32,
+                        w: (w.xmax - w.xmin).max(0.0).round() as u32,
+                        h: (w.ymax - w.ymin).max(0.0).round() as u32,
+                    })
+                    .collect()
+            }),
+        }
+    }
+}
+
 impl From<CachedDetection> for TextRegionsView {
     fn from(d: CachedDetection) -> Self {
         let (pw, ph) = (d.page_w as f32, d.page_h as f32);
@@ -376,7 +407,7 @@ pub async fn serve(
         Err(resp) => return *resp,
     };
     // ─── Models (a first-use download waits here, without a permit) ─
-    let models = match prepare_models(language, detect).await {
+    let models = match prepare_models(&row.content_hash, language, detect).await {
         Ok(m) => m,
         Err(e) => {
             tracing::error!(error = %e, "ocr: model preparation failed");
@@ -417,38 +448,12 @@ pub async fn serve(
         page: req.page,
         redis: app.jobs.redis.clone(),
         detect,
+        // The work writes the result cache itself, so a result that
+        // finishes after this request is gone is still cached.
+        result_key: key,
     };
     match run_ocr(input, models, permit).await {
-        Ok(out) => {
-            let response = OcrResponse {
-                text: out.recognition.text,
-                confidence: out.recognition.confidence,
-                refined_bbox: out.refined_bbox.map(|r| OcrRegion {
-                    x: r.x,
-                    y: r.y,
-                    w: r.w,
-                    h: r.h,
-                }),
-                lang: lang_str.to_owned(),
-                raw_text: out.recognition.raw_text,
-                words: out.recognition.words.map(|ws| {
-                    ws.into_iter()
-                        .map(|w| OcrWord {
-                            text: w.text,
-                            confidence: w.confidence,
-                            x: w.xmin.max(0.0).round() as u32,
-                            y: w.ymin.max(0.0).round() as u32,
-                            w: (w.xmax - w.xmin).max(0.0).round() as u32,
-                            h: (w.ymax - w.ymin).max(0.0).round() as u32,
-                        })
-                        .collect()
-                }),
-            };
-            // Best-effort cache write — failures don't fail the
-            // request; the next call will simply rerun the pipeline.
-            cache::put(&app.jobs.redis, &key, &response).await;
-            Json(response).into_response()
-        }
+        Ok(response) => Json(response).into_response(),
         Err(e) => {
             tracing::error!(error = %e, "ocr: pipeline failure");
             ocr_failure(&e, "ocr pipeline failed")
@@ -502,7 +507,7 @@ pub async fn text_regions(
         Err(resp) => return *resp,
     };
     // ─── Detector (a first-use download waits here, no permit) ───
-    let detector = match prepare_detector().await {
+    let detector = match prepare_detector(&row.content_hash).await {
         Ok(d) => d,
         Err(e) => {
             tracing::error!(error = %e, "ocr: detector preparation failed");

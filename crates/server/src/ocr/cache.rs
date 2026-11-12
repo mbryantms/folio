@@ -47,6 +47,27 @@ use crate::api::issue_ocr::OcrResponse;
 /// guesses.
 pub const CACHE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
+/// Longest a cache write may take. The writes run in the detached OCR
+/// work (`ocr::pipeline`) after the request may be gone; a hung Redis
+/// must not leave those tasks waiting forever.
+pub const CACHE_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// `SET key payload EX ttl`, bounded by [`CACHE_WRITE_TIMEOUT`]. Failures
+/// are logged and swallowed (fail-open).
+async fn set_bounded(redis: &ConnectionManager, key: &str, payload: String, what: &str) {
+    let mut conn = redis.clone();
+    let set = tokio::time::timeout(
+        CACHE_WRITE_TIMEOUT,
+        conn.set_ex::<_, _, ()>(key, payload, CACHE_TTL.as_secs()),
+    )
+    .await;
+    match set {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => tracing::warn!(error = %e, key, "{what}: SET failed; ignoring"),
+        Err(_) => tracing::warn!(key, "{what}: SET timed out; ignoring"),
+    }
+}
+
 /// Version byte folded into every result-cache key. Bump on any
 /// change that alters what the pipeline would produce for the same
 /// inputs: preprocessing (binarization, padding, DPI), PSM,
@@ -264,7 +285,6 @@ pub async fn get(redis: &ConnectionManager, key: &str) -> Option<OcrResponse> {
 
 /// Store a successful OCR response. Failures are swallowed.
 pub async fn put(redis: &ConnectionManager, key: &str, response: &OcrResponse) {
-    let mut conn = redis.clone();
     let payload = match serde_json::to_string(response) {
         Ok(s) => s,
         Err(e) => {
@@ -272,10 +292,7 @@ pub async fn put(redis: &ConnectionManager, key: &str, response: &OcrResponse) {
             return;
         }
     };
-    let set: Result<(), _> = conn.set_ex(key, payload, CACHE_TTL.as_secs()).await;
-    if let Err(e) = set {
-        tracing::warn!(error = %e, key, "ocr cache: SET failed; ignoring");
-    }
+    set_bounded(redis, key, payload, "ocr cache").await;
 }
 
 // ───────── detect-result cache ─────────
@@ -355,7 +372,6 @@ pub async fn get_detect(redis: &ConnectionManager, key: &str) -> Option<CachedDe
 
 /// Store the detector's output for a page. Failures are swallowed.
 pub async fn put_detect(redis: &ConnectionManager, key: &str, detection: &CachedDetection) {
-    let mut conn = redis.clone();
     let payload = match serde_json::to_string(detection) {
         Ok(s) => s,
         Err(e) => {
@@ -363,10 +379,7 @@ pub async fn put_detect(redis: &ConnectionManager, key: &str, detection: &Cached
             return;
         }
     };
-    let set: Result<(), _> = conn.set_ex(key, payload, CACHE_TTL.as_secs()).await;
-    if let Err(e) = set {
-        tracing::warn!(error = %e, key, "ocr detect cache: SET failed; ignoring");
-    }
+    set_bounded(redis, key, payload, "ocr detect cache").await;
 }
 
 #[cfg(test)]
