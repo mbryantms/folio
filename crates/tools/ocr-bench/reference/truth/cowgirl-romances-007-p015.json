@@ -1,0 +1,203 @@
+{
+ "book": "cowgirl-romances-007",
+ "page_index": 15,
+ "image": "pages/cowgirl-romances-007/p015.jpg",
+ "image_size": [
+  1178,
+  1738
+ ],
+ "tiles": "truth/tiles/cowgirl-romances-007/p015 (2 x 2, 15% overlap, native resolution)",
+ "bbox_note": "bbox_pct values are approximate (estimated by eye) and are only meant for matching regions; x, y = top-left, w, h = size, in percent of the page.",
+ "excluded": "Printed page number '3' (bottom right corner) and a faint, mirrored show-through of a page number in the left margin (about 25 px, not printed on this page).",
+ "page_notes": "Western romance. Scan is slightly curved toward the spine on the right. The opening caption is free-floating text set on a steep upward slant (each line rotated roughly 15-20 degrees), a hard layout case. Lettering is upper case with bold-italic emphasis words.",
+ "regions": [
+  {
+   "id": 1,
+   "kind": "caption",
+   "text": "SCARRED AND DISFIGURED, LILLI ANDREY BROODED AND SULKED, CAREFULLY PLOTTED HER REVENGE--AND DAYS LATER, TOGETHER WITH HER HENCHMEN...",
+   "bbox_pct": {
+    "x": 4.0,
+    "y": 4.0,
+    "w": 16.0,
+    "h": 21.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": "No box: italic lettering on the page margin, each line slanted upward. Red drop initial 'S'. 'REVENGE' is followed by a long dash at the line end (drawn as one long stroke); written as '--'. The surname reads ANDREY; the R is clear."
+  },
+  {
+   "id": 2,
+   "kind": "balloon",
+   "text": "MISS PRISCILLA AND HER FOREMAN ARE DOWN IN THE CANYON NOW, LILLI.",
+   "bbox_pct": {
+    "x": 25.0,
+    "y": 4.0,
+    "w": 16.0,
+    "h": 6.6
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 3,
+   "kind": "balloon",
+   "text": "GOOD, I'VE BEEN WAITING A LONG, LONG TIME TO GET HER ALONE...",
+   "bbox_pct": {
+    "x": 42.0,
+    "y": 4.0,
+    "w": 19.0,
+    "h": 6.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 4,
+   "kind": "balloon",
+   "text": "...AND NOW SHE'S GOING TO PAY FOR THIS SCAR SHE GAVE ME! SHE BRANDED ME BEFORE, AND NOW IT'S MY TURN TO DO THE SAME TO HER! COME ON!",
+   "bbox_pct": {
+    "x": 64.0,
+    "y": 4.0,
+    "w": 31.5,
+    "h": 7.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": "'COME ON!' is bold italic."
+  },
+  {
+   "id": 5,
+   "kind": "caption",
+   "text": "MEANWHILE, IN THE CANYON AHEAD, A WOLF PACK CORNERS HELPLESS PREY... HOWLING WILDLY, THE KILLERS POUNCE...",
+   "bbox_pct": {
+    "x": 5.0,
+    "y": 35.0,
+    "w": 36.0,
+    "h": 6.0
+   },
+   "colour_case": "on_colour",
+   "notes": "Dark lettering on a yellow caption box; red drop initial 'M'."
+  },
+  {
+   "id": 6,
+   "kind": "caption",
+   "text": "BUT FROM THE LEDGE ABOVE, THE SNARL OF AMBUSH LEAD!",
+   "bbox_pct": {
+    "x": 42.5,
+    "y": 35.0,
+    "w": 31.5,
+    "h": 3.4
+   },
+   "colour_case": "on_colour",
+   "notes": "Dark lettering on yellow; red drop initial 'B'."
+  },
+  {
+   "id": 7,
+   "kind": "balloon",
+   "text": "THOSE CATTLE LURED 'EM INTO THE OPEN, M'AM!",
+   "bbox_pct": {
+    "x": 44.0,
+    "y": 39.0,
+    "w": 13.5,
+    "h": 5.3
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Drawn as M'AM (apostrophe after the M), kept as lettered."
+  },
+  {
+   "id": 8,
+   "kind": "balloon",
+   "text": "AND ABOUT TIME--THEY'VE BEEN PICKING OFF TOO MANY OF OUR HERD!",
+   "bbox_pct": {
+    "x": 58.5,
+    "y": 39.0,
+    "w": 16.0,
+    "h": 6.8
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Dash drawn as a single long stroke with spaces either side ('TIME — THEY'VE'); written as '--'."
+  },
+  {
+   "id": 9,
+   "kind": "balloon",
+   "text": "GOT MOST OF THEM--AND THE OTHERS ARE RUNNING OFF! I DON'T THINK THEY'LL BE BACK SO SOON...",
+   "bbox_pct": {
+    "x": 75.0,
+    "y": 35.0,
+    "w": 20.5,
+    "h": 7.5
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Long dash at line end after THEM, written as '--'."
+  },
+  {
+   "id": 10,
+   "kind": "balloon",
+   "text": "HEY, LOOK!",
+   "bbox_pct": {
+    "x": 87.0,
+    "y": 43.3,
+    "w": 7.0,
+    "h": 3.4
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 11,
+   "kind": "balloon",
+   "text": "QUICK! DON'T LET THEM GET AWAY--I'VE BEEN WAITING TOO LONG FOR THIS!",
+   "bbox_pct": {
+    "x": 9.5,
+    "y": 67.0,
+    "w": 16.5,
+    "h": 9.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "'QUICK!' is bold italic. Long dash at line end after AWAY, written as '--'."
+  },
+  {
+   "id": 12,
+   "kind": "balloon",
+   "text": "SHE'S A HELLCAT, MISS--RUN FOR THE HORSES!",
+   "bbox_pct": {
+    "x": 32.0,
+    "y": 67.0,
+    "w": 19.5,
+    "h": 6.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Dash drawn as a single long stroke with spaces; written as '--'."
+  },
+  {
+   "id": 13,
+   "kind": "balloon",
+   "text": "LILLI! STOP THIS, HAVE YOU GONE COMPLETELY MAD?",
+   "bbox_pct": {
+    "x": 66.0,
+    "y": 67.0,
+    "w": 22.0,
+    "h": 5.4
+   },
+   "colour_case": "dark_on_light",
+   "notes": "'LILLI!' is bold italic."
+  }
+ ],
+ "second_pass": {
+  "corrections": 1,
+  "details": [
+   "Region 7: first pass wrote MA'M; the lettering is M'AM."
+  ]
+ },
+ "counts": {
+  "regions": 13,
+  "words": 162,
+  "by_kind": {
+   "caption": 3,
+   "balloon": 10
+  },
+  "by_colour_case": {
+   "dark_on_light": 11,
+   "on_colour": 2
+  },
+  "illegible_tokens": 0
+ }
+}

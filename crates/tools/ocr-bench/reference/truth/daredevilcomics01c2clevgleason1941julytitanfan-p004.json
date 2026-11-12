@@ -1,0 +1,268 @@
+{
+ "book": "daredevilcomics01c2clevgleason1941julytitanfan",
+ "page_index": 4,
+ "image": "pages/daredevilcomics01c2clevgleason1941julytitanfan/p004.jpg",
+ "image_size": [
+  1300,
+  1830
+ ],
+ "tiles": "truth/tiles/daredevilcomics01c2clevgleason1941julytitanfan/p004 (2 x 2, 15% overlap, native resolution)",
+ "bbox_note": "bbox_pct values are approximate (estimated by eye from the overview and tiles) and are only meant for matching regions; x, y = top-left, w, h = size, all in percent of the page.",
+ "excluded": "Printed page number '3' at bottom right (folio, not lettering).",
+ "page_notes": "Lettering is hand-drawn upper case. Captions are italic. Two-dot ellipses ('..') are the letterer's habit and are kept as drawn.",
+ "regions": [
+  {
+   "id": 1,
+   "kind": "caption",
+   "text": "ON THE OTHER SIDE OF THE WALL.. FROM LEFT TO RIGHT.. GOEBBELS OF PROPAGANDA, HIMMLER OF THE GESTAPO, AIR MARSHAL GOERING, ADMIRAL ROEDER AND GENERAL BRAUCHITSCH... WITH HITLER, HIMSELF, AT THE HEAD OF THE TABLE.",
+   "bbox_pct": {
+    "x": 6.2,
+    "y": 4.0,
+    "w": 85.5,
+    "h": 5.0
+   },
+   "colour_case": "on_colour",
+   "notes": "Dark italic text on a green caption bar. First letter is a decorated drop initial 'O'. The mark after PROPAGANDA could be a comma or a full stop (low contrast on green); comma chosen to match the list punctuation. Final full stop is small and sits apart from TABLE."
+  },
+  {
+   "id": 2,
+   "kind": "balloon",
+   "text": "THE CRYSTAL BALL SAYS BLITZKRIEG.. SO BLITZKRIEG IT IS! HEIL, HITLER!",
+   "bbox_pct": {
+    "x": 30.8,
+    "y": 8.9,
+    "w": 17.0,
+    "h": 6.1
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 3,
+   "kind": "balloon",
+   "text": "IT'S A DANGEROUS UNDERTAKING TO LAUNCH.. ON THE MERE WORD OF A FORTUNE-TELLER!",
+   "bbox_pct": {
+    "x": 49.8,
+    "y": 8.9,
+    "w": 19.9,
+    "h": 7.2
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 4,
+   "kind": "balloon",
+   "text": "THE CRYSTAL NEVER LIES.. DOWN WITH ENGLAND!",
+   "bbox_pct": {
+    "x": 74.0,
+    "y": 8.9,
+    "w": 17.2,
+    "h": 6.7
+   },
+   "colour_case": "dark_on_light",
+   "notes": "'DOWN WITH ENGLAND!' is lettered in italic for emphasis."
+  },
+  {
+   "id": 5,
+   "kind": "caption",
+   "text": "BUT THE GENERAL SOUNDS AN OMINOUS WARNING.",
+   "bbox_pct": {
+    "x": 6.2,
+    "y": 36.1,
+    "w": 50.0,
+    "h": 2.4
+   },
+   "colour_case": "on_colour",
+   "notes": "Dark italic on green."
+  },
+  {
+   "id": 6,
+   "kind": "balloon",
+   "text": "AN ATTEMPT TO CROSS THE ENGLISH CHANNEL MAY REQUIRE THE SACRIFICE OF 500,000 MEN!",
+   "bbox_pct": {
+    "x": 6.3,
+    "y": 38.3,
+    "w": 24.3,
+    "h": 7.3
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 7,
+   "kind": "balloon",
+   "text": "MY MEN SHOULD BE GLAD TO DIE FOR ME... ANYWAY THE ELEMENT OF DANGER IS NOT TOO GREAT BECAUSE I'M EXPECTING A COPY OF THE ENEMY'S DEFENSE PLANS FROM A BRITISH FRIEND OF MINE!",
+   "bbox_pct": {
+    "x": 23.5,
+    "y": 41.7,
+    "w": 32.0,
+    "h": 12.8
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Drawn as 'ME...ANYWAY' with no space after the ellipsis; written with a space here (ellipsis followed by the next word)."
+  },
+  {
+   "id": 8,
+   "kind": "caption",
+   "text": "THE COLD-BLOODED DICTATOR TURNS TO GOEBBELS.",
+   "bbox_pct": {
+    "x": 57.1,
+    "y": 36.1,
+    "w": 34.4,
+    "h": 3.6
+   },
+   "colour_case": "on_colour",
+   "notes": "Dark italic on yellow."
+  },
+  {
+   "id": 9,
+   "kind": "balloon",
+   "text": "GOEBBELS.. TELL THE FOREIGN PRESS SEVERAL GERMANS HAVE BEEN MURDERED IN YUGOSLAVIA! MAKE THE ATROCITIES SOUND AS HORRIBLE AS POSSIBLE!",
+   "bbox_pct": {
+    "x": 57.1,
+    "y": 39.8,
+    "w": 34.1,
+    "h": 6.9
+   },
+   "colour_case": "dark_on_light",
+   "notes": "'GOEBBELS' is italic. Balloon sits on an orange panel background but the balloon itself is light."
+  },
+  {
+   "id": 10,
+   "kind": "balloon",
+   "text": "HOW ABOUT A DEMAND FOR MORE LIVING SPACE FOR THE REICH?",
+   "bbox_pct": {
+    "x": 68.9,
+    "y": 50.0,
+    "w": 21.0,
+    "h": 10.0
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 11,
+   "kind": "balloon",
+   "text": "FOOL! MASS OUR TROOPS. WE WILL ATTACK THROUGH SOFIA AND THEN-",
+   "bbox_pct": {
+    "x": 6.3,
+    "y": 65.6,
+    "w": 15.0,
+    "h": 7.8
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Italic. Drawn 'FOOL!MASS' with almost no space."
+  },
+  {
+   "id": 12,
+   "kind": "caption",
+   "text": "MEANWHILE, THE FORTUNE-TELLER GOES INTO A TRANCE.",
+   "bbox_pct": {
+    "x": 25.0,
+    "y": 65.6,
+    "w": 17.2,
+    "h": 3.9
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Unboxed italic caption on the page background; decorated drop initial 'M'."
+  },
+  {
+   "id": 13,
+   "kind": "balloon",
+   "text": "FUEHRER... THE CRYSTAL SAYS YOU CAN'T BLITZ ENGLAND WITHOUT THE AID OF MUSSOLINI'S BRAVE LEGIONS!",
+   "bbox_pct": {
+    "x": 25.0,
+    "y": 70.0,
+    "w": 17.0,
+    "h": 9.4
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Drawn 'FUEHRER...THE'."
+  },
+  {
+   "id": 14,
+   "kind": "caption",
+   "text": "WITH A SHRIEK, HITLER RUSHES TO THE OTHER END OF THE TABLE AND GRABS THE GLASS BALL.",
+   "bbox_pct": {
+    "x": 43.0,
+    "y": 65.6,
+    "w": 48.5,
+    "h": 3.3
+   },
+   "colour_case": "on_colour",
+   "notes": "Dark italic on a red caption bar; low contrast."
+  },
+  {
+   "id": 15,
+   "kind": "balloon",
+   "text": "YOU'RE THROUGH TELLING FORTUNES! RAUS!",
+   "bbox_pct": {
+    "x": 43.0,
+    "y": 69.4,
+    "w": 18.8,
+    "h": 4.2
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  },
+  {
+   "id": 16,
+   "kind": "balloon",
+   "text": "YEOWEE!",
+   "bbox_pct": {
+    "x": 43.8,
+    "y": 74.2,
+    "w": 10.0,
+    "h": 2.6
+   },
+   "colour_case": "dark_on_light",
+   "notes": "Italic cry in a small balloon."
+  },
+  {
+   "id": 17,
+   "kind": "balloon",
+   "text": "HA, BRAVE!.. THE GREEKS HAD A WORD FOR IT!",
+   "bbox_pct": {
+    "x": 62.6,
+    "y": 69.4,
+    "w": 15.0,
+    "h": 4.6
+   },
+   "colour_case": "dark_on_light",
+   "notes": "'BRAVE!' and 'WORD FOR IT!' are italic."
+  },
+  {
+   "id": 18,
+   "kind": "balloon",
+   "text": "HA, HA!",
+   "bbox_pct": {
+    "x": 79.0,
+    "y": 69.4,
+    "w": 11.7,
+    "h": 2.4
+   },
+   "colour_case": "dark_on_light",
+   "notes": ""
+  }
+ ],
+ "second_pass": {
+  "corrections": 0,
+  "details": [
+   "No text changed. Added an uncertainty note on region 1 (comma vs full stop after PROPAGANDA)."
+  ]
+ },
+ "counts": {
+  "regions": 18,
+  "words": 225,
+  "by_kind": {
+   "caption": 5,
+   "balloon": 13
+  },
+  "by_colour_case": {
+   "on_colour": 4,
+   "dark_on_light": 14
+  },
+  "illegible_tokens": 0
+ }
+}
