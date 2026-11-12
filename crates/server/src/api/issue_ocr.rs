@@ -362,6 +362,9 @@ pub async fn serve(
         Language::Western => "western",
         Language::Manga => "manga",
     };
+    // The keys carry the engine fingerprint (`ocr::cache`), computed once
+    // per process off the async runtime.
+    cache::warm_fingerprints().await;
     let key = cache::cache_key(&row.content_hash, req.page, lang_str, detect, &region_hash);
     if let Some(hit) = cache::get(&app.jobs.redis, &key).await {
         return Json(hit).into_response();
@@ -487,6 +490,7 @@ pub async fn text_regions(
     // ─── Cache lookup ────────────────────────────────────────────
     // Checked before the archive is touched: a hit skips page load
     // and decode entirely, making warm requests a Redis round-trip.
+    cache::warm_fingerprints().await;
     let key = cache::detect_cache_key(&row.content_hash, page);
     if let Some(hit) = cache::get_detect(&app.jobs.redis, &key).await {
         return Json(TextRegionsView::from(hit)).into_response();

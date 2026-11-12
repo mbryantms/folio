@@ -1,7 +1,14 @@
 //! Redis-backed OCR result cache (text-detection-1.0 plan, M4).
 //!
-//! Keyed by `(content_hash, page, lang, region_hash)`:
+//! Keyed by `(engine fingerprint, content_hash, page, lang, detect,
+//! region_hash)`:
 //!
+//! - **engine fingerprint** is a 16-hex hash of the version constants,
+//!   the pinned ONNX model revisions and digests, the Tesseract version
+//!   and a digest of the language data it loads ([`EngineInputs`]),
+//!   computed once per process. An image upgrade that changes any of
+//!   them rolls every key; old entries age out via the TTL. The detect
+//!   cache carries a detector-only fingerprint.
 //! - **`content_hash`** is the issue's BLAKE3 of the on-disk bytes,
 //!   not its (stable) row id. This makes invalidation automatic: a
 //!   rescan that retags the same issue with new content rolls the
@@ -53,6 +60,126 @@ pub const CACHE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// postprocess cleanup (OCR rework 1.0); v1 = unversioned launch shape.
 pub const OCR_RESULT_VERSION: u32 = 3;
 
+// ───────── engine fingerprint ─────────
+//
+// The version constants cover what this code does to an image; they do
+// not cover what the engines are. An image upgrade that changes the
+// Tesseract library, its language data, or a pinned ONNX model would
+// otherwise keep serving results computed by the old engines until the
+// TTL ran out. Both keys therefore carry a short hash of everything that
+// decides their payload. Old keys simply age out.
+
+/// Hex characters of the fingerprint kept in a key (64 bits).
+const FINGERPRINT_HEX_LEN: usize = 16;
+
+/// Everything that decides what a cached payload holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EngineInputs {
+    pub result_version: u32,
+    pub detect_version: u32,
+    /// `repo@revision/file#sha256` of every pinned detector file.
+    pub detector_pins: Vec<String>,
+    /// The same for the manga-ocr files.
+    pub manga_pins: Vec<String>,
+    /// Tesseract version + language-data digest
+    /// ([`super::recognizer::western::engine_identity`]).
+    pub western: String,
+}
+
+impl EngineInputs {
+    /// What this process runs. Blocking: hashes the Tesseract language
+    /// data. Call through [`fingerprints`] (once per process).
+    pub fn current() -> Self {
+        let pins = |files: &[super::models::PinnedFile]| {
+            files
+                .iter()
+                .map(|f| format!("{}@{}/{}#{}", f.repo, f.revision, f.file, f.sha256))
+                .collect()
+        };
+        Self {
+            result_version: OCR_RESULT_VERSION,
+            detect_version: OCR_DETECT_VERSION,
+            detector_pins: pins(super::models::DETECTOR_FILES),
+            manga_pins: pins(super::models::MANGA_FILES),
+            western: super::recognizer::western::engine_identity(),
+        }
+    }
+
+    /// Fingerprint for result-cache keys: the cleanup + preprocessing
+    /// version, both recognizers, and the detector (a `detect: true`
+    /// result is read from the detector's crop).
+    pub fn result_fingerprint(&self) -> String {
+        let mut parts = vec![
+            format!("result-v{}", self.result_version),
+            format!("detect-v{}", self.detect_version),
+            self.western.clone(),
+        ];
+        parts.extend(self.detector_pins.iter().cloned());
+        parts.extend(self.manga_pins.iter().cloned());
+        short_hash(&parts)
+    }
+
+    /// Fingerprint for detect-cache keys: the detector alone.
+    pub fn detect_fingerprint(&self) -> String {
+        let mut parts = vec![format!("detect-v{}", self.detect_version)];
+        parts.extend(self.detector_pins.iter().cloned());
+        short_hash(&parts)
+    }
+}
+
+/// BLAKE3 over length-prefixed parts (so part boundaries cannot shift),
+/// first [`FINGERPRINT_HEX_LEN`] hex characters.
+fn short_hash(parts: &[String]) -> String {
+    let mut hasher = blake3::Hasher::new();
+    for p in parts {
+        hasher.update(&(p.len() as u64).to_le_bytes());
+        hasher.update(p.as_bytes());
+    }
+    let mut hex = hasher.finalize().to_hex().to_string();
+    hex.truncate(FINGERPRINT_HEX_LEN);
+    hex
+}
+
+/// The two key fingerprints of this process.
+#[derive(Debug, Clone)]
+pub struct Fingerprints {
+    pub result: String,
+    pub detect: String,
+}
+
+static FINGERPRINTS: std::sync::OnceLock<Fingerprints> = std::sync::OnceLock::new();
+
+/// This process's fingerprints, computed on first use. The first call
+/// hashes the Tesseract language data (blocking, tens of ms); the
+/// handlers call [`warm_fingerprints`] first so that happens off the
+/// async runtime.
+pub fn fingerprints() -> &'static Fingerprints {
+    FINGERPRINTS.get_or_init(|| {
+        let inputs = EngineInputs::current();
+        let fp = Fingerprints {
+            result: inputs.result_fingerprint(),
+            detect: inputs.detect_fingerprint(),
+        };
+        tracing::info!(
+            result = %fp.result,
+            detect = %fp.detect,
+            western = %inputs.western,
+            "ocr cache: engine fingerprints"
+        );
+        fp
+    })
+}
+
+/// Compute [`fingerprints`] on the blocking pool if no one has yet.
+pub async fn warm_fingerprints() {
+    if FINGERPRINTS.get().is_none() {
+        let _ = tokio::task::spawn_blocking(|| {
+            fingerprints();
+        })
+        .await;
+    }
+}
+
 /// Build the Redis key for one cache entry. Public so tests can
 /// pre-seed entries without going through the full handler path.
 ///
@@ -61,6 +188,9 @@ pub const OCR_RESULT_VERSION: u32 = 3;
 /// between the two because the detector reframes the user's region;
 /// mixing them in the cache would serve stale answers when an
 /// operator (or future per-call override) flips detection state.
+///
+/// The segment after the version is the engine fingerprint
+/// ([`Fingerprints::result`]).
 pub fn cache_key(
     content_hash: &str,
     page: u32,
@@ -68,8 +198,28 @@ pub fn cache_key(
     detect: bool,
     region_hash: &str,
 ) -> String {
+    result_key_with(
+        &fingerprints().result,
+        content_hash,
+        page,
+        lang,
+        detect,
+        region_hash,
+    )
+}
+
+fn result_key_with(
+    fingerprint: &str,
+    content_hash: &str,
+    page: u32,
+    lang: &str,
+    detect: bool,
+    region_hash: &str,
+) -> String {
     let d = if detect { "d" } else { "r" };
-    format!("ocr:cache:v{OCR_RESULT_VERSION}:{content_hash}:{page}:{lang}:{d}:{region_hash}")
+    format!(
+        "ocr:cache:v{OCR_RESULT_VERSION}:{fingerprint}:{content_hash}:{page}:{lang}:{d}:{region_hash}"
+    )
 }
 
 /// Stable 32-hex BLAKE3 of the integer-pixel rect. Keeping it
@@ -167,9 +317,14 @@ pub struct CachedDetection {
 /// Old-version keys age out via [`CACHE_TTL`].
 pub const OCR_DETECT_VERSION: u32 = 2;
 
-/// Redis key for the per-page detector output cache.
+/// Redis key for the per-page detector output cache. The segment after
+/// the version is the detector fingerprint ([`Fingerprints::detect`]).
 pub fn detect_cache_key(content_hash: &str, page: u32) -> String {
-    format!("ocr:detect:v{OCR_DETECT_VERSION}:{content_hash}:{page}")
+    detect_key_with(&fingerprints().detect, content_hash, page)
+}
+
+fn detect_key_with(fingerprint: &str, content_hash: &str, page: u32) -> String {
+    format!("ocr:detect:v{OCR_DETECT_VERSION}:{fingerprint}:{content_hash}:{page}")
 }
 
 /// Look up cached detector output for a page. `Some` on hit, `None`
@@ -252,6 +407,202 @@ mod tests {
         assert!(k.contains("hashA"));
         assert!(k.contains(":12"));
         assert!(k.starts_with(&format!("ocr:detect:v{OCR_DETECT_VERSION}:")));
+    }
+
+    fn inputs() -> EngineInputs {
+        EngineInputs {
+            result_version: 3,
+            detect_version: 2,
+            detector_pins: vec!["acme/det@aaa/det.onnx#111".into()],
+            manga_pins: vec![
+                "acme/manga@bbb/enc.onnx#222".into(),
+                "acme/manga@bbb/vocab.txt#333".into(),
+            ],
+            western: "tesseract=5.5.0;eng.traineddata=abc".into(),
+        }
+    }
+
+    fn is_fingerprint(s: &str) -> bool {
+        s.len() == FINGERPRINT_HEX_LEN && s.bytes().all(|b| b.is_ascii_hexdigit())
+    }
+
+    #[test]
+    fn keys_carry_a_short_fingerprint() {
+        let k = result_key_with("0123456789abcdef", "hashA", 4, "western", false, "rh");
+        assert_eq!(
+            k,
+            format!("ocr:cache:v{OCR_RESULT_VERSION}:0123456789abcdef:hashA:4:western:r:rh")
+        );
+        let k = detect_key_with("fedcba9876543210", "hashA", 4);
+        assert_eq!(
+            k,
+            format!("ocr:detect:v{OCR_DETECT_VERSION}:fedcba9876543210:hashA:4")
+        );
+        // The process's own keys use its own fingerprints.
+        let fp = fingerprints();
+        assert!(
+            is_fingerprint(&fp.result) && is_fingerprint(&fp.detect),
+            "{fp:?}"
+        );
+        let k = cache_key("hashA", 4, "western", true, "rh");
+        let parts: Vec<&str> = k.split(':').collect();
+        assert_eq!(
+            parts[..3],
+            ["ocr", "cache", &format!("v{OCR_RESULT_VERSION}")]
+        );
+        assert_eq!(parts[3], fp.result);
+        assert_eq!(parts[4..], ["hashA", "4", "western", "d", "rh"]);
+        let parts: Vec<String> = detect_cache_key("hashA", 4)
+            .split(':')
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(parts[3], fp.detect);
+        assert_eq!(parts[4..], ["hashA", "4"]);
+    }
+
+    #[test]
+    fn every_engine_input_changes_the_result_fingerprint() {
+        let base = inputs();
+        let fp = base.result_fingerprint();
+        assert!(is_fingerprint(&fp));
+        assert_eq!(fp, inputs().result_fingerprint(), "deterministic");
+        let variants: Vec<(&str, EngineInputs)> = vec![
+            (
+                "result version",
+                EngineInputs {
+                    result_version: 4,
+                    ..inputs()
+                },
+            ),
+            (
+                "detect version",
+                EngineInputs {
+                    detect_version: 3,
+                    ..inputs()
+                },
+            ),
+            (
+                "detector pin",
+                EngineInputs {
+                    detector_pins: vec!["acme/det@ccc/det.onnx#111".into()],
+                    ..inputs()
+                },
+            ),
+            (
+                "detector digest",
+                EngineInputs {
+                    detector_pins: vec!["acme/det@aaa/det.onnx#999".into()],
+                    ..inputs()
+                },
+            ),
+            (
+                "manga pin",
+                EngineInputs {
+                    manga_pins: vec![
+                        "acme/manga@bbb/enc.onnx#222".into(),
+                        "acme/manga@bbb/vocab.txt#444".into(),
+                    ],
+                    ..inputs()
+                },
+            ),
+            (
+                "tesseract version",
+                EngineInputs {
+                    western: "tesseract=5.5.1;eng.traineddata=abc".into(),
+                    ..inputs()
+                },
+            ),
+            (
+                "language data",
+                EngineInputs {
+                    western: "tesseract=5.5.0;eng.traineddata=abd".into(),
+                    ..inputs()
+                },
+            ),
+        ];
+        for (what, v) in variants {
+            assert_ne!(
+                v.result_fingerprint(),
+                fp,
+                "{what} must change the result fingerprint"
+            );
+        }
+    }
+
+    #[test]
+    fn the_detect_fingerprint_follows_the_detector_only() {
+        let fp = inputs().detect_fingerprint();
+        assert!(is_fingerprint(&fp));
+        for (what, v) in [
+            (
+                "detect version",
+                EngineInputs {
+                    detect_version: 3,
+                    ..inputs()
+                },
+            ),
+            (
+                "detector digest",
+                EngineInputs {
+                    detector_pins: vec!["acme/det@aaa/det.onnx#999".into()],
+                    ..inputs()
+                },
+            ),
+        ] {
+            assert_ne!(v.detect_fingerprint(), fp, "{what} must change it");
+        }
+        for (what, v) in [
+            (
+                "result version",
+                EngineInputs {
+                    result_version: 9,
+                    ..inputs()
+                },
+            ),
+            (
+                "tesseract",
+                EngineInputs {
+                    western: "tesseract=6".into(),
+                    ..inputs()
+                },
+            ),
+            (
+                "manga pins",
+                EngineInputs {
+                    manga_pins: vec![],
+                    ..inputs()
+                },
+            ),
+        ] {
+            assert_eq!(
+                v.detect_fingerprint(),
+                fp,
+                "{what} must not touch detections"
+            );
+        }
+    }
+
+    #[test]
+    fn the_process_fingerprint_names_tesseract_and_every_pin() {
+        let current = EngineInputs::current();
+        assert!(
+            current.western.starts_with("tesseract="),
+            "{}",
+            current.western
+        );
+        assert!(
+            current.western.contains("eng.traineddata="),
+            "{}",
+            current.western
+        );
+        assert_eq!(
+            current.detector_pins.len(),
+            super::super::models::DETECTOR_FILES.len()
+        );
+        assert_eq!(
+            current.manga_pins.len(),
+            super::super::models::MANGA_FILES.len()
+        );
     }
 
     #[test]
