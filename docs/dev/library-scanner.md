@@ -1576,10 +1576,16 @@ deletion:
   re-ingest it. An empty or missing folder is purged as before. The purge
   reads candidate issues oldest confirmation first in keyset pages of 500
   on `(removal_confirmed_at, id)` and deletes at most 5 000 per library
-  per run (`MAX_ISSUES_PER_LIBRARY_PER_RUN`, which counts deletes, not
-  rows examined). A kept row (present or unknown) costs one stat and none
-  of that budget, so the walk goes on past it: a run ends after 5 000
-  deletes or at the end of the library's candidates. Unknown rows stay
+  per run (`MAX_ISSUES_PER_LIBRARY_PER_RUN`, which counts rows actually
+  deleted, not rows examined). A kept row (present or unknown) costs one
+  stat and none of that budget, and so does a row the `DELETE`'s own guard
+  rejects (restored or un-confirmed since the read), so the walk goes on
+  past both: a run ends after 5 000 deletes or at the end of the library's
+  candidates. Each page is one range scan of the partial index
+  `issues_purge_keyset_idx (library_id, removal_confirmed_at, id) WHERE
+  removal_confirmed_at IS NOT NULL`. Deletes are counted, and get their
+  `purged` events, as each transaction commits, so a library that fails
+  part-way (counted as aborted) still reports the rows already gone. Unknown rows stay
   confirmed and are re-examined every run, but however many of them sit at
   the front they no longer hold the purgeable rows behind them back; a
   backlog of purgeable rows drains 5 000 a day, oldest first. Candidate
@@ -1615,6 +1621,8 @@ deletion:
   `::purge_keeps_rows_it_cannot_read`,
   `::purge_pages_past_kept_rows_at_the_front`,
   `::purge_deletes_at_most_the_cap_per_run`,
+  `::purge_counts_committed_deletes_when_a_later_page_fails`,
+  `::purge_pages_through_equal_confirmation_times`,
   `::purge_skips_a_library_whose_root_is_missing`,
   `::empty_root_is_skipped_by_both_sweeps`.
 
