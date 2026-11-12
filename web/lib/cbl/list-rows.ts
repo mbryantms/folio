@@ -70,13 +70,20 @@ export function compareByRead(
 export function compareByRefreshed(
   dateOf: (view: SavedViewView) => string | null | undefined,
 ): (a: SavedViewView, b: SavedViewView) => number {
+  // Compare instants, not strings: two ISO forms of one moment (`Z` vs
+  // `+00:00`, with or without fractions) must not misorder. A missing or
+  // unparsable date sorts last.
+  const time = (v: SavedViewView) => {
+    const t = Date.parse(dateOf(v) ?? "");
+    return Number.isNaN(t) ? null : t;
+  };
   return (a, b) => {
-    const da = dateOf(a) ?? "";
-    const db = dateOf(b) ?? "";
-    if (da !== db) {
-      if (!da) return 1;
-      if (!db) return -1;
-      return db.localeCompare(da);
+    const ta = time(a);
+    const tb = time(b);
+    if (ta !== tb) {
+      if (ta === null) return 1;
+      if (tb === null) return -1;
+      return tb - ta;
     }
     return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
   };

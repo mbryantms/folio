@@ -107,6 +107,26 @@ describe("compareByRefreshed / captions", () => {
     expect(sorted.map((x) => x.id)).toEqual(["new", "mid", "old", "none"]);
   });
 
+  it("compares instants, whatever the offset form, unparsable last", () => {
+    const dates: Record<string, string | null> = {
+      // 09:00-02:00 is 11:00Z, later than 10:00Z, though it sorts lower
+      // as text.
+      offset: "2026-11-01T09:00:00-02:00",
+      zulu: "2026-11-01T10:00:00.000Z",
+      junk: "not a date",
+      empty: "",
+    };
+    const sorted = Object.keys(dates)
+      .map((id) => v(id))
+      .sort(compareByRefreshed((x) => dates[x.id]));
+    expect(sorted.map((x) => x.id)).toEqual([
+      "offset",
+      "zulu",
+      "empty",
+      "junk",
+    ]);
+  });
+
   it("says nothing to read instead of 0 of 0, and names every gap", () => {
     const empty = s({ total: 6, missing: 6 });
     expect(readLabel(empty)).toBe("Nothing to read yet");
