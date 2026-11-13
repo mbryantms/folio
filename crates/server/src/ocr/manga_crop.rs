@@ -9,8 +9,11 @@
 //! there are two candidates for what to read ([`MangaCrop`]):
 //!
 //! - the requested region as is;
-//! - the detector's text box inside the region, when there is exactly one
-//!   clear one, and the region otherwise.
+//! - the detector's text box inside the region, when exactly one lies
+//!   clearly inside it, and the region otherwise. A region that is a
+//!   piece of free text (class 2) is always read as is: it is not a
+//!   balloon, and a text box lying in it belongs to a balloon drawn
+//!   inside it.
 //!
 //! [`MANGA_CROP`] names the one the server uses: the text box. It was
 //! chosen by a comparison, not against a reference text: on 17 pages of
@@ -19,8 +22,9 @@
 //! string as the previous pipeline for 120 with the text box, for 113
 //! with the balloon box as is, and for 116 with the balloon box inset by
 //! 6%. `docs/dev/ocr.md` has the full counts and what they do not show.
-//! [`manga_crop`] is a pure function of the mode, the region and the
-//! page's boxes, so a tool can run both.
+//! The rule here is the one that comparison used. [`manga_crop`] is a
+//! pure function of the mode, the region and the page's boxes, so a tool
+//! can run both.
 //!
 //! Two known weaknesses of the text-box mode:
 //!
@@ -28,8 +32,9 @@
 //!   tiny balloon that holds only a mark the recogniser, given the
 //!   balloon, invents characters.
 //! - **A balloon with several lobes.** The detector may box the text of
-//!   the larger lobe only; that box is then the single clear one and the
-//!   other lobe's text is not read.
+//!   the larger lobe only, or leave the other lobe's text box mostly
+//!   outside the balloon's box; the larger lobe's box is then the single
+//!   one inside and the other lobe's text is not read.
 //!
 //! In this mode a Japanese request always needs the page's detection,
 //! also for a tap on a region (`pipeline::uses_detection`): it comes
@@ -40,7 +45,7 @@
 //! request reads what it always read (the requested rectangle, or the
 //! `comic-text-detector` box it was snapped to).
 
-use super::bubbles::CLASS_TEXT_BUBBLE;
+use super::bubbles::{CLASS_BUBBLE, CLASS_TEXT_BUBBLE, CLASS_TEXT_FREE};
 use super::cache::CachedBbox;
 use super::pipeline::{Rect, bbox_to_rect};
 
@@ -49,8 +54,9 @@ use super::pipeline::{Rect, bbox_to_rect};
 pub enum MangaCrop {
     /// The requested region as is (the balloon box).
     Region,
-    /// The detector's text box (class 1) lying inside the requested
-    /// region when there is exactly one clear one; else the region.
+    /// The detector's text box (class 1) when exactly one lies clearly
+    /// inside the requested region; else the region. A free-text region
+    /// is read as is.
     TextInRegion,
 }
 
@@ -64,20 +70,20 @@ impl MangaCrop {
     }
 }
 
-/// What the server hands to `manga-ocr`: the text box inside the region
-/// when exactly one is clear, else the region (see the module docs for
-/// the comparison behind the choice). Changing it rolls the result-cache
-/// keys by itself (it is part of the engine fingerprint).
+/// What the server hands to `manga-ocr`: the text box when exactly one
+/// lies clearly inside the region, else the region (see the module docs
+/// for the comparison behind the choice). Changing it rolls the
+/// result-cache keys by itself (it is part of the engine fingerprint).
 pub const MANGA_CROP: MangaCrop = MangaCrop::TextInRegion;
 
 /// A text box lies inside the region when at least this share of its
 /// area does.
 pub const TEXT_INSIDE_MIN: f32 = 0.8;
 
-/// A second text box with more than this share of its area in the
-/// region makes the choice unclear (the region holds part of another
-/// text), and the region is read as is.
-pub const TEXT_STRAY_MAX: f32 = 0.2;
+/// A requested region is one of the page's boxes when each of its edges
+/// is within this many pixels of the box's: a region goes to the client
+/// in percent and comes back rounded to whole pixels.
+pub const SAME_BOX_SLACK: u32 = 2;
 
 /// The rectangle of the page a Japanese request reads.
 ///
@@ -88,9 +94,10 @@ pub const TEXT_STRAY_MAX: f32 = 0.2;
 /// [`MangaCrop::Region`] returns `region`. [`MangaCrop::TextInRegion`]
 /// returns the one class-1 box of which at least [`TEXT_INSIDE_MIN`]
 /// lies in `region`, as detected (it may reach a little past the
-/// region), provided no other class-1 box has more than
-/// [`TEXT_STRAY_MAX`] of its area in `region`; with no such box, several,
-/// or a stray one, it returns `region`.
+/// region). With no such box or several it returns `region`, and so it
+/// does for a region that is one of the page's free-text boxes (and not
+/// also a balloon). A text box with a smaller share inside the region
+/// belongs to a neighbour and is not counted.
 pub fn manga_crop(
     mode: MangaCrop,
     region: Rect,
@@ -101,38 +108,48 @@ pub fn manga_crop(
     if mode == MangaCrop::Region {
         return region;
     }
-    let mut inside: Option<Rect> = None;
-    for text in boxes
+    let is_box_of = |class: u32| {
+        boxes
+            .iter()
+            .filter(|b| b.class == class)
+            .filter_map(|b| bbox_to_rect(b, page_w, page_h))
+            .any(|r| same_box(&r, &region))
+    };
+    if is_box_of(CLASS_TEXT_FREE) && !is_box_of(CLASS_BUBBLE) {
+        return region;
+    }
+    let mut inside = boxes
         .iter()
         .filter(|b| b.class == CLASS_TEXT_BUBBLE)
         .filter_map(|b| bbox_to_rect(b, page_w, page_h))
-    {
-        let shared = text.intersection(&region).map_or(0, |i| i.area());
-        let share = shared as f32 / text.area() as f32;
-        if share >= TEXT_INSIDE_MIN {
-            if inside.is_some() {
-                // Two texts in one region: not clear which is meant.
-                return region;
-            }
-            inside = Some(text);
-        } else if share > TEXT_STRAY_MAX {
-            return region;
-        }
+        .filter(|text| {
+            let shared = text.intersection(&region).map_or(0, |i| i.area());
+            shared as f32 / text.area() as f32 >= TEXT_INSIDE_MIN
+        });
+    match (inside.next(), inside.next()) {
+        (Some(only), None) => only,
+        // None, or two texts in one region: not clear which is meant.
+        _ => region,
     }
-    inside.unwrap_or(region)
+}
+
+/// Whether two rectangles are the same box, edge for edge, to within
+/// [`SAME_BOX_SLACK`].
+fn same_box(a: &Rect, b: &Rect) -> bool {
+    let near = |p: u32, q: u32| p.abs_diff(q) <= SAME_BOX_SLACK;
+    near(a.x, b.x) && near(a.y, b.y) && near(a.x + a.w, b.x + b.w) && near(a.y + a.h, b.y + b.h)
 }
 
 /// The constants above that decide which box a Japanese request reads,
 /// for the result-cache fingerprint (`ocr::cache`; the mode itself is
 /// there as [`MangaCrop::label`]).
 pub(crate) fn fingerprint() -> String {
-    format!("manga-crop:inside={TEXT_INSIDE_MIN};stray={TEXT_STRAY_MAX}")
+    format!("manga-crop:inside={TEXT_INSIDE_MIN};same-box={SAME_BOX_SLACK}")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ocr::bubbles::{CLASS_BUBBLE, CLASS_TEXT_FREE};
 
     const PAGE: (u32, u32) = (1000, 1500);
 
@@ -255,29 +272,63 @@ mod tests {
         assert_eq!(crop(MangaCrop::TextInRegion, &[half_out]), BALLOON);
     }
 
-    /// A neighbour's text reaching into the region makes it unclear; one
-    /// that only grazes it does not.
+    /// A neighbour's text reaching into the region is not this
+    /// balloon's: it neither is read nor makes the choice unclear.
     #[test]
-    fn a_stray_text_box_in_the_region_reads_the_region() {
-        // 100 wide, 21 of it inside the balloon: more than a fifth.
-        let stray = || text(279.0, 200.0, 379.0, 300.0);
+    fn a_neighbours_text_reaching_into_the_region_is_not_counted() {
+        // 100 wide, half of it inside the balloon's right edge.
+        let neighbour = || text(250.0, 200.0, 350.0, 300.0);
         assert_eq!(
-            crop(MangaCrop::TextInRegion, &[own_text(), stray()]),
-            BALLOON
+            crop(MangaCrop::TextInRegion, &[own_text(), neighbour()]),
+            OWN_TEXT
         );
         // Order does not matter.
         assert_eq!(
-            crop(MangaCrop::TextInRegion, &[stray(), own_text()]),
-            BALLOON
-        );
-        // 20 of 100 inside: a graze, ignored.
-        let graze = text(280.0, 200.0, 380.0, 300.0);
-        assert_eq!(
-            crop(MangaCrop::TextInRegion, &[own_text(), graze]),
+            crop(MangaCrop::TextInRegion, &[neighbour(), own_text()]),
             OWN_TEXT
         );
-        // A stray box alone gives nothing to read instead.
-        assert_eq!(crop(MangaCrop::TextInRegion, &[stray()]), BALLOON);
+        // Alone it gives nothing to read instead.
+        assert_eq!(crop(MangaCrop::TextInRegion, &[neighbour()]), BALLOON);
+    }
+
+    /// A piece of free text is read as is, also when a balloon drawn
+    /// inside it puts exactly one text box in it.
+    #[test]
+    fn a_free_text_region_is_read_as_is() {
+        let free_text = bbox(CLASS_TEXT_FREE, 100.0, 100.0, 300.0, 400.0);
+        let inner = [bbox(CLASS_BUBBLE, 130.0, 120.0, 270.0, 380.0), own_text()];
+        let page = [free_text.clone(), inner[0].clone(), inner[1].clone()];
+        assert_eq!(crop(MangaCrop::TextInRegion, &page), BALLOON);
+        // The region comes back from the client rounded: a pixel off on
+        // an edge is still that box.
+        let rounded = Rect {
+            x: 101,
+            y: 99,
+            w: 200,
+            h: 302,
+        };
+        assert_eq!(
+            manga_crop(MangaCrop::TextInRegion, rounded, &page, PAGE.0, PAGE.1),
+            rounded
+        );
+        // The same rectangle drawn by hand on a page with no such
+        // free-text box is narrowed to the one text box in it.
+        assert_eq!(crop(MangaCrop::TextInRegion, &inner), OWN_TEXT);
+        // A free-text box elsewhere, or one of another size around the
+        // same text, does not make this region free text.
+        let other = [
+            bbox(CLASS_TEXT_FREE, 90.0, 100.0, 300.0, 400.0),
+            bbox(CLASS_TEXT_FREE, 500.0, 100.0, 700.0, 400.0),
+            own_text(),
+        ];
+        assert_eq!(crop(MangaCrop::TextInRegion, &other), OWN_TEXT);
+        // Found both as a balloon and as free text: a balloon.
+        let both = [
+            free_text,
+            bbox(CLASS_BUBBLE, 101.0, 100.0, 300.0, 401.0),
+            own_text(),
+        ];
+        assert_eq!(crop(MangaCrop::TextInRegion, &both), OWN_TEXT);
     }
 
     #[test]

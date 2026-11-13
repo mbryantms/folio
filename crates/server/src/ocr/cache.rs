@@ -945,7 +945,7 @@ mod tests {
             format!("max={}", ctc::REC_MAX_WIDTH),
             format!("columns={}", ctc::REC_MAX_BATCH_COLUMNS),
             format!("inside={}", crate::ocr::manga_crop::TEXT_INSIDE_MIN),
-            format!("stray={}", crate::ocr::manga_crop::TEXT_STRAY_MAX),
+            format!("same-box={}", crate::ocr::manga_crop::SAME_BOX_SLACK),
             format!("iou={}", regions::NEAR_DUPLICATE_IOU),
         ] {
             assert!(current.reader_tuning.contains(&part), "{part}");
