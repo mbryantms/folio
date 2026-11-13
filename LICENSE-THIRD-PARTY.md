@@ -14,9 +14,15 @@ Comic Reader uses UnRAR only to **read** RAR archives (CBR comic files), in proc
 
 ## `manga-ocr` Rust crate (code derived from it)
 
-GPL-3.0. https://github.com/mayocream/koharu (crate `manga-ocr` 0.5.1, by Mayo Takanashi; the crate's `LICENSE` file is the GNU General Public License version 3).
+GPL-3.0. https://github.com/mayocream/koharu (crate `manga-ocr` 0.5.1, by Mayo Takanashi). The crate's `Cargo.toml` names no SPDX licence, only `license-file = "LICENSE"`, and that file is the text of the GNU General Public License version 3 with no "or any later version" grant.
 
-Comic Reader's Japanese recogniser, `crates/server/src/ocr/recognizer/manga.rs`, is derived from that crate's source: the image preprocessing, the greedy decoding loop and the vocabulary handling follow it. The crate itself is no longer a dependency. GPL-3.0 code may be combined with code under the GNU Affero General Public License version 3 (section 13 of each licence), and the combined work is distributed under AGPL-3.0-or-later, Comic Reader's licence. The model files the recogniser runs (`mayocream/manga-ocr-onnx`) are not bundled; they are downloaded on first use under their own licence (Apache-2.0, as their model card declares).
+Comic Reader's Japanese recogniser, `crates/server/src/ocr/recognizer/manga.rs`, is derived from that crate's source: the image preprocessing, the greedy decoding loop and the vocabulary handling follow it. That file is licensed under the GNU General Public License version 3, as the crate is. It is combined with the rest of Comic Reader (AGPL-3.0-or-later) as section 13 of GPLv3 and of AGPLv3 permit; the licence of the rest of Comic Reader is unaffected. Modified by the Folio project, November 2026: sessions built by Folio, model files from pinned and digest-checked copies, bounds and checks added. The crate itself is no longer a dependency. The model files the recogniser runs (`mayocream/manga-ocr-onnx`) are not bundled; they are downloaded on first use under their own licence (Apache-2.0, as their model card declares).
+
+## `comic-text-detector` Rust crate (code derived from it, development tool only)
+
+GPL-3.0. https://github.com/mayocream/koharu (crate `comic-text-detector` 0.5.1, by Mayo Takanashi). As with `manga-ocr`, its `Cargo.toml` has only `license-file = "LICENSE"`, and that file is the GNU General Public License version 3 text with no "or any later version" grant.
+
+The `CtdOwn` detector in `crates/tools/ocr-bench/src/cand.rs` (a development-only benchmark harness, not part of the server or the images) follows that crate's preprocessing and postprocessing (1024 × 1024 resize, values / 255, confidence and class rule, per-class non-maximum suppression). That code is licensed under the GNU General Public License version 3, as the crate is, and is combined with the rest of Comic Reader (AGPL-3.0-or-later) as section 13 of GPLv3 and of AGPLv3 permit. Modified by the Folio project, November 2026: run on a session the tool builds, without the full-page mask. The crate itself is no longer a dependency; its model (`mayocream/comic-text-detector-onnx`) is not bundled.
 
 ## `tini`
 

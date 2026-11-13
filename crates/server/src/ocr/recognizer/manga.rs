@@ -1,15 +1,21 @@
 //! Japanese recogniser: `mayocream/manga-ocr-onnx`, a ViT encoder and a
 //! BERT decoder, run on two ONNX Runtime sessions Folio builds itself.
 //!
-//! Origin: the preprocessing, the greedy decode and the vocabulary
-//! handling follow the `manga-ocr` crate 0.5.1 (part of the koharu
-//! project, <https://github.com/mayocream/koharu>), by Mayo Takanashi,
-//! licensed GPL-3.0. This module is derived from that crate and, like the
-//! rest of Folio, is distributed under AGPL-3.0-or-later (see
-//! `LICENSE-THIRD-PARTY.md`). What differs from the crate: the sessions
-//! are built by [`crate::ocr::session`] with an explicit thread count,
-//! the files come from the pinned, digest-checked copies
-//! ([`crate::ocr::models::MANGA_FILES`]), and the bounds below.
+//! Licence: this file is derived from the `manga-ocr` crate 0.5.1 (part
+//! of the koharu project, <https://github.com/mayocream/koharu>), by Mayo
+//! Takanashi, whose licence is the GNU General Public License version 3.
+//! This file is licensed under the GNU General Public License version 3,
+//! as that crate is. It is combined with the rest of Folio (licensed
+//! AGPL-3.0-or-later) as section 13 of GPLv3 and of AGPLv3 permit; the
+//! licence of the rest of Folio is unaffected. See
+//! `LICENSE-THIRD-PARTY.md`.
+//!
+//! Modified by the Folio project, November 2026: sessions built by
+//! Folio ([`crate::ocr::session`], explicit thread count), model files
+//! from pinned, digest-checked copies
+//! ([`crate::ocr::models::MANGA_FILES`]), bounds and checks added (below).
+//! The preprocessing, the greedy decode and the vocabulary handling
+//! follow the crate.
 //!
 //! One read:
 //!
