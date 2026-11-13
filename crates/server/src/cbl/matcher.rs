@@ -2,7 +2,8 @@
 //!
 //! Three-tier resolution per [`EntryToMatch`]:
 //!
-//!   1. **ComicVine issue ID** — exact match against `issues.comicvine_id`.
+//!   1. **ComicVine issue ID** — exact match against the issue's
+//!      `external_ids` row (`source = 'comicvine'`).
 //!      `match_method = 'comicvine_id'`, confidence `1.0`.
 //!   2. **Metron issue ID** — same shape, `match_method = 'metron_id'`.
 //!   3. **Series + volume + number fallback** — `pg_trgm` similarity on
@@ -10,7 +11,12 @@
 //!      match (CBL's `Volume` attribute compared against
 //!      `series.year::text` OR `series.volume::text`) AND exact
 //!      `issues.number_raw`. Single candidate above threshold →
-//!      `Matched`. Multiple → `Ambiguous` with top picks preserved.
+//!      `Matched`. Multiple → `Ambiguous` with the top
+//!      [`AMBIGUOUS_TOP_N`] preserved.
+//!
+//! The statement count of [`match_entries`] does not grow with the
+//! number of entries: one id lookup, and one fallback statement that
+//! covers every entry the ids left over (see [`fallback_batch`]).
 //!
 //! Manual overrides (`match_status = 'manual'`) are not produced here —
 //! they're written by the API endpoint and explicitly preserved by the
@@ -99,33 +105,277 @@ impl MatchOutcome {
 }
 
 /// Resolve every entry in `entries` against the live `issues` table.
-/// Returns outcomes in the same order. One batched ID lookup + one
-/// fallback query per entry that didn't ID-match. Uses pg_trgm's
-/// `similarity()` for the fallback — `series.normalized_name` is the
-/// already-normalized form the scanner stores.
+/// Returns outcomes in the same order.
+///
+/// The number of SQL statements is fixed, whatever the number of
+/// entries: at most one ID lookup (both id tiers, [`build_id_lookup`])
+/// and at most one fallback statement that covers every entry the ids
+/// did not resolve ([`fallback_batch`]). Uses pg_trgm's `similarity()` for the
+/// fallback — `series.normalized_name` is the already-normalized form
+/// the scanner stores.
 pub async fn match_entries<C: ConnectionTrait>(
     db: &C,
     entries: &[EntryToMatch],
 ) -> Result<Vec<MatchOutcome>, sea_orm::DbErr> {
     let id_lookup = build_id_lookup(db, entries).await?;
-    let mut out = Vec::with_capacity(entries.len());
-    for entry in entries {
-        if let Some(cv) = entry.cv_issue_id
-            && let Some(issue_id) = id_lookup.cv.get(&cv)
-        {
-            out.push(MatchOutcome::matched(issue_id.clone(), "comicvine_id", 1.0));
+    let mut out: Vec<Option<MatchOutcome>> = Vec::with_capacity(entries.len());
+    let mut batch = FallbackBatch::default();
+    for (idx, entry) in entries.iter().enumerate() {
+        if let Some(outcome) = id_match(&id_lookup, entry) {
+            out.push(Some(outcome));
             continue;
         }
-        if let Some(metron) = entry.metron_issue_id
-            && let Some(issue_id) = id_lookup.metron.get(&metron)
-        {
-            out.push(MatchOutcome::matched(issue_id.clone(), "metron_id", 1.0));
-            continue;
+        match FallbackQuery::of(entry) {
+            Some(query) => {
+                batch.push(idx, query);
+                out.push(None);
+            }
+            None => out.push(Some(MatchOutcome::missing())),
         }
-        out.push(fallback_match(db, entry).await?);
+    }
+    let rows = fallback_batch(db, &batch).await?;
+    for (idx, wanted) in batch.entries {
+        // Several entries can share one wanted (key, number) pair.
+        out[idx] = Some(outcome_of(rows[wanted].clone()));
+    }
+    Ok(out
+        .into_iter()
+        .map(|o| o.unwrap_or_else(MatchOutcome::missing))
+        .collect())
+}
+
+/// The id tiers: ComicVine id, then Metron id.
+fn id_match(lookup: &IdLookup, entry: &EntryToMatch) -> Option<MatchOutcome> {
+    if let Some(cv) = entry.cv_issue_id
+        && let Some(issue_id) = lookup.cv.get(&cv)
+    {
+        return Some(MatchOutcome::matched(issue_id.clone(), "comicvine_id", 1.0));
+    }
+    if let Some(metron) = entry.metron_issue_id
+        && let Some(issue_id) = lookup.metron.get(&metron)
+    {
+        return Some(MatchOutcome::matched(issue_id.clone(), "metron_id", 1.0));
+    }
+    None
+}
+
+/// One row of the fallback: a candidate issue and its series.
+#[derive(Debug, Clone)]
+struct FallbackRow {
+    issue_id: String,
+    series_name: String,
+    sim: f32,
+}
+
+/// Rows (already ordered, at most [`AMBIGUOUS_TOP_N`]) → outcome: none is
+/// missing, one is a match, more are ambiguous with those rows kept for
+/// the Resolution UI. We don't auto-resolve ties even if the similarity
+/// gap is large; the user's library may legitimately have both
+/// candidates and only the human can pick.
+fn outcome_of(rows: Vec<FallbackRow>) -> MatchOutcome {
+    match rows.len() {
+        0 => MatchOutcome::missing(),
+        1 => {
+            let row = rows.into_iter().next().expect("one row");
+            MatchOutcome::matched(row.issue_id, "series_volume_number", row.sim)
+        }
+        _ => MatchOutcome::ambiguous(
+            rows.into_iter()
+                .map(|r| MatchCandidate {
+                    issue_id: r.issue_id,
+                    series_name: r.series_name,
+                    similarity: r.sim,
+                })
+                .collect(),
+        ),
+    }
+}
+
+/// What the series + volume + number fallback compares for one entry.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct FallbackQuery {
+    /// `series::normalize_name` of the entry's series name.
+    normalized: String,
+    /// The trimmed volume; compared with `series.year::text` and
+    /// `series.volume::text`.
+    volume: String,
+    /// The trimmed number; compared with `issues.number_raw`.
+    number: String,
+}
+
+impl FallbackQuery {
+    /// `None` when the fallback cannot match the entry: an empty (after
+    /// trim) series name or number, or no volume. Volume gate: when the
+    /// CBL provides one we require it to match either the series's start
+    /// year or its sequential volume number. Without a volume the
+    /// fallback would reunite "Tech Jacket 2002" with "Tech Jacket 2014"
+    /// — refuse rather than guess.
+    fn of(entry: &EntryToMatch) -> Option<Self> {
+        if entry.series_name.trim().is_empty() || entry.number.trim().is_empty() {
+            return None;
+        }
+        let volume = entry
+            .volume
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())?;
+        Some(Self {
+            normalized: series::normalize_name(&entry.series_name),
+            volume: volume.to_owned(),
+            number: entry.number.trim().to_owned(),
+        })
+    }
+}
+
+/// The fallback work of one [`match_entries`] call, deduplicated: a
+/// reading list names the same series (and often the same issue) many
+/// times.
+#[derive(Debug, Default)]
+struct FallbackBatch {
+    /// Distinct (normalized name, volume) pairs: the series lookups.
+    keys: Vec<(String, String)>,
+    key_index: HashMap<(String, String), usize>,
+    /// Distinct (key, number) pairs: the issue lookups.
+    wanted: Vec<(usize, String)>,
+    wanted_index: HashMap<(usize, String), usize>,
+    /// (entry index, wanted index) for every entry in the fallback.
+    entries: Vec<(usize, usize)>,
+}
+
+impl FallbackBatch {
+    fn push(&mut self, entry_idx: usize, q: FallbackQuery) {
+        let key = (q.normalized, q.volume);
+        let next = self.keys.len();
+        let k = *self.key_index.entry(key.clone()).or_insert_with(|| {
+            self.keys.push(key);
+            next
+        });
+        let want = (k, q.number);
+        let next = self.wanted.len();
+        let w = *self.wanted_index.entry(want.clone()).or_insert_with(|| {
+            self.wanted.push(want);
+            next
+        });
+        self.entries.push((entry_idx, w));
+    }
+}
+
+/// The series + volume + number fallback for every entry of `batch`, in
+/// one statement. Returns the candidate rows per wanted (key, number)
+/// pair, indexed like `batch.wanted`.
+///
+/// Per entry, the rows are the (issue, series) pairs where the issue is
+/// active and not removed, its `number_raw` equals the trimmed number,
+/// the series's `year::text` or `volume::text` equals the trimmed volume,
+/// and `similarity(series.normalized_name, normalized name) > 0.75`. They
+/// are ordered by similarity descending, then series name ascending (the
+/// column's collation, as Postgres sorts it), then issue id ascending,
+/// and cut at [`AMBIGUOUS_TOP_N`]. The issue-id key makes the order
+/// deterministic; the per-entry statement this replaced
+/// ([`reference_match_entries_for_tests`]) left ties on (similarity, name)
+/// in no defined order.
+///
+/// Shape: the distinct (name, volume) keys are joined to `series` on the
+/// volume equality first (two hash-joinable equalities, `UNION`-ed so a
+/// series whose year and volume both equal the key appears once), and
+/// only those pairs get a `similarity`: the pairs CTE is `MATERIALIZED`
+/// so the planner cannot fold the similarity qual into the join and run
+/// it against every series (the per-entry statement's plan evaluated
+/// `similarity` on every series row before the year/volume test); the issues are then looked up by
+/// (candidate series, number) through the `issues (series_id, …)` index.
+/// The similarity and the threshold comparison are Postgres's, with the
+/// same types as before (`similarity()` is `real`, the threshold is bound
+/// as `float8`, the reported value is cast to `real`).
+async fn fallback_batch<C: ConnectionTrait>(
+    db: &C,
+    batch: &FallbackBatch,
+) -> Result<Vec<Vec<FallbackRow>>, sea_orm::DbErr> {
+    let mut out: Vec<Vec<FallbackRow>> = vec![Vec::new(); batch.wanted.len()];
+    if batch.wanted.is_empty() {
+        return Ok(out);
+    }
+    let names: Vec<String> = batch.keys.iter().map(|(n, _)| n.clone()).collect();
+    let volumes: Vec<String> = batch.keys.iter().map(|(_, v)| v.clone()).collect();
+    // `WITH ORDINALITY` is 1-based.
+    let wanted_keys: Vec<i64> = batch.wanted.iter().map(|(k, _)| *k as i64 + 1).collect();
+    let wanted_numbers: Vec<String> = batch.wanted.iter().map(|(_, n)| n.clone()).collect();
+
+    #[derive(Debug, FromQueryResult)]
+    struct Row {
+        wanted: i64,
+        issue_id: String,
+        series_name: String,
+        sim: f32,
+    }
+    let rows = Row::find_by_statement(Statement::from_sql_and_values(
+        db.get_database_backend(),
+        FALLBACK_BATCH_SQL,
+        [
+            names.into(),
+            volumes.into(),
+            (FALLBACK_THRESHOLD as f64).into(),
+            wanted_keys.into(),
+            wanted_numbers.into(),
+            (AMBIGUOUS_TOP_N as i64).into(),
+        ],
+    ))
+    .all(db)
+    .await?;
+    for row in rows {
+        let Some(slot) = usize::try_from(row.wanted - 1)
+            .ok()
+            .and_then(|w| out.get_mut(w))
+        else {
+            continue;
+        };
+        slot.push(FallbackRow {
+            issue_id: row.issue_id,
+            series_name: row.series_name,
+            sim: row.sim,
+        });
     }
     Ok(out)
 }
+
+/// See [`fallback_batch`]. `$1` / `$2`: the keys' normalized names and
+/// volumes; `$3`: the threshold; `$4` / `$5`: per wanted pair, its key's
+/// ordinal and the number; `$6`: rows kept per wanted pair.
+const FALLBACK_BATCH_SQL: &str = r"
+WITH k AS (
+    SELECT name, volume, ord
+      FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS k(name, volume, ord)
+),
+pairs AS MATERIALIZED (
+    SELECT k.ord, k.name, s.id, s.name AS series_name, s.normalized_name
+      FROM k JOIN series s ON s.year::text = k.volume
+    UNION
+    SELECT k.ord, k.name, s.id, s.name AS series_name, s.normalized_name
+      FROM k JOIN series s ON s.volume::text = k.volume
+),
+cand AS (
+    SELECT p.ord, p.id AS series_id, p.series_name,
+           similarity(p.normalized_name, p.name)::real AS sim
+      FROM pairs p
+     WHERE similarity(p.normalized_name, p.name) > $3
+),
+w AS (
+    SELECT key_ord, number, ord
+      FROM unnest($4::bigint[], $5::text[]) WITH ORDINALITY AS w(key_ord, number, ord)
+),
+ranked AS (
+    SELECT w.ord AS wanted, i.id AS issue_id, c.series_name, c.sim,
+           row_number() OVER (PARTITION BY w.ord
+                              ORDER BY c.sim DESC, c.series_name ASC, i.id ASC) AS rn
+      FROM w
+      JOIN cand c ON c.ord = w.key_ord
+      JOIN issues i ON i.series_id = c.series_id AND i.number_raw = w.number
+     WHERE i.state = 'active'
+       AND i.removed_at IS NULL
+)
+SELECT wanted, issue_id, series_name, sim
+  FROM ranked
+ WHERE rn <= $6
+ ORDER BY wanted, rn";
 
 #[derive(Debug, Default)]
 struct IdLookup {
@@ -193,7 +443,36 @@ async fn build_id_lookup<C: ConnectionTrait>(
     Ok(lookup)
 }
 
-async fn fallback_match<C: ConnectionTrait>(
+// ───── debug-build reference implementation ─────
+//
+// The per-entry matcher that `match_entries` replaced (one fallback
+// statement per entry), kept verbatim as the reference for the
+// differential test in `tests/cbl_matcher_batched.rs`. Not compiled into
+// release builds; nothing but tests may call it.
+
+/// REFERENCE ONLY (debug builds, for integration tests): the previous
+/// per-entry implementation of [`match_entries`] — the same id tiers,
+/// then one fallback statement per entry. Its candidate order is
+/// undefined among rows that tie on (similarity, series name).
+#[cfg(debug_assertions)]
+pub async fn reference_match_entries_for_tests<C: ConnectionTrait>(
+    db: &C,
+    entries: &[EntryToMatch],
+) -> Result<Vec<MatchOutcome>, sea_orm::DbErr> {
+    let id_lookup = build_id_lookup(db, entries).await?;
+    let mut out = Vec::with_capacity(entries.len());
+    for entry in entries {
+        if let Some(outcome) = id_match(&id_lookup, entry) {
+            out.push(outcome);
+            continue;
+        }
+        out.push(reference_fallback_match(db, entry).await?);
+    }
+    Ok(out)
+}
+
+#[cfg(debug_assertions)]
+async fn reference_fallback_match<C: ConnectionTrait>(
     db: &C,
     entry: &EntryToMatch,
 ) -> Result<MatchOutcome, sea_orm::DbErr> {

@@ -470,6 +470,12 @@ address literal, bounds each request at 30 s including the body, and
 reads the tree listing (16 MiB) and blob (4 MiB) with a running cap that
 also refuses an oversize `Content-Length` before reading.
 
+**Matching.** `cbl::matcher::match_entries` resolves a whole list in a
+fixed number of statements: one id lookup (ComicVine, then Metron) and
+one series + volume + number fallback for every entry the ids left over,
+with the entries deduplicated by (normalized name, volume) and the
+volume equality applied before `pg_trgm` `similarity` is computed.
+
 **Time budgets** (`cbl::fetch`). Refresh, check, their `-all` variants
 and URL or catalog import run under the 60 s JSON route timeout, so they
 use `REQUEST_BUDGET`: 40 s per fetch and 40 s for one list's remote work,

@@ -1549,3 +1549,60 @@ async fn scan_run_finding_counts_do_not_grow_with_the_page() {
         assert_query_count(after, before, p);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// CBL matcher (series + volume + number fallback)
+// ─────────────────────────────────────────────────────────────────────
+
+/// Statements one `match_entries` call may issue however many entries it
+/// gets: the id lookup and the one fallback statement.
+const MAX_QUERIES_CBL_MATCH: u64 = 2;
+
+/// `cbl::matcher::match_entries` resolves every entry the ids left over
+/// in one statement, so matching 1,000 fallback entries costs the same
+/// small, fixed number of statements as matching 100 (the per-entry
+/// implementation issued one statement per entry).
+#[tokio::test]
+async fn cbl_matcher_statement_count_does_not_grow_with_the_list() {
+    use server::cbl::matcher::{EntryToMatch, MatchStatus, match_entries};
+    let _serial = SERIAL.lock().await;
+    let counter = install_query_counter();
+    let app = TestApp::spawn_with_query_logging().await;
+    seed_library(&app, "cblm", 10, 10).await;
+    let db = app.state().db.clone();
+
+    // Series `s` of `seed_library` is "cblm Series s", year 2020 + s % 5,
+    // issues "1".."10". Every entry carries an id that matches nothing,
+    // so both tiers run and every entry reaches the fallback.
+    let entries = |n: usize| -> Vec<EntryToMatch> {
+        (0..n)
+            .map(|i| {
+                let s = i % 10;
+                EntryToMatch {
+                    series_name: format!("cblm Series {s}"),
+                    number: format!("{}", i % 12 + 1),
+                    volume: Some(format!("{}", 2020 + s % 5)),
+                    cv_issue_id: Some(900_000 + i as i32),
+                    metron_issue_id: Some(800_000 + i as i32),
+                }
+            })
+            .collect()
+    };
+
+    let mut counts = Vec::new();
+    for n in [100, 1_000] {
+        let list = entries(n);
+        let q = QueryCount::snapshot(&counter);
+        let out = match_entries(&db, &list).await.unwrap();
+        let taken = q.taken();
+        assert_eq!(out.len(), n);
+        assert!(out.iter().any(|o| o.status == MatchStatus::Matched));
+        assert!(out.iter().any(|o| o.status == MatchStatus::Missing));
+        assert_query_count(taken, MAX_QUERIES_CBL_MATCH, &format!("match_entries x{n}"));
+        counts.push(taken);
+    }
+    assert_eq!(
+        counts[0], counts[1],
+        "the statement count grew with the list"
+    );
+}
