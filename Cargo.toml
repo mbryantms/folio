@@ -179,9 +179,13 @@ sevenz-rust2 = { version = "0.25", default-features = false, features = ["ppmd",
 # ONNX Runtime binding and array crate for the sessions Folio builds
 # itself (`ocr::session`: balloon detector, line finder, line
 # recogniser, Japanese encoder and decoder). `ort` is pinned exactly
-# (a release candidate); `ndarray` must be the version `ort` uses.
-ort = "=2.0.0-rc.10"
-ndarray = "0.16"
+# (a release candidate); `ndarray` must be the version `ort` uses. The
+# pin is repeated in `ocr::session::ORT_CRATE_VERSION` (part of the OCR
+# cache fingerprint; a unit test holds the two together). rc.15 links
+# ONNX Runtime 1.31.0, whose prebuilt x86_64 Linux library needs a CPU
+# with AVX2 (x86-64-v3).
+ort = "=2.0.0-rc.15"
+ndarray = "0.17"
 # Only for `Cache::default()`, the hub cache path the pinned model files
 # are kept under (`ocr::models`, which fetches and verifies them itself).
 # No features: nothing downloads through it.

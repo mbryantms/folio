@@ -267,10 +267,10 @@ fn decoder_step(
 fn decoder_classes(sessions: &mut Sessions, encoder_output: &str) -> anyhow::Result<usize> {
     let declared = sessions
         .decoder
-        .outputs
+        .outputs()
         .iter()
-        .find(|o| o.name == DECODER_LOGITS)
-        .and_then(|o| o.output_type.tensor_shape())
+        .find(|o| o.name() == DECODER_LOGITS)
+        .and_then(|o| o.dtype().tensor_shape())
         .and_then(|shape| shape.last().copied());
     if let Some(classes) = declared
         && classes > 0

@@ -142,12 +142,13 @@ impl LineFinder {
 
     fn from_file(path: &Path, intra_threads: usize) -> anyhow::Result<Self> {
         let session = session::build(path, intra_threads)?;
-        let (Some(input), Some(output)) = (session.inputs.first(), session.outputs.first()) else {
+        let (Some(input), Some(output)) = (session.inputs().first(), session.outputs().first())
+        else {
             anyhow::bail!("the line finder model has no input or no output");
         };
         Ok(LineFinder {
-            input: input.name.clone(),
-            output: output.name.clone(),
+            input: input.name().to_owned(),
+            output: output.name().to_owned(),
             session: Mutex::new(session),
             first_use: super::FirstUse::new(),
         })

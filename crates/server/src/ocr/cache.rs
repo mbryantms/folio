@@ -85,15 +85,18 @@ async fn set_bounded_ttl(
 /// response semantics. Old-version keys age out via [`CACHE_TTL`] — no flush job
 /// needed.
 ///
-/// History: v4 = Western text is read by the line finder and the CTC
-/// line recogniser, `words` holds one entry per line, and only the line
-/// join is applied to it; Japanese crops come from the balloon detector;
-/// v3 = cleanup reads `|` as the pronoun `I`,
+/// History: v5 = the engines run on ONNX Runtime 1.31 (`ort`
+/// 2.0.0-rc.15) and the Japanese recogniser is Folio's own code; the
+/// runtime is also part of the fingerprint from here on
+/// ([`EngineInputs::runtime`]); v4 = Western text is read by the line
+/// finder and the CTC line recogniser, `words` holds one entry per line,
+/// and only the line join is applied to it; Japanese crops come from the
+/// balloon detector; v3 = cleanup reads `|` as the pronoun `I`,
 /// keeps the hyphen of a line-end join and the double dash of an
 /// interruption, keeps confident grawlix; v2 = Otsu/polarity/padding
 /// preprocessing + postprocess cleanup (OCR rework 1.0); v1 =
 /// unversioned launch shape.
-pub const OCR_RESULT_VERSION: u32 = 4;
+pub const OCR_RESULT_VERSION: u32 = 5;
 
 // ───────── engine fingerprint ─────────
 //
@@ -133,6 +136,19 @@ pub struct EngineInputs {
     /// fingerprint): a percent region becomes a pixel rect through it, so
     /// whatever rolls the page-size keys rolls the result keys too.
     pub page_size: String,
+    /// The inference runtime every engine runs on: the `ort` crate and
+    /// ONNX Runtime's build string ([`runtime_identity`]). An upgrade of
+    /// either can move a score or a box, so it rolls both keys.
+    pub runtime: String,
+}
+
+/// `ort=<crate version>;onnxruntime=<build string>` of this binary.
+pub fn runtime_identity() -> String {
+    format!(
+        "ort={};onnxruntime={}",
+        super::session::ORT_CRATE_VERSION,
+        super::session::runtime_build_info()
+    )
 }
 
 /// `repo@revision/file#sha256` of each file.
@@ -186,6 +202,7 @@ impl EngineInputs {
             manga_pins: pins(models::MANGA_FILES),
             western: line_reader_identity(),
             page_size: page_size_fingerprint().to_owned(),
+            runtime: runtime_identity(),
         }
     }
 
@@ -201,18 +218,21 @@ impl EngineInputs {
             format!("detector-tuning={}", self.detector_tuning),
             format!("reader-tuning={}", self.reader_tuning),
             format!("page-size={}", self.page_size),
+            format!("runtime={}", self.runtime),
         ];
         parts.extend(self.detector_pins.iter().cloned());
         parts.extend(self.manga_pins.iter().cloned());
         short_hash(&parts)
     }
 
-    /// Fingerprint for detect-cache keys: the detector alone (its pins
-    /// and the constants that decide which boxes it keeps).
+    /// Fingerprint for detect-cache keys: the detector alone (its pins,
+    /// the constants that decide which boxes it keeps, and the runtime
+    /// it runs on).
     pub fn detect_fingerprint(&self) -> String {
         let mut parts = vec![
             format!("detect-v{}", self.detect_version),
             format!("detector-tuning={}", self.detector_tuning),
+            format!("runtime={}", self.runtime),
         ];
         parts.extend(self.detector_pins.iter().cloned());
         short_hash(&parts)
@@ -405,11 +425,13 @@ pub struct CachedDetection {
     pub bboxes: Vec<CachedBbox>,
 }
 
-/// Version byte in the detect-cache key. v3 = the boxes are those of the
+/// Version byte in the detect-cache key. v4 = detections computed on
+/// ONNX Runtime 1.31 (`ort` 2.0.0-rc.15; the runtime is in the
+/// fingerprint from here on); v3 = the boxes are those of the
 /// balloon detector, all three classes; v2 = payload grew page dimensions
 /// ([`CachedDetection`]); v1 stored a bare bbox array. Old-version keys
 /// age out via [`CACHE_TTL`].
-pub const OCR_DETECT_VERSION: u32 = 3;
+pub const OCR_DETECT_VERSION: u32 = 4;
 
 /// Redis key for the per-page detector output cache. The segment after
 /// the version is the detector fingerprint ([`Fingerprints::detect`]).
@@ -543,6 +565,7 @@ mod tests {
             ],
             western: "line-finder=acme/lines@ddd/det.onnx#555".into(),
             page_size: "0011223344556677".into(),
+            runtime: "ort=2.0.0-rc.15;onnxruntime=git-branch=rel-1.31.0".into(),
         }
     }
 
@@ -664,6 +687,13 @@ mod tests {
                     ..inputs()
                 },
             ),
+            (
+                "the runtime",
+                EngineInputs {
+                    runtime: "ort=2.0.0-rc.16;onnxruntime=git-branch=rel-1.32.0".into(),
+                    ..inputs()
+                },
+            ),
         ];
         for (what, v) in variants {
             assert_ne!(
@@ -697,6 +727,13 @@ mod tests {
                 "a detector threshold",
                 EngineInputs {
                     detector_tuning: "detector:input=640;score=0.6".into(),
+                    ..inputs()
+                },
+            ),
+            (
+                "the runtime",
+                EngineInputs {
+                    runtime: "ort=2.0.0-rc.16;onnxruntime=git-branch=rel-1.32.0".into(),
                     ..inputs()
                 },
             ),
@@ -757,6 +794,14 @@ mod tests {
         let current = EngineInputs::current();
         assert_eq!(current.result_version, OCR_RESULT_VERSION);
         assert_eq!(current.detect_version, OCR_DETECT_VERSION);
+        assert!(
+            current.runtime.starts_with(&format!(
+                "ort={};onnxruntime=",
+                crate::ocr::session::ORT_CRATE_VERSION
+            )) && current.runtime.contains("git-branch=rel-"),
+            "{}",
+            current.runtime
+        );
         assert_eq!(current.detector_pins, pins(models::BUBBLE_DETECTOR_FILES));
         assert_eq!(current.manga_pins, pins(models::MANGA_FILES));
         assert_eq!(
