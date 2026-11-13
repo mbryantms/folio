@@ -45,7 +45,7 @@ pub mod pipeline;
 pub mod postprocess;
 pub mod recognizer;
 pub mod regions;
-pub(crate) mod session;
+pub mod session;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;

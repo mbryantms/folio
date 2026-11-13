@@ -8,6 +8,53 @@
 
 use server::{app, build_info, config, observability};
 
+/// Refuse to start on an x86_64 CPU without AVX, with a message, before
+/// the statically linked ONNX Runtime 1.31 runs its static initialisers
+/// (they execute AVX instructions and would end the process with a bare
+/// "Illegal instruction"; `docs/dev/ocr.md`, "CPU requirement"). A CPU
+/// with AVX but without AVX2 is not refused here: the server runs there
+/// and only text reading fails (`ocr::session::environment`).
+///
+/// The check is an entry in `.preinit_array`, which the dynamic loader
+/// (or, for a static executable, the C runtime) runs before any
+/// `.init_array` entry, and ONNX Runtime's initialisers are in
+/// `.init_array`. It allocates nothing, cannot panic and uses no std I/O:
+/// at that point nothing else in the process is set up.
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+#[allow(unsafe_code)]
+mod avx_check {
+    const MESSAGE: &[u8] = b"folio: this CPU has no AVX. This build needs an x86_64 CPU with \
+AVX2 (x86-64-v3) and cannot start; see docs/dev/ocr.md.\n";
+
+    extern "C" fn check() {
+        // `is_x86_feature_detected!("avx")` checks the CPUID bit and that
+        // the OS saves the AVX registers (XGETBV); it caches in an atomic
+        // and does not allocate.
+        if std::is_x86_feature_detected!("avx") {
+            return;
+        }
+        // SAFETY: `write` on fd 2 with a pointer and length taken from a
+        // static byte string is valid for that whole length; a failed or
+        // short write only loses the message. Its result is ignored on
+        // purpose: there is nothing better to do before exiting.
+        unsafe {
+            libc::write(2, MESSAGE.as_ptr().cast(), MESSAGE.len());
+        }
+        // SAFETY: `_exit` ends the process without running atexit
+        // handlers or destructors, none of which exist yet; it never
+        // returns.
+        unsafe { libc::_exit(1) }
+    }
+
+    // SAFETY: `.preinit_array` holds pointers to functions the loader
+    // calls once, with no arguments the function needs to read (the
+    // System V ABI passes argc/argv/envp in registers, which a function
+    // taking none ignores). `#[used]` keeps the entry from being dropped.
+    #[used]
+    #[unsafe(link_section = ".preinit_array")]
+    static PREINIT_AVX_CHECK: extern "C" fn() = check;
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // `dotenvy` loads `.env` from the current working directory. We deliberately

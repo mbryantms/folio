@@ -120,6 +120,9 @@ impl CtcRecognizer {
     /// dictionary, build the session and check that the dictionary fits
     /// the model's classes.
     pub async fn load(model: &'static LineRecModel) -> anyhow::Result<Self> {
+        // Before any download: on a CPU that cannot run ONNX Runtime the
+        // engine fails here, not after fetching its models.
+        session::environment()?;
         models::ensure_pinned(model.files).await?;
         let pin = |name: &str| {
             model
@@ -146,10 +149,11 @@ impl CtcRecognizer {
         let dict = read_dictionary(&raw)
             .map_err(|e| anyhow::anyhow!("{}: unusable dictionary: {e}", model.id))?;
         let mut session = session::build(onnx, intra_threads)?;
-        let (Some(input), Some(output)) = (session.inputs.first(), session.outputs.first()) else {
+        let (Some(input), Some(output)) = (session.inputs().first(), session.outputs().first())
+        else {
             anyhow::bail!("{}: the model has no input or no output", model.id);
         };
-        let (input, output) = (input.name.clone(), output.name.clone());
+        let (input, output) = (input.name().to_owned(), output.name().to_owned());
         let classes = output_classes(&mut session, &input, &output)?;
         check_classes(dict.len(), classes).map_err(|e| anyhow::anyhow!("{}: {e}", model.id))?;
         Ok(CtcRecognizer {
@@ -228,9 +232,9 @@ impl CtcRecognizer {
 /// declares it, else read from one run on an empty line.
 fn output_classes(session: &mut Session, input: &str, output: &str) -> anyhow::Result<usize> {
     let declared = session
-        .outputs
+        .outputs()
         .first()
-        .and_then(|o| o.output_type.tensor_shape())
+        .and_then(|o| o.dtype().tensor_shape())
         .and_then(|shape| shape.last().copied());
     if let Some(classes) = declared
         && classes > 0

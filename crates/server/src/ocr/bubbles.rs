@@ -103,6 +103,9 @@ impl BubbleDetector {
 
     /// A detector of its own (tools; the server uses [`Self::shared`]).
     pub async fn load() -> anyhow::Result<Self> {
+        // Before any download: on a CPU that cannot run ONNX Runtime the
+        // engine fails here, not after fetching its models.
+        session::environment()?;
         models::ensure_pinned(models::BUBBLE_DETECTOR_FILES).await?;
         let path = models::cached_path(&models::BUBBLE_DETECTOR_FILES[0])?;
         let threads = session::intra_threads(session::MAX_INTRA_THREADS);

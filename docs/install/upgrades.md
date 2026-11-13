@@ -74,6 +74,24 @@ server first. Moving an existing volume across a Postgres major is a
 image's entrypoint refuses to start on a data directory from a different
 major rather than corrupt it.
 
+## CPU requirement
+
+From this version Folio's x86_64 builds need a CPU with **AVX2**
+(x86-64-v3). The bundled ONNX Runtime 1.31, which runs text reading
+(OCR), is compiled for it.
+
+- **Without AVX** the server does not start: ONNX Runtime executes AVX
+  instructions while the process starts. The server checks first, logs
+  `folio: this CPU has no AVX. …` and exits with status 1 (so a
+  container restart loop shows that line).
+- **With AVX but not AVX2** the server starts and everything works except
+  text reading: both OCR routes (`POST /api/me/issues/{id}/ocr` and the
+  page text-regions route) answer `500` with error code `ocr_failed`, and
+  no OCR model is downloaded.
+
+Checked by software emulation of three CPU models, not on real hardware;
+details in [docs/dev/ocr.md](../dev/ocr.md#cpu-requirement).
+
 ## Major version bump
 
 Before pinning `TAG=v(X+1)…`:
@@ -148,6 +166,15 @@ docker compose -f compose.prod.yml up -d --no-deps app
 ```
 
 ## Breaking changes by version
+
+### Unreleased — text reading on ONNX Runtime 1.31; x86_64 needs AVX2
+
+- The server needs an x86_64 CPU with AVX2. Without AVX it does not
+  start; with AVX but not AVX2 it runs without text reading. See
+  [CPU requirement](#cpu-requirement).
+- Cached text-reading results and page detections start fresh after the
+  upgrade (the cache keys now include the runtime); they are recomputed
+  on first use.
 
 ### Unreleased — the previous text-reading engines and their switch are removed
 
