@@ -6667,6 +6667,23 @@
     "/api/me/cbl-lists/check-all": {
       "post": {
         "operationId": "cbl_lists_check_all",
+        "requestBody": {
+          "description": "Optional; `list_ids` limits the check to those lists. Omit the body to check every list",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CblBulkReq"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -6677,6 +6694,9 @@
               }
             }
           },
+          "422": {
+            "description": "more than 1000 `list_ids`, or an id that is not a UUID"
+          },
           "429": {
             "description": "per-user CBL import quota exceeded"
           }
@@ -6686,6 +6706,23 @@
     "/api/me/cbl-lists/refresh-all": {
       "post": {
         "operationId": "cbl_lists_refresh_all",
+        "requestBody": {
+          "description": "Optional; `list_ids` limits the refresh to those lists. Omit the body to refresh every list",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CblBulkReq"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -6695,6 +6732,9 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "more than 1000 `list_ids`, or an id that is not a UUID"
           },
           "429": {
             "description": "per-user CBL import quota exceeded"
@@ -17679,7 +17719,8 @@
           "added",
           "removed",
           "reordered",
-          "rematched"
+          "rematched",
+          "attempted"
         ],
         "properties": {
           "added": {
@@ -17688,6 +17729,10 @@
           },
           "applied": {
             "type": "boolean"
+          },
+          "attempted": {
+            "type": "boolean",
+            "description": "`false` only for a list a bulk request (`check-all` /\n`refresh-all`) did not start because its time ran out; such an\nitem also has `ok=false` and the \"not attempted\" text in `error`.\nA client finishes the run by sending exactly these ids back as\n`list_ids`. `true` for every other item, failed or not, and always\nfor a single-list check."
           },
           "changed": {
             "type": "boolean",
@@ -17722,6 +17767,23 @@
           },
           "upstream_changed": {
             "type": "boolean"
+          }
+        }
+      },
+      "CblBulkReq": {
+        "type": "object",
+        "description": "Optional body of `check-all` / `refresh-all`. With no body, or no\n`list_ids`, every list the caller may refresh is worked on.",
+        "properties": {
+          "list_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Work on only these lists. Ids the caller may not refresh, and\nunknown ids, are left out of the result without an error; an\nempty array yields an empty result. At most 1000 ids."
           }
         }
       },

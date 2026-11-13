@@ -7695,6 +7695,15 @@ export interface components {
             added: number;
             applied: boolean;
             /**
+             * @description `false` only for a list a bulk request (`check-all` /
+             *     `refresh-all`) did not start because its time ran out; such an
+             *     item also has `ok=false` and the "not attempted" text in `error`.
+             *     A client finishes the run by sending exactly these ids back as
+             *     `list_ids`. `true` for every other item, failed or not, and always
+             *     for a single-list check.
+             */
+            attempted: boolean;
+            /**
              * @description `true` when this refresh would change (check) / did change (refresh)
              *     the list — new/removed/reordered books or newly-resolved entries.
              */
@@ -7710,6 +7719,18 @@ export interface components {
             /** Format: int32 */
             reordered: number;
             upstream_changed: boolean;
+        };
+        /**
+         * @description Optional body of `check-all` / `refresh-all`. With no body, or no
+         *     `list_ids`, every list the caller may refresh is worked on.
+         */
+        CblBulkReq: {
+            /**
+             * @description Work on only these lists. Ids the caller may not refresh, and
+             *     unknown ids, are left out of the result without an error; an
+             *     empty array yields an empty result. At most 1000 ids.
+             */
+            list_ids?: string[] | null;
         };
         CblBulkResultView: {
             /**
@@ -23338,7 +23359,12 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        /** @description Optional; `list_ids` limits the check to those lists. Omit the body to check every list */
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CblBulkReq"] | null;
+            };
+        };
         responses: {
             200: {
                 headers: {
@@ -23347,6 +23373,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CblBulkResultView"];
                 };
+            };
+            /** @description more than 1000 `list_ids`, or an id that is not a UUID */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description per-user CBL import quota exceeded */
             429: {
@@ -23364,7 +23397,12 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        /** @description Optional; `list_ids` limits the refresh to those lists. Omit the body to refresh every list */
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CblBulkReq"] | null;
+            };
+        };
         responses: {
             200: {
                 headers: {
@@ -23373,6 +23411,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CblBulkResultView"];
                 };
+            };
+            /** @description more than 1000 `list_ids`, or an id that is not a UUID */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description per-user CBL import quota exceeded */
             429: {

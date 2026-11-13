@@ -34,7 +34,7 @@ use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
-use super::extractors::Validated;
+use super::extractors::{OptionalValidated, Validated};
 use crate::api::issue_card::IssueCardRow;
 use crate::auth::{CurrentUser, RequireAdmin};
 use crate::cbl::{
@@ -258,6 +258,35 @@ pub struct CblBulkItemView {
     pub removed: i32,
     pub reordered: i32,
     pub rematched: i32,
+    /// `false` only for a list a bulk request (`check-all` /
+    /// `refresh-all`) did not start because its time ran out; such an
+    /// item also has `ok=false` and the "not attempted" text in `error`.
+    /// A client finishes the run by sending exactly these ids back as
+    /// `list_ids`. `true` for every other item, failed or not, and always
+    /// for a single-list check.
+    pub attempted: bool,
+}
+
+/// Most ids one `check-all` / `refresh-all` call accepts in `list_ids`.
+///
+/// A caller can own at most [`crate::cbl::quota::MAX_REMOTE_LISTS_PER_USER`]
+/// (50) lists the server fetches; uploaded lists have no standing cap but
+/// cost one of the hourly import tokens each, and an admin also sees the
+/// shared lists. 1000 is far above any of those in practice, keeps the
+/// `IN (…)` lookup and the parse small, and a client holding more can
+/// split its ids across calls.
+pub const MAX_BULK_LIST_IDS: usize = 1000;
+
+/// Optional body of `check-all` / `refresh-all`. With no body, or no
+/// `list_ids`, every list the caller may refresh is worked on.
+#[derive(Debug, Default, Deserialize, garde::Validate, utoipa::ToSchema)]
+pub struct CblBulkReq {
+    /// Work on only these lists. Ids the caller may not refresh, and
+    /// unknown ids, are left out of the result without an error; an
+    /// empty array yields an empty result. At most 1000 ids.
+    #[serde(default)]
+    #[garde(inner(length(max = MAX_BULK_LIST_IDS)))]
+    pub list_ids: Option<Vec<Uuid>>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -2065,19 +2094,30 @@ fn refresh_audit_detail(s: &ImportSummary) -> serde_json::Value {
 
 // ───── bulk check / refresh (refresh dashboard) ─────
 
-/// The lists the caller can refresh: their own plus any system lists
-/// (`owner_user_id IS NULL`) — the same visibility set as [`list`].
+/// The lists the caller can refresh: their own plus, for an admin, the
+/// shared lists (`owner_user_id IS NULL`). With `only`, just those of
+/// them whose id is listed: ids outside the set, and unknown ids, are
+/// dropped without a trace, so the answer never tells whether such a
+/// list exists.
 async fn refreshable_lists(
     app: &AppState,
     user: &CurrentUser,
+    only: Option<&[Uuid]>,
 ) -> Result<Vec<cbl_list::Model>, axum::response::Response> {
+    if only.is_some_and(<[Uuid]>::is_empty) {
+        return Ok(Vec::new());
+    }
     // Shared lists are refreshed by admins only (see [`ensure_can_manage`]).
     let mut scope = sea_orm::Condition::any().add(cbl_list::Column::OwnerUserId.eq(user.id));
     if user.role == entity::user::UserRole::Admin {
         scope = scope.add(cbl_list::Column::OwnerUserId.is_null());
     }
+    let mut cond = sea_orm::Condition::all().add(scope);
+    if let Some(ids) = only {
+        cond = cond.add(cbl_list::Column::Id.is_in(ids.iter().copied()));
+    }
     cbl_list::Entity::find()
-        .filter(scope)
+        .filter(cond)
         .order_by_desc(cbl_list::Column::CreatedAt)
         .all(&app.db)
         .await
@@ -2112,6 +2152,7 @@ fn item_from_check(
         removed: o.removed,
         reordered: o.reordered,
         rematched: o.rematched,
+        attempted: true,
     }
 }
 
@@ -2130,6 +2171,7 @@ fn item_from_summary(list: &cbl_list::Model, s: &ImportSummary) -> CblBulkItemVi
         removed: s.removed,
         reordered: s.reordered,
         rematched: s.rematched,
+        attempted: true,
     }
 }
 
@@ -2146,6 +2188,19 @@ fn item_error(list: &cbl_list::Model, applied: bool, msg: String) -> CblBulkItem
         removed: 0,
         reordered: 0,
         rematched: 0,
+        attempted: true,
+    }
+}
+
+/// A list a bulk request did not start because its time ran out.
+fn item_not_attempted(list: &cbl_list::Model, applied: bool) -> CblBulkItemView {
+    CblBulkItemView {
+        attempted: false,
+        ..item_error(
+            list,
+            applied,
+            refresh::RefreshError::NotAttempted.to_string(),
+        )
     }
 }
 
@@ -2244,17 +2299,27 @@ pub async fn check_one(
 #[utoipa::path(
     operation_id = "cbl_lists_check_all",    post,
     path = "/me/cbl-lists/check-all",
+    request_body(content = Option<CblBulkReq>, description = "Optional; `list_ids` limits the check to those lists. Omit the body to check every list"),
     responses(
         (status = 200, body = CblBulkResultView),
+        (status = 422, description = "more than 1000 `list_ids`, or an id that is not a UUID"),
         (status = 429, description = "per-user CBL import quota exceeded"),
     )
 )]
 #[handler]
-pub async fn check_all(State(app): State<AppState>, user: CurrentUser) -> impl IntoResponse {
+pub async fn check_all(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    OptionalValidated(req): OptionalValidated<CblBulkReq>,
+) -> impl IntoResponse {
+    // One token per call, a continuation call (`list_ids` = the lists an
+    // earlier call did not reach) included: the quota bounds the remote
+    // work per request, and every request is still held to the same
+    // `CBL_REQUEST_BULK_BUDGET` of it however many ids it names.
     if let Err(resp) = crate::cbl::quota::consume_import(&app, &user).await {
         return resp;
     }
-    let lists = match refreshable_lists(&app, &user).await {
+    let lists = match refreshable_lists(&app, &user, req.list_ids.as_deref()).await {
         Ok(l) => l,
         Err(resp) => return resp,
     };
@@ -2265,11 +2330,7 @@ pub async fn check_all(State(app): State<AppState>, user: CurrentUser) -> impl I
     for idx in bulk_order(lists.len()) {
         let list = &lists[idx];
         let Some(budget) = deadline.next_list_budget() else {
-            slots[idx] = Some(item_error(
-                list,
-                false,
-                crate::cbl::refresh::RefreshError::NotAttempted.to_string(),
-            ));
+            slots[idx] = Some(item_not_attempted(list, false));
             continue;
         };
         let item = match crate::cbl::refresh::check(&app.db, list.id, caller_view.as_ref(), budget)
@@ -2289,8 +2350,10 @@ pub async fn check_all(State(app): State<AppState>, user: CurrentUser) -> impl I
 #[utoipa::path(
     operation_id = "cbl_lists_refresh_all",    post,
     path = "/me/cbl-lists/refresh-all",
+    request_body(content = Option<CblBulkReq>, description = "Optional; `list_ids` limits the refresh to those lists. Omit the body to refresh every list"),
     responses(
         (status = 200, body = CblBulkResultView),
+        (status = 422, description = "more than 1000 `list_ids`, or an id that is not a UUID"),
         (status = 429, description = "per-user CBL import quota exceeded"),
     )
 )]
@@ -2299,11 +2362,13 @@ pub async fn refresh_all(
     State(app): State<AppState>,
     user: CurrentUser,
     Extension(ctx): Extension<RequestContext>,
+    OptionalValidated(req): OptionalValidated<CblBulkReq>,
 ) -> impl IntoResponse {
+    // One token per call, continuation calls included; see [`check_all`].
     if let Err(resp) = crate::cbl::quota::consume_import(&app, &user).await {
         return resp;
     }
-    let lists = match refreshable_lists(&app, &user).await {
+    let lists = match refreshable_lists(&app, &user, req.list_ids.as_deref()).await {
         Ok(l) => l,
         Err(resp) => return resp,
     };
@@ -2317,11 +2382,7 @@ pub async fn refresh_all(
     for idx in bulk_order(lists.len()) {
         let list = &lists[idx];
         let Some(budget) = deadline.next_list_budget() else {
-            slots[idx] = Some(item_error(
-                list,
-                true,
-                refresh::RefreshError::NotAttempted.to_string(),
-            ));
+            slots[idx] = Some(item_not_attempted(list, true));
             continue;
         };
         let before = match snapshot_for_caller(&app.db, list.id, &acl).await {

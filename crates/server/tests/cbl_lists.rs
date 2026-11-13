@@ -3520,3 +3520,326 @@ async fn a_failed_outcome_write_does_not_change_the_refresh_result() {
     assert_eq!(body["error"]["code"], "refresh_failed");
     assert_eq!(outcome(&db, bad).await.count, 0, "outcome not written");
 }
+
+// ───── bulk check / refresh: `list_ids` and `attempted` ─────
+
+async fn upload_tiny(app: &TestApp, auth: &Authed) -> Uuid {
+    let (status, view) = upload_cbl(app, auth, "tiny.cbl", TINY_CBL.as_bytes()).await;
+    assert_eq!(status, StatusCode::CREATED, "{view}");
+    Uuid::parse_str(view["id"].as_str().unwrap()).unwrap()
+}
+
+/// The ids of a bulk result, in response order.
+fn bulk_ids(body: &serde_json::Value) -> Vec<String> {
+    body["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{body:#?}"))
+        .iter()
+        .map(|i| i["id"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// POST a bulk endpoint with a raw body and content type.
+async fn bulk_raw(
+    app: &TestApp,
+    auth: &Authed,
+    path: &str,
+    content_type: Option<&str>,
+    body: &'static str,
+) -> (StatusCode, serde_json::Value) {
+    let mut builder = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/api/me/cbl-lists/{path}"))
+        .header(
+            header::COOKIE,
+            format!(
+                "__Host-comic_session={}; __Host-comic_csrf={}",
+                auth.session, auth.csrf
+            ),
+        )
+        .header("X-CSRF-Token", &auth.csrf);
+    if let Some(ct) = content_type {
+        builder = builder.header(header::CONTENT_TYPE, ct);
+    }
+    let resp = app
+        .router
+        .clone()
+        .oneshot(builder.body(Body::from(body)).unwrap())
+        .await
+        .unwrap();
+    let status = resp.status();
+    (status, body_json(resp.into_body()).await)
+}
+
+/// `check-all` with `list_ids` works on and returns only those of the
+/// caller's refreshable lists; another user's list, a shared list sent by
+/// a non-admin and an unknown id are left out with no error, so the
+/// answer does not tell them apart. Every item a check reaches is
+/// `attempted`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn check_all_with_list_ids_checks_only_the_callers_lists() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "ids-admin@example.com").await;
+    let user = register(&app, "ids-user@example.com").await;
+    let other = register(&app, "ids-other@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+
+    let a = upload_tiny(&app, &user).await;
+    let b = upload_tiny(&app, &user).await;
+    let c = upload_tiny(&app, &user).await;
+    let others = upload_tiny(&app, &other).await;
+    let shared = upload_tiny(&app, &admin).await;
+    let row = cbl_list::Entity::find_by_id(shared)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: cbl_list::ActiveModel = row.into();
+    am.owner_user_id = Set(None);
+    am.update(&db).await.unwrap();
+
+    let (status, all) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists/check-all",
+        Some(&user),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{all}");
+    let all_ids = bulk_ids(&all);
+    assert_eq!(all_ids.len(), 3, "{all}");
+
+    let unknown = Uuid::now_v7();
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists/check-all",
+        Some(&user),
+        Some(serde_json::json!({ "list_ids": [c, others, shared, unknown, a] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // The lists' own order, not the order of `list_ids`.
+    let expected: Vec<String> = all_ids
+        .iter()
+        .filter(|id| *id != &b.to_string())
+        .cloned()
+        .collect();
+    assert_eq!(bulk_ids(&body), expected, "{body}");
+    for item in body["items"].as_array().unwrap() {
+        assert_eq!(item["ok"], true, "{item}");
+        assert_eq!(item["attempted"], true, "{item}");
+        assert_eq!(item["error"], serde_json::Value::Null, "{item}");
+    }
+    assert_eq!(body["failed_count"], 0, "{body}");
+
+    // Lists the caller cannot refresh, alone, answer exactly like an
+    // unknown id: an empty result.
+    for id in [others, shared, unknown] {
+        let (status, body) = http(
+            &app,
+            Method::POST,
+            "/api/me/cbl-lists/check-all",
+            Some(&user),
+            Some(serde_json::json!({ "list_ids": [id] })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body,
+            serde_json::json!({"items": [], "changed_count": 0, "failed_count": 0}),
+        );
+    }
+
+    // The admin may refresh the shared list.
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists/check-all",
+        Some(&admin),
+        Some(serde_json::json!({ "list_ids": [shared, a] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(bulk_ids(&body), vec![shared.to_string()], "{body}");
+
+    // A single-list check is always `attempted`.
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        &format!("/api/me/cbl-lists/{a}/check"),
+        Some(&user),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["attempted"], true, "{body}");
+}
+
+/// The body is optional: none, an empty one with the JSON content type and
+/// `{}` work on every list; `{"list_ids": []}` on none. Over the id bound
+/// is a 422 naming the field; malformed JSON stays 400, and an id that is
+/// not a UUID is 422.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_body_forms() {
+    let app = TestApp::spawn().await;
+    let _admin = register(&app, "forms-admin@example.com").await;
+    let user = register(&app, "forms-user@example.com").await;
+    upload_tiny(&app, &user).await;
+    upload_tiny(&app, &user).await;
+
+    for path in ["check-all", "refresh-all"] {
+        for (ct, body, want) in [
+            (None, "", 2),
+            (Some("application/json"), "", 2),
+            (Some("application/json"), "{}", 2),
+            (Some("application/json"), r#"{"list_ids": null}"#, 2),
+            (Some("application/json"), r#"{"list_ids": []}"#, 0),
+        ] {
+            let (status, resp) = bulk_raw(&app, &user, path, ct, body).await;
+            assert_eq!(status, StatusCode::OK, "{path} {ct:?} {body:?}: {resp}");
+            assert_eq!(
+                bulk_ids(&resp).len(),
+                want,
+                "{path} {ct:?} {body:?}: {resp}"
+            );
+        }
+    }
+
+    let over: Vec<Uuid> = (0..=server::api::cbl_lists::MAX_BULK_LIST_IDS)
+        .map(|_| Uuid::now_v7())
+        .collect();
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists/check-all",
+        Some(&user),
+        Some(serde_json::json!({ "list_ids": over })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["error"]["code"], "validation", "{body}");
+    assert_eq!(body["error"]["details"][0]["field"], "list_ids", "{body}");
+
+    let (status, body) = bulk_raw(
+        &app,
+        &user,
+        "check-all",
+        Some("application/json"),
+        r#"{"list_ids": ["#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let (status, body) = bulk_raw(
+        &app,
+        &user,
+        "check-all",
+        Some("application/json"),
+        r#"{"list_ids": ["not-a-uuid"]}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+}
+
+/// `refresh-all` honours `list_ids` like `check-all`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn refresh_all_with_list_ids_refreshes_only_those() {
+    let app = TestApp::spawn().await;
+    let _admin = register(&app, "rids-admin@example.com").await;
+    let user = register(&app, "rids-user@example.com").await;
+    let a = upload_tiny(&app, &user).await;
+    let _b = upload_tiny(&app, &user).await;
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists/refresh-all",
+        Some(&user),
+        Some(serde_json::json!({ "list_ids": [a] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(bulk_ids(&body), vec![a.to_string()], "{body}");
+    let item = bulk_item(&body, &a.to_string());
+    assert_eq!(item["applied"], true, "{item}");
+    assert_eq!(item["attempted"], true, "{item}");
+    assert_eq!(item["ok"], true, "{item}");
+}
+
+/// The out-of-time path end to end: stalled sources use up the bulk
+/// budget, the lists not reached come back `attempted: false` with the
+/// "not attempted" error, and a second call with exactly those ids checks
+/// them. (Takes the 45 s bulk budget, then one 15 s list budget, to run.)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn check_all_reports_lists_it_did_not_reach_and_a_second_call_checks_them() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "budget@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    // Four lists that each use a whole per-list budget: three fill the
+    // 45 s, the fourth (at least) is not reached.
+    let mut urls = std::collections::HashMap::new();
+    for _ in 0..4 {
+        let id = upload_tiny(&app, &auth).await;
+        let url = format!("https://lists.example.test/{id}/slow.cbl");
+        make_url_list(&db, id, &url, None).await;
+        stub_source_for_tests(&url, TestSource::Stall);
+        urls.insert(id.to_string(), url);
+    }
+
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists/check-all",
+        Some(&auth),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 4, "{body}");
+    let missed: Vec<String> = items
+        .iter()
+        .filter(|i| i["attempted"] == false)
+        .map(|i| i["id"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(!missed.is_empty(), "the budget ran out: {body:#}");
+    for item in items {
+        assert_eq!(item["ok"], false, "{item}");
+        if item["attempted"] == false {
+            assert_eq!(
+                item["error"], "not attempted: the request ran out of time; run it again",
+                "{item}"
+            );
+        } else {
+            assert!(
+                item["error"].as_str().unwrap().contains("timed out"),
+                "{item}"
+            );
+        }
+    }
+    assert_eq!(body["failed_count"], 4, "{body}");
+
+    // The sources of the lists not reached answer now.
+    for id in &missed {
+        stub_source_for_tests(&urls[id], TestSource::Body(TINY_CBL.as_bytes().to_vec()));
+    }
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists/check-all",
+        Some(&auth),
+        Some(serde_json::json!({ "list_ids": missed })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let mut got = bulk_ids(&body);
+    got.sort();
+    let mut want = missed.clone();
+    want.sort();
+    assert_eq!(got, want, "{body}");
+    for item in body["items"].as_array().unwrap() {
+        assert_eq!(item["attempted"], true, "{item}");
+        assert_eq!(item["ok"], true, "{item}");
+    }
+    assert_eq!(body["failed_count"], 0, "{body}");
+}

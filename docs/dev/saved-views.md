@@ -478,7 +478,17 @@ list at most 15 s (`CBL_REQUEST_BULK_LIST_BUDGET`), work through the
 lists in random order so the same stalling hosts cannot hold the others
 back on every run, stop starting lists after 45 s
 (`CBL_REQUEST_BULK_BUDGET`, or when less than 5 s is left) and report the
-rest as "not attempted"; results keep the lists' own order. Matching a
+rest as "not attempted" (`ok: false`, `attempted: false`); results keep
+the lists' own order. Both take an optional body `{"list_ids": [...]}`
+(at most `MAX_BULK_LIST_IDS` = 1000, 422 over it) that limits the call to
+those of the caller's refreshable lists; other and unknown ids are
+dropped silently, and no body means every list. Each call costs one
+import-quota token, a continuation call included. The web "Check for
+updates" (`lib/cbl/check-all-rounds.ts`) sends the not-attempted ids
+back until none are left, shows "Checked N of M lists · still
+checking…" meanwhile, and stops when a round checks nothing or fails
+(the lists checked so far are kept, the rest show that round's error
+with Retry). Matching a
 large list after a slow fetch can still take a request past the route
 timeout: the write is then rolled back and the request answers 408,
 while lists finished earlier in the same bulk request stay updated. The
