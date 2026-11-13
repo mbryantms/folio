@@ -418,14 +418,16 @@ to them.
 Press `x` in the reader and Folio's server-side OCR pipeline outlines
 every detected speech bubble on the page. **Tap a bubble** to extract its
 text (typically well under a second) and copy it — or drag your own box,
-which can snap itself to the tightest detected bubble polygon.
+which can snap itself to the detected bubble it overlaps.
 
-- Two recognizers: **Western** (Tesseract, English) and **Manga**
-  (manga-ocr, Japanese) — auto-selected from the series' text language or
-  reading direction, overridable per capture.
-- Comic-aware post-processing strips the junk OCR usually returns at
-  bubble borders (stray `|`, `~`, halftone noise) while preserving
-  `!?` and ellipses.
+- A detector trained on comics finds the balloons and the text outside
+  them; the outlines appear in a fraction of a second.
+- Two recognizers: **Western** (a line recogniser that reads a balloon
+  line by line, English) and **Manga** (manga-ocr, Japanese) —
+  auto-selected from the series' text language or reading direction,
+  overridable per capture.
+- A balloon's lines are joined into one sentence, keeping the hyphen of
+  a name that wraps (`SPIDER-` / `MAN` → `SPIDER-MAN`).
 - Results are cached against the archive's *content hash*, so a cache
   survives file moves and is correctly invalidated by retags.
 

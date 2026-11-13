@@ -216,46 +216,58 @@ describe("D1: pixel rectangles are in original page pixels", () => {
 });
 
 describe("D2: tap, keyboard and panel read the same box", () => {
-  // A balloon (block box) and one of its lines (line box) inside it.
-  const BLOCK = { x: 30, y: 30, w: 40, h: 40, confidence: 0.9, class: 0 };
-  const LINE = { x: 35, y: 45, w: 30, h: 8, confidence: 0.9, class: 1 };
-  const BLOCK_PX = { x: 596, y: 917, w: 795, h: 1222 };
-  const BLOCK_PCT = { x: 30, y: 30, w: 40, h: 40 };
+  // The regions as the server sends them: a large free-text region and a
+  // balloon inside it. Both are regions to read; the client drops neither.
+  const LARGE = { x: 30, y: 30, w: 40, h: 40, confidence: 0.9, class: 2 };
+  const INNER = { x: 35, y: 45, w: 30, h: 8, confidence: 0.9, class: 0 };
+  const LARGE_BODY = {
+    page: 0,
+    region_pct: { x: 30, y: 30, w: 40, h: 40 },
+    region: { x: 596, y: 917, w: 795, h: 1222 },
+  };
+  const INNER_BODY = {
+    page: 0,
+    region_pct: { x: 35, y: 45, w: 30, h: 8 },
+    region: { x: 696, y: 1375, w: 596, h: 244 },
+  };
 
   beforeEach(() => {
-    regions = [BLOCK, LINE];
+    regions = [LARGE, INNER];
   });
 
-  it("a tap on a line inside a balloon reads the whole balloon", async () => {
+  it("a tap inside a balloon that lies in a larger region reads the balloon", async () => {
     const { svg, container } = renderOverlay();
-    // One outline / proxy: the nested line is not a box of its own.
-    await outlinesLoaded(container, 1);
-    expect(container.querySelectorAll("svg rect")).toHaveLength(1);
+    // Both are outlined and both have a proxy.
+    await outlinesLoaded(container, 2);
+    expect(container.querySelectorAll("svg rect")).toHaveLength(2);
     act(() => pointer(svg, "down", 50, 49));
     act(() => pointer(svg, "up", 50, 49));
     await waitFor(() => expect(ocrBodies()).toHaveLength(1));
-    expect(ocrBodies()[0]).toEqual({
-      page: 0,
-      region_pct: BLOCK_PCT,
-      region: BLOCK_PX,
-    });
+    expect(ocrBodies()[0]).toEqual(INNER_BODY);
+  });
+
+  it("a tap beside the balloon, inside the larger region only, reads that region", async () => {
+    const { svg, container } = renderOverlay();
+    await outlinesLoaded(container, 2);
+    act(() => pointer(svg, "down", 50, 35));
+    act(() => pointer(svg, "up", 50, 35));
+    await waitFor(() => expect(ocrBodies()).toHaveLength(1));
+    expect(ocrBodies()[0]).toEqual(LARGE_BODY);
   });
 
   it("the keyboard proxy reads the same box", async () => {
     const { container } = renderOverlay();
-    await outlinesLoaded(container, 1);
+    await outlinesLoaded(container, 2);
+    // Reading order: the two share a row, the larger region starts
+    // further left, so the balloon is the second stop.
     fireEvent.click(
-      container.querySelector('[aria-label="Capture text region 1 of 1"]')!,
+      container.querySelector('[aria-label="Capture text region 2 of 2"]')!,
     );
     await waitFor(() => expect(ocrBodies()).toHaveLength(1));
-    expect(ocrBodies()[0]).toEqual({
-      page: 0,
-      region_pct: BLOCK_PCT,
-      region: BLOCK_PX,
-    });
+    expect(ocrBodies()[0]).toEqual(INNER_BODY);
   });
 
-  it("the page-text panel reads the same box", async () => {
+  it("the page-text panel reads the same boxes", async () => {
     const qc = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
@@ -265,21 +277,17 @@ describe("D2: tap, keyboard and panel read the same box", () => {
         <PageTextPanel issueId="issue-1" pages={[0]} direction="ltr" />
       </QueryClientProvider>,
     );
-    await waitFor(() => expect(ocrBodies()).toHaveLength(1));
-    expect(ocrBodies()[0]).toEqual({
-      page: 0,
-      region_pct: BLOCK_PCT,
-      region: BLOCK_PX,
-    });
+    await waitFor(() => expect(ocrBodies()).toHaveLength(2));
+    expect(ocrBodies()).toEqual([LARGE_BODY, INNER_BODY]);
     usePageTextPanel.setState({ open: false });
   });
 
   it("a tap on a box the panel already read uses the panel's result", async () => {
     const { svg, container, qc } = renderOverlay();
-    await outlinesLoaded(container, 1);
+    await outlinesLoaded(container, 2);
     // The panel's cache entry for this box (same key the panel writes).
     await qc.fetchQuery({
-      queryKey: ["ocr", "region-text", "issue-1", 0, "30.00,30.00,40.00,40.00"],
+      queryKey: ["ocr", "region-text", "issue-1", 0, "35.00,45.00,30.00,8.00"],
       queryFn: () => ({
         text: "FROM PANEL",
         confidence: 0.8,

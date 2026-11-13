@@ -1,9 +1,20 @@
 # OCR pipeline
 
-Server-side text recognition for reader markers (text-detection-1.0
-plan, reworked by OCR rework 1.0). Replaces the pre-M6
-tesseract.js-in-the-browser path with a detector + recognizer +
-postprocess pipeline that ships with the Rust binary.
+Server-side text reading for the reader: find the text regions of a
+page, read the one the user picked. Three small models on ONNX Runtime
+do the Western work, each in a session Folio builds itself; Japanese
+goes through `manga-ocr`.
+
+| Role | Model | Size | What it does |
+|---|---|---|---|
+| Page detector | `ogkalu/comic-text-and-bubble-detector` (`detector-v4-s_int8.onnx`, RT-DETR-v2) | 11 MB | Balloons and free text of a whole page, one inference |
+| Line finder | `PaddlePaddle/PP-OCRv5_mobile_det_onnx` (DB) | 5 MB | Splits one balloon crop into text lines |
+| Line recogniser | `PaddlePaddle/en_PP-OCRv5_mobile_rec_onnx` (CTC) | 8 MB | Reads the lines of a balloon in one batch |
+| Japanese | `mayocream/manga-ocr-onnx` (`manga-ocr` crate) | 440 MB | Reads a balloon crop as one string |
+
+The previous engines, `comic-text-detector` and Tesseract, stay in the
+build for one release behind
+[`COMIC_OCR_LEGACY_ENGINES`](#engine-switch-comic_ocr_legacy_engines).
 
 ## Endpoints
 
@@ -20,12 +31,15 @@ postprocess pipeline that ships with the Rust binary.
 }
 // Response (200)
 {
-  "text": "POW!",
-  "confidence": 0.91,
+  "text": "LOOK OUT!",
+  "confidence": 0.98,
   "refined_bbox": { "x": 248, "y": 302, "w": 106, "h": 76 },
   "lang": "western",
-  "raw_text": "~POW!|",
-  "words": [{ "text": "POW!", "confidence": 0.93, "x": 252, "y": 305, "w": 90, "h": 60 }],
+  "raw_text": "LOOK\nOUT!",
+  "words": [
+    { "text": "LOOK", "confidence": 0.99, "x": 262, "y": 310, "w": 78, "h": 26 },
+    { "text": "OUT!", "confidence": 0.98, "x": 258, "y": 340, "w": 84, "h": 27 }
+  ],
   "page_w": 1988,
   "page_h": 3056
 }
@@ -79,28 +93,49 @@ postprocess pipeline that ships with the Rust binary.
   `series.reading_direction == "rtl"`, else `western`. The response
   echoes the resolved value in `lang`, and the resolved value feeds
   the cache key.
-- `detect` is the **snap-to-bubble opt-in** (v0.3.26). When `true`
-  the pipeline runs `comic-text-detector` over the page to refine
-  the user's rect to the tightest bubble polygon. When `false` or
-  omitted (the default) the recognizer runs on the user's rect
-  verbatim. The detector's first call on a fresh page costs ~50 s
-  on a typical CPU-bound container; subsequent calls on the same
-  page hit the polygon cache (~200 ms). The reader sends
-  `detect: true` from the drag path only when the page's
-  text-regions fetch already warmed the cache.
-- `refined_bbox` is the detector's snap-to-bubble rect. `None`
-  when `detect: false`, when no bbox overlapped the user's region,
-  or when no detector was run.
+- `detect` is the **snap opt-in**. When `true` the pipeline takes the
+  page's [regions](#regions-ocrregionsrs) (from the detect cache, else
+  by running the page detector) and reads the region that overlaps the
+  user's rect most, instead of the rect itself; among regions that
+  overlap it equally, the smallest. When `false` or omitted (the
+  default) the rectangle is not snapped: that is how a region from the
+  text-regions route is read, since it already is a detected box. The
+  reader sends `detect: true` for a rectangle the user dragged, and only
+  when the page's text-regions fetch succeeded. A **Japanese** request
+  uses the page's detection whatever `detect` says: when its rectangle
+  is one of the page's balloons it reads the text box inside (see
+  [Japanese](#japanese)); a rectangle drawn by hand and not snapped is
+  read as sent.
+- `refined_bbox` is the detected box that was read when that is not
+  the rectangle as sent: the region a `detect: true` request was
+  snapped to, or, for Japanese, the text box inside a balloon. Absent
+  when the rectangle was read as sent.
 - `raw_text` is the engine output before the postprocess cleanup;
-  present only when cleanup changed the text. Use it to author
-  golden fixtures from user reports.
-- `words` is the per-word breakdown (page-pixel boxes, post-cleanup)
-  — western only; manga-ocr exposes no word data.
+  present only when cleanup changed the text. For Western text it holds
+  the lines as read, one per line, where `text` has them joined.
+- `words` holds the pieces the text was read in, in reading order, with
+  page-pixel boxes. For Western text the piece is a **text line** (the
+  recogniser reads whole lines), so an entry's `text` can hold several
+  words; the field keeps its name because the response shape did not
+  change. Absent for manga-ocr and when nothing was read. The web
+  client does not use it.
+- `confidence`: for Western text, the mean over the lines that
+  produced text, each line scored by the mean probability of its
+  characters; a line box in which nothing was read (a speck, the
+  balloon's tail) adds no text and does not lower it. 0.0 when no line
+  produced text. manga-ocr reports 1.0, or 0.0 for an empty result.
 
 ### `GET /me/issues/{id}/pages/{page}/text-regions`
 
-Full-page detector output in **percent** coordinates — drives the
-reader's tappable bubble outlines in text-capture mode.
+The page's text regions in **percent** coordinates — drives the
+reader's tappable outlines in text-capture mode and the page-text
+panel. A region is a balloon (`class` 0) or a piece of text outside
+balloons (`class` 2: a caption on the art, a sound effect, a sign);
+each is a box to read as a whole. The detector's third class, the text
+inside a balloon, is not returned: it lies inside a class 0 box. The
+list is final: the server has already removed duplicate boxes
+([Regions](#regions-ocrregionsrs)), and a client shows and reads every
+box it is sent.
 
 ```json
 // Response (200)
@@ -113,12 +148,10 @@ reader's tappable bubble outlines in text-capture mode.
 }
 ```
 
-Shares the per-page detect cache with the OCR POST: one regions
-fetch makes every subsequent bubble OCR on that page
-recognize-only (~200 ms–2 s). Cache hit = Redis round-trip, no
-archive touch; miss = page decode + detector inference (seconds to
-tens of seconds — see the `OMP_NUM_THREADS` section), which is why
-the endpoint sits on its own stricter rate bucket.
+Shares the per-page detect cache with the OCR POST. Cache hit = Redis
+round-trip, no archive touch; miss = page decode + one detector
+inference (tens of milliseconds for the model; decoding a large page
+costs more). The endpoint keeps its own stricter rate bucket.
 
 Error codes (envelope `{ "error": { "code", "message" } }`):
 
@@ -136,6 +169,7 @@ Error codes (envelope `{ "error": { "code", "message" } }`):
 | 409 | `archive_needs_conversion` | The file is a CBR / CB7 the page reader cannot read until it is converted to CBZ |
 | 410 | `archive_unreadable` | The scanner marked the issue encrypted, or the file no longer opens as an archive |
 | 500 | `ocr_failed` | Detector or recognizer threw |
+| 500 | `ocr_model_unverified` | A model file could not be downloaded or failed its digest check ([Pinned model files](#pinned-model-files)); the file and digests are in the server log. Not retried for 5 minutes |
 | 503 | `service_unavailable` | Every OCR permit busy for 10 s (`OCR_MAX_CONCURRENT` = 2, process-wide), or an I/O error reading the file; carries `Retry-After` |
 | 503 | `library_offline` | The file is missing and the library root itself cannot be opened or is empty (an unmounted share); `Retry-After: 30` |
 
@@ -177,9 +211,12 @@ with an error or a panic from the engine, still hands its finished
 detection to the cache. A failure nobody receives (the request was
 already gone) is logged once at warn. A caught engine panic is logged at
 error with its message and counted in
-`folio_ocr_recognizer_panics_total{model}`; it poisons that engine's
-mutex, so every later request for the engine answers `ocr_failed` until
-the server restarts (unchanged behaviour).
+`folio_ocr_recognizer_panics_total{model}`. A panic while an engine's
+lock is held poisons the lock, and every later request for that engine
+answers `ocr_failed` until the server restarts. Tesseract and manga-ocr
+hold their lock for the whole call; the three sessions Folio builds
+hold theirs for the inference only, so a panic in Folio's own image or
+decoding code around them fails that one request and nothing else.
 
 Every OCR cache read is bounded too (`CACHE_READ_TIMEOUT`, 2 s, on top
 of the Redis connection's own 500 ms response timeout); a timed-out read
@@ -224,18 +261,24 @@ region_pct only: Redis result cache ── HIT? 200
    region_pct notes under Endpoints)
    │
    ▼  ── from here on a detached task owning the permit ──
-detect: false (default) ─────────────────┐
-detect: true → detect cache, else the    │
-   detector (comic-text-detector) on the │
-   full page; snap to the box with the   │
-   largest overlap, or keep the user's   │
-   rect if none overlaps                 │
+Western, detect: false (default) ────────┐
+detect: true, or Japanese → detect       │
+   cache, else the page detector on the  │
+   full page                             │
+   detect: true: snap to the region with │
+   the largest overlap, or keep the      │
+   user's rect if none overlaps          │
+   Japanese, when the rect is a balloon  │
+   of the page: the text box inside it,  │
+   when exactly one is clear             │
    │                                     │
    ▼                                     ▼
-crop → recognizer (Western: Tesseract LSTM ; Manga: manga-ocr)
+crop → recognizer
+   Western: line finder on the crop → lines cut → read in batches
+   Manga:   manga-ocr on the crop
    │
    ▼
-postprocess (junk-token + confidence cleanup)
+postprocess (Western: join the lines; Manga: strip control characters)
    │
    ▼
 permit released → detect-cache PUT (if the detector ran) + result-cache PUT
@@ -244,91 +287,430 @@ permit released → detect-cache PUT (if the detector ran) + result-cache PUT
 200 (if the request is still there)
 ```
 
-### Western preprocessing (inside the recognizer)
+## Engines
 
-Each crop goes through: grayscale → 3× Lanczos3 upscale → **Otsu**
-binarization (midpoint fallback on near-uniform crops) →
-**polarity detection** (majority-black border ring ⇒ white-on-black
-caption ⇒ invert) → **24 px white border pad** (Tesseract
-mis-segments glyphs touching the canvas edge) → PSM 6 + pinned
-300 DPI. `tessedit_char_blacklist` is deliberately not used: the
-LSTM _substitutes_ blacklisted chars instead of omitting them.
+Everything below is the current engine set. The constants are the ones
+the engines were measured with; each lives next to the code that uses
+it, guarded by unit tests. The thresholds, sizes and bounds named below
+are part of the [engine fingerprint](#engine-fingerprint) (each module
+has a `fingerprint()` listing its own), so changing one starts from
+fresh cache entries by itself. **A change to the code around them
+(preprocessing arithmetic, decoding, cleanup rules, payload shape)
+still requires bumping `OCR_RESULT_VERSION` (and `OCR_DETECT_VERSION`
+for the page detector) in `cache.rs`.**
+
+### Page detector ([`ocr/bubbles.rs`](../../crates/server/src/ocr/bubbles.rs))
+
+`ogkalu/comic-text-and-bubble-detector`, `detector-v4-s_int8.onnx`: an
+RT-DETR-v2 export, 8-bit quantized.
+
+- **Input** `images`: the page squashed to 640 × 640 (bilinear; not
+  cropped, not padded), RGB, each value × 1/255, no mean/std
+  normalisation. `orig_target_sizes`: `[[width, height]]` of the page,
+  so the model returns its boxes in page pixels whatever the page's
+  shape.
+- **Output** `labels`, `boxes` (`x0, y0, x1, y1`), `scores`, one row per
+  query. No non-maximum suppression is needed.
+- **Kept**: rows scoring at least **0.5**, of all three classes (0
+  `bubble`, 1 `text_bubble`, 2 `text_free`), clamped to the page. A
+  score that is not a finite number is dropped, a score above 1 is
+  stored as 1, and a box is kept only when at least one whole pixel of
+  it is left after clamping. This is the page's detection, and what the
+  detect cache stores.
+- Used for pages of every language.
+
+### Regions ([`ocr/regions.rs`](../../crates/server/src/ocr/regions.rs))
+
+What a client may outline, tap and read, and what `detect: true` snaps
+to, is decided in one function, `ocr::regions::regions`, applied to the
+page's detection on the way out (the detect cache keeps the raw boxes).
+Clients do no filtering of their own.
+
+- **Current engines**: the boxes of classes 0 and 2. Class 1, the text
+  inside a balloon, never leaves the server; it is kept for the
+  Japanese crop (below). The detector sometimes returns one region
+  twice, a few pixels apart (as a balloon and as free text): of two
+  boxes whose intersection over union is at least **0.8**, the one with
+  the higher score stays (on equal scores the larger). A box that
+  merely lies inside another is a different region and stays: a balloon
+  drawn on top of a caption is still a balloon.
+- **Legacy engines**: every box of the detection (blocks and lines),
+  minus a box that lies at least 80% inside a larger one. This is the
+  rule the web reader used to apply itself, moved here unchanged, so the
+  legacy set shows the boxes it always showed.
+- **Snap** (`detect: true`): the candidate with the largest overlap
+  with the drawn rectangle. Current engines: the candidates are the
+  regions above, and among candidates with the same overlap the
+  smallest wins (a rectangle drawn wholly inside a balloon that itself
+  lies in a larger region snaps to the balloon). Legacy engines: exactly
+  as the release before, the candidates are every raw box and among
+  equals the last in detector order wins.
+
+On the 12 benchmark pages (below) the de-duplication removes 4 of 151
+regions, one near-duplicate pair on each of four pages.
+
+### Line finder ([`ocr/lines.rs`](../../crates/server/src/ocr/lines.rs))
+
+The Western recogniser reads one line at a time, so a balloon crop is
+split into lines first, with `PaddlePaddle/PP-OCRv5_mobile_det_onnx` (a
+DB text detector).
+
+- **Input**: the crop enlarged **2×** (comic lettering is small for a
+  detector trained on documents), less when the long side would pass
+  **1600**, both sides rounded to a multiple of 32; planes in B, G, R
+  order, `(x/255 − mean) / std` with the ImageNet mean `0.485, 0.456,
+  0.406` and std `0.229, 0.224, 0.225` applied in that plane order
+  (what PaddleOCR's own pipeline does).
+- **Postprocess** (DB): pixels of the probability map above **0.3**
+  form 8-connected components; a component's axis-aligned box is
+  scored by the mean probability inside it and dropped below **0.6**
+  (or when thinner than 3 map pixels); the box is grown on every side
+  by `area × 1.5 / perimeter` (the unclip ratio; DB shrinks text regions
+  in training) and mapped back to crop pixels. At most 1000 components
+  are looked at. Rotated boxes are not produced. The mean is taken from
+  a summed-area table of the map, so scoring costs the same however
+  many components there are and however they overlap; a probability
+  that is not a finite number counts as 0, and a box whose score is not
+  a number is dropped.
+- **Order**: rows top to bottom (a box joins a row when its vertical
+  centre is within half the shorter height of the row's first box),
+  left to right within a row.
+- **No lines found**: the whole crop is read as one line. A line is
+  read when both its sides have at least 4 pixels.
+- **Safety bounds** (`lines_to_read`), outside what a balloon produces:
+  at most **256** lines of a region are read, the first in reading
+  order (the rest are left out and the count is logged at warn); and
+  when the summed area of the lines passes **4 ×** the crop's area the
+  split is not a set of text lines, and the whole crop is read as one
+  line instead (logged at warn). On the benchmark pages a region has at
+  most 15 lines and its lines sum to at most 1.01 × its area.
+
+### Line recogniser ([`ocr/recognizer/ctc.rs`](../../crates/server/src/ocr/recognizer/ctc.rs))
+
+`PaddlePaddle/en_PP-OCRv5_mobile_rec_onnx`, a CTC line model with a
+436-character alphabet (it cannot produce characters of other scripts).
+
+- **Input** `[n, 3, 48, w]`: each line resized to height **48** keeping
+  its aspect ratio (bilinear), planes in B, G, R order, `(x/255 − 0.5)
+  / 0.5`. A batch is as wide as its widest line and at least **320**;
+  narrower lines are padded on the right with zeros. The lines of a
+  balloon go in one run (see the bounds below for when they do not).
+  Each line is cut from the crop as its batch is built, so the lines
+  are never all held as separate images.
+- **Decode**: greedy CTC. Per step the most probable class; class 0 is
+  the blank, repeats collapse, the last class is the space, the classes
+  between are the dictionary. A line's confidence is the mean
+  probability of the characters kept.
+- **Dictionary**: the `PostProcess.character_dict` list of the model's
+  `inference.yml`, a pinned file like the model. It is read by a strict
+  reader for that one list (single characters, unquoted or in single
+  quotes, to the end of the block; anything else is an error), not by a
+  YAML library. When the engine loads, the list must be exactly two
+  shorter than the model's class count (blank + list + space); on a
+  mismatch the engine does not start and Western requests answer
+  `ocr_failed`, because every character would decode as a neighbour.
+- **Safety bounds** outside what a balloon produces: a line more than
+  66 times as wide as tall is squeezed to width 3200 (PaddleOCR's own
+  ceiling), and a run holds at most **16,000** input columns (lines ×
+  batch width), the rest going into a following run. The bound also
+  follows the model: a run's output (`columns / 8` steps × classes) is
+  held to 8,000,000 values, which is 16,000 columns for the 438-class
+  English model and 3,416 for the 18,710-class `PP-OCRv6_small`. They
+  bound memory for a hand-drawn region that is one long strip or holds
+  hundreds of lines. On the benchmark pages the largest region needs
+  10,920 columns (15 lines; median 1,920, 99th percentile 9,030), so
+  every balloon there is still one run.
+- **Memory.** ONNX Runtime keeps the largest buffers a session has
+  needed. Measured in a debug build, reading a whole 1280 × 1876 page
+  as one region (59 lines, far more than a balloon): the process grew
+  from about 110 MB with the models loaded to about 1,000 MB after two
+  such reads and stayed there, of which about 560 MB is the line finder
+  at its 1600-pixel ceiling and about 335 MB the recogniser. The
+  recogniser's share is close to 20 MB per 1,000 columns of the bound
+  (it was about 765 MB for the same request at the earlier bound of
+  96,000). The recogniser's share is for unusual regions only. The line
+  finder's is not: its input reaches the 1600-pixel ceiling for any
+  crop of 800 pixels or more on its long side, which a large balloon or
+  caption on a high-resolution scan already is (4 of the 139 benchmark
+  crops). The session keeps its largest buffers, so a server that has
+  read one such crop holds memory of that order from then on: about
+  560 MB here, for a 1088 × 1600 input; a squarer crop gives a larger
+  input, up to 1600 × 1600, which was not measured.
+
+**Another recogniser of the same family is a registry change.**
+`ocr::models::WESTERN_REC` names a `LineRecModel` (its pinned files,
+which one is the model, where the dictionary comes from).
+`latin_PP-OCRv5_mobile_rec_onnx` and `PP-OCRv6_small_rec_onnx` are
+registered with their pins and are never fetched unless selected. To
+switch: point `WESTERN_REC` at the other entry, update the pin table
+below and the expected text of the real-model tests. The cache keys
+follow the pins by themselves.
+
+### Sessions and threads ([`ocr/session.rs`](../../crates/server/src/ocr/session.rs))
+
+Folio builds each of the three sessions with graph-optimization level 3
+and an explicit intra-op thread count:
+
+| Session | Threads |
+|---|---|
+| Page detector, line recogniser | `min(available_parallelism, 4)` |
+| Line finder | `min(available_parallelism, 2)` (it measured faster with 2 than with 4) |
+
+`available_parallelism` follows the cgroup CPU quota and the affinity
+mask, so a container limited to 4 CPUs on a 40-core host gets 4
+threads. ONNX Runtime's own default is one thread per physical core of
+the machine whatever the process may use; that default is what made the
+previous detector take tens of seconds a page in a small container.
+More than 4 threads do not help: each call is a small image.
+
+`OMP_NUM_THREADS` has no effect on any of this. The ONNX Runtime build
+Folio links has no OpenMP (measured: the previous detector took the
+same time with 1, 4 and 8), and Tesseract is built with OpenMP off. The
+server used to set the variable at start; that code is gone.
+
+Each session sits behind a mutex (a run needs exclusive access), taken
+for the inference only. With `OCR_MAX_CONCURRENT` = 2 two requests can
+overlap; they queue on a session for the milliseconds a run takes.
+
+`manga-ocr`'s two sessions (encoder and decoder) are not built here:
+the upstream crate builds them, with ONNX Runtime's default thread
+count (one thread per physical core of the machine, whatever the
+container is allowed). The same holds for the legacy
+`comic-text-detector`. Folio has no setting for either.
+
+### What was measured
+
+The engines were chosen with a benchmark run before they were adopted,
+made with [`crates/tools/ocr-bench`](../../crates/tools/ocr-bench/README.md).
+On one desktop CPU (i9-14900K) pinned to four performance cores, over
+12 scanned pages from 1941–1953 with 139 balloons and captions
+transcribed as the reference:
+
+| | Previous engines | Current engines |
+|---|---|---|
+| A page's regions | 47 s | 68 ms |
+| One balloon, page already detected | 64 ms | 141 ms |
+| Tapping the middle of each of the 139: no region under the tap | 29 | 0 |
+| … read with at most 10% character error | 43 | 114 |
+| … read with at most 5% character error | 22 | 93 |
+
+**The tool did not run the code that ships.** It calls the server's
+code for the previous engines (the legacy set here) and carries its own
+copies of the candidate engines, which is what the right-hand column
+measured. The server's engines were written to the same specification
+and compared with the recorded run once, by hand, when they were
+adopted: for 137 of the 139 tap targets the server read the same crop
+and returned the same text, line for line; for the other two the tap
+lands on a balloon the detector returned twice, the server keeps the
+higher-scored of the pair where the tool took the smaller, and the text
+is the same. Of the 27 pieces of display lettering (sound effects,
+signs, titles) 19 have no region in both and 8 are identical. That
+comparison is not automated: the tool in the repository does not
+re-check the shipped path, and a change to the engines here needs the
+comparison, or a new measurement, done again.
+
+Limits of the measurement: the pages are all upper-case hand lettering
+(no modern digital lettering, no lower case, English only); the
+reference text was transcribed by a model and spot-checked, not typed
+by a person; a slower server CPU scales the times. Most of the
+remaining errors are lines the line finder dropped or took from a
+touching neighbour balloon, not misread letters.
+
+To re-measure on a machine, on the fixture page:
+
+```sh
+cargo test --release -p server --test ocr_recognizer --no-run
+taskset -c 0,2,4,6 <the printed test binary> --ignored --nocapture timing
+```
+
+It prints the detection time, the per-balloon time and the load
+average. Run it on an idle machine; pin only the run, not the build.
+
+### Japanese
+
+`manga-ocr` reads a crop as one string (ViT encoder + BERT decoder,
+greedy decode; confidence is 1.0, or 0.0 for an empty result). The
+recogniser and its cleanup are unchanged and used by both engine sets.
+
+What changes with the current engines is the crop. The previous
+detector returned text blocks; the current one returns balloons, so a
+tapped region is the balloon with the white around its text. Which
+pixels a Japanese request reads is one function,
+[`ocr::manga_crop::manga_crop`](../../crates/server/src/ocr/manga_crop.rs),
+with two behaviours:
+
+- `MangaCrop::Region`: the requested rectangle as is;
+- `MangaCrop::TextInRegion`: when the rectangle is one of the page's
+  balloons, the detector's class 1 box inside it, if exactly one has at
+  least 80% of its area in the balloon (a text box with a smaller share
+  there belongs to a neighbour and is not counted); the balloon when
+  there is none or several. Two kinds of rectangle are never narrowed:
+  - **a rectangle that is not a region of the page**, that is, one
+    drawn by hand and not snapped (a drag while the regions were not
+    loaded, Detect text on a highlight that was drawn by hand, another
+    client). It is read as sent: narrowing it would silently read less
+    than the user enclosed. A rectangle is a region when each of its
+    edges is within 2 pixels of a region box, which covers the percent
+    round trip of a tap;
+  - **a piece of free text** (class 2): it is not a balloon, and a text
+    box lying in it belongs to a balloon drawn inside it. A free-text
+    box that a class 0 box overlaps at the near-duplicate threshold
+    (IoU 0.8) is one balloon found twice, of which the regions kept the
+    free-text box; it is treated as the balloon.
+
+The constant `MANGA_CROP` picks one, and the server runs
+**`TextInRegion`**. A Japanese request therefore always uses the page's
+detection (from the detect cache, which the text-regions fetch has
+normally filled, else by running the detector), also for a tap with
+`detect` off, and `refined_bbox` carries the text box when that is what
+was read. With `detect: true` the rectangle is first snapped to a
+region and the text box is then looked for inside that region. The mode
+and its two constants are part of the result-cache fingerprint.
+
+When the detector fails for a Japanese request, the request answers
+500 `ocr_failed` and nothing is cached, by design: a result read from
+the rectangle as sent would be stored under the same key as the
+narrowed one and served in its place for days.
+
+With the legacy engines a Japanese request reads what it always read:
+the requested rectangle, or the `comic-text-detector` box it was
+snapped to.
+
+#### What the choice rests on
+
+A **relative comparison on one volume, with no reference text**: 17
+pages of one modern manga volume, 135 balloons and captions as tap
+targets, with the output of the previous pipeline
+(`comic-text-detector` + `manga-ocr`) as the yardstick. Nobody
+transcribed the pages, so the counts below say how often the new crop
+gives `manga-ocr` the same string as before. They are not an error
+rate, and "the same as before" includes whatever the previous pipeline
+got wrong.
+
+Detection: the current detector returned a whole box for all 135 tap
+targets and left no tap without one; the previous detector left 1 tap
+without a box and merged 2 balloons into one box. A page took 63 ms
+against 46.8 s.
+
+`manga-ocr`'s output against the previous pipeline's, on the 134
+targets both have a box for:
+
+| Crop | Identical | Punctuation only | Characters differ |
+|---|---|---|---|
+| The balloon box as is (`Region`) | 113 | 12 | 9 |
+| The text box when exactly one is clear, else the balloon (`TextInRegion`) | 120 | 7 | 7 |
+| The balloon box inset by 6% (not built) | 116 | 10 | 8 |
+
+A text box was available for 134 of the 135 taps. The 7 character-level
+differences of the text-box crop, looked at one by one:
+
+- 3 where the new side is right: one character the previous pipeline
+  misread, and two taps where its merged box returned the text of two
+  balloons;
+- 2 where the previous side is right: the two weaknesses below;
+- 2 where both are wrong: decimal numbers set sideways in vertical
+  text.
+
+Two known weaknesses of `TextInRegion`:
+
+- **A balloon with no text box.** The balloon is read as is. For a tiny
+  balloon that holds only a mark, the recogniser given the balloon
+  invents characters.
+- **A balloon with several lobes.** The detector may box the text of
+  the larger lobe only, or box the other lobe's text so that it lies
+  partly outside the balloon's box; the larger lobe's box is then the
+  one text box inside, and the other lobe's text is not read.
+
+The comparison was made with `ocr-bench`, which has its own copy of
+the rule and of the detector. The server's code was then run once, by
+hand, on the same pages, each tap sent as the percent box the
+text-regions route returns and converted back as the OCR route does:
+the detector returned the same boxes, every one of the 139 regions
+came back with the same pixel rectangle, and for all 135 tap targets
+the server read the same box and returned the same text as the
+text-box row above (134 narrowed to a text box, 1 read as the
+balloon). No tapped region on these pages is free text, so the "free
+text is read as is" part of the rule was not exercised; and the
+comparison tapped regions only, so it says nothing about rectangles
+drawn by hand, which is why those are read as sent.
+
+Limits: one volume, so one lettering style and one kind of page; and,
+without a reference text, no count of how often either pipeline is
+actually right. The page images and their text are not in the
+repository.
 
 ### Postprocess
 
 [`crates/server/src/ocr/postprocess.rs`](../../crates/server/src/ocr/postprocess.rs)
-is the single deterministic cleanup pass — this is what keeps
-bubble borders/tails/halftone dots from coming back as stray
-`| ~ ' _` symbols. Western rules in order: per-word confidence
-drop (W1) → pronoun `I` (W1b) → line-end hyphen join (W2) →
-symbol-only token drop sparing expressive punctuation like
-`!?`/`...` and confident grawlix (W3) → edge junk strip (W4) →
-per-char allowlist (W5) → whitespace collapse (W6) → empty-out guard
-(W7) → confidence recompute over kept words (W8). The manga path only
-strips control/zero-width/replacement chars — Japanese punctuation is
-all legitimate output.
+is the single deterministic cleanup pass; `clean_for` picks the rules by
+language and engine set.
 
-Rules that keep comic lettering intact (result version 3):
+**Western, current engines** (`clean_lines`): the recogniser returns one
+string per line, and the cleanup only joins them into one utterance.
 
-- **W1b, pronoun `I`.** Tesseract usually reads a sans-serif capital I
-  as `|`. A token that is exactly `|` with a word (a token holding a
-  letter) on both sides *on the same line* becomes `I`
-  (`WHAT DO | DO` → `WHAT DO I DO`). A token starting `|'M`, `|'LL`,
-  `|'VE` or `|'D` (straight or curly apostrophe, any case, optionally
-  followed by `!?,.` and the like) becomes `I'M` … anywhere on a line
-  (`|'M FINE` → `I'M FINE`). Everything else keeps the old treatment:
-  a `|` at the start or end of a line (where balloon borders sit) is
-  dropped, `|~`, `||`, `|_` are dropped, `|'S` loses its `|` (`'S`).
-  A `|` scored below 0.60 is still dropped by W1 before this rule
-  sees it. `I` and both apostrophes pass the W5 allowlist.
-- **W2, line-end hyphen.** A line whose last token is a word followed
-  by exactly one hyphen joins the next line's first token when that
-  starts with a letter, and the hyphen stays: `SPIDER-` / `MAN` →
-  `SPIDER-MAN` (a U+2010 hyphen is written as `-`). A double dash is
-  an interruption and is not joined: `WAIT--` / `NO` → `WAIT-- NO`.
-  A lone `-` and a digit on the next line are not joined either
-  (unchanged). **Accepted cost:** a word the letterer really split
-  across lines keeps its hyphen, `WON-` / `DERFUL` → `WON-DERFUL`.
-  Comic lettering rarely splits words; the old rule deleted the hyphen
-  of every compound name that wrapped (`SPIDERMAN`) and merged
-  interruptions (`WAIT-NO`).
-- **W3, grawlix.** A symbol-only token of three or more of
-  `# @ $ % & * ! ?` with at least two different of `# @ $ % & *`
-  (`#@$%!`, `@#$%&!`, `*#@!`) is kept as written (W4 does not strip
-  it) when its confidence is at least 0.60 (the word's own score, or
-  the whole recognition's when Tesseract gave no per-word data). Runs
-  of one repeated symbol (`***`, `@@@`), anything shorter, anything
-  with a border character (`|#@$`), and border junk (`~|'_`) are still
-  dropped.
+- **Line-end hyphen.** A line whose last token is a word followed by
+  exactly one hyphen joins the next line's first token when that starts
+  with a letter, and the hyphen stays: `SPIDER-` / `MAN` →
+  `SPIDER-MAN` (a U+2010 hyphen is written as `-`). A double dash is an
+  interruption and is not joined: `WAIT--` / `NO` → `WAIT-- NO`. A lone
+  `-` and a digit on the next line are not joined either. **Accepted
+  cost:** a word the letterer really split across lines keeps its
+  hyphen, `WON-` / `DERFUL` → `WON-DERFUL`. Comic lettering rarely
+  splits words, and deleting the hyphen breaks every compound name that
+  wraps.
+- **Whitespace.** Every other line break and every run of whitespace
+  becomes one space.
+- Nothing is dropped, the only character rewritten is that U+2010
+  hyphen at a joined line end, and the confidence is the recogniser's.
+  The rules below were written for what Tesseract
+  makes of balloon borders; on this recogniser's output they would
+  delete real text (a `|`, a low-scored word, a symbol outside the
+  allowlist).
 
-Thresholds/charsets are documented consts in that file (matcher-
-style: consts + tests now, settings-registry promotion only on
-operator demand). **Changing anything in preprocessing or
-postprocess requires bumping `OCR_RESULT_VERSION`** in `cache.rs`.
+**Manga**: strips control, zero-width and replacement characters and
+collapses whitespace; Japanese punctuation is all legitimate output.
+
+**Western, legacy engines** (`clean`, unchanged): the Tesseract chain,
+in order: per-word confidence drop (W1) → pronoun `I` read as `|` (W1b)
+→ the same line-end hyphen join (W2) → symbol-only token drop sparing
+expressive punctuation like `!?`/`...` and confident grawlix (W3) →
+edge junk strip (W4) → per-char allowlist (W5) → whitespace collapse
+(W6) → empty-out guard (W7) → confidence recompute over kept words
+(W8). The rules and their thresholds are documented in the module.
 
 Code map:
 
 - [`crates/server/src/api/issue_ocr.rs`](../../crates/server/src/api/issue_ocr.rs)
   — request shapes, ACL, permit, decode (through the decoded-page
-  cache), lang resolution, text-regions endpoint.
+  cache), lang resolution, engine set from configuration, text-regions
+  endpoint.
 - [`crates/server/src/ocr/pipeline.rs`](../../crates/server/src/ocr/pipeline.rs)
   — `detect → snap → crop → recognize → clean`, all inside one
   `spawn_blocking` so the reactor isn't stalled, in a detached task
   that also writes the caches; also `detect_and_cache_regions` for the
-  text-regions endpoint. Debug builds carry `test_models`, per-content-
+  text-regions endpoint. `prepare_models` / `prepare_detector` take the
+  `EngineSet` as a value. Debug builds carry `test_models`, per-content-
   hash stand-ins for the detector and recognizers used by the
   integration tests.
-- [`crates/server/src/ocr/detector.rs`](../../crates/server/src/ocr/detector.rs)
-  — `comic-text-detector` singleton (`tokio::sync::OnceCell` +
-  `std::sync::Mutex<ComicTextDetector>`).
-- [`crates/server/src/ocr/recognizer/western.rs`](../../crates/server/src/ocr/recognizer/western.rs)
-  — Tesseract via `tesseract-rs`, loading `eng` only
-  (`tessdata_best/eng`), preprocessing + per-word `ResultIterator`
-  walk. The `tesseract-rs` build script also downloads
-  `tur.traineddata` (it expects both files), and the image ships it;
-  nothing loads it.
+- [`crates/server/src/ocr/session.rs`](../../crates/server/src/ocr/session.rs)
+  — ONNX Runtime session construction and thread counts.
+- [`crates/server/src/ocr/bubbles.rs`](../../crates/server/src/ocr/bubbles.rs)
+  — page detector.
+- [`crates/server/src/ocr/regions.rs`](../../crates/server/src/ocr/regions.rs)
+  — which detected boxes are a page's regions, per engine set
+  (class filter, duplicate removal).
+- [`crates/server/src/ocr/lines.rs`](../../crates/server/src/ocr/lines.rs)
+  — line finder.
+- [`crates/server/src/ocr/recognizer/ctc.rs`](../../crates/server/src/ocr/recognizer/ctc.rs)
+  — line recogniser, dictionary reader, and `LineOcr` (line finder +
+  recogniser behind the `Recognizer` trait).
 - [`crates/server/src/ocr/recognizer/manga.rs`](../../crates/server/src/ocr/recognizer/manga.rs)
   — `manga-ocr` (encoder + decoder + vocab ONNX, greedy decode).
+- [`crates/server/src/ocr/manga_crop.rs`](../../crates/server/src/ocr/manga_crop.rs)
+  — which rectangle a Japanese request reads.
+- [`crates/server/src/ocr/models.rs`](../../crates/server/src/ocr/models.rs)
+  — pinned model files, the fetch-and-verify pinner, the line
+  recogniser registry.
 - [`crates/server/src/ocr/postprocess.rs`](../../crates/server/src/ocr/postprocess.rs)
   — pure-function cleanup rules (see above).
 - [`crates/server/src/ocr/cache.rs`](../../crates/server/src/ocr/cache.rs)
@@ -338,6 +720,44 @@ Code map:
   — in-process decoded-page cache.
 - [`crates/server/src/api/admin_ocr.rs`](../../crates/server/src/api/admin_ocr.rs)
   — `GET /admin/ocr/models` reflection-on-disk endpoint.
+- Legacy engine set:
+  [`ocr/detector.rs`](../../crates/server/src/ocr/detector.rs)
+  (`comic-text-detector` singleton) and
+  [`ocr/recognizer/western.rs`](../../crates/server/src/ocr/recognizer/western.rs)
+  (Tesseract via `tesseract-rs`).
+
+## Engine switch (`COMIC_OCR_LEGACY_ENGINES`)
+
+**Temporary, for one release.** `COMIC_OCR_LEGACY_ENGINES=true` in the
+server's environment (read at start, default `false`, not an admin
+setting) makes the server run the previous engines exactly as the
+release before the engine change did: `comic-text-detector` for the
+page (blocks and lines, classes 0 and 1), Tesseract for Western text
+with the full W cleanup chain, `manga-ocr` for Japanese. It exists so a
+deploy can go back without a code revert; the switch, both legacy
+modules and the Tesseract build are removed in a later change.
+
+- The two sets never share a cache entry: the engine fingerprint in the
+  result and detect keys includes the set. Flipping the switch starts
+  from an empty cache for that set, and flipping back finds the entries
+  it left (until their 7-day expiry).
+- Models are fetched on first use, per set. A server that never runs
+  the legacy set never fetches the 95 MB `comic-text-detector` model;
+  one that was upgraded keeps it on disk until someone deletes it.
+- What the legacy set looks like from outside: a page's first detection
+  takes tens of seconds (minutes in a small container), text-regions
+  returns block boxes and the line boxes not inside a block (the nested
+  ones are dropped on the server now, where the reader used to drop
+  them), `words` holds words, and a Japanese request reads its
+  rectangle as sent.
+- In code the set is `ocr::EngineSet`, chosen once per request in
+  `api::issue_ocr` and passed down, so a tool can run both sets in one
+  process (`prepare_models(EngineSet::Legacy, …)`).
+
+Legacy Western preprocessing, for reference (inside the recognizer):
+grayscale → 3× Lanczos3 upscale → Otsu binarization (midpoint fallback
+on near-uniform crops) → polarity detection (majority-black border ring
+⇒ invert) → 24 px white border pad → PSM 6 + pinned 300 DPI.
 
 ## Cache
 
@@ -347,22 +767,43 @@ in-process cache of decoded pages.
 ### Engine fingerprint
 
 Both Redis keys carry a 16-hex fingerprint (BLAKE3, truncated) of what
-decides their payload, computed once per process
-(`ocr::cache::fingerprints`, logged at first use):
+decides their payload, computed once per process and engine set
+(`ocr::cache::fingerprints_for`, logged at first use):
 
-- result keys: `OCR_RESULT_VERSION`, `OCR_DETECT_VERSION`, the linked
-  Tesseract version (`TessVersion()`), a BLAKE3 of the
-  `eng.traineddata` file the recognizer loads (same path resolution:
-  `TESSDATA_PREFIX`, else `~/.tesseract-rs/tessdata`; `missing` when
-  absent), and every pinned ONNX file of the detector and manga-ocr
-  (repository, commit, file, SHA-256 from `ocr::models`), and the
-  page-size fingerprint (`OCR_PAGE_SIZE_VERSION` and the decode limits);
-- detect keys: `OCR_DETECT_VERSION` and the detector pins only.
+- result keys: the engine set, `OCR_RESULT_VERSION`,
+  `OCR_DETECT_VERSION`, every pinned file (repository, commit, file,
+  SHA-256 from `ocr::models`) of the page detector, the line finder,
+  the line recogniser with its dictionary, and manga-ocr, the Japanese
+  crop mode (`MANGA_CROP`), the page-size fingerprint
+  (`OCR_PAGE_SIZE_VERSION` and the decode limits), and the tuning
+  constants: the detector's input size and score threshold
+  (`bubbles::fingerprint`), the line finder's scale, thresholds and
+  bounds (`lines::fingerprint`), the recogniser's sizes and run bounds
+  (`ctc::fingerprint`), the Japanese crop's constants
+  (`manga_crop::fingerprint`) and the near-duplicate threshold of the
+  regions;
+- detect keys: the engine set, `OCR_DETECT_VERSION`, the page
+  detector's pins and the detector's tuning constants only (the cached
+  detection holds the raw boxes, so the region rules do not touch it).
 
-An image upgrade that changes Tesseract, its language data or a model
-pin therefore rolls the keys by itself; old entries age out via the
-TTL. The version constants are still bumped for changes in Folio's own
-code (preprocessing, cleanup, payload shape).
+For the legacy set the page detector is `comic-text-detector`'s pin and
+the Western part is the linked Tesseract version (`TessVersion()`) plus
+a BLAKE3 of the `eng.traineddata` file the recognizer loads (same path
+resolution: `TESSDATA_PREFIX`, else `~/.tesseract-rs/tessdata`;
+`missing` when absent).
+
+A moved model pin, a switch of line recogniser or of engine set, a
+changed threshold or bound of the current engines, or (legacy) an image
+upgrade that changes Tesseract or its language data therefore rolls the
+keys by itself; old entries age out via the TTL. The version constants
+are still bumped for changes in Folio's own code (preprocessing
+arithmetic, decoding, cleanup, payload shape) and for a changed
+constant of the legacy engines, which are not in the fingerprint.
+Current values:
+result **v4** (Western text read by the line finder and the line
+recogniser, `words` one entry per line; Japanese crops from the
+balloon detector), detect **v3** (the boxes of the balloon detector,
+all three classes).
 
 ### Result cache
 
@@ -372,8 +813,8 @@ Stores the final recognized text per region.
 the `{d|r}` byte is `d` when run with the detector enabled, `r` for
 recognizer-only. `v{N}` is `OCR_RESULT_VERSION` — bump it on any
 change that alters what the pipeline would produce for the same
-inputs (preprocessing, PSM, Tesseract variables, postprocess rules,
-response semantics); old keys age out via TTL, no flush needed.
+inputs (an engine's preprocessing, thresholds or decoding, postprocess
+rules, response semantics); old keys age out via TTL, no flush needed.
 
 - `content_hash` (the issue's mutable BLAKE3 of on-disk bytes, not
   the stable `issue.id`) makes invalidation automatic — a rescan
@@ -388,43 +829,41 @@ response semantics); old keys age out via TTL, no flush needed.
 Hit → short-circuit before page load + decode. Miss → run the
 full pipeline and write the result.
 
-### Detector-result cache (M4 follow-up, v0.3.25)
+### Detector-result cache
 
-Stores the detector's polygon list per page so re-OCRs on _different_
-regions of the same page skip the expensive detector stage. The
-detector is by far the heaviest part of the pipeline (~3 s on a fast
-CPU, much more on constrained hosts) — caching its output is what
-makes "OCR every bubble on this page" feasible.
+Stores the page's detected regions so the text-regions route answers a
+repeat request without touching the archive, and `detect: true` reads
+of _different_ regions of the same page share one detection.
 
 **Key**: `ocr:detect:v{N}:{fingerprint}:{content_hash}:{page}` (`N` =
 `OCR_DETECT_VERSION`, detector-only fingerprint)
 
 **Value**: `{page_w, page_h, bboxes: [{xmin, ymin, xmax, ymax,
-confidence, class}]}` in page-pixel coordinates. The page dims ride
-along so the text-regions endpoint can convert to percent on a
-cache hit without re-decoding the page (the v1 payload was a bare
-bbox array; v1 entries deserialize-fail and read as misses).
+confidence, class}]}` in page-pixel coordinates: every box the
+detector kept, of all three classes. The text-regions route and the
+snap pass it through `ocr::regions` on the way out, and a Japanese
+request looks in it for the text box inside its region. The
+page dims ride along so the text-regions endpoint can convert to
+percent on a cache hit without re-decoding the page (the v1 payload
+was a bare bbox array; an entry of that shape deserialize-fails and
+reads as a miss).
 
-Flow per OCR call with `detect: true` (with `detect: false`, the
-default, steps 3–5 are skipped and the user's rect is recognized
-verbatim):
+Flow per OCR call with `detect: true` (a Western request with `detect:
+false`, the default, skips steps 3–5 and reads the user's rect
+verbatim; a Japanese request with `detect: false` skips only step 5):
 
 1. Result-cache lookup. Hit → return.
 2. Take a permit; get the page from the decoded-page cache or decode it.
-3. Detect-cache lookup. Hit → use cached polygons.
-4. Miss → run detector on the **full page**.
-5. Pick the polygon whose intersection with the user's rect is
-   largest. Fall back to the user's rect verbatim if none overlap.
-6. Recognize the chosen crop.
+3. Detect-cache lookup. Hit → use the cached detection.
+4. Miss → run the page detector on the **full page**.
+5. Pick the region whose intersection with the user's rect is
+   largest (the smallest among equals). Fall back to the user's rect
+   verbatim if none overlap.
+6. Recognize the chosen crop; for Japanese, when it is one of the
+   page's balloons, the text box inside it when exactly one is clear.
 7. Release the permit; write the detect cache (step 4 ran) and the
    result cache. These writes happen in the detached task, also when
    the request is gone.
-
-Pre-v0.3.25, step 3-4 ran the detector over a crop around the user's
-rect, not the full page. The model resizes its input to 1024×1024
-internally either way, so per-call inference cost is unchanged — but
-moving to full-page detection lets two OCR calls on different bubbles
-of the same page share the work.
 
 **TTL**: 7 days for both caches. OCR + detection are deterministic
 per `(content_hash, …)` but a finite TTL caps Redis size.
@@ -473,8 +912,7 @@ is read from the archive and decoded once, not once per balloon.
   carry the page-size fingerprint. Memory is the bound plus at most one
   in-flight page per permit; a waiter (holding a permit) waits only on
   a decode that runs under the other permit and ends. The map's lock
-  is held for map updates only, never with the Tesseract or detector
-  mutexes.
+  is held for map updates only, never with an engine's mutex.
 - **Visibility and timing**: a user who cannot see the issue gets the
   same 404 before the cache is looked at. A user who can see it may
   notice that a page answers faster because someone opened it in the
@@ -485,42 +923,23 @@ is read from the archive and decoded once, not once per balloon.
 - **Metrics**: `folio_ocr_page_cache_hits_total` /
   `folio_ocr_page_cache_misses_total`.
 
-## OpenMP threads (`OMP_NUM_THREADS`)
-
-The ort/onnxruntime build the upstream `comic-text-detector` crate
-uses is compiled with OpenMP. Per the ort docs,
-`Session::with_intra_threads()` is **a no-op** with OpenMP builds —
-the only knob that matters is the `OMP_NUM_THREADS` env var.
-
-OpenMP doesn't read cgroup CPU quotas. Left to its own devices it
-sees host cores, which in a 4-CPU LXC running on a 16-core host means
-it spawns 16 threads that all fight for 4 cores. The result is severe
-thrashing — observed ~48 s detector inference on a system that should
-run in ~3 s. **This is by far the biggest perf gotcha in the
-pipeline.**
-
-Folio's `main.rs` auto-tunes this at process start: if `OMP_NUM_THREADS`
-isn't already set, we call `std::thread::available_parallelism()`
-(which _does_ respect cgroups on Linux) and set the env var to that
-value, clamped to 8 to avoid diminishing returns on fat boxes.
-
-Operator override: set `OMP_NUM_THREADS=N` in compose / env-file to
-pin the count. Lower it if the OCR endpoint is starving other
-workers; raise it if you have idle cores.
-
 ## Rate limits
 
 Per-IP token buckets via `tower_governor`, in
 [`crates/server/src/middleware/rate_limit.rs`](../../crates/server/src/middleware/rate_limit.rs):
 
 - `OCR` (POST) = 60/min, burst 60. Reader users won't notice — the
-  bucket caps a runaway script, not manual bubble exploration
-  (bubble taps are recognize-only and cheap).
-- `OCR_DETECT` (text-regions GET) = ~15/min, burst 10. A
-  detect-cache miss is the most expensive single operation the
-  server exposes (full-page inference through a process-wide
-  mutex); the client's `staleTime: Infinity` keeps real usage far
-  under the limit.
+  bucket caps a runaway script, not manual bubble exploration.
+- `OCR_DETECT` (text-regions GET) = ~15/min, burst 10. Sized for the
+  previous detector, where a detect-cache miss was the most expensive
+  single operation the server exposed; a miss now costs a page decode
+  and a short inference. The limits were left as they are (the client's
+  `staleTime: Infinity` keeps real usage far under them, and the
+  legacy engines can still be switched on).
+
+A POST can run the detector too (`detect: true`, or any Japanese
+request, on a detect-cache miss); that run counts against the `OCR`
+bucket, not `OCR_DETECT`.
 
 Denied requests increment
 `folio_rate_limit_denied_total{bucket="ocr"|"ocr.detect"}`.
@@ -532,7 +951,7 @@ Denied requests increment
 | `folio_ocr_cache_hits_total` | counter | — | Cache effectiveness |
 | `folio_ocr_cache_misses_total` | counter | — | Pair with hits for hit-rate |
 | `folio_ocr_pipeline_seconds` | histogram | `lang` | Wall time, detector + recognize (recorded only on success path) |
-| `folio_ocr_recognize_seconds` | histogram | `lang` | Recognize-only — diff with `pipeline_seconds` exposes detector cost |
+| `folio_ocr_recognize_seconds` | histogram | `lang` | Recognize-only — diff with `pipeline_seconds` exposes detector cost. For Western text it spans the line finder and the line recogniser |
 | `folio_ocr_detect_seconds` | histogram | — | Detector-only inference via the text-regions endpoint |
 | `folio_ocr_page_decode_seconds` | histogram | — | Archive read + decode of one page (decoded-page cache misses only) |
 | `folio_ocr_permit_wait_seconds` | histogram | — | Time a request waited for an OCR permit (also recorded when it gave up) |
@@ -540,7 +959,7 @@ Denied requests increment
 | `folio_ocr_detect_abandoned_total` | counter | — | Detections that finished after their request was gone (timeout, abort); each is written to the cache like any other (a write that fails or exceeds 5 s is dropped) |
 | `folio_ocr_recognizer_panics_total` | counter | `model` | Recognizer panics caught during a request (`western`, `manga`); the engine answers `ocr_failed` until restart |
 | `folio_ocr_cache_read_timeouts_total` | counter | — | OCR cache reads (result, detect, page size) that exceeded `CACHE_READ_TIMEOUT` (2 s) and were treated as misses |
-| `folio_ocr_model_load_seconds` | histogram | `model` | Once per process per model (`detector`, `western`, `manga`): verified download (if needed) + session build |
+| `folio_ocr_model_load_seconds` | histogram | `model` | Once per process per model (`detector`, `line_finder`, `western`, `manga`): verified download (if needed) + session build. `detector` is the page detector and `western` the Western recogniser of whichever engine set runs |
 | `folio_ocr_model_first_use_seconds` | histogram | `model` | Once per process per model: the first inference after load (session warm-up included) |
 | `folio_ocr_page_cache_hits_total` / `folio_ocr_page_cache_misses_total` | counter | — | Decoded-page cache effectiveness |
 | `folio_rate_limit_denied_total{bucket="ocr"}` | counter | `bucket` | OCR bucket denials (also `bucket="ocr.detect"`) |
@@ -556,30 +975,35 @@ Reading slowness: a high `permit_wait_seconds` with a rising
 large or the cache is too small for the readers at once; a large
 `model_first_use_seconds` beside a small steady-state inference time is
 session warm-up after a restart. Every `*_seconds` histogram shares the
-exporter's buckets (top bucket 10 s), so a cold 50 s detection only
-shows as `+Inf`.
+exporter's buckets (top bucket 10 s), so a detection by the legacy
+detector only shows as `+Inf`.
 
 ## Models — auto-download + on-disk inspection
 
-The three model artifacts the pipeline depends on:
+The model artifacts the pipeline depends on:
 
-| Component                                    | Where                                                                         | Download source                      | Approx size |
-| -------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------ | ----------- |
-| `comic-text-detector` ONNX                   | `${HOME}/.cache/huggingface/hub/models--mayocream--comic-text-detector-onnx/` | `mayocream/comic-text-detector-onnx` | ~95 MB      |
-| `manga-ocr` ONNX (encoder + decoder + vocab) | `${HOME}/.cache/huggingface/hub/models--mayocream--manga-ocr-onnx/`           | `mayocream/manga-ocr-onnx`           | ~440 MB     |
-| Tesseract LSTM (`eng.traineddata`)           | `${TESSDATA_PREFIX}` (default `${HOME}/.tesseract-rs/tessdata`)               | tessdata_best (build script)         | ~15 MB      |
+| Component | Where | Download source | Size |
+| --- | --- | --- | --- |
+| Page detector | `${HOME}/.cache/huggingface/hub/models--ogkalu--comic-text-and-bubble-detector/` | `ogkalu/comic-text-and-bubble-detector` | 11 MB |
+| Line finder | `…/hub/models--PaddlePaddle--PP-OCRv5_mobile_det_onnx/` | `PaddlePaddle/PP-OCRv5_mobile_det_onnx` | 5 MB |
+| Line recogniser + dictionary | `…/hub/models--PaddlePaddle--en_PP-OCRv5_mobile_rec_onnx/` | `PaddlePaddle/en_PP-OCRv5_mobile_rec_onnx` | 8 MB |
+| `manga-ocr` (encoder + decoder + vocab) | `…/hub/models--mayocream--manga-ocr-onnx/` | `mayocream/manga-ocr-onnx` | ~440 MB |
+| Legacy: `comic-text-detector` | `…/hub/models--mayocream--comic-text-detector-onnx/` | `mayocream/comic-text-detector-onnx` | ~95 MB |
+| Legacy: Tesseract LSTM (`eng.traineddata`) | `${TESSDATA_PREFIX}` (default `${HOME}/.tesseract-rs/tessdata`) | tessdata_best (build script) | ~15 MB |
 
-The ONNX cache path follows `HOME`, not `HF_HOME` (see the gotcha
-below). The first request that touches a model triggers download + ~1–2 s session
-build for ONNX, or a one-time cmake build for Tesseract (cached at
-`~/.tesseract-rs/`).
+All model cards of the first four declare the Apache-2.0 licence. The
+ONNX cache path follows `HOME`, not `HF_HOME` (see the gotcha below).
+The first request that needs a model triggers its download and session
+build: under a second each for the three small models once downloaded,
+a few seconds for manga-ocr. The legacy rows are fetched or loaded only
+with the engine switch on.
 
 ### Pinned model files
 
-Every ONNX file is pinned to a commit of its Hugging Face repository
+Every model file is pinned to a commit of its Hugging Face repository
 and to a SHA-256 ([`ocr::models`](../../crates/server/src/ocr/models.rs)).
-Before `ComicTextDetector::new` / `MangaOCR::new` run, Folio itself
-fetches each missing file from
+Before an engine builds its session, Folio itself fetches each missing
+file from
 `https://huggingface.co/<repo>/resolve/<commit>/<file>` over https
 only (connect 20 s, per-read 60 s, 30 min overall, at most 5 redirects,
 each https and never to an internal address literal, cut off past the
@@ -588,8 +1012,10 @@ randomly named temporary file (`.folio-part-*`, removed if the
 download fails; a leftover from a killed process is swept after 35
 minutes and is not counted by `GET /admin/ocr/models`), and only then moves it to
 `hub/models--<org>--<repo>/snapshots/<commit>/<file>` and points
-`refs/main` at `<commit>`. The upstream constructor finds the file
-there and does not download anything. A digest mismatch deletes the
+`refs/main` at `<commit>`. Folio's own sessions open the file at that
+path; the `manga-ocr` and `comic-text-detector` constructors find it
+there through the hub cache and do not download anything. A digest
+mismatch deletes the
 download, logs the file and both digests, and fails the request with
 `500 ocr_model_unverified`; nothing unverified is loaded. A file
 already in the cache (from before the pin, or changed on disk) is
@@ -597,10 +1023,11 @@ hashed once per process; a mismatch deletes it and fetches it again
 from the pinned commit.
 
 The fetch runs in a background task, one per repository for the whole
-process. OCR requests sit under the 60 s JSON route timeout, so the
-first request after a cold start may still time out while the ~440 MB
-manga models download; the download carries on, and later requests
-wait on it or find the verified files. After a failed attempt
+process. OCR requests sit under the 60 s JSON route timeout; the three
+small models (24 MB together) normally arrive well inside it, while the
+first Japanese request after a cold start may still time out during
+the ~440 MB manga download. The download carries on, and later
+requests wait on it or find the verified files. After a failed attempt
 (network down, a digest mismatch) the repository is not tried again
 for 5 minutes; requests in that window get `ocr_model_unverified`
 without a new download.
@@ -613,29 +1040,37 @@ the pin, the previous `snapshots/<old commit>/` folder (and, for files
 the hub downloaded before pinning, its `blobs/`) stays on disk unused
 and can be deleted.
 
-| Repository                           | Commit                                     | File                       | SHA-256               | Bytes       |
-| ------------------------------------ | ------------------------------------------ | -------------------------- | --------------------- | ----------- |
-| `mayocream/comic-text-detector-onnx` | `a5d67ec772adef819ef5b0e7aa701fcf4c8bf74a` | `comic-text-detector.onnx` | `1a86ace7…071d718f`   | 94,669,756  |
-| `mayocream/manga-ocr-onnx`           | `24b12778d85800835e2ca409236de281b8ab7b9f` | `encoder_model.onnx`       | `15fa8155…d995def85f` | 343,454,249 |
-|                                      |                                            | `decoder_model.onnx`       | `ef776526…fa61f5e8`   | 117,480,262 |
-|                                      |                                            | `vocab.txt`                | `5cb5c558…4d6a36a3`   | 30,216      |
+| Repository | Commit | File | SHA-256 | Bytes |
+| --- | --- | --- | --- | --- |
+| `ogkalu/comic-text-and-bubble-detector` | `16e8a622f91fabc6b5b65c96d32d1183f8843546` | `detector-v4-s_int8.onnx` | `5fe9e4f5…c931ea79` | 11,120,765 |
+| `PaddlePaddle/PP-OCRv5_mobile_det_onnx` | `e6f4fa85f00e168c862bc462aebca69eef9b3d3d` | `inference.onnx` | `a4319856…97b6e61d` | 4,826,518 |
+| `PaddlePaddle/en_PP-OCRv5_mobile_rec_onnx` | `3fafbc3b5dcf93dd72add9f48368be8a3a2cd33b` | `inference.onnx` | `b5f833df…eabc557f` | 7,848,423 |
+| | | `inference.yml` | `27e91d05…8b441067` | 3,964 |
+| `mayocream/manga-ocr-onnx` | `24b12778d85800835e2ca409236de281b8ab7b9f` | `encoder_model.onnx` | `15fa8155…d995def85f` | 343,454,249 |
+| | | `decoder_model.onnx` | `ef776526…fa61f5e8` | 117,480,262 |
+| | | `vocab.txt` | `5cb5c558…4d6a36a3` | 30,216 |
+| `mayocream/comic-text-detector-onnx` (legacy) | `a5d67ec772adef819ef5b0e7aa701fcf4c8bf74a` | `comic-text-detector.onnx` | `1a86ace7…071d718f` | 94,669,756 |
 
-(Full digests in `models.rs`; looked up 2026-11-11, both `main`
-branches last changed 2025-05-08.) There is no setting for another
-model source: the upstream crates hardcode the repositories and
-`Api::new()` ignores `HF_ENDPOINT`. For an air-gapped host, copy the
-files to `snapshots/<commit>/` under the cache above; they are
+(Full digests in `models.rs`. Looked up 2026-11-12 for the first three
+repositories, 2026-11-11 for the two `mayocream` ones.) Two more line
+recognisers are registered there with their pins and never fetched
+unless selected: `PaddlePaddle/latin_PP-OCRv5_mobile_rec_onnx` at
+`89d3a50e…` and `PaddlePaddle/PP-OCRv6_small_rec_onnx` at `b8f84f0b…`.
+There is no setting for another model source. For an air-gapped host,
+copy the files to `snapshots/<commit>/` under the cache above; they are
 verified like any cached file.
 
-**Updating the pin:** `curl -s
+**Updating a pin:** `curl -s
 "https://huggingface.co/api/models/<repo>/revision/main?blobs=true"`
 gives the commit (`sha`) and, per LFS file, `lfs.sha256` and `size`.
-For a non-LFS file (`vocab.txt`) download it from
-`/resolve/<commit>/vocab.txt` and run `sha256sum` (its `git
-hash-object` should equal the listing's `blobId`). Change `revision`,
-`sha256` and `size` in `models.rs` and this table together.
+For a non-LFS file (`vocab.txt`, `inference.yml`) download it from
+`/resolve/<commit>/<file>` and run `sha256sum` (its `git hash-object`
+should equal the listing's `blobId`). Change `revision`, `sha256` and
+`size` in `models.rs` and this table together. A new line recogniser
+revision must still pass the dictionary check at load (run the ignored
+real-model tests).
 
-**Tesseract data** is not fetched at runtime. In the image build,
+**Tesseract data** (legacy engines) is not fetched at runtime. In the image build,
 `scripts/docker/tesseract-inputs.sh` downloads `eng` and `tur` from a
 pinned `tessdata_best` commit (and the Leptonica + Tesseract sources),
 checks each against a pinned SHA-256 and places them where the
@@ -654,37 +1089,44 @@ In the Folio Docker image:
   in place; the pinned tessdata is copied into the runtime
   image). `TESSDATA_PREFIX`
   defaults to that path.
-- `HOME=/data` so the detector + manga-ocr ONNX caches land under
+- `HOME=/data` so every ONNX model cache lands under
   `/data/.cache/huggingface/hub/` (in the persistent volume) and
-  survive container restarts. `HF_HOME=/data/.cache/huggingface` is
+  survives container restarts. `HF_HOME=/data/.cache/huggingface` is
   set in parallel — see the gotcha below.
 - Both env vars are operator-overridable for air-gapped deploys; the
   loader exactly mirrors what `GET /admin/ocr/models` reports.
 
 ### Upstream cache-resolution gotcha
 
-`comic-text-detector` 0.5.1 calls `hf_hub::api::sync::Api::new()`,
-which internally uses `Cache::default()`. **`Cache::default()`
-ignores `HF_HOME`** — only `Api::from_env()` / `Cache::from_env()`
-honor it. The cache path the crate actually writes to is
-`dirs::home_dir() + .cache/huggingface/hub/`, i.e. driven by `HOME`,
-not `HF_HOME`.
+`manga-ocr` and `comic-text-detector` 0.5.1 call
+`hf_hub::api::sync::Api::new()`, which internally uses
+`Cache::default()`. **`Cache::default()` ignores `HF_HOME`** — only
+`Api::from_env()` / `Cache::from_env()` honor it. The cache path those
+crates read is `dirs::home_dir() + .cache/huggingface/hub/`, i.e. driven
+by `HOME`, not `HF_HOME`. Folio's pinner and its own sessions use the
+same `Cache::default()` root, so every model is in one place.
 
 Folio's `Dockerfile` sets `HOME=/data` so this works out cleanly:
-the crate resolves to `/data/.cache/...` and the admin endpoint
-reports the same. If upstream bumps to a version that fixes this
-precedence we can drop the `HOME` override; `HF_HOME` is kept for
-forward-compatibility.
+everything resolves to `/data/.cache/...` and the admin endpoint
+reports the same. `HF_HOME` is set in parallel for forward
+compatibility.
 
 Local-dev builds without `HOME` set will land the cache at
-`~/.cache/huggingface/hub/` (the user's real home) — that's fine,
-just don't be surprised when `du -sh ~/.cache/huggingface` grows by
-a few hundred MB the first time you run an OCR test.
+`~/.cache/huggingface/hub/` (the user's real home): about 24 MB for
+the Western engines the first time an OCR request or test runs, plus
+manga-ocr's 440 MB on the first Japanese request.
 
 ## Admin surfaces
 
 - `GET /admin/ocr/models` — JSON view of cache state. Read-only;
-  `RequireAdmin` extractor.
+  `RequireAdmin` extractor. Rows, in order: the page detector
+  (`comic-text-and-bubble-detector`), the line finder
+  (`pp-ocrv5-mobile-det`), the line recogniser
+  (`en-pp-ocrv5-mobile-rec`), `manga-ocr`, then the two legacy engines
+  (`comic-text-detector`, `tesseract-eng`). The expected size of an
+  ONNX row is the sum of its pinned files. On an install that never ran
+  the legacy engines `comic-text-detector` stays "missing"; that is
+  expected.
 - `/admin/server` UI tile — pairs the JSON with the build /
   dependencies cards so an operator can verify both binary and
   models are healthy in one place. Lives in
@@ -726,12 +1168,17 @@ separate server change; until it is merged they are typed locally in
 the original page bytes it loads itself, against that image's own size,
 so the same area always hashes the same pixels.
 
-**The text boxes of a page — one definition.** The detector returns
-block- and line-level boxes. `pageTextBoxes` in
+**The text boxes of a page — one definition.** The server returns the
+final list of regions (balloons and free text, duplicates already
+removed: [Regions](#regions-ocrregionsrs)). `pageTextBoxes` in
 [`web/lib/reader/text-regions.ts`](../../web/lib/reader/text-regions.ts)
-keeps the enclosing box and drops boxes 80% inside a larger one;
-`readingOrderRegions` orders that set. Capture draws its outlines,
-hit-tests a tap, and renders its keyboard proxies from this set, and the
+takes every region with a positive area and drops nothing else: a small
+box inside a large one is a balloon on a caption and stays tappable.
+(It used to drop a box 80% inside a larger one, a rule for the previous
+detector's block and line boxes; that rule now runs on the server, for
+the legacy engines only.) `readingOrderRegions` orders the set. Capture
+draws its outlines, hit-tests a tap, and renders its keyboard proxies
+from this set, and the
 panel reads it, so a tap, a key press and the panel read the same box
 (the same pixel rectangle, so one server cache entry). A tap or key press
 on a box goes through `boxTextQueryOptions` — the panel's query for that
@@ -739,9 +1186,16 @@ box — so a box the panel already read is captured without a request.
 
 **Capture mode.** Entering it fetches the page's text regions
 (`useIssuePageTextRegions`, `staleTime: Infinity`) and draws the boxes.
-Tapping a box reads it recognizer-only; dragging reads the drawn
+Tapping a box sends that box without `detect`; dragging reads the drawn
 rectangle and sends `detect: true` only when the regions fetch succeeded
-(cache warm ⇒ snap is cheap). One capture runs at a time; leaving the
+(cache warm ⇒ snap is cheap). For Japanese the server still consults the
+page's detection on a tap (the regions fetch has just cached it) and
+reads the text box inside the balloon; the saved highlight keeps the
+tapped balloon, while a dragged one that snapped takes the returned
+`refined_bbox`. A rectangle that did not snap and is not a region
+(a drag without `detect`, Detect text on a highlight drawn by hand) is
+read as sent, for Japanese too.
+One capture runs at a time; leaving the
 mode (Esc, the pill's Cancel) cancels it — the request finishes but its
 answer is ignored and no editor opens. A tap that hits no box (or lands
 before the boxes load) does nothing and stays in the mode. A live status
@@ -776,7 +1230,8 @@ page is left.
 
 The marker editor shows a copy-to-clipboard button, a low-confidence
 hint (< 0.6 — effectively western-only since manga-ocr reports a
-synthetic 1.0), and an Auto / Western (English) / Japanese select for
+synthetic 1.0; the line recogniser scores clean lettering well above
+0.9), and an Auto / Western (English) / Japanese select for
 Detect text. Detect text on an existing marker saves at once, on the marker the read
 was started for (by id; a read that lands after the editor moved to
 another marker or closed is dropped), and the
@@ -797,13 +1252,50 @@ recognized text.
   [`crates/server/tests/ocr_permits.rs`](../../crates/server/tests/ocr_permits.rs).
 - Work that outlives its request is cached; the decoded-page cache
   (one decode per page, a hidden issue still 404s, a new content hash
-  is a miss), with debug-build model stand-ins:
+  is a miss); the engine switch through the routes (regions, cleanup
+  and cache keys of each set, with a nested pair of boxes); a Japanese
+  request reading the text box inside its balloon, a free-text region
+  and a hand-drawn rectangle read as sent, and a failing detector
+  answering 500 with nothing cached; all with debug-build model
+  stand-ins:
   [`crates/server/tests/ocr_work.rs`](../../crates/server/tests/ocr_work.rs).
+- Tests that reach the real pipeline without stand-ins (the
+  pipeline-reach cases in `issue_ocr.rs` and `ocr_permits.rs`) expect
+  200. Where the model files cannot be fetched they accept exactly one
+  other answer, `500 ocr_model_unverified`; any other 500 fails.
+  `COMIC_TEST_OCR_STRICT=1` removes that allowance, for a machine where
+  the models are known to be available. CI has no model cache: these
+  tests fetch the three small models (24 MB) from Hugging Face in each
+  run.
+- The engine switch read from the environment
+  (`COMIC_OCR_LEGACY_ENGINES` unset, `false`, `true`, in a child
+  process): `config.rs`.
 - Admin endpoint + RequireAdmin:
   [`crates/server/tests/admin_ocr.rs`](../../crates/server/tests/admin_ocr.rs).
-- Recognizer trait + heavy E2E (ignored by default):
-  [`crates/server/tests/ocr_recognizer.rs`](../../crates/server/tests/ocr_recognizer.rs).
-  Run with `cargo test -p server --test ocr_recognizer -- --ignored`.
+- Engine unit tests, no model file needed, next to the code: detector
+  input, classes, scores and clamping (`ocr/bubbles.rs`); which boxes
+  are regions under each engine set's rule (`ocr/regions.rs`); the snap
+  and its tie rule, what a run reads and what `refined_bbox` says
+  (`ocr/pipeline.rs`); the Japanese crop (`ocr/manga_crop.rs`);
+  line-finder input size, DB postprocess on synthetic probability maps,
+  reading order and the line bounds (`ocr/lines.rs`); recogniser batch
+  shape, padding and run bounds, CTC decode, the dictionary reader and
+  the class check (`ocr/recognizer/ctc.rs`); cleanup rules per engine
+  set (`ocr/postprocess.rs`); fingerprints per engine set and per
+  constant (`ocr/cache.rs`).
+- Real models (ignored by default; they fetch the pinned files on first
+  run):
+  [`crates/server/tests/ocr_recognizer.rs`](../../crates/server/tests/ocr_recognizer.rs)
+  runs the page detector and the line recogniser on a public-domain
+  page under
+  [`crates/server/tests/fixtures/ocr/`](../../crates/server/tests/fixtures/ocr/README.md)
+  and on three balloons cut from it, loads every registered line
+  recogniser against its dictionary, and prints timings;
+  `issue_ocr.rs` has one that reads a balloon of that page through both
+  routes. Run with
+  `cargo test -p server --test ocr_recognizer --test issue_ocr -- --ignored`
+  (the legacy Tesseract and the manga-ocr cases are in the same file;
+  `--skip manga` avoids the 440 MB download).
 - Web client fetch shape + failure paths:
   [`web/tests/reader/marker-selection.test.ts`](../../web/tests/reader/marker-selection.test.ts);
   page size, box set and failure words:
@@ -813,17 +1305,39 @@ recognized text.
   [`web/tests/dom/text-capture.test.tsx`](../../web/tests/dom/text-capture.test.tsx).
 - Speed and accuracy on real pages:
   [`crates/tools/ocr-bench`](../../crates/tools/ocr-bench/README.md), a
-  development-only harness that times this pipeline and candidate
-  engines and scores their text against reference transcriptions. Its
-  runs are manual; CI only compiles it and runs its unit tests.
+  development-only harness that times the legacy pipeline through the
+  server's code and candidate engines through its own copies of them,
+  and scores their text against reference transcriptions. It does not
+  run the current engines of the server (see [What was
+  measured](#what-was-measured)). Its runs are manual; CI only compiles
+  it and runs its unit tests.
 
 ## Future work
 
-- PaddleOCR swap behind the existing `Recognizer` trait — better
-  Western quality than `tessdata_best`.
-- Detector segmentation-mask blanking: `comic-text-detector`
-  exposes a per-page text mask we currently discard; using it to
-  blank non-text pixels needs mask caching alongside the bboxes.
+- Remove the legacy engine set: `COMIC_OCR_LEGACY_ENGINES`,
+  `ocr/detector.rs`, `ocr/recognizer/western.rs`, the Tesseract-only
+  cleanup rules, and the Tesseract build plumbing (Dockerfile,
+  `scripts/docker/tesseract-inputs.sh`, CI caches).
+- Line finding: most of the remaining reading errors are lines the
+  finder drops or takes from a touching neighbour balloon. Candidates:
+  accept its result only when the lines cover the balloon's ink and
+  retry at another scale otherwise; drop lines that belong to a
+  neighbouring region's box.
+- Japanese: the crop was chosen by comparison with the previous
+  pipeline on one volume. Measure it against transcribed pages of
+  several volumes; and address the two known weaknesses (a balloon with
+  no text box, a balloon with several lobes).
+- `ocr-bench`: point it at the server's current engines
+  (`EngineSet::Current`) so the measurement of what ships can be
+  repeated by the tool.
+- Memory after an unusually large region: ONNX Runtime keeps a
+  session's largest buffers. Shrinking the arena after a run (a run
+  option of ONNX Runtime) is not built.
+- Other Latin-script languages: `latin_PP-OCRv5_mobile_rec_onnx` is
+  registered; choosing it per series (`series.text_language`) is not
+  built.
+- Sound effects, signs and titles are poorly covered by the regions
+  (they are outside the "tap a balloon" use).
 - manga-ocr real confidence: upstream PR to expose mean token
   probability from the decoder logits (today it's a synthetic
   1.0/0.0).
@@ -833,6 +1347,7 @@ recognized text.
   a couple at a time. A batch route that does this in one request is
   not built.
 - Background pre-detection at scan time (`issue_text_region`
-  table) — deferred; the on-demand + content_hash-keyed Redis
-  cache already gives invalidation-on-rescan and warm-cache
-  interactivity after one fetch.
+  table) — not needed for reading a balloon: detection is fast enough
+  on demand, and the content_hash-keyed Redis cache already gives
+  invalidation-on-rescan. It would only serve a feature that needs the
+  text of every page (search inside comics).

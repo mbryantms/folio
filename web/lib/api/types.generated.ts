@@ -12521,8 +12521,8 @@ export interface components {
             cache_dir: string;
             /**
              * Format: int64
-             * @description Typical post-download size — informational, used by the UI to
-             *     render a download-progress bar before the model is fully cached.
+             * @description Size once fully downloaded (the sum of the pinned files for the
+             *     ONNX models) — used by the UI to tell "downloading" from "ready".
              */
             expected_bytes_approx: number;
             /** @description Stable identifier; never localized. */
@@ -12597,21 +12597,15 @@ export interface components {
         };
         OcrRequest: {
             /**
-             * @description When `true`, run `comic-text-detector` over the page to snap
-             *     the user's drag rect to the tightest enclosing speech-bubble
-             *     polygon. When `false` (or omitted — that's the default as of
-             *     v0.3.26), the recognizer runs on the user's rect verbatim.
-             *
-             *     Why default off: on CPU-constrained hosts the detector costs
-             *     ~50 s on the *first* bubble of a page (subsequent bubbles on
-             *     the same page hit the polygon cache and run ~200 ms). That
-             *     cold-start makes the snap-to-bubble feature unusable in
-             *     practice. Operators on fast hardware can flip the request
-             *     flag to `true` to opt in; a future server config knob will
-             *     let them flip the default. The recognizer-only path
-             *     (~200 ms total) matches what the old browser-side
-             *     tesseract.js delivered, just better quality (real Tesseract
-             *     5 + tessdata_best, not the in-browser fast variant).
+             * @description When `true`, run the page detector (or use its cached result
+             *     for the page) and snap the rectangle to the detected text region
+             *     it overlaps most; the snapped box comes back as `refined_bbox`.
+             *     When `false` or omitted (the default), the rectangle is not
+             *     snapped: the way to read a region taken from the text-regions
+             *     route, which is already a detected box. (A Japanese request for
+             *     such a region, when it is a balloon, still reads the text box the
+             *     detector found inside it, when there is exactly one; see
+             *     `refined_bbox`. Any other rectangle is read as sent.)
              */
             detect?: boolean | null;
             /**
@@ -12645,10 +12639,11 @@ export interface components {
         OcrResponse: {
             /**
              * Format: float
-             * @description Mean confidence in `[0.0, 1.0]` over the words kept by the
-             *     cleanup pass (Tesseract); manga-ocr reports `1.0` (or `0.0`
-             *     for an empty result) since the greedy decoder doesn't expose
-             *     per-token probabilities.
+             * @description Confidence in `[0.0, 1.0]`. Western text: the mean over the
+             *     text lines that produced text, each line scored by the mean
+             *     probability of its characters (`0.0` when no line produced
+             *     text). manga-ocr reports `1.0` (or `0.0` for an empty result)
+             *     since its greedy decoder doesn't expose per-token probabilities.
              */
             confidence: number;
             /**
@@ -12672,8 +12667,9 @@ export interface components {
             page_w: number;
             /**
              * @description Engine output before cleanup. Present only when cleanup
-             *     changed the text — a debugging aid, and the raw material for
-             *     golden-fixture authoring when users report junk output.
+             *     changed the text (for Western text: the lines as read, one per
+             *     line, where `text` has them joined) — a debugging aid, and the
+             *     raw material for golden-fixture authoring.
              */
             raw_text?: string | null;
             refined_bbox?: components["schemas"]["OcrRegion"] | null;
@@ -12683,17 +12679,22 @@ export interface components {
              */
             text: string;
             /**
-             * @description Per-word boxes in page-pixel coords, post-cleanup. `None`
-             *     when the engine doesn't expose word data (manga-ocr) or the
-             *     iterator yielded nothing.
+             * @description The pieces the text was read in, in reading order, with their
+             *     boxes in page-pixel coords. Western text: one entry per text
+             *     line (the recognizer reads whole lines, so an entry's `text`
+             *     holds several words). Absent for manga-ocr, which returns one
+             *     string, and when nothing was read.
              */
             words?: components["schemas"]["OcrWord"][] | null;
         };
-        /** @description One recognized word: cleaned text + confidence + page-pixel box. */
+        /**
+         * @description One piece of the recognized text (a text line; see
+         *     `OcrResponse.words`): its text, confidence and page-pixel box.
+         */
         OcrWord: {
             /**
              * Format: float
-             * @description `[0.0, 1.0]`, from Tesseract's per-word score.
+             * @description `[0.0, 1.0]`: the recognizer's score for this piece.
              */
             confidence: number;
             /** Format: int32 */
@@ -15963,7 +15964,11 @@ export interface components {
         TextRegionView: {
             /**
              * Format: int32
-             * @description Detector class index (0 = text block, 1 = text line).
+             * @description What the detector took the region for: 0 = a balloon, 2 = text
+             *     outside balloons (a caption on the art, a sound effect). Every
+             *     region is a box to read as a whole. (A server running the
+             *     previous engines, `COMIC_OCR_LEGACY_ENGINES`, sends that
+             *     detector's classes: 0 = text block, 1 = text line.)
              */
             class: number;
             /**
@@ -15996,6 +16001,8 @@ export interface components {
          * @description Detected text regions for one page, in percent-of-page
          *     coordinates (0–100 floats — the reader's native marker
          *     representation, consumable by its SVG overlay without math).
+         *     The set is final: one box per region to read, duplicates already
+         *     removed. A box inside a larger one is a region of its own.
          */
         TextRegionsView: {
             /**
@@ -24374,7 +24381,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description ocr pipeline failure */
+            /** @description the OCR run failed (`ocr_failed`), or a model file could not be downloaded or failed its integrity check (`ocr_model_unverified`) */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -24440,7 +24447,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description detector failure */
+            /** @description detection failed (`ocr_failed`), or a model file could not be downloaded or failed its integrity check (`ocr_model_unverified`) */
             500: {
                 headers: {
                     [name: string]: unknown;

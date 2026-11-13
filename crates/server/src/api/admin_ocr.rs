@@ -1,29 +1,29 @@
 //! `GET /admin/ocr/models` — read-only OCR model surface
 //! (text-detection-1.0 plan, M5).
 //!
-//! Reports which of the three OCR-pipeline models the operator has
-//! on disk plus rough bytes-on-disk per model. Lives under the
-//! `/admin/server` family so it picks up [`RequireAdmin`].
+//! Reports which of the OCR-pipeline models the operator has on disk
+//! plus bytes-on-disk per model. Lives under the `/admin/server` family
+//! so it picks up [`RequireAdmin`].
 //!
-//! Disk discovery:
+//! The list, in order:
 //!
-//! - `comic-text-detector` ONNX → `${HF_HOME}/hub/models--mayocream--comic-text-detector-onnx/`
-//! - `manga-ocr` ONNX (encoder + decoder + vocab) → `${HF_HOME}/hub/models--mayocream--manga-ocr-onnx/`
-//! - English Tesseract LSTM (`eng.traineddata`) → `${TESSDATA_PREFIX}/eng.traineddata`
-//!   with fallback to `${HOME}/.tesseract-rs/tessdata/eng.traineddata`
-//!   (the [`crate::ocr::recognizer::western::tessdata_dir`] resolver
-//!   matches this exactly so the report mirrors what the recognizer
-//!   actually reads on cold start).
+//! - the current engines: the balloon detector, the line finder and the
+//!   line recogniser ([`crate::ocr::models`] pins, fetched on first use);
+//! - `manga-ocr` (encoder + decoder + vocab), used with either engine set;
+//! - the legacy engines, loaded only with `COMIC_OCR_LEGACY_ENGINES=true`:
+//!   `comic-text-detector` and the English Tesseract data
+//!   (`${TESSDATA_PREFIX}/eng.traineddata`, falling back to
+//!   `${HOME}/.tesseract-rs/tessdata/eng.traineddata`, the resolution
+//!   [`crate::ocr::recognizer::western`] uses). Without the switch the
+//!   detector is never fetched and stays "missing" on a new install.
 //!
-//! **Upstream gotcha (hf-hub 0.4.3):** `comic-text-detector` and
-//! `manga-ocr` both call `hf_hub::api::sync::Api::new()`, which
-//! resolves the cache via `Cache::default()` and **does not honor
-//! `HF_HOME`**. The real cache root is
-//! `dirs::home_dir() + .cache/huggingface/hub/`, i.e. driven by
-//! `HOME`. Our `hf_home_dir()` below reads `HF_HOME` first and falls
-//! back to `${HOME}/.cache/huggingface` for that reason — and the
-//! Folio Dockerfile sets `HOME=/data` so both resolutions land on
-//! the same persistent path. See `docs/dev/ocr.md`.
+//! ONNX models sit in the hub cache,
+//! `<root>/hub/models--<org>--<repo>/`. The loader's root is
+//! `dirs::home_dir() + .cache/huggingface` (`hf_hub::Cache::default()`,
+//! driven by `HOME`, **not** `HF_HOME`); `hf_home_dir()` below reads
+//! `HF_HOME` first and falls back to `${HOME}/.cache/huggingface`, and
+//! the Folio Dockerfile sets `HOME=/data` and `HF_HOME` so both
+//! resolutions land on the same persistent path. See `docs/dev/ocr.md`.
 //!
 //! Missing directories return `present = false` + `bytes_on_disk = 0`
 //! rather than an error — the operator dashboard uses this to drive
@@ -37,6 +37,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use crate::auth::RequireAdmin;
+use crate::ocr::models::{self, PinnedFile};
 use crate::state::AppState;
 use server_macros::handler;
 
@@ -62,12 +63,12 @@ pub struct OcrModelView {
     /// Recursive sum of bytes under `cache_dir`. `0` when
     /// `present = false`.
     pub bytes_on_disk: u64,
-    /// Typical post-download size — informational, used by the UI to
-    /// render a download-progress bar before the model is fully cached.
+    /// Size once fully downloaded (the sum of the pinned files for the
+    /// ONNX models) — used by the UI to tell "downloading" from "ready".
     pub expected_bytes_approx: u64,
     /// Where the binary fetches this model from on first init.
     /// `"huggingface.co/<repo>"` or `"tessdata_best (build script)"`.
-    pub source: &'static str,
+    pub source: String,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -98,49 +99,25 @@ pub async fn list(_admin: RequireAdmin) -> impl IntoResponse {
     let tessdata_dir = tessdata_dir();
 
     // HF cache layout is `${HF_HOME}/hub/models--{org}--{repo}/…`.
-    let detector_dir = hf_repo_dir(&hf_home, "mayocream/comic-text-detector-onnx");
-    let manga_dir = hf_repo_dir(&hf_home, "mayocream/manga-ocr-onnx");
     let tessdata_eng = tessdata_dir.join("eng.traineddata");
-
-    let detector_bytes = dir_size(&detector_dir).unwrap_or(0);
-    let manga_bytes = dir_size(&manga_dir).unwrap_or(0);
     let tessdata_bytes = file_size(&tessdata_eng).unwrap_or(0);
 
-    let models = vec![
-        OcrModelView {
-            id: "comic-text-detector",
-            purpose: "Text-bubble detection over cropped reader regions",
-            kind: "onnx",
-            cache_dir: detector_dir.to_string_lossy().into_owned(),
-            present: detector_bytes > 0,
-            bytes_on_disk: detector_bytes,
-            // The on-disk blob is ~95 MB after HF dedups symlinks; we
-            // round up for display.
-            expected_bytes_approx: 95 * 1024 * 1024,
-            source: "huggingface.co/mayocream/comic-text-detector-onnx",
-        },
-        OcrModelView {
-            id: "manga-ocr",
-            purpose: "Vertical Japanese OCR (encoder + decoder + vocab)",
-            kind: "onnx",
-            cache_dir: manga_dir.to_string_lossy().into_owned(),
-            present: manga_bytes > 0,
-            bytes_on_disk: manga_bytes,
-            expected_bytes_approx: 440 * 1024 * 1024,
-            source: "huggingface.co/mayocream/manga-ocr-onnx",
-        },
-        OcrModelView {
-            id: "tesseract-eng",
-            purpose: "Western OCR — Tesseract LSTM (English `tessdata_best`)",
-            kind: "tessdata",
-            cache_dir: tessdata_dir.to_string_lossy().into_owned(),
-            present: tessdata_bytes > 0,
-            bytes_on_disk: tessdata_bytes,
-            // `tessdata_best/eng.traineddata` on the v4.1 LSTM branch.
-            expected_bytes_approx: 15 * 1024 * 1024,
-            source: "tessdata_best (build script)",
-        },
-    ];
+    let mut models: Vec<OcrModelView> = ONNX_MODELS
+        .iter()
+        .map(|m| onnx_model_view(&hf_home, m))
+        .collect();
+    models.push(OcrModelView {
+        id: "tesseract-eng",
+        purpose: "Legacy Western OCR: Tesseract LSTM, English `tessdata_best` \
+                  (loaded only with COMIC_OCR_LEGACY_ENGINES=true)",
+        kind: "tessdata",
+        cache_dir: tessdata_dir.to_string_lossy().into_owned(),
+        present: tessdata_bytes > 0,
+        bytes_on_disk: tessdata_bytes,
+        // `tessdata_best/eng.traineddata` on the v4.1 LSTM branch.
+        expected_bytes_approx: 15 * 1024 * 1024,
+        source: "tessdata_best (build script)".to_owned(),
+    });
 
     let total_bytes_on_disk = models.iter().map(|m| m.bytes_on_disk).sum();
 
@@ -150,6 +127,63 @@ pub async fn list(_admin: RequireAdmin) -> impl IntoResponse {
         models,
         total_bytes_on_disk,
     })
+}
+
+// ───────── model list ─────────
+
+/// One ONNX model of the card: the pinned files of one hub repository.
+struct OnnxModel {
+    id: &'static str,
+    purpose: &'static str,
+    /// All of one hub repository.
+    files: &'static [PinnedFile],
+}
+
+/// The ONNX models, in display order: the current engines, manga-ocr,
+/// then the legacy detector. Sizes and cache folders come from the pins,
+/// so the card cannot drift from what the loaders fetch.
+const ONNX_MODELS: &[OnnxModel] = &[
+    OnnxModel {
+        id: "comic-text-and-bubble-detector",
+        purpose: "Balloon and free-text detection over a whole page",
+        files: models::BUBBLE_DETECTOR_FILES,
+    },
+    OnnxModel {
+        id: "pp-ocrv5-mobile-det",
+        purpose: "Line finder: splits a balloon into text lines",
+        files: models::LINE_FINDER_FILES,
+    },
+    OnnxModel {
+        id: models::WESTERN_REC.id,
+        purpose: "Western OCR: line recogniser (model + character list)",
+        files: models::WESTERN_REC.files,
+    },
+    OnnxModel {
+        id: "manga-ocr",
+        purpose: "Vertical Japanese OCR (encoder + decoder + vocab)",
+        files: models::MANGA_FILES,
+    },
+    OnnxModel {
+        id: "comic-text-detector",
+        purpose: "Legacy page detector (loaded only with COMIC_OCR_LEGACY_ENGINES=true)",
+        files: models::DETECTOR_FILES,
+    },
+];
+
+fn onnx_model_view(hf_home: &Path, model: &OnnxModel) -> OcrModelView {
+    let repo = model.files.first().map_or("", |f| f.repo);
+    let dir = hf_repo_dir(hf_home, repo);
+    let bytes = dir_size(&dir).unwrap_or(0);
+    OcrModelView {
+        id: model.id,
+        purpose: model.purpose,
+        kind: "onnx",
+        cache_dir: dir.to_string_lossy().into_owned(),
+        present: bytes > 0,
+        bytes_on_disk: bytes,
+        expected_bytes_approx: model.files.iter().map(|f| f.size).sum(),
+        source: format!("huggingface.co/{repo}"),
+    }
 }
 
 // ───────── path resolution ─────────
@@ -258,6 +292,43 @@ mod tests {
         assert_eq!(dir_size(dir.path()).unwrap(), 0, "a partial is not a model");
         std::fs::write(dir.path().join("model.onnx"), vec![0u8; 40]).unwrap();
         assert_eq!(dir_size(dir.path()).unwrap(), 40);
+    }
+
+    /// The card's rows follow the pins: each names its repository, the
+    /// expected size is what the loader fetches, and the line recogniser
+    /// row is the one the server runs.
+    #[test]
+    fn onnx_rows_follow_the_pinned_files() {
+        let ids: Vec<&str> = ONNX_MODELS.iter().map(|m| m.id).collect();
+        assert_eq!(
+            ids,
+            [
+                "comic-text-and-bubble-detector",
+                "pp-ocrv5-mobile-det",
+                models::WESTERN_REC.id,
+                "manga-ocr",
+                "comic-text-detector",
+            ]
+        );
+        for m in ONNX_MODELS {
+            let repo = m.files[0].repo;
+            assert!(m.files.iter().all(|f| f.repo == repo), "{}", m.id);
+            let view = onnx_model_view(Path::new("/cache/hf"), m);
+            assert_eq!(view.source, format!("huggingface.co/{repo}"), "{}", m.id);
+            assert_eq!(
+                view.cache_dir,
+                format!("/cache/hf/hub/models--{}", repo.replace('/', "--"))
+            );
+            assert_eq!(
+                view.expected_bytes_approx,
+                m.files.iter().map(|f| f.size).sum::<u64>()
+            );
+            assert!(!view.present && view.bytes_on_disk == 0);
+        }
+        assert_eq!(
+            onnx_model_view(Path::new("/x"), &ONNX_MODELS[0]).expected_bytes_approx,
+            11_120_765
+        );
     }
 
     #[test]

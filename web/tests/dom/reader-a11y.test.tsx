@@ -93,15 +93,14 @@ import { ReaderSkipLinks } from "@/app/[locale]/read/[seriesSlug]/[issueSlug]/Re
 import { useReaderStore } from "@/lib/reader/store";
 import { usePageAltText, usePageTextPanel } from "@/lib/reader/page-text";
 
-// Two bubbles on one row (given right-then-left), one on the next row, and
-// a line box nested in the first bubble that must not become its own stop.
+// Two bubbles on one row (given right-then-left) and one on the next row:
+// the regions as the server sends them, one box per region to read.
 const REGIONS: TextRegionsView = {
   page_w: 1000,
   page_h: 1500,
   regions: [
     { x: 60, y: 10, w: 30, h: 10, confidence: 0.9, class: 0 },
     { x: 10, y: 11, w: 30, h: 10, confidence: 0.9, class: 0 },
-    { x: 62, y: 12, w: 20, h: 4, confidence: 0.9, class: 1 },
     { x: 20, y: 60, w: 40, h: 10, confidence: 0.9, class: 0 },
   ],
 };
@@ -168,7 +167,7 @@ describe("MarkerOverlay text-region keyboard proxies", () => {
       name: "Detected text on page 1",
     });
     const proxies = within(group).getAllByRole("button");
-    // Nested line box collapsed → 3 stops, not 4.
+    // One stop per region.
     expect(proxies.map((b) => b.getAttribute("aria-label"))).toEqual([
       "Capture text region 1 of 3",
       "Capture text region 2 of 3",
@@ -293,7 +292,7 @@ describe("PageTextPanel", () => {
     expect(within(dialog).getByRole("status").textContent).toBe(
       "Page 1: 3 text blocks.",
     );
-    // Nested line box is never OCR'd on its own.
+    // One read per region.
     expect(ocr).toHaveBeenCalledTimes(3);
   });
 

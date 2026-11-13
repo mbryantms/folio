@@ -4,11 +4,13 @@
  * and the page-text panel all read the SAME box (and so the same pixel
  * rectangle, which shares the server's OCR cache entry for it).
  *
- * The detector returns both block-level and line-level boxes. Reading both
- * would read every balloon twice, and hit-testing all of them would let a
- * tap capture one line of a balloon while the panel reads the whole of it.
- * {@link pageTextBoxes} keeps the enclosing box and drops what it contains;
- * {@link readingOrderRegions} orders that set; {@link hitTestBox} hit-tests
+ * The server sends the final set: one box per region to read, already
+ * de-duplicated for the engines it runs (a balloon and a piece of free
+ * text around it are two regions and both arrive; the same text found
+ * twice arrives once). The client does not drop or merge boxes: a box
+ * inside a larger one is a region of its own, and a tap inside it reads
+ * it. {@link pageTextBoxes} only leaves out boxes with no area;
+ * {@link readingOrderRegions} orders the set; {@link hitTestBox} hit-tests
  * it. The marker overlay draws, hit-tests and proxies the ordered set; the
  * panel reads it.
  *
@@ -18,40 +20,19 @@
 import type { TextRegionView } from "@/lib/api/types";
 import type { Direction } from "@/lib/reader/detect";
 
-/** Fraction of a region's area that must sit inside another region for it
- *  to count as a nested duplicate. */
-const NESTED_OVERLAP = 0.8;
-
 function area(r: TextRegionView): number {
   return Math.max(0, r.w) * Math.max(0, r.h);
 }
 
-function intersection(a: TextRegionView, b: TextRegionView): number {
-  const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
-  const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
-  return w > 0 && h > 0 ? w * h : 0;
-}
-
 /**
- * The page's text boxes: empty boxes dropped, and a box that sits mostly
- * (80%) inside a larger one dropped in favour of the larger. Two identical
- * boxes keep exactly one. Detector order is kept.
+ * The page's text boxes: the server's regions, minus any with no area.
+ * Nothing else is dropped (the server de-duplicates), so a box inside a
+ * larger one stays. Server order is kept.
  */
 export function pageTextBoxes(
   regions: readonly TextRegionView[],
 ): TextRegionView[] {
-  return regions.filter((r, i) => {
-    const a = area(r);
-    if (a <= 0) return false;
-    return !regions.some((other, j) => {
-      if (i === j) return false;
-      const oa = area(other);
-      // Only a strictly larger (or equal-size, earlier) box can swallow
-      // this one — two identical boxes keep exactly one.
-      if (oa < a || (oa === a && j > i)) return false;
-      return intersection(r, other) / a >= NESTED_OVERLAP;
-    });
-  });
+  return regions.filter((r) => area(r) > 0);
 }
 
 /**
@@ -88,8 +69,8 @@ export function readingOrderRegions(
 }
 
 /** The smallest of `boxes` containing the point (percent coords), or
- *  `null`. Pass the {@link pageTextBoxes} set: nested line boxes are gone,
- *  so "smallest" only settles two balloons that overlap at the edges. */
+ *  `null`. "Smallest" settles a point in two regions: a balloon inside a
+ *  larger region, or two balloons that overlap at the edges. */
 export function hitTestBox(
   boxes: readonly TextRegionView[],
   x: number,

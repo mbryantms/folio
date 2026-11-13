@@ -1,13 +1,28 @@
 //! Post-recognition text cleanup.
 //!
-//! Raw engine output from comic lettering carries OCR debris: bubble
-//! borders, tails, and halftone dots read back as stray `| ~ ' _`
-//! symbols, and Tesseract keeps low-confidence guesses in the text.
 //! This module is the single deterministic cleanup pass, run by the
 //! pipeline right after recognition (see
-//! [`crate::ocr::pipeline::run_ocr`]).
+//! [`crate::ocr::pipeline::run_ocr`]). Which rules run depends on the
+//! engine that produced the text ([`clean_for`]):
 //!
-//! Western rule chain, in order (W-numbers referenced from tests):
+//! - **CTC line recogniser** (Western, current engine set): only the
+//!   rules that do not depend on an engine's mistakes. The recogniser
+//!   returns one string per text line; the lines are joined into one
+//!   utterance with the line-end hyphen rule (W2 below) and single
+//!   spaces (W6). Nothing is dropped, and the only character ever
+//!   rewritten is a U+2010 hyphen at a W2 join, which becomes `-`: the
+//!   debris rules below were written for what Tesseract makes of balloon
+//!   borders, and on this recogniser's output they would delete real
+//!   text (a `|`, a low-scored word, a symbol outside the allowlist).
+//!   The confidence is the recogniser's.
+//! - **Tesseract** (Western, legacy engine set): the full W chain.
+//! - **manga-ocr**: control-character stripping only (see below).
+//!
+//! Raw Tesseract output from comic lettering carries OCR debris: bubble
+//! borders, tails, and halftone dots read back as stray `| ~ ' _`
+//! symbols, and Tesseract keeps low-confidence guesses in the text.
+//!
+//! Tesseract rule chain, in order (W-numbers referenced from tests):
 //!
 //! - **W1** word-confidence drop — needs per-word data; skipped when
 //!   the recognizer returned `words: None`.
@@ -54,6 +69,7 @@
 //! [`crate::ocr::cache::OCR_RESULT_VERSION`] when changing anything
 //! in this module.
 
+use super::EngineSet;
 use super::recognizer::{Language, Recognition, Word};
 
 /// W1: words below this confidence are dropped outright.
@@ -108,7 +124,67 @@ pub struct Cleaned {
     pub raw_text: Option<String>,
 }
 
-/// Entry point: language-aware cleanup of one recognition result.
+/// Entry point for the pipeline: the cleanup that fits the engine that
+/// read `rec`. Western text from the current engine set (the CTC line
+/// recogniser) gets [`clean_lines`]; everything else gets [`clean`].
+pub fn clean_for(rec: Recognition, lang: Language, engines: EngineSet) -> Cleaned {
+    match (lang, engines) {
+        (Language::Western, EngineSet::Current) => clean_lines(rec),
+        (Language::Western, EngineSet::Legacy) | (Language::Manga, _) => clean(rec, lang),
+    }
+}
+
+/// Cleanup for the CTC line recogniser: join the lines into one
+/// utterance. A line ending in a word and one hyphen joins the next
+/// line's first word (W2: `SPACE-` / `BUSTERS` → `SPACE-BUSTERS`); every
+/// other line break and every run of whitespace becomes one space (W6).
+/// No token is dropped, and the confidence is kept. One character can
+/// change: at such a join a typographic hyphen (U+2010) ending the line
+/// is written as the ASCII `-`, as W2 always did. Nothing else is
+/// rewritten. The line entries in `words` keep their own text, with
+/// whitespace collapsed.
+pub fn clean_lines(rec: Recognition) -> Cleaned {
+    let raw = rec.text;
+    let lines: Vec<Vec<Token>> = raw
+        .lines()
+        .map(|l| {
+            l.split_whitespace()
+                .map(|t| Token {
+                    text: t.to_owned(),
+                    word: None,
+                })
+                .collect::<Vec<Token>>()
+        })
+        .filter(|l| !l.is_empty())
+        .collect();
+    let text = join_hyphenated(lines)
+        .iter()
+        .map(|t| t.text.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let words = rec
+        .words
+        .map(|lines| {
+            lines
+                .into_iter()
+                .filter_map(|mut line| {
+                    line.text = line.text.split_whitespace().collect::<Vec<_>>().join(" ");
+                    (!line.text.is_empty()).then_some(line)
+                })
+                .collect::<Vec<Word>>()
+        })
+        .filter(|lines| !lines.is_empty());
+    let raw_text = (!raw.is_empty() && raw != text).then_some(raw);
+    Cleaned {
+        text,
+        confidence: rec.confidence,
+        words,
+        raw_text,
+    }
+}
+
+/// Language-aware cleanup with the Tesseract rule chain for Western text
+/// (the legacy engine set) and the manga rules for Japanese.
 pub fn clean(rec: Recognition, lang: Language) -> Cleaned {
     let raw = rec.text.clone();
     let (text, confidence, words) = match lang {
@@ -722,6 +798,136 @@ mod tests {
         assert_eq!(out.text, "");
         assert!((out.confidence - 0.8).abs() < 1e-6);
         assert!(out.raw_text.is_none());
+    }
+
+    // ── CTC line recogniser: engine-independent rules only ──
+
+    fn line_rec(lines: &[(&str, f32)]) -> Recognition {
+        Recognition {
+            text: lines.iter().map(|(t, _)| *t).collect::<Vec<_>>().join("\n"),
+            confidence: 0.9,
+            words: Some(
+                lines
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (t, c))| word(t, *c, i as u32))
+                    .collect(),
+            ),
+        }
+    }
+
+    #[test]
+    fn lines_are_joined_into_one_utterance() {
+        let out = clean_lines(line_rec(&[
+            ("WHAT A WORKING-", 0.95),
+            ("OVER! IT'LL BE A", 0.9),
+            ("PLEASURE  TO BE SHOT!", 0.85),
+        ]));
+        assert_eq!(
+            out.text,
+            "WHAT A WORKING-OVER! IT'LL BE A PLEASURE TO BE SHOT!"
+        );
+        assert_eq!(
+            out.raw_text.as_deref(),
+            Some("WHAT A WORKING-\nOVER! IT'LL BE A\nPLEASURE  TO BE SHOT!")
+        );
+        // The recogniser's own confidence, untouched.
+        assert!((out.confidence - 0.9).abs() < 1e-6);
+        // One entry per line, each with its own text.
+        let lines = out.words.expect("line entries");
+        let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            [
+                "WHAT A WORKING-",
+                "OVER! IT'LL BE A",
+                "PLEASURE TO BE SHOT!"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_line_end_hyphen_rule_is_the_same_one() {
+        for (input, want) in [
+            ("SPIDER-\nMAN", "SPIDER-MAN"),
+            // The one rewrite: a U+2010 hyphen at the join becomes `-`.
+            // Anywhere else it stays as read.
+            ("SPIDER\u{2010}\nMAN", "SPIDER-MAN"),
+            ("A\u{2010}B C\u{2010}", "A\u{2010}B C\u{2010}"),
+            ("WAIT--\nNO", "WAIT-- NO"),
+            ("WAIT -\nNO", "WAIT - NO"),
+            ("ROUTE-\n66", "ROUTE- 66"),
+        ] {
+            assert_eq!(clean_lines(rec(input)).text, want, "{input}");
+        }
+    }
+
+    /// What the Tesseract chain would drop or rewrite is kept as read.
+    #[test]
+    fn nothing_the_line_recogniser_read_is_dropped_or_rewritten() {
+        for input in [
+            // W1b / W3 / W4: a bar, symbol-only tokens, edge symbols.
+            "WHAT DO | DO",
+            "| HELLO THERE |",
+            "HELLO ~| WORLD",
+            "|HELLO!",
+            "[STOP]",
+            "OH @@@ ***",
+            "OH #@",
+            // W5: characters outside the Tesseract allowlist.
+            "50% OFF ● TODAY ©",
+            "A < B > C",
+        ] {
+            let out = clean_lines(rec(input));
+            assert_eq!(out.text, input, "{input}");
+            assert!(out.raw_text.is_none(), "{input}");
+        }
+        // W1: low-scored lines stay, in the text and as entries.
+        let out = clean_lines(line_rec(&[("KEEP", 0.9), ("FAINT", 0.2), ("~'", 0.5)]));
+        assert_eq!(out.text, "KEEP FAINT ~'");
+        assert_eq!(out.words.expect("entries").len(), 3);
+        // The same input through the Tesseract chain loses them.
+        let out = clean(
+            line_rec(&[("KEEP", 0.9), ("FAINT", 0.2), ("~'", 0.5)]),
+            Language::Western,
+        );
+        assert_eq!(out.text, "KEEP");
+    }
+
+    #[test]
+    fn an_empty_reading_stays_empty_with_its_confidence() {
+        let out = clean_lines(Recognition {
+            text: String::new(),
+            confidence: 0.0,
+            words: None,
+        });
+        assert_eq!(out.text, "");
+        assert_eq!(out.confidence, 0.0);
+        assert!(out.words.is_none() && out.raw_text.is_none());
+        // Whitespace only: nothing was read.
+        let out = clean_lines(rec(" \n  "));
+        assert_eq!(out.text, "");
+        assert_eq!(out.raw_text.as_deref(), Some(" \n  "));
+    }
+
+    #[test]
+    fn the_engine_set_picks_the_rule_chain() {
+        let bar = || rec("| HELLO |");
+        // Current engines: the line rules.
+        assert_eq!(
+            clean_for(bar(), Language::Western, EngineSet::Current).text,
+            "| HELLO |"
+        );
+        // Legacy engines: the Tesseract chain, as before.
+        assert_eq!(
+            clean_for(bar(), Language::Western, EngineSet::Legacy).text,
+            "HELLO"
+        );
+        // Japanese: the manga rules with either set.
+        for engines in [EngineSet::Current, EngineSet::Legacy] {
+            let out = clean_for(rec("す\u{200B}ごい | ！"), Language::Manga, engines);
+            assert_eq!(out.text, "すごい | ！");
+        }
     }
 
     // ── Manga path: western rules must not fire ──

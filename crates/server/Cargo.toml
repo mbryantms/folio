@@ -12,11 +12,15 @@ path = "src/main.rs"
 
 [features]
 default = []
-# Opt-in GPU acceleration for the OCR pipeline. Forwarded to
-# `comic-text-detector/cuda` (and through it to `ort/cuda`). Default
-# builds stay CPU-only — enabling this requires CUDA Toolkit + the
-# `onnxruntime` GPU shared library on the operator's box.
-cuda = ["comic-text-detector/cuda"]
+# Links a CUDA-enabled ONNX Runtime build (`ort/cuda`, directly and
+# through `comic-text-detector/cuda`). That is all it does today: no
+# session registers the CUDA execution provider (neither the ones Folio
+# builds in `ocr::session` nor the upstream crates' own), so inference
+# still runs on the CPU with this feature on. It is kept so a GPU path
+# can be added without a manifest change; building with it needs the
+# CUDA toolkit and the GPU `onnxruntime` library. Default builds do not
+# use it.
+cuda = ["ort/cuda", "comic-text-detector/cuda"]
 
 [dependencies]
 # Web stack
@@ -74,10 +78,13 @@ notify-debouncer-full = { workspace = true }
 rustix = { workspace = true }
 image = { workspace = true }
 imageproc = { workspace = true }
-# Text-bubble detection on cropped reader regions. Gated behind a
-# `Mutex<ComicTextDetector>` singleton in `src/ocr/detector.rs`;
-# model auto-downloads from HF on first use (~50 MB). The `cuda`
-# server feature below flips this crate's `cuda` feature on.
+# ONNX Runtime sessions for the text-reading engines Folio runs itself
+# (`src/ocr/session.rs`): balloon detector, line finder, line recogniser.
+ort = { workspace = true }
+ndarray = { workspace = true }
+# Legacy page detector, used only with `COMIC_OCR_LEGACY_ENGINES=true`
+# (`src/ocr/detector.rs`); its model (~95 MB) is fetched on first use.
+# Removed together with Tesseract one release after the engine change.
 comic-text-detector = { workspace = true }
 # Vertical-Japanese OCR for manga (M2). ONNX models auto-download
 # from HF on first init (~80 MB encoder + decoder).
@@ -85,8 +92,9 @@ manga-ocr = { workspace = true }
 hf-hub = { workspace = true }
 # Exclusive, self-removing temp files for OCR model downloads.
 tempfile = "3"
-# Western OCR via Tesseract 5.5.2 + Leptonica 1.87.0 built from source
-# by tesseract-rs 0.4.0 (M2). Build script compiles natively via cmake;
+# Legacy Western OCR (`COMIC_OCR_LEGACY_ENGINES=true`): Tesseract 5.5.2 +
+# Leptonica 1.87.0 built from source by tesseract-rs 0.4.0. Build script
+# compiles natively via cmake;
 # cache lives at `~/.tesseract-rs/` and survives `cargo clean`. The
 # image build pins those sources (scripts/docker/tesseract-inputs.sh).
 tesseract-rs = { workspace = true }
