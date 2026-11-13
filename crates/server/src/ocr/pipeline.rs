@@ -750,9 +750,10 @@ pub(crate) struct Crop {
 /// 1. With `detect`, the snap candidate that overlaps `user` most
 ///    replaces it ([`pick_bbox_page`]); with no overlap `user` stays.
 /// 2. A Japanese request with the current engines then goes through
-///    [`manga_crop`], which may narrow the region to the text box inside
-///    it (`manga` chooses; the legacy engines read the region as they
-///    always did).
+///    [`manga_crop`], which narrows a rectangle that is one of the page's
+///    regions (a tap, a snap) to the text box inside it; any other
+///    rectangle is read as sent (`manga` chooses; the legacy engines
+///    read the region as they always did).
 pub(crate) fn choose_crop(
     engines: EngineSet,
     language: Language,
@@ -1118,6 +1119,11 @@ mod tests {
             (snapped.read, snapped.refined_bbox),
             (BALLOON_TEXT, Some(BALLOON_TEXT))
         );
+        // A rectangle drawn around the text that is not a region of the
+        // page (no snap) is what the user enclosed: read as sent.
+        let drawn = rect(130, 120, 140, 260);
+        let sent = crop_of(EngineSet::Current, Language::Manga, false, mode, drawn);
+        assert_eq!((sent.read, sent.refined_bbox), (drawn, None));
         // The caption has no text box in it: read whole, nothing refined
         // for a tap, the caption for a snap.
         let caption = rect(500, 100, 300, 60);
