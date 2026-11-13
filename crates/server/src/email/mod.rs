@@ -280,7 +280,29 @@ mod tests {
 
     const TOKEN: &str = "tok-0123456789abcdef-single-use";
 
+    /// Held by every test that reaches [`log_skipped`], so they run one at a
+    /// time when plain `cargo test` runs them as threads of one process.
+    ///
+    /// tracing caches, for each callsite and for the whole process, whether
+    /// any subscriber wants its events. The cache is filled when a thread
+    /// first reaches the callsite and recomputed only when a subscriber is
+    /// created. While at most one subscriber is registered, it is filled
+    /// from that first thread's own default subscriber alone (tracing-core
+    /// `Dispatchers::has_just_one`). Without the lock, a test thread with no
+    /// subscriber could reach `log_skipped` after a capturing test had
+    /// created its subscriber and before that test reached the same `warn!`
+    /// / `debug!`; the cache then said "never" and the capture lost the
+    /// event.
+    ///
+    /// Under the lock a thread with no subscriber gets there either before
+    /// the capturing subscriber is created (creating it recomputes the
+    /// cache) or after the capture is over. A new test that reaches
+    /// `log_skipped`, for example by sending through [`Noop`], must hold it
+    /// too. It is a tokio mutex because one holder is an async test.
+    static LOG_SKIPPED_CALLSITES: Mutex<()> = Mutex::const_new(());
+
     fn capture(include_body: bool) -> Vec<crate::observability::LogEntry> {
+        let _serial = LOG_SKIPPED_CALLSITES.blocking_lock();
         let ring = LogRingBuffer::with_capacity(16);
         let subscriber = Registry::default().with(RingLayer::new(ring.clone()));
         let email =
@@ -327,6 +349,7 @@ mod tests {
 
     #[tokio::test]
     async fn noop_send_succeeds_and_mock_still_captures_body() {
+        let _serial = LOG_SKIPPED_CALLSITES.lock().await;
         let email =
             templates::password_reset("https://comics.example.com", "reader@example.com", TOKEN);
         assert!(Noop.send(email.clone()).await.is_ok());
