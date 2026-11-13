@@ -17,8 +17,9 @@ use std::path::Path;
 use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
 
-/// Most intra-op threads the page detector and the line recogniser use.
-/// Each call is a small image; more threads have nothing to do.
+/// Most intra-op threads the page detector, the line recogniser and the
+/// Japanese encoder and decoder use. Each call is a small image (or a
+/// short token sequence); more threads have nothing to do.
 pub(crate) const MAX_INTRA_THREADS: usize = 4;
 
 /// Intra-op threads of the line finder. It measured faster with 2 than

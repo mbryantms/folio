@@ -8,8 +8,9 @@
 //!
 //! - [`ctc::LineOcr`]: Western text with the current engine set. A line
 //!   finder splits the balloon, a CTC line model reads the lines.
-//! - [`manga::MangaOcr`]: vertical Japanese OCR backed by `manga-ocr`'s
-//!   ViT encoder + BERT decoder on ONNX Runtime (both engine sets).
+//! - [`manga::MangaOcr`]: vertical Japanese OCR, the `manga-ocr` model's
+//!   ViT encoder + BERT decoder on two ONNX Runtime sessions Folio builds
+//!   itself (both engine sets).
 //! - [`western::WesternOcr`]: Western text with the legacy engine set.
 //!   Native Tesseract 5 with the `tessdata_best` LSTM models, vendored
 //!   via `tesseract-rs`.

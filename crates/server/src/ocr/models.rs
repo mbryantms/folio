@@ -18,12 +18,12 @@
 //!    pointed at `<commit>`.
 //!
 //! The engines Folio runs itself (the balloon detector, the line finder,
-//! the line recogniser) then open the file at that path
-//! ([`cached_path`]). `manga-ocr` and the legacy `comic-text-detector`
-//! load through `hf_hub::api::sync::Api::new()`, which looks at
-//! `refs/main` first and so finds the same verified file without
-//! reaching the network; left alone it would download the repository's
-//! `main` branch, unpinned and unchecked.
+//! the line recogniser, the Japanese recogniser) then open the file at
+//! that path ([`cached_path`]). The legacy `comic-text-detector` loads
+//! through `hf_hub::api::sync::Api::new()`, which looks at `refs/main`
+//! first and so finds the same verified file without reaching the
+//! network; left alone it would download the repository's `main` branch,
+//! unpinned and unchecked.
 //!
 //! The fetch runs in a detached task, one per repository for the whole
 //! process ([`Pinner`]): a request that times out or disconnects stops
@@ -97,7 +97,8 @@ pub const DETECTOR_FILES: &[PinnedFile] = &[PinnedFile {
     size: 94_669_756,
 }];
 
-/// What `MangaOCR::new` reads.
+/// The Japanese recogniser's files (`ocr::recognizer::manga`): encoder,
+/// decoder, vocabulary.
 pub const MANGA_FILES: &[PinnedFile] = &[
     PinnedFile {
         repo: MANGA_REPO,
@@ -778,11 +779,11 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     /// `hf_hub::Cache::default()` here must be the very code the OCR
-    /// crates' loader runs, or this module could place verified files
+    /// crate's loader runs, or this module could place verified files
     /// where the loader does not look. That holds only while Cargo
     /// resolves one `hf-hub` for the whole workspace, so a bump of the
     /// direct dependency on its own (two copies in the lock file) fails
-    /// here. Bump it together with `comic-text-detector` and `manga-ocr`.
+    /// here. Bump it together with `comic-text-detector`.
     #[test]
     fn one_hf_hub_in_the_lock_file() {
         let lock =

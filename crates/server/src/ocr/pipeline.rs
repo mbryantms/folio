@@ -263,8 +263,8 @@ async fn real_detector(engines: EngineSet) -> anyhow::Result<&'static dyn PageDe
     })
 }
 
-/// The recognizer for a language. Japanese is `manga-ocr` with either
-/// engine set.
+/// The recognizer for a language. Japanese is the `manga-ocr` model with
+/// either engine set.
 async fn real_recognizer(
     engines: EngineSet,
     language: Language,

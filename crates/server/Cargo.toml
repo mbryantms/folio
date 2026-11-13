@@ -79,16 +79,14 @@ rustix = { workspace = true }
 image = { workspace = true }
 imageproc = { workspace = true }
 # ONNX Runtime sessions for the text-reading engines Folio runs itself
-# (`src/ocr/session.rs`): balloon detector, line finder, line recogniser.
+# (`src/ocr/session.rs`): balloon detector, line finder, line recogniser,
+# and the Japanese recogniser's encoder and decoder.
 ort = { workspace = true }
 ndarray = { workspace = true }
 # Legacy page detector, used only with `COMIC_OCR_LEGACY_ENGINES=true`
 # (`src/ocr/detector.rs`); its model (~95 MB) is fetched on first use.
 # Removed together with Tesseract one release after the engine change.
 comic-text-detector = { workspace = true }
-# Vertical-Japanese OCR for manga (M2). ONNX models auto-download
-# from HF on first init (~80 MB encoder + decoder).
-manga-ocr = { workspace = true }
 hf-hub = { workspace = true }
 # Exclusive, self-removing temp files for OCR model downloads.
 tempfile = "3"

@@ -4246,20 +4246,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dae608c151f68243f2b000364e1f7b186d9c29845f7d2d85bd31b9ad77ad552b"
 
 [[package]]
-name = "manga-ocr"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e40c8fb0b36181ce15b4dc850a16b1274300d387425ab47e5ef783834df6364"
-dependencies = [
- "anyhow",
- "clap",
- "hf-hub",
- "image",
- "ndarray",
- "ort",
-]
-
-[[package]]
 name = "matchers"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6953,7 +6939,6 @@ dependencies = [
  "libc",
  "log",
  "lru",
- "manga-ocr",
  "metrics",
  "metrics-exporter-prometheus",
  "metrics-process",

@@ -12,6 +12,12 @@ The UnRAR source carries a license clause:
 
 Comic Reader uses UnRAR only to **read** RAR archives (CBR comic files), in process. It does not create RAR archives. The container image no longer ships a separate `unrar` program.
 
+## `manga-ocr` Rust crate (code derived from it)
+
+GPL-3.0. https://github.com/mayocream/koharu (crate `manga-ocr` 0.5.1, by Mayo Takanashi; the crate's `LICENSE` file is the GNU General Public License version 3).
+
+Comic Reader's Japanese recogniser, `crates/server/src/ocr/recognizer/manga.rs`, is derived from that crate's source: the image preprocessing, the greedy decoding loop and the vocabulary handling follow it. The crate itself is no longer a dependency. GPL-3.0 code may be combined with code under the GNU Affero General Public License version 3 (section 13 of each licence), and the combined work is distributed under AGPL-3.0-or-later, Comic Reader's licence. The model files the recogniser runs (`mayocream/manga-ocr-onnx`) are not bundled; they are downloaded on first use under their own licence (Apache-2.0, as their model card declares).
+
 ## `tini`
 
 Apache-2.0. https://github.com/krallin/tini
