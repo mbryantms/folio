@@ -2122,20 +2122,32 @@ export function useCheckCblList(id: string) {
   );
 }
 
+/** What the reading-list updates panel hears from a check. Held in a ref,
+ *  so the latest callbacks run, and attached to the mutation itself (not
+ *  to one `mutate` call), so the error toast's Retry reaches them too. */
+export type CheckAllCallbacks = {
+  /** How far a check got, before each further server call. */
+  onProgress?: (p: CheckAllProgress) => void;
+  /** The merged result of a finished check. */
+  onResult?: (data: CblBulkResultView) => void;
+  /** A check ended: finished, failed or abandoned. */
+  onSettled?: () => void;
+};
+
+/** Input of a check: `signal` abandons it (no further rounds, no toast). */
+export type CheckAllInput = { signal?: AbortSignal };
+
 /** Dry-run every reading list and report which have updates available.
  *  Nothing is applied — the user reviews, then updates. One server call
  *  has a time budget, so this carries on with the lists a call did not
- *  reach until every list was checked (`checkAllUntilDone`); `onProgress`
- *  hears how far it got before each further call. */
-export function useCheckAllCblLists(
-  onProgress?: (p: CheckAllProgress) => void,
-) {
-  const progressRef = React.useRef(onProgress);
+ *  reach until every list was checked (`checkAllUntilDone`). */
+export function useCheckAllCblLists(callbacks: CheckAllCallbacks = {}) {
+  const callbacksRef = React.useRef(callbacks);
   React.useEffect(() => {
-    progressRef.current = onProgress;
-  }, [onProgress]);
-  return useApiRunMutation<CblBulkResultView, void>(
-    () =>
+    callbacksRef.current = callbacks;
+  });
+  return useApiRunMutation<CblBulkResultView, CheckAllInput>(
+    (input) =>
       checkAllUntilDone(
         (listIds) =>
           apiMutate<CblBulkResultView>({
@@ -2145,7 +2157,8 @@ export function useCheckAllCblLists(
               ? { body: { list_ids: listIds } satisfies CblBulkReq }
               : {}),
           }),
-        (p) => progressRef.current?.(p),
+        (p) => callbacksRef.current.onProgress?.(p),
+        input.signal,
       ),
     {
       successMessage: (data) => {
@@ -2160,6 +2173,10 @@ export function useCheckAllCblLists(
               : `${changed} lists have updates available`;
         return failed > 0 ? `${base} · ${failed} couldn't be checked` : base;
       },
+      onSuccess: (data) => {
+        if (data) callbacksRef.current.onResult?.(data);
+      },
+      onSettled: () => callbacksRef.current.onSettled?.(),
     },
   );
 }

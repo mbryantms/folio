@@ -143,7 +143,6 @@ export function CblUpdatesProvider({
   // How far a check that is carrying on (more than one server call) got;
   // `null` until the first call answered.
   const [progress, setProgress] = React.useState<CheckAllProgress | null>(null);
-  const checkAll = useCheckAllCblLists(setProgress);
   const batch = useBatchRefresh();
   const [results, setResults] = React.useState<CblBulkItemView[] | null>(null);
   const [checkedAt, setCheckedAt] = React.useState<string | null>(null);
@@ -159,6 +158,27 @@ export function CblUpdatesProvider({
     new Set(),
   );
   const [panelOpen, setPanelOpen] = React.useState(false);
+  // The run in flight; leaving the page abandons it (no further rounds,
+  // no toast). One controller per run, so React strict mode's development
+  // unmount/remount cannot abort a later check.
+  const runRef = React.useRef<AbortController | null>(null);
+  React.useEffect(() => () => runRef.current?.abort(), []);
+  const checkAll = useCheckAllCblLists({
+    onProgress: setProgress,
+    // Here rather than on the `mutate` call, so the error toast's Retry
+    // fills the panel too.
+    onResult: (d) => {
+      const items = d.items;
+      setResults(items);
+      setCheckedAt(new Date().toISOString());
+      // Pre-select everything with changes: the common case is "yes,
+      // update them", and unticking is one click per exception.
+      setSelected(
+        new Set(items.filter((i) => i.ok && i.changed).map((i) => i.id)),
+      );
+    },
+    onSettled: () => setProgress(null),
+  });
 
   const count = lists.length;
   const viewHref = React.useMemo(() => {
@@ -209,19 +229,10 @@ export function CblUpdatesProvider({
     setAppliedIds(new Set());
     setSelected(new Set());
     setProgress(null);
-    runCheck(undefined, {
-      onSettled: () => setProgress(null),
-      onSuccess: (d) => {
-        const items = d?.items ?? [];
-        setResults(items);
-        setCheckedAt(new Date().toISOString());
-        // Pre-select everything with changes: the common case is "yes,
-        // update them", and unticking is one click per exception.
-        setSelected(
-          new Set(items.filter((i) => i.ok && i.changed).map((i) => i.id)),
-        );
-      },
-    });
+    runRef.current?.abort();
+    const run = new AbortController();
+    runRef.current = run;
+    runCheck({ signal: run.signal });
   }, [runCheck]);
 
   const { clear: clearBatch, start: startRaw } = batch;

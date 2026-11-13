@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiMutationError } from "@/lib/api/mutations/_core";
 import type { CblBulkItemView, CblBulkResultView } from "@/lib/api/types";
 import {
+  MAX_IDS_PER_ROUND,
   checkAllUntilDone,
   type CheckAllProgress,
   type CheckAllRequest,
@@ -141,6 +142,56 @@ describe("checkAllUntilDone", () => {
   it("lets a failed first round fail the check", async () => {
     const { request } = rounds(new ApiMutationError("offline", "network"));
     await expect(checkAllUntilDone(request)).rejects.toThrow("offline");
+  });
+
+  it("never lets a round overwrite a row it did not ask about, and stops without progress", async () => {
+    // A misbehaving server echoes an already-resolved list as attempted
+    // (with different counts) while the lists asked about stay unreached.
+    const echo = item("a", { changed: true, added: 9 });
+    const { request, calls } = rounds(
+      result([item("a"), missed("b"), missed("c")]),
+      result([echo, missed("b"), missed("c")]),
+      result([echo, missed("b"), missed("c")]),
+    );
+    const out = await checkAllUntilDone(request);
+    expect(calls).toEqual([undefined, ["b", "c"]]);
+    expect(out.items[0]).toEqual(item("a"));
+    expect(out.changed_count).toBe(0);
+    expect(out.failed_count).toBe(2);
+  });
+
+  it("sends at most MAX_IDS_PER_ROUND ids per round, the rest in later rounds", async () => {
+    const n = MAX_IDS_PER_ROUND + 5;
+    const all = Array.from({ length: n }, (_, i) => `l${i}`);
+    const firstChunk = all.slice(1, MAX_IDS_PER_ROUND + 1);
+    const rest = all.slice(MAX_IDS_PER_ROUND + 1);
+    const { request, calls } = rounds(
+      result([item(all[0]!), ...all.slice(1).map(missed)]),
+      result(firstChunk.map((id) => item(id))),
+      result(rest.map((id) => item(id))),
+    );
+    const out = await checkAllUntilDone(request);
+    expect(calls).toEqual([undefined, firstChunk, rest]);
+    expect(calls.every((c) => (c?.length ?? 0) <= MAX_IDS_PER_ROUND)).toBe(
+      true,
+    );
+    expect(out.items.map((i) => i.id)).toEqual(all);
+    expect(out.failed_count).toBe(0);
+  });
+
+  it("sends no further round once abandoned, and rejects with an AbortError", async () => {
+    const controller = new AbortController();
+    const calls: Array<string[] | undefined> = [];
+    const request: CheckAllRequest = async (ids) => {
+      calls.push(ids);
+      // The page goes away while the first round is in flight.
+      controller.abort();
+      return result([item("a"), missed("b")]);
+    };
+    await expect(
+      checkAllUntilDone(request, undefined, controller.signal),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(calls).toEqual([undefined]);
   });
 
   it("ignores lists a later round returns that were not asked about", async () => {

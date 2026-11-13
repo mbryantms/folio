@@ -263,6 +263,12 @@ export function useApiRunMutation<TData, TInput>(
       onSuccess?.(data, input, onMutateResult, context);
     },
     onError: (err, input, onMutateResult, context) => {
+      // Work the caller abandoned on purpose (an `AbortError`, e.g. the
+      // page that started it went away) is not a failure to report.
+      if (err.name === "AbortError") {
+        onError?.(err, input, onMutateResult, context);
+        return;
+      }
       // Attach Retry only for transient failures (5xx + network).
       // 4xx errors are user-facing validation/auth/permission issues
       // that retrying without changing input won't fix.
