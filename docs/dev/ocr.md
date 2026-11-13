@@ -12,12 +12,6 @@ a session Folio builds itself.
 | Line recogniser | `PaddlePaddle/en_PP-OCRv5_mobile_rec_onnx` (CTC) | 8 MB | Reads the lines of a balloon in one batch |
 | Japanese | `mayocream/manga-ocr-onnx` (encoder + decoder) | 440 MB | Reads a balloon crop as one string |
 
-The runtime is ONNX Runtime 1.31.0, through the `ort` crate
-2.0.0-rc.15, which links the prebuilt library it downloads at build
-time. That library is built for x86-64 CPUs with AVX2; see
-[CPU requirement](#cpu-requirement) for what happens on
-other CPUs.
-
 The previous engines, `comic-text-detector` and Tesseract, and the
 `COMIC_OCR_LEGACY_ENGINES` switch that brought them back are gone. A
 deployment that still sets `COMIC_OCR_LEGACY_ENGINES` boots and ignores
@@ -454,10 +448,8 @@ follow the pins by themselves.
 
 ### Sessions and threads ([`ocr/session.rs`](../../crates/server/src/ocr/session.rs))
 
-Folio builds each of the five sessions with every graph optimization
-(`ORT_ENABLE_ALL`; `ort` rc.15 calls it `GraphOptimizationLevel::All`,
-and its `Level3` now means the lower `ORT_ENABLE_LAYOUT`), an explicit
-intra-op thread count and intra-op spinning off:
+Folio builds each of the five sessions with graph-optimization level 3
+and an explicit intra-op thread count:
 
 | Session | Threads |
 |---|---|
@@ -483,51 +475,6 @@ overlap; they queue on a session for the milliseconds a run takes.
 The Japanese encoder and decoder share one mutex: a read runs the
 encoder once and the decoder once per output token, and holds both for
 the whole read.
-
-**One environment.** `ort` allows one ONNX Runtime environment per
-process; `session::environment()` builds it on first use (name `folio`,
-telemetry off, `ort`'s tracing logger) and keeps it for the life of the
-process. `ocr-bench` builds its own sessions on the same function.
-
-**Spinning** is off, set explicitly (ONNX Runtime's own default is on;
-according to `ort`'s release notes the libraries it ships from rc.11 on
-are built with it off). With it on, the idle threads of one session's
-pool spin on the cores the next session needs: a balloon runs the line
-finder and then the recogniser, a Japanese read alternates encoder and
-decoder. Measured on four pinned cores with ONNX Runtime 1.31: a balloon
-took a median 54 ms with spinning off against 105–112 ms with it on,
-and a Japanese read 149 ms against 572 ms. The page detector alone was
-slightly slower without spinning (83–87 ms against 81 ms). See
-[ONNX Runtime 1.31](#onnx-runtime-131).
-
-#### CPU requirement
-
-From this version Folio's x86_64 builds need a CPU with AVX2
-(x86-64-v3). The prebuilt ONNX Runtime 1.31 library `ort` rc.15 links
-statically is compiled for that baseline (`ort`'s rc.11 release notes
-say its prebuilt binaries target it from then on); the ONNX Runtime
-1.22 library of `ort` rc.10 was not.
-
-- **Without AVX** the server does not start. Without a check, the
-  process dies with SIGILL before `main`, in a static initialiser of the
-  ONNX Runtime library (`onnxruntime::ProviderLibrary::ProviderLibrary`).
-  The `server` binary therefore checks for AVX in a `.preinit_array`
-  entry (`main.rs`, module `avx_check`), which runs before those
-  initialisers, prints `folio: this CPU has no AVX. This build needs an
-  x86_64 CPU with AVX2 (x86-64-v3) and cannot start; see
-  docs/dev/ocr.md.` to standard error and exits with status 1.
-- **With AVX but not AVX2** the server starts and everything works
-  except text reading. `session::environment()` refuses to start ONNX
-  Runtime (running a model would end the process with SIGILL, which
-  `catch_unwind` cannot stop), and each engine checks that before
-  fetching its models: both OCR routes answer `500` with error code
-  `ocr_failed`, and no model is downloaded.
-- **With AVX2** everything works.
-
-Verified by QEMU software emulation of three CPU models (one without
-AVX, one with AVX but not AVX2, one with AVX2) on release builds, not on
-real hardware. On the CPU model without AVX the `ort` rc.10 build
-started and read text.
 
 ### What was measured
 
@@ -577,59 +524,6 @@ taskset -c 0,2,4,6 <the printed test binary> --ignored --nocapture timing
 It prints the detection time, the per-balloon time and the load
 average. Run it on an idle machine; pin only the run, not the build.
 
-### ONNX Runtime 1.31
-
-Everything above was measured on ONNX Runtime 1.22 (`ort`
-2.0.0-rc.10). On 2026-11-12 the server moved to 1.31 (`ort` rc.15), and
-the server's own engine code was run on the benchmark pages before and
-after, on the same machine (a throwaway program, not in the repository,
-calling `ocr::bubbles`, `ocr::regions`, `ocr::manga_crop` and the
-recognisers, each tap sent as the percent box the text-regions route
-returns and converted back as the OCR route does). The pages: the 12
-scanned pages above (139 tap targets), 22 pages of modern digital
-lettering (236), and the 17 Japanese pages (135).
-
-- **The recognisers are unchanged.** Given the crops 1.22 read, 1.31
-  returns the same text and the same line split for all 510: the line
-  finder and line recogniser on 375 Western crops, the Japanese
-  recogniser on 135.
-- **The page detector (8-bit) is not.** Its boxes move by fractions of
-  a pixel: of 1,074 boxes, 1,071 pair up (IoU ≥ 0.5) with a median
-  largest-edge change of 0.3 px (90th percentile 0.5–0.9 px, largest
-  4.4 px on the scanned pages, 18.9 px on the modern ones) and a median
-  score change of about 0.002; paired one to one, 3 boxes appear, 3
-  disappear and 7 change class (the three with no overlapping partner
-  at all score 0.50–0.54, at the 0.5 threshold). Whether the graph optimizations
-  are at the layout level or all of them makes no difference here.
-- **So about half the taps read a crop one pixel off**, and the line
-  finder, run at twice the crop's size, sometimes splits it differently.
-  Against 1.22: Japanese 68 of 135 taps read a different box (all by
-  1 px), 7 of them return different text (1, 1, 1, 3, 5, 6 and 12
-  character edits); scanned pages 79 of 139 (74 by 1 px, the rest by
-  2–4 px), text differs for 36 (1–34 edits, most 1–2) and the line count
-  for 18; modern pages 137 of 236 (133 by 1 px, three by 2–3 px, one by
-  84 px), text differs for 23 (1–6 edits) and the line count
-  for 22.
-- **Against the reference text** (case-insensitive edit distance over
-  the tap targets, a simpler scoring than `ocr-bench`'s): scanned pages
-  1,134 → 1,121 character errors, read within 10% error 114 → 116,
-  within 5% 87 → 85; modern pages 338 → 360 errors, within 10% 221 →
-  221, within 5% 215 → 214. Neither direction stands out from what a
-  one-pixel shift does; there is no reference text for the Japanese
-  pages.
-- **Times** (fixture page, release build, `taskset -c 0,2,4,6` on the
-  i9-14900K, 1-minute load average 1.5–3.5 during the runs, the two
-  versions run alternately): page detection 63–67 ms on 1.22, 81–87 ms
-  on 1.31 (its first run 69–115 ms against about 300 ms with spinning
-  on, about 95 ms with it off); one balloon 95–99 ms on 1.22 (spinning
-  on), 54 ms on 1.31 with spinning off; every balloon of the page
-  1.39–1.42 s against 0.85 s. One Japanese read on the 17 pages'
-  reference boxes: 149 ms median (spinning off; 572 ms with it on).
-  No Japanese figure was taken on 1.22. A repeat of the fixture-page
-  runs on 2026-11-13 (three alternating rounds, load average 2–3) gave
-  page detection 67–68 ms on 1.22 and 86–87 ms on 1.31, one balloon
-  98–104 ms and 55 ms, every balloon of the page 1.45–1.49 s and 0.87 s.
-
 ### Japanese
 
 The `manga-ocr` model reads a crop as one string (ViT encoder + BERT
@@ -643,8 +537,8 @@ token 3 or after 300 steps, and tokens below 5 (the special ones) are
 dropped from the text. At load the vocabulary must match the decoder's
 class count (6,144). Before the crate was removed both were run side by
 side on 559 crops of the Japanese benchmark pages (the reference boxes,
-every detected box, every tapped crop), on ONNX Runtime 1.22: all 559
-strings were identical.
+every detected box, every tapped crop): all 559 strings were
+identical.
 
 What changed with the balloon detector is the crop. The previous
 detector returned text blocks; the current one returns balloons, so a
@@ -742,9 +636,7 @@ text-box row above (134 narrowed to a text box, 1 read as the
 balloon). No tapped region on these pages is free text, so the "free
 text is read as is" part of the rule was not exercised; and the
 comparison tapped regions only, so it says nothing about rectangles
-drawn by hand, which is why those are read as sent. That run was on ONNX Runtime
-1.22; on 1.31 7 of the 135 return different text (see
-[ONNX Runtime 1.31](#onnx-runtime-131)).
+drawn by hand, which is why those are read as sent.
 
 Limits: one volume, so one lettering style and one kind of page; and,
 without a reference text, no count of how often either pipeline is
@@ -804,8 +696,7 @@ Code map:
   hash stand-ins for the detector and recognizers used by the
   integration tests.
 - [`crates/server/src/ocr/session.rs`](../../crates/server/src/ocr/session.rs)
-  — the process's ONNX Runtime environment, session construction and
-  thread counts.
+  — ONNX Runtime session construction and thread counts.
 - [`crates/server/src/ocr/bubbles.rs`](../../crates/server/src/ocr/bubbles.rs)
   — page detector.
 - [`crates/server/src/ocr/regions.rs`](../../crates/server/src/ocr/regions.rs)
@@ -857,30 +748,25 @@ decides their payload, computed once per process
   (`bubbles::fingerprint`), the line finder's scale, thresholds and
   bounds (`lines::fingerprint`), the recogniser's sizes and run bounds
   (`ctc::fingerprint`), the Japanese crop's constants
-  (`manga_crop::fingerprint`), the near-duplicate threshold of the
-  regions, and the runtime (below);
-- detect keys: `OCR_DETECT_VERSION`, the page detector's pins, the
-  detector's tuning constants and the runtime only (the cached
+  (`manga_crop::fingerprint`) and the near-duplicate threshold of the
+  regions;
+- detect keys: `OCR_DETECT_VERSION`, the page detector's pins and the
+  detector's tuning constants only (the cached
   detection holds the raw boxes, so the region rules do not touch it).
 
-The runtime part (`cache::runtime_identity`) is the `ort` crate version
-(`session::ORT_CRATE_VERSION`, held to the workspace pin by a unit
-test) and ONNX Runtime's own build string (`ort::info()`: release
-branch, commit, build flags). Moving to another ONNX Runtime moves
-detection boxes by fractions of a pixel (measured for 1.22 → 1.31, see
-[ONNX Runtime 1.31](#onnx-runtime-131)), so it rolls both keys.
+A moved model pin, a switch of line recogniser or a changed threshold
+or bound therefore rolls the keys by itself; old entries age out via
+the TTL. The version constants are still bumped for changes in Folio's
+own code (preprocessing arithmetic, decoding, cleanup, payload shape).
+Current values: result **v4** (Western text read by the line finder and
+the line recogniser, `words` one entry per line; Japanese crops from
+the balloon detector), detect **v3** (the boxes of the balloon
+detector, all three classes).
 
-A moved model pin, a switch of line recogniser, a changed threshold or
-bound, or another ONNX Runtime therefore rolls the keys by itself; old
-entries age out via the TTL. The version constants are still bumped for
-changes in Folio's own code (preprocessing arithmetic, decoding,
-cleanup, payload shape). Current values: result **v5** (the runtime
-joins the fingerprint, ONNX Runtime 1.31, the Japanese recogniser is
-Folio's own code; v4: Western text read by the line finder and the
-line recogniser, `words` one entry per line, Japanese crops from the
-balloon detector), detect **v4** (ONNX Runtime 1.31 and the runtime in
-the fingerprint; v3: the boxes of the balloon detector, all three
-classes).
+The engine set used to be part of both fingerprints. Removing it with
+the previous engines changed them once, without a version bump: entries
+written by a release that had the switch are not read any more and age
+out.
 
 ### Result cache
 
@@ -1354,10 +1240,9 @@ recognized text.
   shape, padding and run bounds, CTC decode, the dictionary reader and
   the class check (`ocr/recognizer/ctc.rs`); the Japanese recogniser's
   preprocessing, greedy decode, token-to-text and vocabulary check
-  (`ocr/recognizer/manga.rs`); the environment, the thread caps and the
-  runtime version (`ocr/session.rs`); cleanup rules per language
-  (`ocr/postprocess.rs`); fingerprints per constant and per runtime
-  (`ocr/cache.rs`).
+  (`ocr/recognizer/manga.rs`); the thread caps (`ocr/session.rs`);
+  cleanup rules per language (`ocr/postprocess.rs`); fingerprints per
+  constant (`ocr/cache.rs`).
 - Real models (ignored by default; they fetch the pinned files on first
   run):
   [`crates/server/tests/ocr_recognizer.rs`](../../crates/server/tests/ocr_recognizer.rs)

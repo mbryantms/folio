@@ -35,20 +35,9 @@ pub(crate) fn load_session(
     intra_threads: usize,
 ) -> anyhow::Result<(Session, ModelMeta)> {
     let t = std::time::Instant::now();
-    // The server's environment (one per process) and its session options:
-    // every graph optimization (`All`, which was `Level3` before `ort`
-    // rc.15), intra-op spinning off, `intra_threads` (0 = ONNX Runtime's
-    // default count, for the `timefree` step).
-    let env = server::ocr::session::environment()?;
-    let mut b = Session::builder(env)?
-        .with_optimization_level(GraphOptimizationLevel::All)
-        .map_err(ort::Error::<()>::from)?
-        .with_intra_op_spinning(false)
-        .map_err(ort::Error::<()>::from)?;
+    let mut b = Session::builder()?.with_optimization_level(GraphOptimizationLevel::Level3)?;
     if intra_threads > 0 {
-        b = b
-            .with_intra_threads(intra_threads)
-            .map_err(ort::Error::<()>::from)?;
+        b = b.with_intra_threads(intra_threads)?;
     }
     // ONNX Runtime's per-op profile (a Chrome trace JSON per session),
     // for finding the op a slow model spends its time in.
@@ -60,9 +49,7 @@ pub(crate) fn load_session(
             .to_string_lossy()
             .into_owned();
         let file = path.file_stem().unwrap_or_default().to_string_lossy();
-        b = b
-            .with_profiling(Path::new(&dir).join(format!("{stem}-{file}")))
-            .map_err(ort::Error::<()>::from)?;
+        b = b.with_profiling(Path::new(&dir).join(format!("{stem}-{file}")))?;
     }
     let s = b
         .commit_from_file(path)
@@ -73,14 +60,14 @@ pub(crate) fn load_session(
         bytes: std::fs::metadata(path).map(|m| m.len()).unwrap_or(0),
         intra_threads,
         inputs: s
-            .inputs()
+            .inputs
             .iter()
-            .map(|i| format!("{}: {:?}", i.name(), i.dtype()))
+            .map(|i| format!("{}: {:?}", i.name, i.input_type))
             .collect(),
         outputs: s
-            .outputs()
+            .outputs
             .iter()
-            .map(|o| format!("{}: {:?}", o.name(), o.dtype()))
+            .map(|o| format!("{}: {:?}", o.name, o.output_type))
             .collect(),
         load_ms,
     };
@@ -153,8 +140,8 @@ impl PaddleRec {
     pub(crate) fn load(name: &str, dir: &Path, threads: usize) -> anyhow::Result<Self> {
         let dict = read_dict(&dir.join("inference.yml"))?;
         let (session, meta) = load_session(&dir.join("inference.onnx"), threads)?;
-        let input = session.inputs()[0].name().to_owned();
-        let output = session.outputs()[0].name().to_owned();
+        let input = session.inputs[0].name.clone();
+        let output = session.outputs[0].name.clone();
         Ok(PaddleRec {
             name: name.into(),
             session,
@@ -313,8 +300,8 @@ impl PaddleDet {
         let raw = std::fs::read_to_string(dir.join("inference.yml"))?;
         let (session, meta) = load_session(&dir.join("inference.onnx"), threads)?;
         Ok(PaddleDet {
-            input: session.inputs()[0].name().to_owned(),
-            output: session.outputs()[0].name().to_owned(),
+            input: session.inputs[0].name.clone(),
+            output: session.outputs[0].name.clone(),
             session,
             meta,
             thresh: yml_number(&raw, "thresh").unwrap_or(0.3),
@@ -511,11 +498,7 @@ impl Ogkalu {
         threshold: f32,
     ) -> anyhow::Result<Self> {
         let (session, meta) = load_session(path, threads)?;
-        let names: Vec<&str> = session
-            .inputs()
-            .iter()
-            .map(ort::value::Outlet::name)
-            .collect();
+        let names: Vec<&str> = session.inputs.iter().map(|i| i.name.as_str()).collect();
         let hf = if names.contains(&"pixel_values") {
             true
         } else if names.contains(&"images") {

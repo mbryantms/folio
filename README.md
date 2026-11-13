@@ -125,12 +125,8 @@ The full feature tour, with how each part works, is in
 
 ## Getting started
 
-You need a Linux host with Docker and Compose v2, on an x86_64 CPU with
-AVX2 (x86-64-v3). Without AVX the server does not start; with AVX but
-not AVX2 everything works except text reading (see
-[CPU requirement](./docs/install/upgrades.md#cpu-requirement)). Folio
-listens on `127.0.0.1:8080` and expects a reverse proxy in front of it
-for TLS.
+You need a Linux host with Docker and Compose v2. Folio listens on
+`127.0.0.1:8080` and expects a reverse proxy in front of it for TLS.
 
 ```bash
 mkdir -p ~/folio && cd ~/folio

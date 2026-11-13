@@ -107,9 +107,6 @@ impl MangaOcr {
 
     /// A recogniser of its own (tools; the server uses [`Self::shared`]).
     pub async fn load() -> anyhow::Result<Self> {
-        // Before any download: on a CPU that cannot run ONNX Runtime the
-        // engine fails here, not after fetching its models.
-        session::environment()?;
         models::ensure_pinned(models::MANGA_FILES).await?;
         let pin = |name: &str| {
             models::MANGA_FILES
@@ -270,10 +267,10 @@ fn decoder_step(
 fn decoder_classes(sessions: &mut Sessions, encoder_output: &str) -> anyhow::Result<usize> {
     let declared = sessions
         .decoder
-        .outputs()
+        .outputs
         .iter()
-        .find(|o| o.name() == DECODER_LOGITS)
-        .and_then(|o| o.dtype().tensor_shape())
+        .find(|o| o.name == DECODER_LOGITS)
+        .and_then(|o| o.output_type.tensor_shape())
         .and_then(|shape| shape.last().copied());
     if let Some(classes) = declared
         && classes > 0
