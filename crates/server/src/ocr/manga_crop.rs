@@ -32,9 +32,9 @@
 //!   tiny balloon that holds only a mark the recogniser, given the
 //!   balloon, invents characters.
 //! - **A balloon with several lobes.** The detector may box the text of
-//!   the larger lobe only, or leave the other lobe's text box mostly
-//!   outside the balloon's box; the larger lobe's box is then the single
-//!   one inside and the other lobe's text is not read.
+//!   the larger lobe only, or box the other lobe's text so that it lies
+//!   partly outside the balloon's box; the larger lobe's box is then the
+//!   single one inside and the other lobe's text is not read.
 //!
 //! In this mode a Japanese request always needs the page's detection,
 //! also for a tap on a region (`pipeline::uses_detection`): it comes
