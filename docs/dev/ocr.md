@@ -21,12 +21,11 @@ other CPUs.
 The previous engines, `comic-text-detector` and Tesseract, and the
 `COMIC_OCR_LEGACY_ENGINES` switch that brought them back are gone. A
 deployment that still sets `COMIC_OCR_LEGACY_ENGINES` boots and ignores
-it. The previous detector's model file (about 95 MB, in
-`models--mayocream--comic-text-detector-onnx/` under the Hugging Face
-hub cache, `${HOME}/.cache/huggingface/hub/`) is no longer used; the
-operator may delete it, Folio does not. Tesseract
-(`ocr/recognizer/western.rs` and its cleanup rules) is still compiled,
-for `crates/tools/ocr-bench` only; no request reaches it.
+it; the same holds for `TESSDATA_PREFIX`. The previous detector's model
+file (about 95 MB, in `models--mayocream--comic-text-detector-onnx/`
+under the Hugging Face hub cache, `${HOME}/.cache/huggingface/hub/`) is
+no longer used; the operator may delete it, Folio does not. Tesseract is
+no longer compiled into the server or shipped in the image.
 
 ## Endpoints
 
@@ -225,9 +224,9 @@ already gone) is logged once at warn. A caught engine panic is logged at
 error with its message and counted in
 `folio_ocr_recognizer_panics_total{model}`. A panic while an engine's
 lock is held poisons the lock, and every later request for that engine
-answers `ocr_failed` until the server restarts. Tesseract and manga-ocr
-hold their lock for the whole call; the three sessions Folio builds
-hold theirs for the inference only, so a panic in Folio's own image or
+answers `ocr_failed` until the server restarts. manga-ocr holds its
+lock for the whole call; the three sessions Folio builds hold theirs
+for the inference only, so a panic in Folio's own image or
 decoding code around them fails that one request and nothing else.
 
 Every OCR cache read is bounded too (`CACHE_READ_TIMEOUT`, 2 s, on top
@@ -473,8 +472,8 @@ More than 4 threads do not help: each call is a small image.
 
 `OMP_NUM_THREADS` has no effect on any of this. The ONNX Runtime build
 Folio links has no OpenMP (measured: the previous detector took the
-same time with 1, 4 and 8), and Tesseract is built with OpenMP off. The
-server used to set the variable at start; that code is gone.
+same time with 1, 4 and 8). The server used to set the variable at
+start; that code is gone.
 
 Each session sits behind a mutex (a run needs exclusive access), taken
 for the inference only. With `OCR_MAX_CONCURRENT` = 2 two requests can
@@ -532,8 +531,10 @@ started and read text.
 ### What was measured
 
 The engines were chosen with a benchmark run before they were adopted,
-made with [`crates/tools/ocr-bench`](../../crates/tools/ocr-bench/README.md).
-On one desktop CPU (i9-14900K) pinned to four performance cores, over
+made with [`crates/tools/ocr-bench`](../../crates/tools/ocr-bench/README.md)
+while the tool still ran Tesseract; the "Previous engines" column
+(comic-text-detector and Tesseract) was measured then, and the tool can
+no longer reproduce it. On one desktop CPU (i9-14900K) pinned to four performance cores, over
 12 scanned pages from 1941–1953 with 139 balloons and captions
 transcribed as the reference:
 
@@ -774,22 +775,15 @@ string per line, and the cleanup only joins them into one utterance.
   becomes one space.
 - Nothing is dropped, the only character rewritten is that U+2010
   hyphen at a joined line end, and the confidence is the recogniser's.
-  The rules below were written for what Tesseract
-  makes of balloon borders; on this recogniser's output they would
-  delete real text (a `|`, a low-scored word, a symbol outside the
-  allowlist).
+  The debris rules Folio used to run on Tesseract's output (dropping
+  `|`, low-scored words and symbols outside an allowlist) would delete
+  real text from this recogniser's output; they were removed with
+  Tesseract.
 
-**Manga**: strips control, zero-width and replacement characters and
-collapses whitespace; Japanese punctuation is all legitimate output.
-
-**Tesseract** (`clean`, kept for `ocr-bench` only; no request runs it):
-the chain written for Tesseract's output,
-in order: per-word confidence drop (W1) → pronoun `I` read as `|` (W1b)
-→ the same line-end hyphen join (W2) → symbol-only token drop sparing
-expressive punctuation like `!?`/`...` and confident grawlix (W3) →
-edge junk strip (W4) → per-char allowlist (W5) → whitespace collapse
-(W6) → empty-out guard (W7) → confidence recompute over kept words
-(W8). The rules and their thresholds are documented in the module.
+**Manga** (`clean_manga`): strips control, zero-width and replacement
+characters and collapses whitespace; Japanese punctuation is all
+legitimate output. A reading that strips down to nothing reports
+confidence 0.
 
 Code map:
 
@@ -832,9 +826,6 @@ Code map:
   — in-process decoded-page cache.
 - [`crates/server/src/api/admin_ocr.rs`](../../crates/server/src/api/admin_ocr.rs)
   — `GET /admin/ocr/models` reflection-on-disk endpoint.
-- [`crates/server/src/ocr/recognizer/western.rs`](../../crates/server/src/ocr/recognizer/western.rs)
-  — Tesseract via `tesseract-rs`, kept for `ocr-bench`'s baseline; no
-  request reaches it.
 
 ## Cache
 
@@ -1143,27 +1134,15 @@ should equal the listing's `blobId`). Change `revision`, `sha256` and
 revision must still pass the dictionary check at load (run the ignored
 real-model tests).
 
-**Tesseract data** is not fetched at runtime, and the server no longer
-reads it: Tesseract is compiled only for `ocr-bench`. The image build
-still prepares it, unchanged. In the image build,
-`scripts/docker/tesseract-inputs.sh` downloads `eng` and `tur` from a
-pinned `tessdata_best` commit (and the Leptonica + Tesseract sources),
-checks each against a pinned SHA-256 and places them where the
-`tesseract-rs` build script would otherwise download them, so it skips
-its own unchecked download; after the build the Dockerfile checks again
-that the tessdata directory holds exactly those two files. A local
-`cargo build` outside Docker runs the upstream build script unchanged
-and downloads all four files unchecked into `~/.tesseract-rs/` (cached
-there afterwards); see
-[dependency-management.md](dependency-management.md#tesseract-rs-build-inputs).
+**Tesseract data** is gone: Folio no longer builds Tesseract, the image
+no longer holds `/app/tessdata`, and `TESSDATA_PREFIX` is not read. A
+local checkout that built an earlier version may still hold
+`~/.tesseract-rs/` (the sources, libraries and language data the
+`tesseract-rs` build script cached there); nothing uses it, and it can be
+deleted.
 
 In the Folio Docker image:
 
-- `eng.traineddata` and `tur.traineddata` are baked into the image at
-  `/app/tessdata/` (the build compiles Tesseract with the pinned sources
-  in place; the pinned tessdata is copied into the runtime
-  image). `TESSDATA_PREFIX`
-  defaults to that path. No request reads them.
 - `HOME=/data` so every ONNX model cache lands under
   `/data/.cache/huggingface/hub/` (in the persistent volume) and
   survives container restarts. `HF_HOME=/data/.cache/huggingface` is
@@ -1199,8 +1178,7 @@ manga-ocr's 440 MB on the first Japanese request.
   (`pp-ocrv5-mobile-det`), the line recogniser
   (`en-pp-ocrv5-mobile-rec`), `manga-ocr`. Every row is `kind: "onnx"`;
   the expected size of a row is the sum of its pinned files. The
-  response still carries `tessdata_dir` (the directory Tesseract would
-  read), so its shape is unchanged; the server no longer uses it.
+  response no longer carries `tessdata_dir`; it went with Tesseract.
 - `/admin/server` UI tile — pairs the JSON with the build /
   dependencies cards so an operator can verify both binary and
   models are healthy in one place. Lives in
@@ -1369,8 +1347,8 @@ recognized text.
   `issue_ocr.rs` has one that reads a balloon of that page through both
   routes. Run with
   `cargo test -p server --test ocr_recognizer --test issue_ocr -- --ignored`
-  (the Tesseract cases, kept for `ocr-bench`, and the manga-ocr case are
-  in the same file; `--skip manga` avoids the 440 MB download).
+  (the manga-ocr case is in the same file; `--skip manga` avoids the
+  440 MB download).
 - Web client fetch shape + failure paths:
   [`web/tests/reader/marker-selection.test.ts`](../../web/tests/reader/marker-selection.test.ts);
   page size, box set and failure words:
@@ -1380,20 +1358,16 @@ recognized text.
   [`web/tests/dom/text-capture.test.tsx`](../../web/tests/dom/text-capture.test.tsx).
 - Speed and accuracy on real pages:
   [`crates/tools/ocr-bench`](../../crates/tools/ocr-bench/README.md), a
-  development-only harness that times the previous pipeline
-  (comic-text-detector's model in a session of its own, and the
-  server's Tesseract code) and candidate engines through its own copies
-  of them, and scores their text against reference transcriptions. It
+  development-only harness that times the previous detector
+  (comic-text-detector's model in a session of its own) and candidate
+  engines through its own copies of them, and scores the candidates'
+  text against reference transcriptions. It
   does not run the current engines of the server (see [What was
   measured](#what-was-measured)). Its runs are manual; CI only compiles
   it and runs its unit tests.
 
 ## Future work
 
-- Remove Tesseract: `ocr/recognizer/western.rs`, the Tesseract-only
-  cleanup rules, `ocr-bench`'s Tesseract baseline, and the Tesseract
-  build plumbing (Dockerfile, `scripts/docker/tesseract-inputs.sh`, CI
-  caches).
 - Line finding: most of the remaining reading errors are lines the
   finder drops or takes from a touching neighbour balloon. Candidates:
   accept its result only when the lines cover the balloon's ink and

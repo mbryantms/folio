@@ -167,6 +167,16 @@ docker compose -f compose.prod.yml up -d --no-deps app
 
 ## Breaking changes by version
 
+### Unreleased — Tesseract is removed from the image
+
+- `TESSDATA_PREFIX` is no longer read. The image no longer sets it, and
+  a value left in your environment is ignored; you can delete the line.
+- The image no longer contains `/app/tessdata` (the Tesseract `eng` and
+  `tur` language data). Nothing read it: text reading has run on the
+  ONNX models since the previous engines were replaced.
+- `GET /api/admin/ocr/models` no longer returns `tessdata_dir`. A script
+  that reads that field gets nothing; the other fields are unchanged.
+
 ### Unreleased — text reading on ONNX Runtime 1.31; x86_64 needs AVX2
 
 - The server needs an x86_64 CPU with AVX2. Without AVX it does not
