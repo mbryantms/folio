@@ -22,7 +22,8 @@ use image::DynamicImage;
 /// `words` holds the pieces the engine read, with their boxes in crop
 /// pixels: one entry per text line for the CTC line recogniser (its unit
 /// is the line). `None` when the engine exposes no pieces (manga-ocr
-/// returns a single string) or read nothing. The client uses `text` for `marker.selection.text`.
+/// returns a single string) or read nothing. The client uses `text`
+/// for `marker.selection.text`.
 #[derive(Debug, Clone)]
 pub struct Recognition {
     pub text: String,

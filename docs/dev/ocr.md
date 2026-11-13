@@ -533,8 +533,10 @@ started and read text.
 The engines were chosen with a benchmark run before they were adopted,
 made with [`crates/tools/ocr-bench`](../../crates/tools/ocr-bench/README.md)
 while the tool still ran Tesseract; the "Previous engines" column
-(comic-text-detector and Tesseract) was measured then, and the tool can
-no longer reproduce it. On one desktop CPU (i9-14900K) pinned to four performance cores, over
+(comic-text-detector and Tesseract) was measured then. The tool no
+longer runs Tesseract, so of that column only what comic-text-detector
+does alone (a page's regions) can still be measured again. On one
+desktop CPU (i9-14900K) pinned to four performance cores, over
 12 scanned pages from 1941–1953 with 139 balloons and captions
 transcribed as the reference:
 
