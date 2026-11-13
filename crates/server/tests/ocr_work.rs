@@ -1136,25 +1136,29 @@ async fn identical_bytes_in_a_hidden_library_stay_hidden() {
 // ─── The rollback switch ─────────────────────────────────────────
 
 /// A detector that finds three boxes side by side, one of each class
-/// index (0, 1 and 2).
+/// index (0, 1 and 2), and a fourth of class 0 that lies wholly inside
+/// the first.
 struct ThreeClassDetector;
 
 impl PageDetector for ThreeClassDetector {
     fn detect(&self, page: &DynamicImage) -> anyhow::Result<CachedDetection> {
+        let bbox = |class, xmin, ymin, xmax, ymax| CachedBbox {
+            xmin,
+            ymin,
+            xmax,
+            ymax,
+            confidence: 0.9,
+            class,
+        };
         Ok(CachedDetection {
             page_w: page.width(),
             page_h: page.height(),
-            bboxes: [(0, 4.0), (1, 34.0), (2, 64.0)]
-                .into_iter()
-                .map(|(class, x)| CachedBbox {
-                    xmin: x,
-                    ymin: 4.0,
-                    xmax: x + 24.0,
-                    ymax: 40.0,
-                    confidence: 0.9,
-                    class,
-                })
-                .collect(),
+            bboxes: vec![
+                bbox(0, 4.0, 4.0, 28.0, 40.0),
+                bbox(1, 34.0, 4.0, 58.0, 40.0),
+                bbox(2, 64.0, 4.0, 88.0, 40.0),
+                bbox(0, 8.0, 10.0, 24.0, 34.0),
+            ],
         })
     }
 }
@@ -1177,8 +1181,10 @@ impl Recognizer for BarsRecognizer {
 /// and which of the four cache keys (legacy / default, detection /
 /// result) then exist.
 struct SwitchOutcome {
-    region_classes: Vec<u64>,
+    /// Class and left edge (percent of the page) of each region sent.
+    regions: Vec<(u64, f64)>,
     text: String,
+    raw_text: Option<String>,
     legacy_keys: (bool, bool),
     default_keys: (bool, bool),
 }
@@ -1198,11 +1204,16 @@ async fn outcome_with_the_three_class_stand_ins(app: &TestApp, email: &str) -> S
 
     let (status, regions) = send(app, regions_request(&admin, &id, 0)).await;
     assert_eq!(status, StatusCode::OK, "{regions}");
-    let region_classes = regions["regions"]
+    let regions = regions["regions"]
         .as_array()
         .expect("regions")
         .iter()
-        .map(|r| r["class"].as_u64().expect("class"))
+        .map(|r| {
+            (
+                r["class"].as_u64().expect("class"),
+                r["x"].as_f64().expect("x").round(),
+            )
+        })
         .collect();
 
     let body = serde_json::json!({
@@ -1210,10 +1221,6 @@ async fn outcome_with_the_three_class_stand_ins(app: &TestApp, email: &str) -> S
     });
     let (status, read) = send(app, ocr_request(&admin, &id, body)).await;
     assert_eq!(status, StatusCode::OK, "{read}");
-    assert_eq!(
-        read["raw_text"].as_str().unwrap_or("| HELLO |"),
-        "| HELLO |"
-    );
 
     cache::warm_fingerprints_for(EngineSet::Legacy).await;
     cache::warm_fingerprints_for(EngineSet::Current).await;
@@ -1239,8 +1246,9 @@ async fn outcome_with_the_three_class_stand_ins(app: &TestApp, email: &str) -> S
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     SwitchOutcome {
-        region_classes,
+        regions,
         text: read["text"].as_str().expect("text").to_owned(),
+        raw_text: read["raw_text"].as_str().map(str::to_owned),
         legacy_keys: (
             redis_has(app, &legacy.0).await,
             redis_has(app, &legacy.1).await,
@@ -1253,10 +1261,11 @@ async fn outcome_with_the_three_class_stand_ins(app: &TestApp, email: &str) -> S
 }
 
 /// `COMIC_OCR_LEGACY_ENGINES` through the routes, with stand-ins for the
-/// models: the legacy set offers every class of its detector as a region,
-/// cleans the text with the Tesseract rules, and keeps its detections and
-/// results under its own cache keys. The same stand-ins on a server
-/// without the switch show the other side of each.
+/// models: the legacy set offers every class of its detector as a region
+/// but drops a box nested in a larger one, cleans the text with the
+/// Tesseract rules, and keeps its detections and results under its own
+/// cache keys. The same stand-ins on a server without the switch show the
+/// other side of each: the region classes only, the nested box kept.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_legacy_switch_selects_regions_cleanup_and_cache_keys() {
     let _shared = ALL_PERMITS.read().await;
@@ -1264,10 +1273,14 @@ async fn the_legacy_switch_selects_regions_cleanup_and_cache_keys() {
     let legacy_app = TestApp::spawn_with_legacy_ocr_engines().await;
     let legacy =
         outcome_with_the_three_class_stand_ins(&legacy_app, "ocr-work-legacy@example.com").await;
-    // Blocks and lines alike are regions of the legacy detector.
-    assert_eq!(legacy.region_classes, [0, 1, 2]);
-    // The Tesseract chain drops the bars at the line's edges.
+    // Blocks and lines alike are regions of the legacy detector; the
+    // box inside the first one is the same text again and is dropped
+    // (the reader no longer does this itself).
+    assert_eq!(legacy.regions, [(0, 4.0), (1, 34.0), (2, 64.0)]);
+    // The Tesseract chain drops the bars at the line's edges, and the
+    // response carries what was read before the cleanup.
     assert_eq!(legacy.text, "HELLO");
+    assert_eq!(legacy.raw_text.as_deref(), Some("| HELLO |"));
     assert_eq!(
         legacy.legacy_keys,
         (true, true),
@@ -1282,18 +1295,22 @@ async fn the_legacy_switch_selects_regions_cleanup_and_cache_keys() {
     let default_app = TestApp::spawn().await;
     let default =
         outcome_with_the_three_class_stand_ins(&default_app, "ocr-work-default@example.com").await;
-    // Balloons and free text; the text inside a balloon is not offered.
-    assert_eq!(default.region_classes, [0, 2]);
-    // The line recogniser's cleanup keeps what was read.
+    // Balloons and free text; the text inside a balloon is not offered,
+    // and a balloon inside another region is a region of its own.
+    assert_eq!(default.regions, [(0, 4.0), (2, 64.0), (0, 8.0)]);
+    // The line recogniser's cleanup keeps what was read, so there is no
+    // separate raw text.
     assert_eq!(default.text, "| HELLO |");
+    assert_eq!(default.raw_text, None);
     assert_eq!(default.default_keys, (true, true));
     assert_eq!(default.legacy_keys, (false, false));
 }
 
 // ─── Japanese: the text box inside the balloon ───────────────────
 
-/// A detector that finds, on a 200 × 100 page, a balloon, the text
-/// inside it, and a caption outside balloons.
+/// A detector that finds, on a 200 × 100 page: a balloon with its
+/// text; and a piece of free text with a small balloon drawn inside it,
+/// which has a text box of its own.
 struct BalloonWithText {
     calls: AtomicUsize,
 }
@@ -1315,7 +1332,9 @@ impl PageDetector for BalloonWithText {
             bboxes: vec![
                 bbox(0, 10.0, 10.0, 110.0, 90.0),
                 bbox(1, 30.0, 20.0, 90.0, 80.0),
-                bbox(2, 130.0, 10.0, 190.0, 40.0),
+                bbox(2, 120.0, 5.0, 198.0, 95.0),
+                bbox(0, 135.0, 25.0, 185.0, 75.0),
+                bbox(1, 145.0, 35.0, 175.0, 65.0),
             ],
         })
     }
@@ -1344,7 +1363,13 @@ async fn balloon_issue(
 }
 
 const BALLOON_REGION: (u32, u32, u32, u32) = (10, 10, 100, 80);
-const CAPTION_REGION: (u32, u32, u32, u32) = (130, 10, 60, 30);
+/// The free text, which holds the small balloon and so exactly one text
+/// box.
+const FREE_TEXT_REGION: (u32, u32, u32, u32) = (120, 5, 78, 90);
+const SMALL_BALLOON_REGION: (u32, u32, u32, u32) = (135, 25, 50, 50);
+/// Drawn by hand around the first balloon's text: not a region of the
+/// page.
+const DRAWN_AROUND_TEXT: (u32, u32, u32, u32) = (20, 15, 80, 70);
 
 fn read_body(lang: &str, (x, y, w, h): (u32, u32, u32, u32), detect: bool) -> serde_json::Value {
     let mut body = serde_json::json!({
@@ -1356,11 +1381,13 @@ fn read_body(lang: &str, (x, y, w, h): (u32, u32, u32, u32), detect: bool) -> se
     body
 }
 
-/// A Japanese request reads the text box the detector found inside the
-/// balloon, and `refined_bbox` is that box: for a tap on the balloon
-/// (no `detect`) and for a drawn rectangle that snapped to it. A region
-/// with no text box inside is read as sent. Western text reads the
-/// balloon. Clients are still sent the balloon and the caption only.
+/// A Japanese request for a balloon of the page reads the text box the
+/// detector found inside it, and `refined_bbox` is that box: for a tap
+/// (no `detect`, as pixels or as the percent box the regions route
+/// sent) and for a drawn rectangle that snapped to the balloon. A piece
+/// of free text is read as sent although one text box lies in it, and
+/// so is a rectangle that is not a region of the page. Western text
+/// reads the balloon.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_japanese_request_reads_the_text_box_inside_the_balloon() {
     let _shared = ALL_PERMITS.read().await;
@@ -1382,31 +1409,67 @@ async fn a_japanese_request_reads_the_text_box_inside_the_balloon() {
     assert_eq!(tap["lang"], "manga");
     assert_eq!(detector.calls.load(Ordering::SeqCst), 1);
 
-    // The regions for clients: the balloon and the caption.
+    // The regions for clients: the balloon, the free text, and the
+    // small balloon inside it. No text box.
     let (status, regions) = send(&app, regions_request(&admin, &id, 0)).await;
     assert_eq!(status, StatusCode::OK, "{regions}");
-    let classes: Vec<u64> = regions["regions"]
-        .as_array()
-        .expect("regions")
+    let sent = regions["regions"].as_array().expect("regions");
+    let classes: Vec<u64> = sent
         .iter()
         .map(|r| r["class"].as_u64().expect("class"))
         .collect();
-    assert_eq!(classes, [0, 2]);
+    assert_eq!(classes, [0, 2, 0]);
     assert_eq!(
         detector.calls.load(Ordering::SeqCst),
         1,
         "the tap's detection was cached for the page"
     );
 
-    // The caption holds no text box: read as sent, nothing refined.
-    let (status, caption) = send(
+    // The reader's tap: the balloon's percent box exactly as that route
+    // sent it. It is recognised as the region and narrowed the same way.
+    let balloon = &sent[0];
+    let as_percent = serde_json::json!({
+        "page": 0, "lang": "manga",
+        "region_pct": { "x": balloon["x"], "y": balloon["y"], "w": balloon["w"], "h": balloon["h"] },
+    });
+    let (status, tap) = send(&app, ocr_request(&admin, &id, as_percent)).await;
+    assert_eq!(status, StatusCode::OK, "{tap}");
+    assert_eq!(tap["text"], "60x60", "{tap}");
+    assert_eq!(tap["refined_bbox"], text_box, "{tap}");
+
+    // The free text holds exactly one text box, the small balloon's.
+    // It is not a balloon: read as sent, nothing refined.
+    let (status, free_text) = send(
         &app,
-        ocr_request(&admin, &id, read_body("manga", CAPTION_REGION, false)),
+        ocr_request(&admin, &id, read_body("manga", FREE_TEXT_REGION, false)),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{caption}");
-    assert_eq!(caption["text"], "60x30");
-    assert!(caption.get("refined_bbox").is_none(), "{caption}");
+    assert_eq!(status, StatusCode::OK, "{free_text}");
+    assert_eq!(free_text["text"], "78x90", "{free_text}");
+    assert!(free_text.get("refined_bbox").is_none(), "{free_text}");
+    // The small balloon is a region of its own and is narrowed.
+    let (status, small) = send(
+        &app,
+        ocr_request(&admin, &id, read_body("manga", SMALL_BALLOON_REGION, false)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{small}");
+    assert_eq!(small["text"], "30x30", "{small}");
+    assert_eq!(
+        small["refined_bbox"],
+        serde_json::json!({ "x": 145, "y": 35, "w": 30, "h": 30 })
+    );
+
+    // A rectangle drawn by hand around the first balloon's text, not
+    // snapped: what the user enclosed is read, not the text box in it.
+    let (status, drawn) = send(
+        &app,
+        ocr_request(&admin, &id, read_body("manga", DRAWN_AROUND_TEXT, false)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{drawn}");
+    assert_eq!(drawn["text"], "80x70", "{drawn}");
+    assert!(drawn.get("refined_bbox").is_none(), "{drawn}");
 
     // A rectangle drawn in the balloon, snapped: the balloon's text box.
     let (status, snapped) = send(
@@ -1439,6 +1502,85 @@ async fn a_japanese_request_reads_the_text_box_inside_the_balloon() {
         serde_json::json!({ "x": 10, "y": 10, "w": 100, "h": 80 })
     );
     assert_eq!(detector.calls.load(Ordering::SeqCst), 1, "one detection");
+}
+
+/// A detector that fails.
+struct FailingDetector {
+    calls: AtomicUsize,
+}
+
+impl PageDetector for FailingDetector {
+    fn detect(&self, _page: &DynamicImage) -> anyhow::Result<CachedDetection> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Err(anyhow::anyhow!("stand-in detector failure"))
+    }
+}
+
+/// A Japanese request needs the page's detection. When the detector
+/// fails the request is a 500 and nothing is read or cached: a result
+/// read from the rectangle as sent would sit under the same key as the
+/// narrowed one and be served in its place.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_japanese_request_whose_detection_fails_is_an_error_and_caches_nothing() {
+    use server::ocr::{EngineSet, cache};
+    let _shared = ALL_PERMITS.read().await;
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "ocr-work-manga-nodetect@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let id = seed(&app, &tmp.path().join("lib"), 200, 100).await;
+    let detector: &'static FailingDetector = Box::leak(Box::new(FailingDetector {
+        calls: AtomicUsize::new(0),
+    }));
+    let recognizer: &'static EchoSize = Box::leak(Box::new(EchoSize {
+        calls: AtomicUsize::new(0),
+    }));
+    test_models::install(
+        &id,
+        test_models::Stub {
+            detector: Some(detector),
+            recognizer: Some(recognizer),
+        },
+    );
+    cache::warm_fingerprints_for(EngineSet::Current).await;
+    let (x, y, w, h) = BALLOON_REGION;
+    let result_key = cache::cache_key(&id, 0, "manga", false, &cache::region_hash(x, y, w, h));
+    let detect_key = cache::detect_cache_key(&id, 0);
+
+    for attempt in 1..=2 {
+        let (status, body) = send(
+            &app,
+            ocr_request(&admin, &id, read_body("manga", BALLOON_REGION, false)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+        assert_eq!(body["error"]["code"], "ocr_failed", "{body}");
+        // The second request ran the detector again: the first left
+        // nothing to answer from.
+        assert_eq!(detector.calls.load(Ordering::SeqCst), attempt);
+        assert_eq!(
+            recognizer.calls.load(Ordering::SeqCst),
+            0,
+            "nothing is read without the detection"
+        );
+    }
+    // Any write would have been started before the response; give a
+    // detached task a moment before looking for absences.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!redis_has(&app, &result_key).await, "no result cached");
+    assert!(!redis_has(&app, &detect_key).await, "no detection cached");
+
+    // The same stand-ins do answer a Western tap, which needs no
+    // detection: the keys above are absent because of the failure, not
+    // because the stand-ins never write.
+    let (status, western) = send(
+        &app,
+        ocr_request(&admin, &id, read_body("western", BALLOON_REGION, false)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{western}");
+    let western_key = cache::cache_key(&id, 0, "western", false, &cache::region_hash(x, y, w, h));
+    assert!(wait_for_key(&app, &western_key).await);
+    assert_eq!(detector.calls.load(Ordering::SeqCst), 2);
 }
 
 /// With the legacy engines a Japanese request reads what it always

@@ -1061,37 +1061,52 @@ mod tests {
         assert!(pct(50.0, 50.0, 0.1, 0.1).to_pixels(200, 100).is_none());
     }
 
-    /// Clients get the regions of a page: with the current engines the
-    /// balloons and the free text, not the text boxes inside balloons
-    /// the detection also holds; with the legacy engines every box.
+    /// Clients get the regions of a page, final: with the current
+    /// engines the balloons and the free text, not the text boxes inside
+    /// balloons the detection also holds, and a box inside another is
+    /// kept; with the legacy engines every class, minus a box nested in a
+    /// larger one. The client applies no rule of its own.
     #[test]
-    fn text_regions_are_the_region_classes_of_the_engine_set() {
+    fn text_regions_are_the_final_regions_of_the_engine_set() {
         use crate::ocr::cache::CachedBbox;
-        // Three boxes side by side, one of each class index.
+        let bbox = |class, xmin: f32, xmax: f32, ymin: f32, ymax: f32| CachedBbox {
+            xmin,
+            ymin,
+            xmax,
+            ymax,
+            confidence: 0.9,
+            class,
+        };
+        // Three boxes side by side, one of each class index, and a
+        // fourth of class 0 wholly inside the first.
         let detection = || CachedDetection {
             page_w: 1000,
             page_h: 2000,
-            bboxes: [(0, 100.0), (1, 350.0), (2, 600.0)]
-                .into_iter()
-                .map(|(class, x)| CachedBbox {
-                    xmin: x,
-                    ymin: 200.0,
-                    xmax: x + 200.0,
-                    ymax: 600.0,
-                    confidence: 0.9,
-                    class,
-                })
-                .collect(),
+            bboxes: vec![
+                bbox(0, 100.0, 300.0, 200.0, 600.0),
+                bbox(1, 350.0, 550.0, 200.0, 600.0),
+                bbox(2, 600.0, 800.0, 200.0, 600.0),
+                bbox(0, 150.0, 250.0, 300.0, 500.0),
+            ],
         };
-        let classes = |engines| -> Vec<u32> {
+        // Class and left edge in percent of each region sent.
+        let sent = |engines| -> Vec<(u32, f32)> {
             TextRegionsView::from_detection(detection(), engines)
                 .regions
                 .iter()
-                .map(|r| r.class)
+                .map(|r| (r.class, r.x.round()))
                 .collect()
         };
-        assert_eq!(classes(EngineSet::Current), [0, 2]);
-        assert_eq!(classes(EngineSet::Legacy), [0, 1, 2]);
+        assert_eq!(
+            sent(EngineSet::Current),
+            [(0, 10.0), (2, 60.0), (0, 15.0)],
+            "the nested balloon is a region of its own"
+        );
+        assert_eq!(
+            sent(EngineSet::Legacy),
+            [(0, 10.0), (1, 35.0), (2, 60.0)],
+            "the nested box is the same text again"
+        );
         // Percent of the page, as before.
         let view = TextRegionsView::from_detection(detection(), EngineSet::Current);
         assert_eq!((view.page_w, view.page_h), (1000, 2000));
