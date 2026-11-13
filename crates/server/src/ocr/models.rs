@@ -17,13 +17,9 @@
 //! 3. it lands at `snapshots/<commit>/<file>`, and `refs/main` is
 //!    pointed at `<commit>`.
 //!
-//! The engines Folio runs itself (the balloon detector, the line finder,
-//! the line recogniser, the Japanese recogniser) then open the file at
-//! that path ([`cached_path`]). The legacy `comic-text-detector` loads
-//! through `hf_hub::api::sync::Api::new()`, which looks at `refs/main`
-//! first and so finds the same verified file without reaching the
-//! network; left alone it would download the repository's `main` branch,
-//! unpinned and unchecked.
+//! The engines (the balloon detector, the line finder, the line
+//! recogniser, the Japanese recogniser) then open the file at that path
+//! ([`cached_path`]). Nothing loads a model any other way.
 //!
 //! The fetch runs in a detached task, one per repository for the whole
 //! process ([`Pinner`]): a request that times out or disconnects stops
@@ -53,7 +49,7 @@
 //!    `docs/dev/ocr.md`.
 //!
 //! Looked up: the balloon detector, line finder and line recognisers on
-//! 2026-11-12; `manga-ocr` and `comic-text-detector` on 2026-11-11.
+//! 2026-11-12; `manga-ocr` on 2026-11-11.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -82,20 +78,8 @@ pub struct PinnedFile {
     pub size: u64,
 }
 
-const DETECTOR_REPO: &str = "mayocream/comic-text-detector-onnx";
-const DETECTOR_REVISION: &str = "a5d67ec772adef819ef5b0e7aa701fcf4c8bf74a";
 const MANGA_REPO: &str = "mayocream/manga-ocr-onnx";
 const MANGA_REVISION: &str = "24b12778d85800835e2ca409236de281b8ab7b9f";
-
-/// What `ComicTextDetector::new` reads: the detector of the legacy engine
-/// set (`ocr::detector`), fetched only when that set is selected.
-pub const DETECTOR_FILES: &[PinnedFile] = &[PinnedFile {
-    repo: DETECTOR_REPO,
-    revision: DETECTOR_REVISION,
-    file: "comic-text-detector.onnx",
-    sha256: "1a86ace74961413cbd650002e7bb4dcec4980ffa21b2f19b86933372071d718f",
-    size: 94_669_756,
-}];
 
 /// The Japanese recogniser's files (`ocr::recognizer::manga`): encoder,
 /// decoder, vocabulary.
@@ -267,17 +251,16 @@ pub const LINE_REC_MODELS: &[&LineRecModel] = &[
     &PP_OCRV6_SMALL_REC,
 ];
 
-/// The line recogniser the Western path of the current engine set runs.
+/// The line recogniser the Western path runs.
 pub const WESTERN_REC: &LineRecModel = &EN_PP_OCRV5_MOBILE_REC;
 
-/// Every pinned file: both engine sets and every registered recogniser.
+/// Every pinned file: the engines and every registered recogniser.
 pub fn all_pins() -> impl Iterator<Item = &'static PinnedFile> {
     BUBBLE_DETECTOR_FILES
         .iter()
         .chain(LINE_FINDER_FILES)
         .chain(LINE_REC_MODELS.iter().flat_map(|m| m.files.iter()))
         .chain(MANGA_FILES)
-        .chain(DETECTOR_FILES)
 }
 
 /// Connect and per-read timeouts plus an overall ceiling sized for the
@@ -360,7 +343,8 @@ pub fn is_partial_download(name: &str) -> bool {
     name.starts_with(PART_PREFIX)
 }
 
-/// The hub cache root the upstream crates read (`Cache::default()`).
+/// The hub cache root (`hf_hub::Cache::default()`: `$HOME/.cache/huggingface/hub`),
+/// where the pinned files have always been kept.
 pub fn hub_cache_root() -> Result<PathBuf, String> {
     std::panic::catch_unwind(hf_hub::Cache::default)
         .map(|c| c.path().clone())
@@ -540,7 +524,7 @@ pub async fn ensure_pinned(files: &'static [PinnedFile]) -> anyhow::Result<()> {
     let pinner = match pinner {
         Ok(p) => p,
         Err(e) => {
-            let f = files.first().copied().unwrap_or(DETECTOR_FILES[0]);
+            let f = files.first().copied().unwrap_or(BUBBLE_DETECTOR_FILES[0]);
             return Err(f.fail(e.clone()).into());
         }
     };
@@ -778,32 +762,6 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    /// `hf_hub::Cache::default()` here must be the very code the OCR
-    /// crate's loader runs, or this module could place verified files
-    /// where the loader does not look. That holds only while Cargo
-    /// resolves one `hf-hub` for the whole workspace, so a bump of the
-    /// direct dependency on its own (two copies in the lock file) fails
-    /// here. Bump it together with `comic-text-detector`.
-    #[test]
-    fn one_hf_hub_in_the_lock_file() {
-        let lock =
-            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock"))
-                .expect("workspace Cargo.lock");
-        let versions: Vec<&str> = lock
-            .split("[[package]]")
-            .filter(|pkg| pkg.lines().any(|l| l.trim() == r#"name = "hf-hub""#))
-            .filter_map(|pkg| {
-                pkg.lines()
-                    .find_map(|l| l.trim().strip_prefix("version = "))
-            })
-            .collect();
-        assert_eq!(
-            versions.len(),
-            1,
-            "expected exactly one hf-hub in Cargo.lock, found {versions:?}"
-        );
-    }
-
     const BODY: &[u8] = b"pretend onnx bytes";
     const REV: &str = "0123456789abcdef0123456789abcdef01234567";
     const ROUTE: &str =
@@ -852,7 +810,7 @@ mod tests {
 
     #[test]
     fn every_pin_is_a_commit_with_a_digest() {
-        assert_eq!(all_pins().count(), 12);
+        assert_eq!(all_pins().count(), 11);
         for f in all_pins() {
             assert_eq!(f.revision.len(), 40, "{f:?}");
             assert!(f.revision.bytes().all(|b| b.is_ascii_hexdigit()), "{f:?}");
@@ -877,19 +835,11 @@ mod tests {
     }
 
     #[test]
-    fn pins_cover_what_the_upstream_constructors_read() {
-        let names: Vec<_> = DETECTOR_FILES
-            .iter()
-            .chain(MANGA_FILES)
-            .map(|f| (f.repo, f.file))
-            .collect();
+    fn pins_cover_what_the_japanese_recogniser_opens() {
+        let names: Vec<_> = MANGA_FILES.iter().map(|f| (f.repo, f.file)).collect();
         assert_eq!(
             names,
             [
-                (
-                    "mayocream/comic-text-detector-onnx",
-                    "comic-text-detector.onnx"
-                ),
                 ("mayocream/manga-ocr-onnx", "encoder_model.onnx"),
                 ("mayocream/manga-ocr-onnx", "decoder_model.onnx"),
                 ("mayocream/manga-ocr-onnx", "vocab.txt"),

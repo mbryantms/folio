@@ -7,16 +7,16 @@
 //! engine, implement one trait and register it in `main.rs`.
 
 use std::io::Read;
+use std::path::PathBuf;
 use std::time::Instant;
 
 use image::DynamicImage;
 use serde::Serialize;
-use server::ocr::detector::Detector;
-use server::ocr::models;
-use server::ocr::pipeline::PageDetector as ServerPageDetector;
+use server::ocr::models::{self, PinnedFile};
 use server::ocr::recognizer::{Recognition, Recognizer, western::WesternOcr};
 use sha2::{Digest, Sha256};
 
+use crate::cand::CtdOwn;
 use crate::stats::ms_since;
 
 /// One detected box in page pixels.
@@ -49,119 +49,82 @@ pub(crate) trait CropRecognizer {
     fn recognize(&mut self, crop: &DynamicImage) -> anyhow::Result<RecOutput>;
 }
 
+/// The `comic-text-detector` model the server ran before the engine
+/// change: the baseline detector. The server no longer pins or fetches
+/// it; the tool reads it from the hub cache where an earlier server (or
+/// `docs/dev/ocr.md`'s pre-staging) left it, and refuses a file that is
+/// not this one.
+pub(crate) const CTD_MODEL: PinnedFile = PinnedFile {
+    repo: "mayocream/comic-text-detector-onnx",
+    revision: "a5d67ec772adef819ef5b0e7aa701fcf4c8bf74a",
+    file: "comic-text-detector.onnx",
+    sha256: "1a86ace74961413cbd650002e7bb4dcec4980ffa21b2f19b86933372071d718f",
+    size: 94_669_756,
+};
+
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct DetectorLoad {
-    /// Our own read + SHA-256 of the cached model, before anything else,
-    /// to refuse a run that would make the server code download.
+    /// Our own read + SHA-256 of the cached model, before anything else.
     pub precheck_hash_ms: f64,
-    /// `models::ensure_pinned` (hashes the cached file once per process).
-    pub ensure_pinned_ms: f64,
-    /// `Detector::shared` after the pin: ONNX Runtime session build.
+    /// ONNX Runtime session build.
     pub session_build_ms: f64,
     pub model_path: String,
     pub model_bytes: u64,
 }
 
-/// `comic-text-detector` through Folio's singleton.
-pub(crate) struct FolioDetector {
-    det: &'static Detector,
+/// [`CTD_MODEL`] in the hub cache, checked against its digest. Never
+/// downloads: a missing or different file is an error.
+pub(crate) fn ctd_model_path() -> anyhow::Result<(PathBuf, u64, f64)> {
+    let root = models::hub_cache_root().map_err(|e| anyhow::anyhow!(e))?;
+    let path = CTD_MODEL.snapshot_path(&root);
+    let t = Instant::now();
+    let mut f = std::fs::File::open(&path).map_err(|e| {
+        anyhow::anyhow!(
+            "comic-text-detector model not cached at {} ({e}); not downloading",
+            path.display()
+        )
+    })?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 1 << 20];
+    let mut bytes = 0u64;
+    loop {
+        let n = f.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        bytes += n as u64;
+        hasher.update(&buf[..n]);
+    }
+    let digest: String = hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    if digest != CTD_MODEL.sha256 {
+        anyhow::bail!(
+            "refusing to load: cached comic-text-detector model digest {digest} != pinned {}",
+            CTD_MODEL.sha256
+        );
+    }
+    Ok((path, bytes, ms_since(t)))
 }
 
-impl FolioDetector {
-    /// Load the detector. Refuses (instead of letting the server code
-    /// fetch anything) unless the pinned model is already in the hub
-    /// cache with the pinned digest and `refs/main` names the pinned
-    /// commit.
-    pub(crate) async fn load() -> anyhow::Result<(Self, DetectorLoad)> {
-        let pin = models::DETECTOR_FILES[0];
-        let root = models::hub_cache_root().map_err(|e| anyhow::anyhow!(e))?;
-        let path = pin.snapshot_path(&root);
-        let refs_main = root
-            .join(format!("models--{}", pin.repo.replace('/', "--")))
-            .join("refs")
-            .join("main");
-        let rev = std::fs::read_to_string(&refs_main).unwrap_or_default();
-        if rev.trim() != pin.revision {
-            anyhow::bail!(
-                "refusing to load: {} does not name the pinned commit {} (the server code would rewrite it); not downloading",
-                refs_main.display(),
-                pin.revision
-            );
-        }
-        let t = Instant::now();
-        let mut f = std::fs::File::open(&path).map_err(|e| {
-            anyhow::anyhow!(
-                "refusing to load: pinned detector model not cached at {} ({e}); the server code would download it",
-                path.display()
-            )
-        })?;
-        let mut hasher = Sha256::new();
-        let mut buf = vec![0u8; 1 << 20];
-        let mut bytes = 0u64;
-        loop {
-            let n = f.read(&mut buf)?;
-            if n == 0 {
-                break;
-            }
-            bytes += n as u64;
-            hasher.update(&buf[..n]);
-        }
-        let digest: String = hasher
-            .finalize()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        if digest != pin.sha256 {
-            anyhow::bail!(
-                "refusing to load: cached detector model digest {digest} != pinned {}; the server code would delete and re-download it",
-                pin.sha256
-            );
-        }
-        let precheck_hash_ms = ms_since(t);
-
-        let t = Instant::now();
-        models::ensure_pinned(models::DETECTOR_FILES).await?;
-        let ensure_pinned_ms = ms_since(t);
-        let t = Instant::now();
-        let det = Detector::shared().await?;
-        let session_build_ms = ms_since(t);
-        Ok((
-            FolioDetector { det },
-            DetectorLoad {
-                precheck_hash_ms,
-                ensure_pinned_ms,
-                session_build_ms,
-                model_path: path.display().to_string(),
-                model_bytes: bytes,
-            },
-        ))
-    }
-}
-
-impl PageDetector for FolioDetector {
-    fn name(&self) -> String {
-        "comic-text-detector 0.5.1 (server::ocr::pipeline full-page detection)".into()
-    }
-
-    /// The server's own full-page detection
-    /// (`server::ocr::pipeline::PageDetector` on the singleton): the call
-    /// both OCR routes make on a detect-cache miss, with the pipeline's
-    /// thresholds, returning the boxes it would cache.
-    fn detect(&mut self, page: &DynamicImage) -> anyhow::Result<Vec<DetBox>> {
-        let detection = ServerPageDetector::detect(self.det, page)?;
-        Ok(detection
-            .bboxes
-            .iter()
-            .map(|b| DetBox {
-                x0: b.xmin,
-                y0: b.ymin,
-                x1: b.xmax,
-                y1: b.ymax,
-                confidence: b.confidence,
-                class: b.class,
-            })
-            .collect())
-    }
+/// The baseline detector: `comic-text-detector`'s model in a session the
+/// tool builds ([`CtdOwn`], `threads` intra-op threads, 0 = ONNX
+/// Runtime's default).
+pub(crate) fn load_ctd(threads: usize) -> anyhow::Result<(CtdOwn, DetectorLoad)> {
+    let (path, bytes, precheck_hash_ms) = ctd_model_path()?;
+    let t = Instant::now();
+    let det = CtdOwn::load(&path, threads)?;
+    Ok((
+        det,
+        DetectorLoad {
+            precheck_hash_ms,
+            session_build_ms: ms_since(t),
+            model_path: path.display().to_string(),
+            model_bytes: bytes,
+        },
+    ))
 }
 
 /// Folio's Western recogniser, exactly as the pipeline calls it (the

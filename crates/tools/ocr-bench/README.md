@@ -1,7 +1,7 @@
 # ocr-bench
 
 A development-only harness that times the OCR pipeline and scores its text
-against reference transcriptions, for today's engines and for candidate
+against reference transcriptions, for the previous engines and for candidate
 replacements, on the same pages and through the same scoring.
 
 It is not part of the application. Nothing depends on this crate, the image
@@ -14,12 +14,15 @@ Pipeline background: [`docs/dev/ocr.md`](../../../docs/dev/ocr.md).
 
 ## What it measures
 
-### Today's pipeline (the `full` step)
+### The previous pipeline (the `full` step)
 
-Calls the server's own code: `util::image_decode::decode_limited`, the
-detector singleton through `ocr::pipeline::PageDetector` (the full-page
-detection both OCR routes run on a detect-cache miss),
-`WesternOcr::recognize`, and `postprocess::clean`. The report has:
+The pipeline the server ran before the engine swap: comic-text-detector's
+model and Tesseract. The server no longer runs either; the step stays as the
+baseline the candidates were chosen against. It calls the server's own code
+where that code still exists (`util::image_decode::decode_limited`,
+`WesternOcr::recognize`, which the server keeps for this tool, and
+`postprocess::clean`) and runs comic-text-detector's model in a session the
+tool builds (`ctd`, with `--threads`). The report has:
 
 - **Timings**, cold (first run in the process) and warm (median, 90th
   percentile): file read, page decode, model load, detection, crop,
@@ -40,7 +43,7 @@ detection both OCR routes run on a detect-cache miss),
 |---|---|---|
 | A | Recognition alone | Each recogniser on each reference box (+4 % margin), once per line split. Rows ending `@tight` use the `ogk-m` text box that covers the region best instead of the rough reference box (only when `ogk-m` is among the detectors). |
 | B | Detection alone | Each detector's boxes against the reference boxes: found, split, merged, partial, missed, and boxes matching no reference. |
-| C | Tap one balloon | A tap at the centre of each reference box: the smallest detected box under it is cropped and read (for today's detector, after the reader's rule that drops a box nested in a larger one). `missed` is a tap with no box under it. Reported for all regions and for tap targets (balloons and captions) only. |
+| C | Tap one balloon | A tap at the centre of each reference box: the smallest detected box under it is cropped and read (for comic-text-detector, after the rule the reader applied to it, which drops a box nested in a larger one). `missed` is a tap with no box under it. Reported for all regions and for tap targets (balloons and captions) only. |
 | D | Timings | Page decode, detection (cold and warm), line split, one balloon, one line, and a tap on a page never seen (decode + detect + one balloon) or already detected (one balloon). |
 | E | Whole-page throughput | Decode, detect and read every balloon of a page; with `--throughput`, one worker process doing only that, so several can run side by side. |
 
@@ -48,11 +51,10 @@ Engines, by the names the arguments take:
 
 | Kind | Name | What it is |
 |---|---|---|
-| detector | `ctd-crate` | today's detector through the server's singleton (ONNX Runtime's default thread count, as the server runs it) |
-| detector | `ctd` | the same model in a session the tool builds, with `--threads` |
+| detector | `ctd` | comic-text-detector's model (the previous detector) in a session the tool builds, with `--threads` |
 | detector | `ogk-s`, `ogk-m` | ogkalu comic text and bubble detector, small and medium 8-bit models; units `bubble` and `text_bubble` |
 | detector | `ppdetN` | PP-OCRv5 text-line detector on the page at long side N; units `lines` and `blocks` |
-| recogniser | `tess-today` | the server's Western recogniser, scored after the server's postprocess |
+| recogniser | `tess-today` | the previous Western recogniser (Tesseract, kept in the server for this tool), scored after the server's postprocess |
 | recogniser | `tess-best` | the Tesseract variant named by `--best-tess` |
 | recogniser | `pp-v5-en`, `pp-v5-latin`, `pp-v6-tiny`, `pp-v6-small`, `pp-v6-medium` | PP-OCR line recognisers, scored on their raw text |
 | line split | `ppdet`, `ppdet2x` | PP-OCRv5 line detector on the crop, or on the crop enlarged 2x |
@@ -78,7 +80,7 @@ caps each region at 100 % and counts a missed one as 100 %.
 | Reference transcriptions | [`reference/truth/`](reference/truth/) (12 pages, 166 regions; conventions and known weaknesses in its README) |
 | The 12 page images | not in the repository; `python3 -I reference/fetch.py pages DIR` |
 | Candidate models | not in the repository; `python3 -I reference/fetch.py models DIR` (14 files, 178 MB; `--only TEXT` for a subset) |
-| Today's detector model | the server's pinned file in the Hugging Face cache; the tool refuses to run today's detector unless it is already there with the pinned digest (the server fetches it on first use, or place it as `docs/dev/ocr.md` describes) |
+| Previous detector model | comic-text-detector's model in the Hugging Face cache; the tool refuses to run it unless it is already there with the digest pinned in `src/engines.rs` (the tool never downloads it) |
 | Tesseract language data | the `tesseract-rs` build, or `TESSDATA_PREFIX` |
 
 `fetch.py` takes every address, size and SHA-256 from
@@ -113,14 +115,14 @@ runs one step:
 
 | Step | What it runs | Needs a quiet machine |
 |---|---|---|
-| `full` | today's pipeline: timings, accuracy, Tesseract variants, contact sheets | yes |
+| `full` | the previous pipeline: timings, accuracy, Tesseract variants, contact sheets | yes |
 | `cand` | sections A, B and C for every detector and recogniser | for its time columns |
-| `tap` | section C for `BEST_DET` with each recogniser in `TAP_RECS` on `BEST_SPLIT` lines; today's detector is not run | no (ignore its time columns) |
-| `time4` | 4 pinned cores: today's pipeline, the chosen pair, `ALT_DET`, and a recogniser thread sweep (1, 2, 4) | yes |
-| `time8` | 8 pinned cores: today's pipeline and the chosen pair | yes |
-| `timefree` | no pinning, ONNX Runtime default threads: today's pipeline and the chosen pair | yes |
+| `tap` | section C for `BEST_DET` with each recogniser in `TAP_RECS` on `BEST_SPLIT` lines; the previous detector is not run | no (ignore its time columns) |
+| `time4` | 4 pinned cores: the previous pipeline, the chosen pair, `ALT_DET`, and a recogniser thread sweep (1, 2, 4) | yes |
+| `time8` | 8 pinned cores: the previous pipeline and the chosen pair | yes |
+| `timefree` | no pinning, ONNX Runtime default threads: the previous pipeline and the chosen pair | yes |
 | `workers` | throughput of the chosen pair as W processes x T threads on 8 and on 4 pinned cores | yes |
-| `omp` | today's detector on 4 pinned cores with `OMP_NUM_THREADS` = 1, 4, 8 | yes |
+| `omp` | the previous detector on 4 pinned cores with `OMP_NUM_THREADS` = 1, 4, 8 | yes |
 
 Today's detector can take tens of seconds a page, so `full`, `cand` and the
 timing steps are slow; `tap` is the quick accuracy check.
@@ -136,7 +138,7 @@ timing steps are slow; `tap` is the quick accuracy check.
 | `CPU4`, `CPU8` | `0,2,4,6` and `0,2,…,14` | CPU lists for `taskset` in the pinned steps |
 | `LOAD_MAX` | `2` | 1-minute load average a timed run may start at |
 | `LOAD_WAIT` | `300` | seconds to wait for that before giving up |
-| `SKIP_TODAY` | unset | set to skip today's pipeline in the timing steps |
+| `SKIP_TODAY` | unset | set to skip the previous pipeline in the timing steps |
 | `OCR_BENCH_ORT_PROFILE` | unset | directory for ONNX Runtime per-operator profiles of the candidate sessions |
 
 The binary can also be run directly; `ocr-bench --help` lists every
@@ -159,9 +161,8 @@ keep result directories out of the repository.
   report records the load average at its start and end, the CPUs the
   process was allowed, the thread settings and the build profile. Discard a
   run whose recorded load is high.
-- The thread count is part of the result. Candidate sessions use
-  `--threads`. `ctd-crate` uses whatever the server's detector uses, which
-  does not follow `--threads` or the CPU list.
+- The thread count is part of the result. Every session the tool builds
+  uses `--threads`.
 - Cold figures include one-off work (model load, first inference); warm
   figures are repeats in the same process. Report them apart.
 - Figures do not carry over to another CPU. The 8-bit detector models in
@@ -179,7 +180,7 @@ busy machine.
   on top of one recognition.
 - **Concurrency.** One request at a time, in one process (apart from the
   `workers` step, which measures candidates only).
-- **The manga path** (manga-ocr) is not measured.
+- **The Japanese path** (the manga-ocr recogniser) is not measured.
 - **The reference set is narrow**: 12 pages of 1940 to 1953 scans, upper-case
   hand lettering, English. No modern digital lettering, no lower-case font,
   one light-on-dark region, no page with more than 13 balloons. The

@@ -1,60 +1,40 @@
 //! The regions of a page: which boxes of a detection are offered to
-//! clients (the text-regions route) and, with the current engines, which
-//! a drawn rectangle snaps to.
+//! clients (the text-regions route) and which a drawn rectangle snaps to.
 //!
 //! A page's detection is cached raw, every box of every class. The
 //! server turns it into the final set here, so the client draws, taps
 //! and reads exactly the boxes it is sent and never drops one itself.
-//! What "the same thing twice" means depends on the detector:
 //!
-//! - **Current engines** ([`super::bubbles`]): a region is a balloon or a
-//!   piece of free text. A box inside another is a different thing (a
-//!   balloon inside a large free-text box, a balloon inside a balloon the
-//!   detector also boxed with its neighbour), so containment drops
-//!   nothing. The detector does sometimes return one region twice, as a
-//!   balloon and as free text a few pixels apart: two region boxes whose
-//!   intersection over union is at least [`NEAR_DUPLICATE_IOU`] are one
-//!   region, and the higher score stays (on a tie the larger box).
-//! - **Legacy engines** (`comic-text-detector`): the boxes are text
-//!   blocks and the text lines inside them, so a box mostly inside a
-//!   larger one is the same text again. A box with at least
-//!   [`LEGACY_NESTED_OVERLAP`] of its area inside a box at least as large
-//!   is dropped. This is the rule the reader applied itself before the
-//!   server did, moved here unchanged.
+//! A region is a balloon or a piece of free text ([`super::bubbles`]). A
+//! box inside another is a different thing (a balloon inside a large
+//! free-text box, a balloon inside a balloon the detector also boxed with
+//! its neighbour), so containment drops nothing. The detector does
+//! sometimes return one region twice, as a balloon and as free text a few
+//! pixels apart: two region boxes whose intersection over union is at
+//! least [`NEAR_DUPLICATE_IOU`] are one region, and the higher score stays
+//! (on a tie the larger box).
 //!
-//! Both rules work on the boxes clamped to the page and keep detector
+//! The rule works on the boxes clamped to the page and keeps detector
 //! order.
 
-use super::EngineSet;
+use super::bubbles::is_region_class;
 use super::cache::CachedBbox;
 
-/// Current engines: two region boxes with at least this intersection
-/// over union are the same region found twice.
+/// Two region boxes with at least this intersection over union are the
+/// same region found twice.
 pub const NEAR_DUPLICATE_IOU: f32 = 0.8;
 
-/// Legacy engines: a box with at least this share of its area inside a
-/// box at least as large is a nested duplicate.
-pub const LEGACY_NESTED_OVERLAP: f32 = 0.8;
-
-/// The regions of a `page_w × page_h` page's detection for an engine
-/// set: the boxes of a region class ([`EngineSet::is_region_class`]),
-/// clamped to the page (a box with nothing left on it is dropped), with
-/// the set's duplicates removed, in detector order.
-pub fn regions(
-    engines: EngineSet,
-    boxes: &[CachedBbox],
-    page_w: u32,
-    page_h: u32,
-) -> Vec<CachedBbox> {
+/// The regions of a `page_w × page_h` page's detection: the boxes of a
+/// region class ([`is_region_class`]), clamped to the page (a box with
+/// nothing left on it is dropped), with near-duplicates removed, in
+/// detector order.
+pub fn regions(boxes: &[CachedBbox], page_w: u32, page_h: u32) -> Vec<CachedBbox> {
     let on_page: Vec<CachedBbox> = boxes
         .iter()
-        .filter(|b| engines.is_region_class(b.class))
+        .filter(|b| is_region_class(b.class))
         .filter_map(|b| clamp_to_page(b, page_w, page_h))
         .collect();
-    let keep = match engines {
-        EngineSet::Current => without_near_duplicates(&on_page),
-        EngineSet::Legacy => without_nested(&on_page),
-    };
+    let keep = without_near_duplicates(&on_page);
     on_page
         .into_iter()
         .zip(keep)
@@ -99,7 +79,7 @@ fn iou(a: &CachedBbox, b: &CachedBbox) -> f32 {
     if union > 0.0 { shared / union } else { 0.0 }
 }
 
-/// Which boxes stay under the current engines' rule. Boxes are taken
+/// Which boxes stay. Boxes are taken
 /// best first (score, then area, then detector order); one is kept
 /// unless it overlaps a box already kept by [`NEAR_DUPLICATE_IOU`] or
 /// more.
@@ -124,32 +104,6 @@ fn without_near_duplicates(boxes: &[CachedBbox]) -> Vec<bool> {
         }
     }
     keep
-}
-
-/// Which boxes stay under the legacy engines' rule: a box is dropped
-/// when some other box that is larger (or as large and earlier) holds at
-/// least [`LEGACY_NESTED_OVERLAP`] of its area. Every other box counts,
-/// also one that is itself dropped, exactly as the reader's rule did.
-fn without_nested(boxes: &[CachedBbox]) -> Vec<bool> {
-    boxes
-        .iter()
-        .enumerate()
-        .map(|(i, b)| {
-            let a = area(b);
-            !boxes.iter().enumerate().any(|(j, other)| {
-                if i == j {
-                    return false;
-                }
-                let other_area = area(other);
-                // Only a strictly larger (or equal-size, earlier) box can
-                // swallow this one: two identical boxes keep exactly one.
-                if other_area < a || (other_area == a && j > i) {
-                    return false;
-                }
-                intersection(b, other) / a >= LEGACY_NESTED_OVERLAP
-            })
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -178,14 +132,8 @@ mod tests {
     }
 
     fn current(boxes: &[CachedBbox]) -> Vec<CachedBbox> {
-        regions(EngineSet::Current, boxes, PAGE.0, PAGE.1)
+        regions(boxes, PAGE.0, PAGE.1)
     }
-
-    fn legacy(boxes: &[CachedBbox]) -> Vec<CachedBbox> {
-        regions(EngineSet::Legacy, boxes, PAGE.0, PAGE.1)
-    }
-
-    // ── Current engines ──
 
     /// A balloon inside a large free-text box is its own region: nothing
     /// is dropped for being contained, whichever of the two is larger.
@@ -260,7 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn text_inside_balloons_is_never_a_region_of_the_current_engines() {
+    fn text_inside_balloons_is_never_a_region() {
         let balloon = bbox(CLASS_BUBBLE, 0.9, 100.0, 100.0, 300.0, 400.0);
         let text = bbox(CLASS_TEXT_BUBBLE, 0.95, 140.0, 130.0, 260.0, 370.0);
         let got = current(&[balloon, text]);
@@ -273,82 +221,20 @@ mod tests {
         assert_eq!(current(&[same_as_text, balloon]).len(), 1);
     }
 
-    // ── Legacy engines ──
-
-    /// A line inside its block is the same text again: the smaller box
-    /// goes, whatever its class or score.
-    #[test]
-    fn a_legacy_nested_pair_drops_the_smaller() {
-        let block = bbox(0, 0.6, 300.0, 300.0, 700.0, 700.0);
-        let line = bbox(1, 0.99, 350.0, 450.0, 650.0, 530.0);
-        let other = bbox(0, 0.9, 50.0, 800.0, 150.0, 900.0);
-        let got = legacy(&[line.clone(), block.clone(), other.clone()]);
-        assert_eq!(rects(&got), rects(&[block.clone(), other]));
-        // The same pair is two regions for the current engines (given
-        // region classes).
-        let inner = bbox(CLASS_BUBBLE, 0.99, 350.0, 450.0, 650.0, 530.0);
-        assert_eq!(current(&[inner, block]).len(), 2);
-    }
-
-    /// 80% of the smaller box's area inside the larger one is the line;
-    /// less than that is a neighbour that overlaps.
-    #[test]
-    fn the_legacy_rule_is_a_share_of_the_smaller_box() {
-        let block = bbox(0, 0.9, 0.0, 0.0, 400.0, 400.0);
-        // 100 wide, 80 of it inside the block.
-        let mostly_in = bbox(1, 0.9, 320.0, 100.0, 420.0, 200.0);
-        assert_eq!(legacy(&[block.clone(), mostly_in]).len(), 1);
-        // 79 of 100 inside.
-        let neighbour = bbox(1, 0.9, 321.0, 100.0, 421.0, 200.0);
-        assert_eq!(legacy(&[block, neighbour]).len(), 2);
-    }
-
-    #[test]
-    fn legacy_identical_boxes_keep_the_first_only() {
-        let a = bbox(0, 0.5, 100.0, 100.0, 300.0, 200.0);
-        let twin = bbox(1, 0.9, 100.0, 100.0, 300.0, 200.0);
-        let got = legacy(&[a, twin]);
-        assert_eq!(got.len(), 1);
-        assert_eq!(got[0].class, 0);
-    }
-
-    /// As the reader's rule did, a box is dropped for sitting in any
-    /// larger box, also one that is itself dropped.
-    #[test]
-    fn the_legacy_rule_counts_boxes_that_are_themselves_dropped() {
-        let outer = bbox(0, 0.9, 0.0, 0.0, 500.0, 500.0);
-        let middle = bbox(0, 0.9, 50.0, 50.0, 450.0, 450.0);
-        let inner = bbox(1, 0.9, 100.0, 100.0, 400.0, 400.0);
-        assert_eq!(
-            rects(&legacy(&[inner, middle, outer.clone()])),
-            rects(&[outer])
-        );
-    }
-
-    // ── Both ──
-
     #[test]
     fn regions_are_clamped_to_the_page_and_empty_ones_dropped() {
-        for engines in [EngineSet::Current, EngineSet::Legacy] {
-            let got = regions(
-                engines,
-                &[
-                    bbox(0, 0.9, -20.0, -5.0, 300.0, 200.0),
-                    // Wholly off the page, collapsed, not finite.
-                    bbox(0, 0.9, 1200.0, 100.0, 1300.0, 200.0),
-                    bbox(0, 0.9, 500.0, 500.0, 500.0, 900.0),
-                    bbox(0, 0.9, f32::NAN, 0.0, 10.0, 10.0),
-                    bbox(0, 0.9, 900.0, 1400.0, 1100.0, 1600.0),
-                ],
-                PAGE.0,
-                PAGE.1,
-            );
-            assert_eq!(
-                rects(&got),
-                [(0.0, 0.0, 300.0, 200.0), (900.0, 1400.0, 1000.0, 1500.0)],
-                "{engines:?}"
-            );
-        }
-        assert!(current(&[]).is_empty() && legacy(&[]).is_empty());
+        let got = current(&[
+            bbox(0, 0.9, -20.0, -5.0, 300.0, 200.0),
+            // Wholly off the page, collapsed, not finite.
+            bbox(0, 0.9, 1200.0, 100.0, 1300.0, 200.0),
+            bbox(0, 0.9, 500.0, 500.0, 500.0, 900.0),
+            bbox(0, 0.9, f32::NAN, 0.0, 10.0, 10.0),
+            bbox(0, 0.9, 900.0, 1400.0, 1100.0, 1600.0),
+        ]);
+        assert_eq!(
+            rects(&got),
+            [(0.0, 0.0, 300.0, 200.0), (900.0, 1400.0, 1000.0, 1500.0)]
+        );
+        assert!(current(&[]).is_empty());
     }
 }

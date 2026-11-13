@@ -429,7 +429,6 @@ async fn a_recognition_that_outlives_its_request_is_cached() {
     let body = serde_json::json!({
         "page": 0, "region": { "x": 4, "y": 4, "w": 40, "h": 30 }, "lang": "western",
     });
-    server::ocr::cache::warm_fingerprints().await;
     let region_hash = server::ocr::cache::region_hash(4, 4, 40, 30);
     let key = server::ocr::cache::cache_key(&id, 0, "western", false, &region_hash);
 
@@ -955,7 +954,6 @@ async fn a_payload_of_another_page_size_is_not_served() {
     }
     .to_pixels(216, 100)
     .unwrap();
-    server::ocr::cache::warm_fingerprints().await;
     let key = server::ocr::cache::cache_key(
         &id,
         0,
@@ -1133,7 +1131,7 @@ async fn identical_bytes_in_a_hidden_library_stay_hidden() {
     assert_eq!(detector.calls.load(Ordering::SeqCst), detected);
 }
 
-// ─── The rollback switch ─────────────────────────────────────────
+// ─── Regions, cleanup and cache keys through the routes ──────────
 
 /// A detector that finds three boxes side by side, one of each class
 /// index (0, 1 and 2), and a fourth of class 0 that lies wholly inside
@@ -1163,8 +1161,8 @@ impl PageDetector for ThreeClassDetector {
     }
 }
 
-/// A recognizer that reads a word between two bars, the way a balloon's
-/// borders come back from Tesseract.
+/// A recognizer that reads a word between two bars (what a balloon's
+/// borders used to become in Tesseract's output).
 struct BarsRecognizer;
 
 impl Recognizer for BarsRecognizer {
@@ -1177,23 +1175,19 @@ impl Recognizer for BarsRecognizer {
     }
 }
 
-/// What the two routes answer for one issue with the stand-ins above,
-/// and which of the four cache keys (legacy / default, detection /
-/// result) then exist.
-struct SwitchOutcome {
-    /// Class and left edge (percent of the page) of each region sent.
-    regions: Vec<(u64, f64)>,
-    text: String,
-    raw_text: Option<String>,
-    legacy_keys: (bool, bool),
-    default_keys: (bool, bool),
-}
-
-async fn outcome_with_the_three_class_stand_ins(app: &TestApp, email: &str) -> SwitchOutcome {
-    use server::ocr::{EngineSet, cache};
-    let admin = register(app, email).await;
+/// With stand-ins for the models, the routes offer balloons and free
+/// text as regions (the text inside a balloon is not offered, and a
+/// balloon inside another region is a region of its own), keep what the
+/// recognizer read (no Tesseract cleanup, so no separate raw text), and
+/// write the detection and the result under the server's cache keys.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_routes_offer_regions_keep_the_text_and_write_the_cache_keys() {
+    use server::ocr::cache;
+    let _shared = ALL_PERMITS.read().await;
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "ocr-work-routes@example.com").await;
     let tmp = tempfile::tempdir().unwrap();
-    let id = seed(app, &tmp.path().join("lib"), 100, 64).await;
+    let id = seed(&app, &tmp.path().join("lib"), 100, 64).await;
     test_models::install(
         &id,
         test_models::Stub {
@@ -1202,9 +1196,9 @@ async fn outcome_with_the_three_class_stand_ins(app: &TestApp, email: &str) -> S
         },
     );
 
-    let (status, regions) = send(app, regions_request(&admin, &id, 0)).await;
+    let (status, regions) = send(&app, regions_request(&admin, &id, 0)).await;
     assert_eq!(status, StatusCode::OK, "{regions}");
-    let regions = regions["regions"]
+    let regions: Vec<(u64, f64)> = regions["regions"]
         .as_array()
         .expect("regions")
         .iter()
@@ -1215,95 +1209,31 @@ async fn outcome_with_the_three_class_stand_ins(app: &TestApp, email: &str) -> S
             )
         })
         .collect();
+    assert_eq!(regions, [(0, 4.0), (2, 64.0), (0, 8.0)]);
 
     let body = serde_json::json!({
         "page": 0, "region": { "x": 4, "y": 4, "w": 24, "h": 36 }, "lang": "western",
     });
-    let (status, read) = send(app, ocr_request(&admin, &id, body)).await;
+    let (status, read) = send(&app, ocr_request(&admin, &id, body)).await;
     assert_eq!(status, StatusCode::OK, "{read}");
+    assert_eq!(read["text"], "| HELLO |");
+    assert!(read.get("raw_text").is_none(), "{read}");
 
-    cache::warm_fingerprints_for(EngineSet::Legacy).await;
-    cache::warm_fingerprints_for(EngineSet::Current).await;
     let region_hash = cache::region_hash(4, 4, 24, 36);
-    let legacy = (
-        cache::detect_cache_key_for(EngineSet::Legacy, &id, 0),
-        cache::cache_key_for(EngineSet::Legacy, &id, 0, "western", false, &region_hash),
-    );
-    let default = (
+    let keys = (
         cache::detect_cache_key(&id, 0),
         cache::cache_key(&id, 0, "western", false, &region_hash),
     );
-    assert_ne!(legacy.0, default.0);
-    assert_ne!(legacy.1, default.1);
     // Both routes answered, so both writes were started; give the
-    // detached tasks a moment to land them before looking for absences.
+    // detached tasks a moment to land them.
     for _ in 0..200 {
-        let written = (redis_has(app, &legacy.0).await || redis_has(app, &default.0).await)
-            && (redis_has(app, &legacy.1).await || redis_has(app, &default.1).await);
-        if written {
+        if redis_has(&app, &keys.0).await && redis_has(&app, &keys.1).await {
             break;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    SwitchOutcome {
-        regions,
-        text: read["text"].as_str().expect("text").to_owned(),
-        raw_text: read["raw_text"].as_str().map(str::to_owned),
-        legacy_keys: (
-            redis_has(app, &legacy.0).await,
-            redis_has(app, &legacy.1).await,
-        ),
-        default_keys: (
-            redis_has(app, &default.0).await,
-            redis_has(app, &default.1).await,
-        ),
-    }
-}
-
-/// `COMIC_OCR_LEGACY_ENGINES` through the routes, with stand-ins for the
-/// models: the legacy set offers every class of its detector as a region
-/// but drops a box nested in a larger one, cleans the text with the
-/// Tesseract rules, and keeps its detections and results under its own
-/// cache keys. The same stand-ins on a server without the switch show the
-/// other side of each: the region classes only, the nested box kept.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn the_legacy_switch_selects_regions_cleanup_and_cache_keys() {
-    let _shared = ALL_PERMITS.read().await;
-
-    let legacy_app = TestApp::spawn_with_legacy_ocr_engines().await;
-    let legacy =
-        outcome_with_the_three_class_stand_ins(&legacy_app, "ocr-work-legacy@example.com").await;
-    // Blocks and lines alike are regions of the legacy detector; the
-    // box inside the first one is the same text again and is dropped
-    // (the reader no longer does this itself).
-    assert_eq!(legacy.regions, [(0, 4.0), (1, 34.0), (2, 64.0)]);
-    // The Tesseract chain drops the bars at the line's edges, and the
-    // response carries what was read before the cleanup.
-    assert_eq!(legacy.text, "HELLO");
-    assert_eq!(legacy.raw_text.as_deref(), Some("| HELLO |"));
-    assert_eq!(
-        legacy.legacy_keys,
-        (true, true),
-        "written under the legacy keys"
-    );
-    assert_eq!(
-        legacy.default_keys,
-        (false, false),
-        "nothing under the default keys"
-    );
-
-    let default_app = TestApp::spawn().await;
-    let default =
-        outcome_with_the_three_class_stand_ins(&default_app, "ocr-work-default@example.com").await;
-    // Balloons and free text; the text inside a balloon is not offered,
-    // and a balloon inside another region is a region of its own.
-    assert_eq!(default.regions, [(0, 4.0), (2, 64.0), (0, 8.0)]);
-    // The line recogniser's cleanup keeps what was read, so there is no
-    // separate raw text.
-    assert_eq!(default.text, "| HELLO |");
-    assert_eq!(default.raw_text, None);
-    assert_eq!(default.default_keys, (true, true));
-    assert_eq!(default.legacy_keys, (false, false));
+    assert!(redis_has(&app, &keys.0).await, "detection cached");
+    assert!(redis_has(&app, &keys.1).await, "result cached");
 }
 
 // ─── Japanese: the text box inside the balloon ───────────────────
@@ -1522,7 +1452,7 @@ impl PageDetector for FailingDetector {
 /// narrowed one and be served in its place.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_japanese_request_whose_detection_fails_is_an_error_and_caches_nothing() {
-    use server::ocr::{EngineSet, cache};
+    use server::ocr::cache;
     let _shared = ALL_PERMITS.read().await;
     let app = TestApp::spawn().await;
     let admin = register(&app, "ocr-work-manga-nodetect@example.com").await;
@@ -1541,7 +1471,6 @@ async fn a_japanese_request_whose_detection_fails_is_an_error_and_caches_nothing
             recognizer: Some(recognizer),
         },
     );
-    cache::warm_fingerprints_for(EngineSet::Current).await;
     let (x, y, w, h) = BALLOON_REGION;
     let result_key = cache::cache_key(&id, 0, "manga", false, &cache::region_hash(x, y, w, h));
     let detect_key = cache::detect_cache_key(&id, 0);
@@ -1581,24 +1510,4 @@ async fn a_japanese_request_whose_detection_fails_is_an_error_and_caches_nothing
     let western_key = cache::cache_key(&id, 0, "western", false, &cache::region_hash(x, y, w, h));
     assert!(wait_for_key(&app, &western_key).await);
     assert_eq!(detector.calls.load(Ordering::SeqCst), 2);
-}
-
-/// With the legacy engines a Japanese request reads what it always
-/// read: the rectangle as sent, without consulting the detector.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn the_legacy_engines_read_a_japanese_region_as_sent() {
-    let _shared = ALL_PERMITS.read().await;
-    let app = TestApp::spawn_with_legacy_ocr_engines().await;
-    let admin = register(&app, "ocr-work-manga-legacy@example.com").await;
-    let tmp = tempfile::tempdir().unwrap();
-    let (id, detector) = balloon_issue(&app, &tmp.path().join("lib")).await;
-    let (status, tap) = send(
-        &app,
-        ocr_request(&admin, &id, read_body("manga", BALLOON_REGION, false)),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{tap}");
-    assert_eq!(tap["text"], "100x80");
-    assert!(tap.get("refined_bbox").is_none(), "{tap}");
-    assert_eq!(detector.calls.load(Ordering::SeqCst), 0);
 }

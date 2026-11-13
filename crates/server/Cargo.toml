@@ -12,15 +12,14 @@ path = "src/main.rs"
 
 [features]
 default = []
-# Links a CUDA-enabled ONNX Runtime build (`ort/cuda`, directly and
-# through `comic-text-detector/cuda`). That is all it does today: no
-# session registers the CUDA execution provider (neither the ones Folio
-# builds in `ocr::session` nor the upstream crates' own), so inference
-# still runs on the CPU with this feature on. It is kept so a GPU path
+# Links a CUDA-enabled ONNX Runtime build (`ort/cuda`). That is all it
+# does today: no session registers the CUDA execution provider (the ones
+# Folio builds in `ocr::session` do not), so inference still runs on the
+# CPU with this feature on. It is kept so a GPU path
 # can be added without a manifest change; building with it needs the
 # CUDA toolkit and the GPU `onnxruntime` library. Default builds do not
 # use it.
-cuda = ["ort/cuda", "comic-text-detector/cuda"]
+cuda = ["ort/cuda"]
 
 [dependencies]
 # Web stack
@@ -83,15 +82,13 @@ imageproc = { workspace = true }
 # and the Japanese recogniser's encoder and decoder.
 ort = { workspace = true }
 ndarray = { workspace = true }
-# Legacy page detector, used only with `COMIC_OCR_LEGACY_ENGINES=true`
-# (`src/ocr/detector.rs`); its model (~95 MB) is fetched on first use.
-# Removed together with Tesseract one release after the engine change.
-comic-text-detector = { workspace = true }
 hf-hub = { workspace = true }
 # Exclusive, self-removing temp files for OCR model downloads.
 tempfile = "3"
-# Legacy Western OCR (`COMIC_OCR_LEGACY_ENGINES=true`): Tesseract 5.5.2 +
-# Leptonica 1.87.0 built from source by tesseract-rs 0.4.0. Build script
+# Tesseract 5.5.2 + Leptonica 1.87.0 built from source by tesseract-rs
+# 0.4.0. No request uses it any more (`src/ocr/recognizer/western.rs`);
+# it stays for `crates/tools/ocr-bench`'s baseline until the Tesseract
+# build is removed from the image and CI. Build script
 # compiles natively via cmake;
 # cache lives at `~/.tesseract-rs/` and survives `cargo clean`. The
 # image build pins those sources (scripts/docker/tesseract-inputs.sh).

@@ -12527,19 +12527,18 @@ export interface components {
             expected_bytes_approx: number;
             /** @description Stable identifier; never localized. */
             id: string;
-            /** @description `"onnx"` (HF-cached models) or `"tessdata"` (Tesseract LSTM). */
+            /** @description `"onnx"` (HF-cached models), the kind of every model listed. */
             kind: string;
             /**
              * @description `true` if at least one model file is on disk under
-             *     `cache_dir`. For HF entries this is "the snapshot folder
-             *     holds files"; for tessdata, "`eng.traineddata` exists".
+             *     `cache_dir` ("the snapshot folder holds files").
              */
             present: boolean;
             /** @description One-line operator-facing description. */
             purpose: string;
             /**
-             * @description Where the binary fetches this model from on first init.
-             *     `"huggingface.co/<repo>"` or `"tessdata_best (build script)"`.
+             * @description Where the binary fetches this model from on first init:
+             *     `"huggingface.co/<repo>"`.
              */
             source: string;
         };
@@ -12552,8 +12551,9 @@ export interface components {
             /** @description Per-model state. */
             models: components["schemas"]["OcrModelView"][];
             /**
-             * @description Resolved tessdata directory; see module doc for resolution
-             *     order.
+             * @description Resolved Tesseract language-data directory (`TESSDATA_PREFIX`,
+             *     else `${HOME}/.tesseract-rs/tessdata`). The server no longer reads
+             *     it; the field stays so the response keeps its shape.
              */
             tessdata_dir: string;
             /**
@@ -15966,9 +15966,7 @@ export interface components {
              * Format: int32
              * @description What the detector took the region for: 0 = a balloon, 2 = text
              *     outside balloons (a caption on the art, a sound effect). Every
-             *     region is a box to read as a whole. (A server running the
-             *     previous engines, `COMIC_OCR_LEGACY_ENGINES`, sends that
-             *     detector's classes: 0 = text block, 1 = text line.)
+             *     region is a box to read as a whole.
              */
             class: number;
             /**

@@ -20,10 +20,6 @@
 //! [`visible`]. Rate limits: the POST sits on the `OCR` bucket, the
 //! GET on the stricter `OCR_DETECT` bucket.
 //!
-//! Which engines run is [`EngineSet::from_config`], read once per
-//! request and passed down: it selects the models, the cleanup rules
-//! and the cache keys (the two sets never share an entry).
-//!
 //! Concurrency (audit S-23): rate limits are per caller, so the heavy
 //! part of both routes (page decode, detection, recognition) also runs
 //! under one process-wide semaphore of [`OCR_MAX_CONCURRENT`] permits.
@@ -70,7 +66,6 @@ use super::page_source::{PageUnavailable, issue_not_found, no_store};
 use crate::auth::CurrentUser;
 use crate::library::zip_lru::{CachedReader, lock_reader};
 use crate::middleware::rate_limit;
-use crate::ocr::EngineSet;
 use crate::ocr::cache::{self, CachedDetection};
 use crate::ocr::page_cache::{Claim, Lookup, PageKey, SharedPage, decoded_pages};
 use crate::ocr::pipeline::{
@@ -355,9 +350,7 @@ pub struct TextRegionView {
     pub confidence: f32,
     /// What the detector took the region for: 0 = a balloon, 2 = text
     /// outside balloons (a caption on the art, a sound effect). Every
-    /// region is a box to read as a whole. (A server running the
-    /// previous engines, `COMIC_OCR_LEGACY_ENGINES`, sends that
-    /// detector's classes: 0 = text block, 1 = text line.)
+    /// region is a box to read as a whole.
     pub class: u32,
 }
 
@@ -395,16 +388,16 @@ impl OcrResponse {
 }
 
 impl TextRegionsView {
-    /// A page's detection as the client sees it: the page's regions for
-    /// the engine set ([`crate::ocr::regions::regions`]: the region
-    /// classes, clamped to the page, the set's duplicates removed), in
-    /// percent. The client draws and reads exactly this set.
-    pub(crate) fn from_detection(d: CachedDetection, engines: EngineSet) -> Self {
+    /// A page's detection as the client sees it: the page's regions
+    /// ([`crate::ocr::regions::regions`]: the region classes, clamped to
+    /// the page, near-duplicates removed), in percent. The client draws
+    /// and reads exactly this set.
+    pub(crate) fn from_detection(d: CachedDetection) -> Self {
         let (pw, ph) = (d.page_w as f32, d.page_h as f32);
         let regions = if pw <= 0.0 || ph <= 0.0 {
             Vec::new()
         } else {
-            crate::ocr::regions::regions(engines, &d.bboxes, d.page_w, d.page_h)
+            crate::ocr::regions::regions(&d.bboxes, d.page_w, d.page_h)
                 .iter()
                 .map(|b| TextRegionView {
                     x: b.xmin / pw * 100.0,
@@ -529,19 +522,10 @@ pub async fn serve(
         Language::Manga => "manga",
     };
     // The keys carry the engine fingerprint (`ocr::cache`), computed once
-    // per process and engine set, off the async runtime.
-    let engines = EngineSet::from_config(&app.cfg());
-    cache::warm_fingerprints_for(engines).await;
+    // per process.
     let result_key = |r: &OcrRegion| {
         let region_hash = cache::region_hash(r.x, r.y, r.w, r.h);
-        cache::cache_key_for(
-            engines,
-            &row.content_hash,
-            req.page,
-            lang_str,
-            detect,
-            &region_hash,
-        )
+        cache::cache_key(&row.content_hash, req.page, lang_str, detect, &region_hash)
     };
     if let Some(r) = &pixel_region
         && let Some(hit) = cache::get(&app.jobs.redis, &result_key(r)).await
@@ -580,7 +564,7 @@ pub async fn serve(
         Err(resp) => return *resp,
     };
     // ─── Models (a first-use download waits here, without a permit) ─
-    let models = match prepare_models(engines, &row.content_hash, language, detect).await {
+    let models = match prepare_models(&row.content_hash, language, detect).await {
         Ok(m) => m,
         Err(e) => {
             tracing::error!(error = %e, "ocr: model preparation failed");
@@ -720,11 +704,9 @@ pub async fn text_regions(
     // ─── Cache lookup ────────────────────────────────────────────
     // Checked before the archive is touched: a hit skips page load
     // and decode entirely, making warm requests a Redis round-trip.
-    let engines = EngineSet::from_config(&app.cfg());
-    cache::warm_fingerprints_for(engines).await;
-    let key = cache::detect_cache_key_for(engines, &row.content_hash, page);
+    let key = cache::detect_cache_key(&row.content_hash, page);
     if let Some(hit) = cache::get_detect(&app.jobs.redis, &key).await {
-        return Json(TextRegionsView::from_detection(hit, engines)).into_response();
+        return Json(TextRegionsView::from_detection(hit)).into_response();
     }
 
     // ─── Cheap checks (no permit, no page bytes) ─────────────────
@@ -733,7 +715,7 @@ pub async fn text_regions(
         Err(resp) => return *resp,
     };
     // ─── Detector (a first-use download waits here, no permit) ───
-    let detector = match prepare_detector(engines, &row.content_hash).await {
+    let detector = match prepare_detector(&row.content_hash).await {
         Ok(d) => d,
         Err(e) => {
             tracing::error!(error = %e, "ocr: detector preparation failed");
@@ -749,7 +731,6 @@ pub async fn text_regions(
         };
     match detect_and_cache_regions(
         app.jobs.redis.clone(),
-        engines,
         &row.content_hash,
         page,
         decoded,
@@ -758,7 +739,7 @@ pub async fn text_regions(
     )
     .await
     {
-        Ok(detection) => Json(TextRegionsView::from_detection(detection, engines)).into_response(),
+        Ok(detection) => Json(TextRegionsView::from_detection(detection)).into_response(),
         Err(e) => {
             tracing::error!(error = %e, "ocr: text-region detection failed");
             ocr_failure(&e, "text-region detection failed")
@@ -1062,13 +1043,12 @@ mod tests {
         assert!(pct(50.0, 50.0, 0.1, 0.1).to_pixels(200, 100).is_none());
     }
 
-    /// Clients get the regions of a page, final: with the current
-    /// engines the balloons and the free text, not the text boxes inside
-    /// balloons the detection also holds, and a box inside another is
-    /// kept; with the legacy engines every class, minus a box nested in a
-    /// larger one. The client applies no rule of its own.
+    /// Clients get the regions of a page, final: the balloons and the
+    /// free text, not the text boxes inside balloons the detection also
+    /// holds, and a box inside another is kept. The client applies no
+    /// rule of its own.
     #[test]
-    fn text_regions_are_the_final_regions_of_the_engine_set() {
+    fn text_regions_are_the_final_regions() {
         use crate::ocr::cache::CachedBbox;
         let bbox = |class, xmin: f32, xmax: f32, ymin: f32, ymax: f32| CachedBbox {
             xmin,
@@ -1091,25 +1071,18 @@ mod tests {
             ],
         };
         // Class and left edge in percent of each region sent.
-        let sent = |engines| -> Vec<(u32, f32)> {
-            TextRegionsView::from_detection(detection(), engines)
-                .regions
-                .iter()
-                .map(|r| (r.class, r.x.round()))
-                .collect()
-        };
+        let sent: Vec<(u32, f32)> = TextRegionsView::from_detection(detection())
+            .regions
+            .iter()
+            .map(|r| (r.class, r.x.round()))
+            .collect();
         assert_eq!(
-            sent(EngineSet::Current),
+            sent,
             [(0, 10.0), (2, 60.0), (0, 15.0)],
             "the nested balloon is a region of its own"
         );
-        assert_eq!(
-            sent(EngineSet::Legacy),
-            [(0, 10.0), (1, 35.0), (2, 60.0)],
-            "the nested box is the same text again"
-        );
         // Percent of the page, as before.
-        let view = TextRegionsView::from_detection(detection(), EngineSet::Current);
+        let view = TextRegionsView::from_detection(detection());
         assert_eq!((view.page_w, view.page_h), (1000, 2000));
         let r = &view.regions[0];
         assert!((r.x - 10.0).abs() < 1e-4 && (r.y - 10.0).abs() < 1e-4);

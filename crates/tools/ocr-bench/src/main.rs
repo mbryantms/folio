@@ -1,9 +1,10 @@
 //! `ocr-bench`: timings and accuracy for Folio's OCR pipeline.
 //!
-//! Drives `server::ocr` directly (detector singleton, Western recogniser,
-//! postprocess); never starts the HTTP server, Postgres or Redis, and
-//! never downloads: the detector is loaded only when the pinned model is
-//! already cached with the pinned digest.
+//! Drives `server::ocr` directly (Tesseract recogniser, postprocess) with
+//! `comic-text-detector`'s model in a session of its own as the baseline
+//! detector; never starts the HTTP server, Postgres or Redis, and never
+//! downloads: the detector is loaded only when its model is already
+//! cached with the expected digest.
 //!
 //! ```text
 //! ocr-bench --pages DIR [--truth DIR] --out DIR --label NAME
@@ -45,7 +46,8 @@ use server::ocr::postprocess::{self, Cleaned};
 use server::ocr::recognizer::{Language, Recognition};
 use server::util::image_decode::decode_limited;
 
-use crate::engines::{CropRecognizer, DetBox, FolioDetector, FolioWestern, PageDetector};
+use crate::cand::CtdOwn;
+use crate::engines::{CropRecognizer, DetBox, FolioWestern, PageDetector};
 use crate::stats::{Summary, median, ms_since, summarize, timed};
 use crate::tess::{TessConfig, TessEngine};
 use crate::truth::{PageFile, RefRegion};
@@ -122,7 +124,7 @@ struct Args {
         default_value = "tess-today,tess-best,pp-v5-en,pp-v5-latin,pp-v6-tiny,pp-v6-small,pp-v6-medium"
     )]
     recs: String,
-    /// Detectors, comma separated (ctd, ctd-crate, ogk-s, ogk-m, ppdetN).
+    /// Detectors, comma separated (ctd, ogk-s, ogk-m, ppdetN).
     #[arg(long, default_value = "ctd,ogk-s,ogk-m,ppdet960,ppdet1600")]
     dets: String,
     /// Line splits for the PP recognisers.
@@ -620,7 +622,7 @@ fn score_pair(reference_norm: &str, text: &str) -> (f64, f64) {
 
 struct Ctx {
     args: Args,
-    detector: Option<FolioDetector>,
+    detector: Option<CtdOwn>,
     western: Option<FolioWestern>,
     split: Option<TessEngine>,
     variants: Vec<(TessConfig, anyhow::Result<TessEngine>)>,
@@ -675,7 +677,7 @@ fn main() -> anyhow::Result<()> {
     let need_rec = !args.detector_only && (args.timing || args.accuracy || args.variants);
 
     let (detector, detector_load) = if need_detector {
-        let (d, l) = rt.block_on(FolioDetector::load())?;
+        let (d, l) = engines::load_ctd(args.threads)?;
         (Some(d), Some(l))
     } else {
         (None, None)
@@ -1292,9 +1294,9 @@ fn summarize_timing(
     });
     if let Some(l) = load {
         rows.push(TimingRow {
-            stage: "detector model load: ensure_pinned (hash of cached file)".into(),
+            stage: "detector model load: hash of cached file".into(),
             input: format!("{:.1} MB ONNX", l.model_bytes as f64 / 1e6),
-            cold_ms: Some(l.ensure_pinned_ms),
+            cold_ms: Some(l.precheck_hash_ms),
             warm: Summary::default(),
         });
         rows.push(TimingRow {
@@ -1362,7 +1364,7 @@ fn summarize_timing(
     if page_det.len() == page_dec.len() && !page_det.is_empty() {
         let outline: Vec<f64> = page_dec.iter().zip(&page_det).map(|(a, b)| a + b).collect();
         let cold = match (first_page.decode.first, first_page.detect.first, load) {
-            (Some(a), Some(b), Some(l)) => Some(a + b + l.ensure_pinned_ms + l.session_build_ms),
+            (Some(a), Some(b), Some(l)) => Some(a + b + l.precheck_hash_ms + l.session_build_ms),
             _ => None,
         };
         composed.push(Composed {

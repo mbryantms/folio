@@ -291,15 +291,6 @@ pub struct Config {
     #[serde(default)]
     pub watch_force_poll: bool,
 
-    /// Text reading: run the previous engines (`comic-text-detector` and
-    /// Tesseract) instead of the current ones (`ocr::EngineSet`).
-    /// Infrastructure, so env-only (`COMIC_OCR_LEGACY_ENGINES`, default
-    /// false, read at start). **Temporary**: it exists for one release so
-    /// a deploy can go back to the old engines without a revert, and goes
-    /// away together with the Tesseract build.
-    #[serde(default)]
-    pub ocr_legacy_engines: bool,
-
     // Archive limits (spec §4.1.1). Defaults mirror the `archive` crate's
     // `ArchiveLimits::default()`; overridable per-deploy via the
     // `COMIC_ARCHIVE_MAX_*` env vars to tune DoS bounds for unusually
@@ -628,7 +619,6 @@ impl std::fmt::Debug for Config {
             .field("watch_debounce_secs", &self.watch_debounce_secs)
             .field("watch_poll_interval_secs", &self.watch_poll_interval_secs)
             .field("watch_force_poll", &self.watch_force_poll)
-            .field("ocr_legacy_engines", &self.ocr_legacy_engines)
             .field("archive_max_entries", &self.archive_max_entries)
             .field("archive_max_total_bytes", &self.archive_max_total_bytes)
             .field("archive_max_entry_bytes", &self.archive_max_entry_bytes)
@@ -2153,7 +2143,6 @@ mod tests {
             watch_debounce_secs: default_watch_debounce_secs(),
             watch_poll_interval_secs: default_watch_poll_interval_secs(),
             watch_force_poll: false,
-            ocr_legacy_engines: false,
             archive_max_entries: 0,
             archive_max_total_bytes: 0,
             archive_max_entry_bytes: 0,
@@ -2259,67 +2248,20 @@ mod tests {
         cfg.validate().expect("defaults validate");
     }
 
-    const OCR_SWITCH_CHILD_ENV: &str = "FOLIO_CONFIG_OCR_SWITCH_CHILD";
-
-    /// `COMIC_OCR_LEGACY_ENGINES` selects the OCR engine set, through
-    /// the same sources `Config::load` reads: unset or `false` is the
-    /// current set, `true` the legacy one. The variables are set only on
-    /// a child test process (this binary, running the ignored test below
-    /// alone), so no other test sees them.
+    /// `COMIC_OCR_LEGACY_ENGINES` was removed together with the previous
+    /// text-reading engines. A deployment that still sets it must boot as
+    /// before; the leftover key is ignored.
     #[test]
-    fn the_ocr_engine_switch_is_read_from_the_environment() {
-        for (value, expected) in [
-            (None, "current"),
-            (Some("false"), "current"),
-            (Some("true"), "legacy"),
-        ] {
-            let mut cmd = std::process::Command::new(std::env::current_exe().unwrap());
-            cmd.args([
-                "--exact",
-                "config::tests::ocr_engine_switch_child",
-                "--ignored",
-                "--test-threads=1",
-            ]);
-            // Nothing of this process's own configuration leaks in.
-            for (key, _) in std::env::vars_os() {
-                if key.to_string_lossy().starts_with("COMIC_") {
-                    cmd.env_remove(key);
-                }
-            }
-            cmd.env(OCR_SWITCH_CHILD_ENV, expected)
-                .env("COMIC_DATABASE_URL", "postgres://x")
-                .env("COMIC_REDIS_URL", "redis://x")
-                .env("COMIC_LIBRARY_PATH", "/l")
-                .env("COMIC_DATA_PATH", "/d")
-                .env("COMIC_PUBLIC_URL", "http://localhost");
-            if let Some(value) = value {
-                cmd.env("COMIC_OCR_LEGACY_ENGINES", value);
-            }
-            let out = cmd.output().unwrap();
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            assert!(
-                out.status.success() && stdout.contains("1 passed"),
-                "COMIC_OCR_LEGACY_ENGINES={value:?}: child failed:\n{stdout}\n{}",
-                String::from_utf8_lossy(&out.stderr)
-            );
-        }
-    }
-
-    #[test]
-    #[ignore = "run by the_ocr_engine_switch_is_read_from_the_environment in a child process"]
-    fn ocr_engine_switch_child() {
-        let Ok(expected) = std::env::var(OCR_SWITCH_CHILD_ENV) else {
-            // Only meaningful in the child process the parent test starts.
-            return;
-        };
-        let cfg: Config = Config::sources()
+    fn removed_ocr_legacy_engines_key_is_ignored() {
+        let cfg: Config = Figment::new()
+            .merge(Toml::string(
+                "database_url = 'postgres://x'\nredis_url = 'redis://x'\n\
+                 library_path = '/l'\ndata_path = '/d'\npublic_url = 'http://localhost'\n\
+                 ocr_legacy_engines = true\n",
+            ))
             .extract()
-            .expect("the environment extracts");
-        assert_eq!(cfg.ocr_legacy_engines, expected == "legacy");
-        assert_eq!(
-            crate::ocr::EngineSet::from_config(&cfg).label(),
-            expected.as_str()
-        );
+            .expect("a leftover ocr_legacy_engines key extracts");
+        cfg.validate().expect("defaults validate");
     }
 
     #[test]

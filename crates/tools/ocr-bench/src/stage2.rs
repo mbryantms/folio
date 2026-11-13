@@ -15,7 +15,7 @@ use server::ocr::recognizer::Recognition;
 use server::util::image_decode::decode_limited;
 
 use crate::cand::{CtdOwn, ModelMeta, ModelPaths, Ogkalu, PP_RECS, PaddleDet, PaddleDetPage};
-use crate::engines::{CropRecognizer, DetBox, FolioDetector, FolioWestern, PageDetector};
+use crate::engines::{CropRecognizer, DetBox, FolioWestern, PageDetector};
 use crate::split::{self, Split};
 use crate::stats::{Summary, median, ms_since, summarize, timed};
 use crate::tess::{TessConfig, TessEngine};
@@ -51,7 +51,6 @@ struct Engines {
     ppdet_page: Option<PaddleDetPage>,
     ogk: Vec<(String, Ogkalu)>,
     ctd: Option<CtdOwn>,
-    ctd_crate: Option<FolioDetector>,
     tess_today: Option<FolioWestern>,
     tess_best: Option<TessEngine>,
     loads: Vec<LoadInfo>,
@@ -62,19 +61,6 @@ fn list(s: &str) -> Vec<String> {
         .map(|x| x.trim().to_owned())
         .filter(|x| !x.is_empty() && x != "none")
         .collect()
-}
-
-fn ctd_model_path() -> anyhow::Result<PathBuf> {
-    let pin = server::ocr::models::DETECTOR_FILES[0];
-    let root = server::ocr::models::hub_cache_root().map_err(|e| anyhow::anyhow!(e))?;
-    let p = pin.snapshot_path(&root);
-    if !p.exists() {
-        anyhow::bail!(
-            "comic-text-detector model not cached at {}; not downloading",
-            p.display()
-        );
-    }
-    Ok(p)
 }
 
 fn track(
@@ -189,7 +175,7 @@ fn load_engines(args: &Args, rt: &tokio::runtime::Runtime) -> anyhow::Result<Eng
     }
     let mut ctd = None;
     if det_names.iter().any(|d| d == "ctd") || rec_names.iter().any(|_| false) {
-        let p = ctd_model_path()?;
+        let (p, _, _) = crate::engines::ctd_model_path()?;
         track(
             &mut loads,
             "ctd (own session)",
@@ -200,19 +186,6 @@ fn load_engines(args: &Args, rt: &tokio::runtime::Runtime) -> anyhow::Result<Eng
                 Ok(Some(m))
             },
             "session build",
-        )?;
-    }
-    let mut ctd_crate = None;
-    if det_names.iter().any(|d| d == "ctd-crate") {
-        track(
-            &mut loads,
-            "ctd-crate (Folio singleton)",
-            &mut || {
-                let (d, _) = rt.block_on(FolioDetector::load())?;
-                ctd_crate = Some(d);
-                Ok(None)
-            },
-            "ensure_pinned + session build, ONNX Runtime default threads",
         )?;
     }
     let mut tess_today = None;
@@ -257,7 +230,6 @@ fn load_engines(args: &Args, rt: &tokio::runtime::Runtime) -> anyhow::Result<Eng
         ppdet_page,
         ogk,
         ctd,
-        ctd_crate,
         tess_today,
         tess_best,
         loads,
@@ -277,7 +249,7 @@ pub(crate) fn probe(models: &Path, threads: usize) -> anyhow::Result<()> {
     paths.push(mp.det_dir().join("inference.onnx"));
     paths.push(mp.ogkalu("small"));
     paths.push(mp.ogkalu("medium"));
-    paths.push(ctd_model_path()?);
+    paths.push(crate::engines::ctd_model_path()?.0);
     for p in paths {
         match crate::cand::load_session(&p, threads) {
             Ok((_, m)) => println!("{}", serde_json::to_string_pretty(&m)?),
@@ -301,7 +273,7 @@ pub(crate) fn probe(models: &Path, threads: usize) -> anyhow::Result<()> {
 /// The boxes a detector offers as tap targets / balloon units.
 fn units(det: &str, unit: &str, boxes: &[DetBox]) -> Vec<[f64; 4]> {
     match (det, unit) {
-        ("ctd" | "ctd-crate", "panel") => {
+        ("ctd", "panel") => {
             let nested = nested_flags(boxes);
             boxes
                 .iter()
@@ -310,7 +282,7 @@ fn units(det: &str, unit: &str, boxes: &[DetBox]) -> Vec<[f64; 4]> {
                 .map(|(b, _)| det_box(b))
                 .collect()
         }
-        ("ctd" | "ctd-crate", _) => boxes.iter().map(det_box).collect(),
+        ("ctd", _) => boxes.iter().map(det_box).collect(),
         (_, "text_bubble") => boxes
             .iter()
             .filter(|b| b.class == 1 || b.class == 2)
@@ -627,7 +599,6 @@ fn run_detectors(
     for d in names {
         let res: Option<(anyhow::Result<Vec<DetBox>>, f64)> = match d.as_str() {
             "ctd" => eng.ctd.as_mut().map(|c| timed(|| c.detect(page))),
-            "ctd-crate" => eng.ctd_crate.as_mut().map(|c| timed(|| c.detect(page))),
             "ogk-s" | "ogk-m" => eng
                 .ogk
                 .iter_mut()
@@ -653,7 +624,7 @@ fn run_detectors(
 /// The unit sets section B and C use, per detector.
 fn unit_names(det: &str) -> &'static [&'static str] {
     match det {
-        "ctd" | "ctd-crate" => &["panel", "all"],
+        "ctd" => &["panel", "all"],
         "ogk-s" | "ogk-m" => &["text_bubble", "bubble"],
         _ => &["lines", "blocks"],
     }
@@ -847,7 +818,7 @@ fn taps(
     for d in det_boxes.keys() {
         let d = d.as_str();
         match d {
-            "ctd" | "ctd-crate" => {
+            "ctd" => {
                 if eng.tess_today.is_some() {
                     combos.push((
                         format!("{d}(panel) + tess-today"),
@@ -1038,11 +1009,7 @@ fn timing_page(
         let mut first = None;
         let mut warm = Vec::new();
         let mut last = Vec::new();
-        let reps = if d == "ctd-crate" {
-            1 + args.warm.min(2)
-        } else {
-            1 + args.warm
-        };
+        let reps = 1 + args.warm;
         for _ in 0..reps {
             let mut po = PageOut::default();
             run_detectors(eng, &page, std::slice::from_ref(d), &mut po)?;
@@ -1151,7 +1118,7 @@ fn timing_page(
     let best_pp = eng.recs.iter().position(|r| r.name == args.best_pp);
     for d in &det_names {
         let unit = match d.as_str() {
-            "ctd" | "ctd-crate" => "panel",
+            "ctd" => "panel",
             "ogk-s" | "ogk-m" => "bubble",
             _ => "blocks",
         };
@@ -1336,7 +1303,7 @@ fn run_throughput(
         .next()
         .ok_or_else(|| anyhow::anyhow!("--dets needs one detector"))?;
     let unit = match d.as_str() {
-        "ctd" | "ctd-crate" => "panel",
+        "ctd" => "panel",
         "ogk-s" | "ogk-m" => "bubble",
         _ => "blocks",
     };

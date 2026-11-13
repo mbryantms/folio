@@ -363,8 +363,8 @@ pub const OPDS_STREAM: Bucket = Bucket {
 };
 
 /// `POST /me/issues/{id}/ocr` — 60/min/IP + burst 60. OCR is CPU-heavy
-/// (text-detection-1.0 plan, M4): each request runs a YOLO-style
-/// detector + a Tesseract / manga-ocr inference. The Redis-backed
+/// (text-detection-1.0 plan, M4): each request can run the page
+/// detector and a recognition (Western line reader or manga-ocr). The Redis-backed
 /// cache covers retries on the same region for free, so the bucket
 /// only needs to bound *novel* requests from a single IP. 60/min
 /// matches the old shared OPDS bucket — generous enough for a reader exploring
@@ -377,10 +377,10 @@ pub const OCR: Bucket = Bucket {
 };
 
 /// `GET /me/issues/{id}/pages/{page}/text-regions` — 15/min/IP +
-/// burst 10. A detect-cache miss is the most expensive single
-/// operation the server exposes: a full-page detector inference
-/// (~3 s on a fast CPU, ~50 s on constrained hosts) serialized
-/// through a process-wide mutex. Cache hits are a Redis round-trip,
+/// burst 10. Sized for the previous page detector, when a detect-cache
+/// miss was the most expensive single operation the server exposed (tens
+/// of seconds a page); a miss now costs a page decode and a short
+/// inference. The limit was left as it is. Cache hits are a Redis round-trip,
 /// but the bucket has to protect the miss path — page-flipping in
 /// text mode could otherwise queue dozens of detector runs. The web
 /// client fetches each page's regions at most once per session
