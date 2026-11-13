@@ -13,6 +13,39 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.81.0](https://github.com/mbryantms/folio/compare/v0.80.0...v0.81.0) (2026-11-13)
+
+
+### Added
+
+* **cbl:** a reading list says when its refresh is failing and why, and a failing source is retried less often ([#1620](https://github.com/mbryantms/folio/issues/1620)) ([d3b62d0](https://github.com/mbryantms/folio/commit/d3b62d0dbab1413c18b7e65d26cca1f10291782a))
+* **ocr:** text reading uses a balloon detector and a line recogniser, and outlines appear in a fraction of a second ([#1631](https://github.com/mbryantms/folio/issues/1631)) ([44b49a5](https://github.com/mbryantms/folio/commit/44b49a516c4f306f9f6e5fd4236e7abff09e0a04))
+
+
+### Fixed
+
+* **ocr:** finished text detections are kept after a timeout, a page is decoded once, and regions can be sent as percentages ([#1623](https://github.com/mbryantms/folio/issues/1623)) ([8c09194](https://github.com/mbryantms/folio/commit/8c091945546b9031d77d3425c4556ed3b8679853))
+* **reader:** text capture reads the rectangle on screen, tap and panel share one set of boxes, and failures say what happened ([#1624](https://github.com/mbryantms/folio/issues/1624)) ([3b2f12d](https://github.com/mbryantms/folio/commit/3b2f12d3e22c758c509b717d2a1f9705abc600bc))
+* **reconcile:** rows the confirm sweep leaves alone no longer hold back a library's removals, and the series purge counts in batches ([#1617](https://github.com/mbryantms/folio/issues/1617)) ([42315b6](https://github.com/mbryantms/folio/commit/42315b64040f834dea63f8ee0c8eeaed14148609))
+
+
+### Changed
+
+* **api:** issue cards carry the caller's reading progress, so badge-only pages skip the all-progress request ([#1621](https://github.com/mbryantms/folio/issues/1621)) ([6c9567f](https://github.com/mbryantms/folio/commit/6c9567f2c821534e32f6d47fd949871f2dade2bd))
+
+
+### Dependencies
+
+* update dependency cronstrue to v3.39.0 ([#1622](https://github.com/mbryantms/folio/issues/1622)) ([5076fa5](https://github.com/mbryantms/folio/commit/5076fa5ef9c731dfe15e06da47ee9056f95536e1))
+* update dependency next to v16.4.6 ([#1627](https://github.com/mbryantms/folio/issues/1627)) ([bffd9db](https://github.com/mbryantms/folio/commit/bffd9dba276a53425be180aa0f75fb20bcca6533))
+* update nextjs monorepo to v16.4.6 ([#1626](https://github.com/mbryantms/folio/issues/1626)) ([118ba2a](https://github.com/mbryantms/folio/commit/118ba2a35b1e6341d3a919b3483fbb58b0aac1fa))
+* update rust crate arc-swap to v1.9.5 ([#1625](https://github.com/mbryantms/folio/issues/1625)) ([935886b](https://github.com/mbryantms/folio/commit/935886b84f83d0ea7b32d19fb87ddcf04c1a0240))
+
+
+### Build & CI
+
+* **docker:** the OCR sources and language data are fetched by pinned digest before the image is built ([#1619](https://github.com/mbryantms/folio/issues/1619)) ([cfac5c0](https://github.com/mbryantms/folio/commit/cfac5c05799233315626b246c4cc460fb891951e))
+
 ## [0.80.0](https://github.com/mbryantms/folio/compare/v0.79.0...v0.80.0) (2026-11-12)
 
 
