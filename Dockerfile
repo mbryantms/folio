@@ -25,7 +25,7 @@
 # reverse proxy. See `docs/install/` for the wiring.
 
 # ───── Stage 1a: cargo-chef recipe ─────
-FROM rust:1-slim-bookworm@sha256:f2c004e3d2d8b547e8cf7ffbc29205385f4e71d23e53e4e383065db5e9f822cd AS planner
+FROM rust:1-slim-trixie@sha256:cc9edbcadf2c27013a642b1d1bb7504e26b1142d6b5ebe58f64cf2eb2bc128ae AS planner
 WORKDIR /work
 COPY rust-toolchain.toml ./
 RUN cargo install cargo-chef --locked
@@ -36,7 +36,12 @@ RUN cargo chef prepare --recipe-path recipe.json
 # ───── Stage 1b: cargo-chef cook (cached deps) ─────
 # Its own target so CI can build + cache just this layer (`--target deps`)
 # without exporting the per-commit final build.
-FROM rust:1-slim-bookworm@sha256:f2c004e3d2d8b547e8cf7ffbc29205385f4e71d23e53e4e383065db5e9f822cd AS deps
+# Debian 13 (trixie), not 12: the prebuilt ONNX Runtime 1.31 library that
+# `ort-sys` links statically into the server needs glibc 2.38 and the C++
+# library of GCC 13 or newer. On bookworm (glibc 2.36, GCC 12) the link step
+# fails with undefined symbols such as `__isoc23_strtoll`. Keep the planner,
+# this stage and the runtime image on the same Debian release.
+FROM rust:1-slim-trixie@sha256:cc9edbcadf2c27013a642b1d1bb7504e26b1142d6b5ebe58f64cf2eb2bc128ae AS deps
 WORKDIR /work
 COPY rust-toolchain.toml ./
 # build-essential / g++ pulled in for cc-rs crates (zstd-sys, image, webp,
@@ -115,7 +120,7 @@ RUN cargo build --release --bin server --bin migration \
 RUN sh /usr/local/bin/tesseract-inputs.sh verify-build /work/target
 
 # ───── Stage 2: tini from Debian apt ─────
-FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS apt-source
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS apt-source
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tini \
     && rm -rf /var/lib/apt/lists/*
@@ -125,9 +130,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # argon2, sea-orm Postgres TLS). RAR is read in process through the UnRAR
 # library compiled into the server, so the image ships no `unrar` program.
 # debian13 (trixie) rather than debian12: the bookworm-based tag shipped a
-# fixable HIGH libssl3 CVE for weeks (2026-09) while the trixie tag was clean;
-# a bookworm-built binary runs on the newer glibc unchanged. Verified by the
-# docker-smoke job.
+# fixable HIGH libssl3 CVE for weeks (2026-09) while the trixie tag was clean.
+# The build stages above are trixie too (see the `deps` stage), so the binary
+# is linked against the glibc and C++ library this image carries. Verified
+# by the docker-smoke job.
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:08476c244888bfb425bae1ae4dd7c17f093e972aab8426883d97f3c6f280f7c1 AS runtime
 WORKDIR /app
 
