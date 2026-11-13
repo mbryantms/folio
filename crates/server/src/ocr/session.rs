@@ -8,11 +8,15 @@
 //! cgroup quota and the affinity mask, so the counts below follow the
 //! cores the process really has.
 //!
-//! The sessions use the options the engines were measured with: every
-//! graph optimization (`ORT_ENABLE_ALL`), the thread count, intra-op
-//! spinning on (set explicitly: ONNX Runtime builds disagree on its
-//! default), and nothing else (per-session thread pools, sequential
-//! execution, the CPU provider). `ort` rc.15 maps
+//! The sessions use every graph optimization (`ORT_ENABLE_ALL`), the
+//! thread count, intra-op spinning off, and nothing else (per-session
+//! thread pools, sequential execution, the CPU provider). Spinning is set
+//! explicitly because ONNX Runtime builds disagree on its default. With
+//! it on, the idle threads of one session's pool spin on the cores the
+//! next session needs (a balloon runs the line finder, then the
+//! recogniser; a Japanese read alternates encoder and decoder), and on
+//! four cores a balloon took about twice as long and a Japanese read
+//! about four times as long (`docs/dev/ocr.md`, "ONNX Runtime 1.31"). `ort` rc.15 maps
 //! `GraphOptimizationLevel::Level3` to `ORT_ENABLE_LAYOUT`; `All` is
 //! what `Level3` meant in rc.10.
 //!
@@ -136,7 +140,7 @@ pub fn build(path: &Path, intra_threads: usize) -> anyhow::Result<Session> {
         .and_then(|b| {
             b.with_optimization_level(GraphOptimizationLevel::All)
                 .and_then(|b| b.with_intra_threads(intra_threads))
-                .and_then(|b| b.with_intra_op_spinning(true))
+                .and_then(|b| b.with_intra_op_spinning(false))
                 .map_err(ort::Error::from)
         })
         .and_then(|mut b| b.commit_from_file(path))

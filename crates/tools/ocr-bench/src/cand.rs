@@ -37,12 +37,12 @@ pub(crate) fn load_session(
     let t = std::time::Instant::now();
     // The server's environment (one per process) and its session options:
     // every graph optimization (`All`, which was `Level3` before `ort`
-    // rc.15), intra-op spinning on, `intra_threads` (0 = ONNX Runtime's
+    // rc.15), intra-op spinning off, `intra_threads` (0 = ONNX Runtime's
     // default count, for the `timefree` step).
     let env = server::ocr::session::environment()?;
     let mut b = Session::builder(env)?
         .with_optimization_level(GraphOptimizationLevel::All)
-        .and_then(|b| b.with_intra_op_spinning(true))
+        .and_then(|b| b.with_intra_op_spinning(false))
         .map_err(ort::Error::<()>::from)?;
     if intra_threads > 0 {
         b = b
