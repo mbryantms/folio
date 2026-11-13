@@ -276,12 +276,18 @@ impl FallbackBatch {
 /// in no defined order.
 ///
 /// Shape: the distinct (name, volume) keys are joined to `series` on the
-/// volume equality first (two hash-joinable equalities, `UNION`-ed so a
-/// series whose year and volume both equal the key appears once), and
-/// only those pairs get a `similarity`: the pairs CTE is `MATERIALIZED`
-/// so the planner cannot fold the similarity qual into the join and run
-/// it against every series (the per-entry statement's plan evaluated
-/// `similarity` on every series row before the year/volume test); the issues are then looked up by
+/// volume equality (two hash-joinable equalities, `UNION`-ed so a series
+/// whose year and volume both equal the key appears once), and only those
+/// pairs get a `similarity`. That ordering is the gain over the per-entry
+/// statement, whose plan evaluated `similarity` on every series row
+/// before the year/volume test. The similarity condition needs both the
+/// key and the series, so it can only run as a join condition; under a
+/// hash join the volume equality is the hash clause and runs first in any
+/// case. `MATERIALIZED` covers the remaining case, a nested-loop join,
+/// where both conditions would be join-filter quals evaluated in
+/// estimated-cost order, and Postgres costs `similarity()` below the
+/// cast-and-compare: the fence makes the volume equality come first
+/// whatever join the planner picks. The issues are then looked up by
 /// (candidate series, number) through the `issues (series_id, …)` index.
 /// The similarity and the threshold comparison are Postgres's, with the
 /// same types as before (`similarity()` is `real`, the threshold is bound
@@ -326,6 +332,13 @@ async fn fallback_batch<C: ConnectionTrait>(
             .ok()
             .and_then(|w| out.get_mut(w))
         else {
+            // `wanted` is an ordinal of `$4`, so this cannot happen; skip
+            // the row in release builds rather than fail the match.
+            debug_assert!(
+                false,
+                "fallback row with out-of-range wanted {}",
+                row.wanted
+            );
             continue;
         };
         slot.push(FallbackRow {

@@ -24,13 +24,16 @@ const XML: &str = r#"<?xml version="1.0"?>
 /// The catalog hosts are constants, so a test cannot serve the blob. The
 /// catalog source here names a repository that does not exist, with a
 /// cached index that is fresh (no tree request) and lists the list's path
-/// under the SHA the list already stores. Before the index SHA was
-/// compared ahead of the download, check and refresh downloaded the blob
-/// first and only then compared SHAs: against this repository that
-/// download fails (`404`, or a transport error without network), so both
-/// calls failed. Now neither makes a network request: both succeed and
-/// report nothing changed upstream, the refresh re-matching the stored
-/// entries.
+/// under the SHA the list already stores and at 64 MiB, over the 4 MiB
+/// blob cap. Before the index SHA was compared ahead of the download,
+/// check and refresh went through `fetch_blob`, whose size check refused
+/// that entry with `TooLarge` before any request was made, so both calls
+/// failed; a smaller listed size would have reached the download, which
+/// fails against this repository too. Because the old failure needed no
+/// network, the test is deterministic whatever the network does. Now
+/// neither call downloads or size-checks the unchanged blob: both succeed
+/// and report nothing changed upstream, the refresh re-matching the
+/// stored entries.
 #[tokio::test]
 async fn unchanged_catalog_sha_skips_the_blob_download() {
     let app = TestApp::spawn().await;
@@ -53,8 +56,9 @@ async fn unchanged_catalog_sha_skips_the_blob_download() {
                 "name": "Unchanged List",
                 "publisher": "Marvel",
                 "sha": SHA,
-                // Over the blob cap: an unchanged blob is not size-checked
-                // either (stored content is not re-checked).
+                // Over the blob cap: the old code failed here with
+                // `TooLarge` before any request; an unchanged blob is not
+                // size-checked (stored content is not re-checked).
                 "size": 64 * 1024 * 1024,
             }]
         }))),

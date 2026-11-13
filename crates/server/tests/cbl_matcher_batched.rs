@@ -212,6 +212,14 @@ pub async fn seed_fixture(db: &sea_orm::DatabaseConnection) -> Fixture {
         )
         .await;
     }
+    // NULL year (reachable only through its volume), NULL volume, and a
+    // non-ASCII name.
+    let null_year = series(db, lib, "Null Year Run", None, Some(7)).await;
+    issue(db, lib, null_year, "1", Kind::Active).await;
+    let null_volume = series(db, lib, "Null Volume Run", Some(2015), None).await;
+    issue(db, lib, null_volume, "1", Kind::Active).await;
+    let pokemon = series(db, lib, "Pokémon Adventures", Some(1997), None).await;
+    issue(db, lib, pokemon, "1", Kind::Active).await;
     // Background series for the generated entries.
     for g in 0..20 {
         let year = 1990 + (g % 7);
@@ -283,7 +291,14 @@ fn rule_entries() -> Vec<EntryToMatch> {
         nowhere,    // 23: ids miss, name matches
         entry("SAGA!", "1.5", Some("2012")),
         entry("Saga", "1.50", Some("2012")),
-        entry("Batman", "1", Some("2011")), // duplicate of 0
+        entry("Batman", "1", Some("2011")),     // duplicate of 0
+        entry("Null Year Run", "1", Some("7")), // 27: NULL year, by volume
+        entry("Null Year Run", "1", Some("2000")),
+        entry("Null Volume Run", "1", Some("2015")), // 29: NULL volume, by year
+        entry("Null Volume Run", "1", Some("1")),
+        entry("Pokémon Adventures", "1", Some("1997")), // 31: non-ASCII
+        entry("POKÉMON ADVENTURES!", "1", Some("1997")),
+        entry("Pokemon Adventures", "1", Some("1997")),
     ]
 }
 
@@ -306,6 +321,10 @@ fn generated_entries(n: usize) -> Vec<EntryToMatch> {
         "Encrypted Run",
         "Weird Tales",
         "Id Run",
+        "Null Year Run",
+        "Null Volume Run",
+        "Pokémon Adventures",
+        "pokémon adventures",
         "",
     ]
     .iter()
@@ -330,6 +349,9 @@ fn generated_entries(n: usize) -> Vec<EntryToMatch> {
         Some("1993"),
         Some("1996"),
         Some(" 1991 "),
+        Some("7"),
+        Some("1997"),
+        Some("2015"),
         Some("vol"),
     ];
     let numbers = ["1", "2", "3", "4", " 2 ", "1.5", "5", ""];
@@ -489,6 +511,13 @@ async fn batched_matcher_agrees_with_the_per_entry_reference() {
     assert_eq!(new[23].method, Some("series_volume_number"));
     assert_eq!(status(24), Matched, "1.5 by normalized name");
     assert_eq!(status(25), Missing, "number_raw compares as text");
+    assert_eq!(status(27), Matched, "NULL year, matched through the volume");
+    assert_eq!(status(28), Missing);
+    assert_eq!(status(29), Matched, "NULL volume, matched through the year");
+    assert_eq!(status(30), Missing);
+    assert_eq!(status(31), Matched, "non-ASCII name");
+    assert_eq!(status(32), Matched, "non-ASCII name, case and punctuation");
+    assert_eq!(new[31].issue_id, new[32].issue_id);
 
     // The generated half is not degenerate either.
     let generated = &new[rules..];
