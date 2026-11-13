@@ -124,12 +124,13 @@ the repository commit that was current on 2026-11-12. Address of a file:
 
 ### Models that are not in `models.json`
 
-The engines the application ships are not fetched by `fetch.py`:
+`fetch.py` does not fetch the previous detector:
 
 - **comic-text-detector** (the previous detector, `ctd`) is pinned in
   `crates/tools/ocr-bench/src/engines.rs` (`CTD_MODEL`: repository,
   revision, size, SHA-256). The server no longer fetches it. `ocr-bench`
   loads it only when it is already in the Hugging Face cache with the pinned
   digest, and otherwise stops.
-- **Tesseract language data** comes from the `tesseract-rs` build
-  (`docs/dev/ocr.md`, "Tesseract data").
+
+The tool no longer runs Tesseract, the previous Western recogniser, so it
+needs no Tesseract language data.

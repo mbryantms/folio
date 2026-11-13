@@ -1,8 +1,9 @@
 # ocr-bench
 
-A development-only harness that times the OCR pipeline and scores its text
-against reference transcriptions, for the previous engines and for candidate
-replacements, on the same pages and through the same scoring.
+A development-only harness that times OCR engines and scores their text
+against reference transcriptions: the candidate engines the server's current
+pipeline was chosen from, and the previous detector, on the same pages and
+through the same scoring.
 
 It is not part of the application. Nothing depends on this crate, the image
 build (`cargo build --bin server --bin migration`) does not compile it, and
@@ -14,28 +15,24 @@ Pipeline background: [`docs/dev/ocr.md`](../../../docs/dev/ocr.md).
 
 ## What it measures
 
-### The previous pipeline (the `full` step)
+### The previous detector (the `full` step)
 
-The pipeline the server ran before the engine swap: comic-text-detector's
-model and Tesseract. The server no longer runs either; the step stays as the
-baseline the candidates were chosen against. It calls the server's own code
-where that code still exists (`util::image_decode::decode_limited`,
-`WesternOcr::recognize`, which the server keeps for this tool, and
-`postprocess::clean`) and runs comic-text-detector's model in a session the
-tool builds (`ctd`, with `--threads`). The report has:
+The detector the server ran before the engine swap: comic-text-detector's
+model, in a session the tool builds (`ctd`, with `--threads`); the server no
+longer runs it. Pages are decoded with the server's own
+`util::image_decode::decode_limited`. The report has:
 
 - **Timings**, cold (first run in the process) and warm (median, 90th
-  percentile): file read, page decode, model load, detection, crop,
-  preprocessing, the Tesseract call, postprocess; and latencies composed
-  from them (outlines appear, tap one balloon, read the whole page).
+  percentile): file read, page decode, model load and detection, and the
+  composed latency until outlines appear (decode + detect).
 - **Detection per page**, with contact sheets (detected boxes over the page,
   reference boxes in green).
-- **End to end**: detect, recognise every box, pair the results with the
-  reference regions.
-- **Recognition alone** on the reference boxes with a 0, 4 and 8 % margin.
-- **Tesseract variants**: one change each against the server's settings
-  (binarisation, page-segmentation mode, scale, language data).
-- The 25 worst regions, as crops with reference and output.
+
+The previous Western recogniser, Tesseract, is no longer part of Folio or of
+this tool. Before its removal the step also measured it (recognition alone,
+end to end, Tesseract variants, the worst regions); the figures recorded then
+are in [`docs/dev/ocr.md`](../../../docs/dev/ocr.md) and are not reproducible
+with this tool any more.
 
 ### Candidate engines (sections A to E)
 
@@ -54,9 +51,7 @@ Engines, by the names the arguments take:
 | detector | `ctd` | comic-text-detector's model (the previous detector) in a session the tool builds, with `--threads` |
 | detector | `ogk-s`, `ogk-m` | ogkalu comic text and bubble detector, small and medium 8-bit models; units `bubble` and `text_bubble` |
 | detector | `ppdetN` | PP-OCRv5 text-line detector on the page at long side N; units `lines` and `blocks` |
-| recogniser | `tess-today` | the previous Western recogniser (Tesseract, kept in the server for this tool), scored after the server's postprocess |
-| recogniser | `tess-best` | the Tesseract variant named by `--best-tess` |
-| recogniser | `pp-v5-en`, `pp-v5-latin`, `pp-v6-tiny`, `pp-v6-small`, `pp-v6-medium` | PP-OCR line recognisers, scored on their raw text |
+| recogniser | `pp-v5-en`, `pp-v5-latin`, `pp-v6-tiny`, `pp-v6-small`, `pp-v6-medium` | PP-OCR line recognisers, scored on their text as read |
 | line split | `ppdet`, `ppdet2x` | PP-OCRv5 line detector on the crop, or on the crop enlarged 2x |
 | line split | `page-lines`, `ctd-lines` | lines from a page-level pass that fall inside the crop |
 | line split | `profile`, `none` | row projection profile; the whole crop as one line (control) |
@@ -81,7 +76,6 @@ caps each region at 100 % and counts a missed one as 100 %.
 | The 12 page images | not in the repository; `python3 -I reference/fetch.py pages DIR` |
 | Candidate models | not in the repository; `python3 -I reference/fetch.py models DIR` (14 files, 178 MB; `--only TEXT` for a subset) |
 | Previous detector model | comic-text-detector's model in the Hugging Face cache; the tool refuses to run it unless it is already there with the digest pinned in `src/engines.rs` (the tool never downloads it) |
-| Tesseract language data | the `tesseract-rs` build, or `TESSDATA_PREFIX` |
 
 `fetch.py` takes every address, size and SHA-256 from
 [`reference/pages.json`](reference/pages.json) and
@@ -115,17 +109,17 @@ runs one step:
 
 | Step | What it runs | Needs a quiet machine |
 |---|---|---|
-| `full` | the previous pipeline: timings, accuracy, Tesseract variants, contact sheets | yes |
+| `full` | the previous detector: decode and detection timings, detection counts, contact sheets | yes |
 | `cand` | sections A, B and C for every detector and recogniser | for its time columns |
 | `tap` | section C for `BEST_DET` with each recogniser in `TAP_RECS` on `BEST_SPLIT` lines; the previous detector is not run | no (ignore its time columns) |
-| `time4` | 4 pinned cores: the previous pipeline, the chosen pair, `ALT_DET`, and a recogniser thread sweep (1, 2, 4) | yes |
-| `time8` | 8 pinned cores: the previous pipeline and the chosen pair | yes |
-| `timefree` | no pinning, ONNX Runtime default threads: the previous pipeline and the chosen pair | yes |
+| `time4` | 4 pinned cores: the previous detector, the chosen pair, `ALT_DET`, and a recogniser thread sweep (1, 2, 4) | yes |
+| `time8` | 8 pinned cores: the previous detector and the chosen pair | yes |
+| `timefree` | no pinning, ONNX Runtime default threads: the previous detector and the chosen pair | yes |
 | `workers` | throughput of the chosen pair as W processes x T threads on 8 and on 4 pinned cores | yes |
 | `omp` | the previous detector on 4 pinned cores with `OMP_NUM_THREADS` = 1, 4, 8 | yes |
 
-Today's detector can take tens of seconds a page, so `full`, `cand` and the
-timing steps are slow; `tap` is the quick accuracy check.
+The previous detector can take tens of seconds a page, so `full`, `cand` and
+the timing steps are slow; `tap` is the quick accuracy check.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -138,15 +132,15 @@ timing steps are slow; `tap` is the quick accuracy check.
 | `CPU4`, `CPU8` | `0,2,4,6` and `0,2,…,14` | CPU lists for `taskset` in the pinned steps |
 | `LOAD_MAX` | `2` | 1-minute load average a timed run may start at |
 | `LOAD_WAIT` | `300` | seconds to wait for that before giving up |
-| `SKIP_TODAY` | unset | set to skip the previous pipeline in the timing steps |
+| `SKIP_TODAY` | unset | set to skip the previous detector in the timing steps |
 | `OCR_BENCH_ORT_PROFILE` | unset | directory for ONNX Runtime per-operator profiles of the candidate sessions |
 
 The binary can also be run directly; `ocr-bench --help` lists every
 argument, and `--only TEXT` / `--max-pages N` limit the pages.
 
 Each run writes `<out>/<label>.md` and `<out>/<label>.json` (every
-per-region record), plus `<label>-sheets/` and `<label>-worst/` where they
-apply. The reports name the CPU and local paths of the machine they ran on:
+per-region record), plus `<label>-sheets/` (the `full` step) and
+`<label>-worst/` (the `cand` step) where they apply. The reports name the CPU and local paths of the machine they ran on:
 keep result directories out of the repository.
 
 ## Timings need a quiet machine and pinned cores
@@ -193,15 +187,13 @@ busy machine.
 - **Candidate results describe this tool's own pre- and postprocessing** of
   those models (`src/cand.rs`: axis-aligned line boxes, greedy decoding), not
   the upstream reference implementations.
-- **Tesseract** is whatever version the local `tesseract-rs` build linked;
-  the report records it. It can differ from the version in the image.
 - **Two reference pages are re-encoded from JPEG 2000** by `fetch.py`. If
   the local Pillow build writes different bytes, the page is refused unless
   `--accept-reencode` is given, and figures for it may then differ slightly.
 
 ## Adding an engine
 
-A detector implements `PageDetector` and a recogniser `CropRecognizer`
-(`src/engines.rs`); timing, scoring and reports are shared. Candidate
-engines on ONNX Runtime live in `src/cand.rs` and are registered in
+A detector implements `PageDetector` (`src/engines.rs`); timing, scoring
+and reports are shared. Candidate engines on ONNX Runtime, detectors and
+line recognisers alike, live in `src/cand.rs` and are registered in
 `load_engines` (`src/stage2.rs`).

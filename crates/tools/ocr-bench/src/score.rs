@@ -1,5 +1,5 @@
-//! Text scoring: normalisation, character and word error rates with
-//! `[?]` wildcards, and a one-to-one assignment (Hungarian method).
+//! Text scoring: normalisation, and character and word error rates with
+//! `[?]` wildcards.
 
 /// Stands in for a reference `[?]` (an illegible word) after
 /// normalisation. Never produced by a recogniser.
@@ -161,106 +161,6 @@ pub(crate) fn wer(reference: &str, hyp: &str) -> f64 {
     prev[m] as f64 / known as f64
 }
 
-/// Cost that marks a pair as not allowed.
-pub(crate) const FORBIDDEN: f64 = 1.0e6;
-
-/// Minimum-cost one-to-one assignment of rows to columns. Returns, for
-/// each row, the column it got (`None` when there are more rows than
-/// columns, or when its only option was a [`FORBIDDEN`] pair).
-pub(crate) fn assign(cost: &[Vec<f64>]) -> Vec<Option<usize>> {
-    let n = cost.len();
-    if n == 0 {
-        return Vec::new();
-    }
-    let m = cost[0].len();
-    if m == 0 {
-        return vec![None; n];
-    }
-    // The algorithm below needs rows <= columns; transpose if not.
-    if n > m {
-        let t: Vec<Vec<f64>> = (0..m)
-            .map(|j| (0..n).map(|i| cost[i][j]).collect())
-            .collect();
-        let col_for = hungarian(&t);
-        let mut out = vec![None; n];
-        for (j, i) in col_for.into_iter().enumerate() {
-            if cost[i][j] < FORBIDDEN {
-                out[i] = Some(j);
-            }
-        }
-        return out;
-    }
-    hungarian(cost)
-        .into_iter()
-        .enumerate()
-        .map(|(i, j)| (cost[i][j] < FORBIDDEN).then_some(j))
-        .collect()
-}
-
-/// Classic O(n^2 m) Hungarian method for n <= m; returns the column of
-/// each row.
-fn hungarian(a: &[Vec<f64>]) -> Vec<usize> {
-    let n = a.len();
-    let m = a[0].len();
-    let inf = f64::INFINITY;
-    let mut u = vec![0.0; n + 1];
-    let mut v = vec![0.0; m + 1];
-    let mut p = vec![0usize; m + 1];
-    let mut way = vec![0usize; m + 1];
-    for i in 1..=n {
-        p[0] = i;
-        let mut j0 = 0usize;
-        let mut minv = vec![inf; m + 1];
-        let mut used = vec![false; m + 1];
-        loop {
-            used[j0] = true;
-            let i0 = p[j0];
-            let mut delta = inf;
-            let mut j1 = 0usize;
-            for j in 1..=m {
-                if !used[j] {
-                    let cur = a[i0 - 1][j - 1] - u[i0] - v[j];
-                    if cur < minv[j] {
-                        minv[j] = cur;
-                        way[j] = j0;
-                    }
-                    if minv[j] < delta {
-                        delta = minv[j];
-                        j1 = j;
-                    }
-                }
-            }
-            for j in 0..=m {
-                if used[j] {
-                    u[p[j]] += delta;
-                    v[j] -= delta;
-                } else {
-                    minv[j] -= delta;
-                }
-            }
-            j0 = j1;
-            if p[j0] == 0 {
-                break;
-            }
-        }
-        loop {
-            let j1 = way[j0];
-            p[j0] = p[j1];
-            j0 = j1;
-            if j0 == 0 {
-                break;
-            }
-        }
-    }
-    let mut row_to_col = vec![0usize; n];
-    for j in 1..=m {
-        if p[j] != 0 {
-            row_to_col[p[j] - 1] = j - 1;
-        }
-    }
-    row_to_col
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,23 +210,5 @@ mod tests {
         assert_eq!(wer("A B C", "A B C"), 0.0);
         assert!((wer("A B C", "A X C") - 1.0 / 3.0).abs() < 1e-9);
         assert!((wer("A B C", "A B") - 1.0 / 3.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn assignment_is_one_to_one_and_optimal() {
-        // Greedy would give row 0 column 0 (0.1) and row 1 column 1 (0.9);
-        // the optimum is 0->1, 1->0 (0.2 + 0.2).
-        let cost = vec![vec![0.1, 0.2], vec![0.2, 0.9]];
-        assert_eq!(assign(&cost), vec![Some(1), Some(0)]);
-    }
-
-    #[test]
-    fn assignment_handles_rectangles_and_forbidden() {
-        let cost = vec![vec![0.5], vec![0.1], vec![FORBIDDEN]];
-        assert_eq!(assign(&cost), vec![None, Some(0), None]);
-        let cost = vec![vec![FORBIDDEN, 0.3, 0.1]];
-        assert_eq!(assign(&cost), vec![Some(2)]);
-        let cost = vec![vec![FORBIDDEN]];
-        assert_eq!(assign(&cost), vec![None]);
     }
 }

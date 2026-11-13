@@ -2,7 +2,7 @@
 //! "tap one balloon" path end to end (C), and timings (D, E).
 //!
 //! Shares the page list, truth loading, crop geometry and text scoring
-//! with the baseline run in `main.rs`.
+//! with the previous detector's run in `main.rs`.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -15,14 +15,13 @@ use server::ocr::recognizer::Recognition;
 use server::util::image_decode::decode_limited;
 
 use crate::cand::{CtdOwn, ModelMeta, ModelPaths, Ogkalu, PP_RECS, PaddleDet, PaddleDetPage};
-use crate::engines::{CropRecognizer, DetBox, FolioWestern, PageDetector};
+use crate::engines::{DetBox, PageDetector};
 use crate::split::{self, Split};
 use crate::stats::{Summary, median, ms_since, summarize, timed};
-use crate::tess::{TessConfig, TessEngine};
 use crate::truth::{self, PageFile, RefRegion};
 use crate::{
-    Agg, Args, Grouped, aggregate, area, crop, det_box, grouped, grow, inter, nested_flags,
-    score_pair, to_rect,
+    Agg, Args, Grouped, area, crop, det_box, grouped, grow, inter, nested_flags, score_pair,
+    to_rect,
 };
 
 fn status_kb(field: &str) -> Option<u64> {
@@ -51,8 +50,6 @@ struct Engines {
     ppdet_page: Option<PaddleDetPage>,
     ogk: Vec<(String, Ogkalu)>,
     ctd: Option<CtdOwn>,
-    tess_today: Option<FolioWestern>,
-    tess_best: Option<TessEngine>,
     loads: Vec<LoadInfo>,
 }
 
@@ -84,7 +81,7 @@ fn track(
     Ok(())
 }
 
-fn load_engines(args: &Args, rt: &tokio::runtime::Runtime) -> anyhow::Result<Engines> {
+fn load_engines(args: &Args) -> anyhow::Result<Engines> {
     let models = ModelPaths {
         root: args
             .models
@@ -174,7 +171,7 @@ fn load_engines(args: &Args, rt: &tokio::runtime::Runtime) -> anyhow::Result<Eng
         }
     }
     let mut ctd = None;
-    if det_names.iter().any(|d| d == "ctd") || rec_names.iter().any(|_| false) {
+    if det_names.iter().any(|d| d == "ctd") {
         let (p, _, _) = crate::engines::ctd_model_path()?;
         track(
             &mut loads,
@@ -188,50 +185,12 @@ fn load_engines(args: &Args, rt: &tokio::runtime::Runtime) -> anyhow::Result<Eng
             "session build",
         )?;
     }
-    let mut tess_today = None;
-    let mut tess_best = None;
-    if rec_names.iter().any(|r| r == "tess-today") {
-        track(
-            &mut loads,
-            "tess-today",
-            &mut || {
-                let (w, _) = rt.block_on(FolioWestern::load())?;
-                tess_today = Some(w);
-                Ok(None)
-            },
-            "Tesseract init",
-        )?;
-    }
-    if rec_names.iter().any(|r| r == "tess-best") {
-        let tessdata = crate::tessdata_dir()?;
-        let sys = args
-            .system_tessdata
-            .join("eng.traineddata")
-            .exists()
-            .then_some(args.system_tessdata.as_path());
-        let cfg = TessConfig::variants(&tessdata, sys)
-            .into_iter()
-            .find(|c| c.name == args.best_tess)
-            .ok_or_else(|| anyhow::anyhow!("no Tesseract variant {}", args.best_tess))?;
-        let work = args.out.join(format!("{}-work", args.label));
-        track(
-            &mut loads,
-            "tess-best",
-            &mut || {
-                tess_best = Some(TessEngine::new(cfg.clone(), &work)?);
-                Ok(None)
-            },
-            "Tesseract init",
-        )?;
-    }
     Ok(Engines {
         recs,
         ppdet,
         ppdet_page,
         ogk,
         ctd,
-        tess_today,
-        tess_best,
         loads,
     })
 }
@@ -428,12 +387,11 @@ struct Rec {
     colour_case: String,
     reference: String,
     engine: String,
-    raw: String,
-    clean: String,
-    cer_raw: Option<f64>,
-    cer_clean: Option<f64>,
-    wer_raw: Option<f64>,
-    wer_clean: Option<f64>,
+    /// The recogniser's text as read (lines joined with newlines), scored
+    /// as is.
+    text: String,
+    cer: Option<f64>,
+    wer: Option<f64>,
     lines: usize,
     ms: f64,
     crop_px: (u32, u32, u32, u32),
@@ -468,9 +426,7 @@ fn rec_record(
     rect: (u32, u32, u32, u32),
     note: String,
 ) -> Rec {
-    let (cl, _) = crate::clean(rec.clone());
-    let (cr, wr) = score_pair(reference, &rec.text);
-    let (cc, wc) = score_pair(reference, &cl.text);
+    let (cer, wer) = score_pair(reference, &rec.text);
     Rec {
         page: page.into(),
         ref_id: r.id.clone(),
@@ -478,12 +434,9 @@ fn rec_record(
         colour_case: r.colour_case.clone(),
         reference: crate::score::display(reference),
         engine,
-        raw: rec.text.clone(),
-        clean: cl.text,
-        cer_raw: Some(cr),
-        cer_clean: Some(cc),
-        wer_raw: Some(wr),
-        wer_clean: Some(wc),
+        text: rec.text.clone(),
+        cer: Some(cer),
+        wer: Some(wer),
         lines,
         ms,
         crop_px: rect,
@@ -499,12 +452,9 @@ fn missed_record(page: &str, r: &RefRegion, reference: &str, engine: String, not
         colour_case: r.colour_case.clone(),
         reference: crate::score::display(reference),
         engine,
-        raw: String::new(),
-        clean: String::new(),
-        cer_raw: None,
-        cer_clean: None,
-        wer_raw: None,
-        wer_clean: None,
+        text: String::new(),
+        cer: None,
+        wer: None,
         lines: 0,
         ms: 0.0,
         crop_px: (0, 0, 0, 0),
@@ -684,7 +634,7 @@ fn accuracy_page(
         .unwrap_or_default();
     let mut jobs: Vec<(usize, split::Rect, &'static str)> = Vec::new();
     for (ri, rp) in ref_px.iter().enumerate() {
-        if let Some(rect) = to_rect(grow(*rp, args.variant_margin), pw, ph) {
+        if let Some(rect) = to_rect(grow(*rp, args.margin), pw, ph) {
             jobs.push((ri, rect, ""));
         }
         let g = grow(*rp, 0.25);
@@ -701,34 +651,6 @@ fn accuracy_page(
     for (ri, rect, sfx) in jobs {
         let r = &refs[ri];
         let c = crop(&page, rect);
-        if let Some(t) = eng.tess_today.as_mut() {
-            let (o, ms) = timed(|| t.recognize(&c));
-            out.recog.push(rec_record(
-                &pf.key,
-                r,
-                &refs_norm[ri],
-                format!("tess-today{sfx}"),
-                &o?.rec,
-                0,
-                ms,
-                rect,
-                String::new(),
-            ));
-        }
-        if let Some(t) = eng.tess_best.as_mut() {
-            let (o, ms) = timed(|| t.recognize(&c));
-            out.recog.push(rec_record(
-                &pf.key,
-                r,
-                &refs_norm[ri],
-                format!("tess-best ({}){sfx}", t.cfg.name),
-                &o?.rec,
-                0,
-                ms,
-                rect,
-                String::new(),
-            ));
-        }
         for &s in &splits {
             let ((rects, fell_back), ms) = {
                 let t = Instant::now();
@@ -819,15 +741,6 @@ fn taps(
         let d = d.as_str();
         match d {
             "ctd" => {
-                if eng.tess_today.is_some() {
-                    combos.push((
-                        format!("{d}(panel) + tess-today"),
-                        d,
-                        "panel",
-                        "tess-today",
-                        Split::None,
-                    ));
-                }
                 for &sp in &tap_splits {
                     combos.push((
                         format!("{d}(panel) + {}/{}", args.best_pp, sp.name()),
@@ -850,15 +763,6 @@ fn taps(
                         ));
                     }
                 }
-                if eng.tess_today.is_some() {
-                    combos.push((
-                        format!("{d}(text_bubble) + tess-today"),
-                        d,
-                        "text_bubble",
-                        "tess-today",
-                        Split::None,
-                    ));
-                }
             }
             _ => combos.push((
                 format!("{d}(blocks) + {} on its own lines", args.best_pp),
@@ -869,11 +773,11 @@ fn taps(
             )),
         }
     }
-    // A PP combination needs the `--best-pp` recogniser loaded; without it
+    // A combination needs the `--best-pp` recogniser loaded; without it
     // only its taps on no box would be recorded, which reads as a result.
-    if best_pp.is_none() {
-        combos.retain(|c| c.3 == "tess-today");
-    }
+    let Some(best_pp) = best_pp else {
+        return Ok(());
+    };
     for (name, d, unit, recn, sp) in combos {
         let boxes = &det_boxes[d];
         let line_boxes: Vec<[f64; 4]> = boxes.iter().map(det_box).collect();
@@ -917,18 +821,12 @@ fn taps(
             let c = crop(page, rect);
             let t = Instant::now();
             let (recog, n) = match recn {
-                "tess-today" => (
-                    eng.tess_today.as_mut().expect("loaded").recognize(&c)?.rec,
-                    0,
-                ),
                 "pp" => {
-                    let Some(bi) = best_pp else { continue };
                     let (rects, _) =
                         split_rects(sp, eng, &c, rect, &ctd_page_lines, &pp_page_lines)?;
-                    pp_balloon(&mut eng.recs[bi], &c, &rects, true)?
+                    pp_balloon(&mut eng.recs[best_pp], &c, &rects, true)?
                 }
                 _ => {
-                    let Some(bi) = best_pp else { continue };
                     let members = &blks[ui].1;
                     let rects: Vec<split::Rect> = members
                         .iter()
@@ -946,7 +844,7 @@ fn taps(
                             )
                         })
                         .collect();
-                    pp_balloon(&mut eng.recs[bi], &c, &rects, true)?
+                    pp_balloon(&mut eng.recs[best_pp], &c, &rects, true)?
                 }
             };
             let ms = ms_since(t);
@@ -1040,7 +938,7 @@ fn timing_page(
     let balloons: Vec<(u32, u32, u32, u32)> = match refs {
         Some(r) => r
             .iter()
-            .filter_map(|x| to_rect(grow(x.bbox_px(pw, ph), args.variant_margin), pw, ph))
+            .filter_map(|x| to_rect(grow(x.bbox_px(pw, ph), args.margin), pw, ph))
             .collect(),
         None => boxes_by
             .values()
@@ -1091,129 +989,86 @@ fn timing_page(
                     .or_default()
                     .push(total);
             }
-            if let Some(tt) = eng.tess_today.as_mut() {
-                let (r, ms) = timed(|| tt.recognize(&c));
-                r?;
-                if t.first_balloon.contains_key("tess-today") {
-                    t.balloon_batched
-                        .entry("tess-today".into())
-                        .or_default()
-                        .push(ms);
-                } else {
-                    t.first_balloon.insert("tess-today".into(), ms);
-                }
-            }
-            if let Some(tb) = eng.tess_best.as_mut() {
-                let (r, ms) = timed(|| tb.recognize(&c));
-                r?;
-                t.balloon_batched
-                    .entry("tess-best".into())
-                    .or_default()
-                    .push(ms);
-            }
         }
     }
 
     // Whole page and tap, per combo, measured end to end on this page.
-    let best_pp = eng.recs.iter().position(|r| r.name == args.best_pp);
+    let Some(best_pp) = eng.recs.iter().position(|r| r.name == args.best_pp) else {
+        return Ok(());
+    };
     for d in &det_names {
         let unit = match d.as_str() {
             "ctd" => "panel",
             "ogk-s" | "ogk-m" => "bubble",
             _ => "blocks",
         };
-        let mut recogs: Vec<&str> = Vec::new();
-        if best_pp.is_some() {
-            recogs.push("pp");
-        }
-        if eng.tess_today.is_some() && (d.starts_with("ctd")) {
-            recogs.push("tess-today");
-        }
-        for recn in recogs {
-            let combo = format!(
-                "{d}({unit}) + {}",
-                if recn == "pp" {
-                    format!(
-                        "{}/{}",
-                        args.best_pp,
-                        if unit == "blocks" {
-                            "own lines"
-                        } else {
-                            best_split.name()
-                        }
-                    )
-                } else {
-                    recn.to_owned()
-                }
-            );
-            let t0 = Instant::now();
-            let p2 = decode_limited(&bytes)?;
-            let decode_ms = ms_since(t0);
-            let mut po = PageOut::default();
-            run_detectors(eng, &p2, std::slice::from_ref(d), &mut po)?;
-            let det_ms = po.det_ms.get(d).copied().unwrap_or(0.0);
-            let boxes = po.det_boxes.remove(d).unwrap_or_default();
-            let line_boxes: Vec<[f64; 4]> = boxes.iter().map(det_box).collect();
-            let blks = if unit == "blocks" {
-                blocks(&line_boxes)
+        let combo = format!(
+            "{d}({unit}) + {}/{}",
+            args.best_pp,
+            if unit == "blocks" {
+                "own lines"
             } else {
-                Vec::new()
-            };
-            let us = units(d, unit, &boxes);
-            let ctd_lines: Vec<[f64; 4]> =
-                boxes.iter().filter(|x| x.class == 1).map(det_box).collect();
-            let mut unit_ms = Vec::new();
-            for (ui, u) in us.iter().enumerate() {
-                let Some(rect) = to_rect(*u, pw, ph) else {
-                    continue;
-                };
-                let tu = Instant::now();
-                let c = crop(&p2, rect);
-                match recn {
-                    "tess-today" => {
-                        eng.tess_today.as_mut().expect("loaded").recognize(&c)?;
-                    }
-                    _ => {
-                        let bi = best_pp.expect("checked");
-                        let rects = if unit == "blocks" {
-                            blks[ui]
-                                .1
-                                .iter()
-                                .filter_map(|&li| {
-                                    let l = line_boxes[li];
-                                    to_rect(
-                                        [
-                                            l[0] - f64::from(rect.0),
-                                            l[1] - f64::from(rect.1),
-                                            l[2] - f64::from(rect.0),
-                                            l[3] - f64::from(rect.1),
-                                        ],
-                                        rect.2,
-                                        rect.3,
-                                    )
-                                })
-                                .collect()
-                        } else {
-                            split_rects(best_split, eng, &c, rect, &ctd_lines, &[])?.0
-                        };
-                        pp_balloon(&mut eng.recs[bi], &c, &rects, true)?;
-                    }
-                }
-                unit_ms.push(ms_since(tu));
+                best_split.name()
             }
-            let total = ms_since(t0);
-            t.whole_page.entry(combo.clone()).or_default().push(total);
-            t.units_per_page
+        );
+        let t0 = Instant::now();
+        let p2 = decode_limited(&bytes)?;
+        let decode_ms = ms_since(t0);
+        let mut po = PageOut::default();
+        run_detectors(eng, &p2, std::slice::from_ref(d), &mut po)?;
+        let det_ms = po.det_ms.get(d).copied().unwrap_or(0.0);
+        let boxes = po.det_boxes.remove(d).unwrap_or_default();
+        let line_boxes: Vec<[f64; 4]> = boxes.iter().map(det_box).collect();
+        let blks = if unit == "blocks" {
+            blocks(&line_boxes)
+        } else {
+            Vec::new()
+        };
+        let us = units(d, unit, &boxes);
+        let ctd_lines: Vec<[f64; 4]> = boxes.iter().filter(|x| x.class == 1).map(det_box).collect();
+        let mut unit_ms = Vec::new();
+        for (ui, u) in us.iter().enumerate() {
+            let Some(rect) = to_rect(*u, pw, ph) else {
+                continue;
+            };
+            let tu = Instant::now();
+            let c = crop(&p2, rect);
+            let rects = if unit == "blocks" {
+                blks[ui]
+                    .1
+                    .iter()
+                    .filter_map(|&li| {
+                        let l = line_boxes[li];
+                        to_rect(
+                            [
+                                l[0] - f64::from(rect.0),
+                                l[1] - f64::from(rect.1),
+                                l[2] - f64::from(rect.0),
+                                l[3] - f64::from(rect.1),
+                            ],
+                            rect.2,
+                            rect.3,
+                        )
+                    })
+                    .collect()
+            } else {
+                split_rects(best_split, eng, &c, rect, &ctd_lines, &[])?.0
+            };
+            pp_balloon(&mut eng.recs[best_pp], &c, &rects, true)?;
+            unit_ms.push(ms_since(tu));
+        }
+        let total = ms_since(t0);
+        t.whole_page.entry(combo.clone()).or_default().push(total);
+        t.units_per_page
+            .entry(combo.clone())
+            .or_default()
+            .push(us.len());
+        for u in &unit_ms {
+            t.tap_fresh
                 .entry(combo.clone())
                 .or_default()
-                .push(us.len());
-            for u in &unit_ms {
-                t.tap_fresh
-                    .entry(combo.clone())
-                    .or_default()
-                    .push(decode_ms + det_ms + u);
-                t.tap_detected.entry(combo.clone()).or_default().push(*u);
-            }
+                .push(decode_ms + det_ms + u);
+            t.tap_detected.entry(combo.clone()).or_default().push(*u);
         }
     }
     Ok(())
@@ -1231,14 +1086,12 @@ struct Stage2 {
     vm_hwm_mb: Option<f64>,
     pages: Vec<PageOut>,
     a_recognition: BTreeMap<String, Grouped>,
-    a_recognition_raw: BTreeMap<String, Agg>,
     a_time: BTreeMap<String, Summary>,
     split_time: BTreeMap<String, Summary>,
     ctd_line_fallbacks: (usize, usize),
     b_detection: BTreeMap<String, DetCounts>,
     det_time: BTreeMap<String, Summary>,
     c_taps: BTreeMap<String, Grouped>,
-    c_taps_raw: BTreeMap<String, Agg>,
     timing: Option<TimingOut>,
     timing_summary: BTreeMap<String, (Option<f64>, Summary)>,
     worst: BTreeMap<String, Vec<WorstRow>>,
@@ -1254,12 +1107,8 @@ struct WorstRow {
     image: String,
 }
 
-fn rec_metric(r: &Rec, clean: bool) -> (Option<f64>, Option<f64>) {
-    if clean {
-        (r.cer_clean, r.wer_clean)
-    } else {
-        (r.cer_raw, r.wer_raw)
-    }
+fn rec_metric(r: &Rec) -> (Option<f64>, Option<f64>) {
+    (r.cer, r.wer)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1291,13 +1140,9 @@ fn unix_ms() -> u128 {
 /// One worker: every page `repeat` times, decode + detect + recognise
 /// every unit, serially. Parallel workers are separate processes, each
 /// with its own sessions; the wall-clock bounds let a caller add them up.
-fn run_throughput(
-    args: &Args,
-    rt: &tokio::runtime::Runtime,
-    pages: &[PageFile],
-) -> anyhow::Result<()> {
+fn run_throughput(args: &Args, pages: &[PageFile]) -> anyhow::Result<()> {
     let loadavg_start = crate::loadavg();
-    let mut eng = load_engines(args, rt)?;
+    let mut eng = load_engines(args)?;
     let d = list(&args.dets)
         .into_iter()
         .next()
@@ -1311,8 +1156,11 @@ fn run_throughput(
         .into_iter()
         .find(|s| s.name() == args.best_split)
         .unwrap_or(Split::Profile);
-    let pp = eng.recs.iter().position(|r| r.name == args.best_pp);
-    let use_tess = pp.is_none();
+    let pp = eng
+        .recs
+        .iter()
+        .position(|r| r.name == args.best_pp)
+        .ok_or_else(|| anyhow::anyhow!("--recs must include --best-pp {}", args.best_pp))?;
     let bytes: Vec<Vec<u8>> = pages
         .iter()
         .map(|p| std::fs::read(&p.path))
@@ -1343,13 +1191,6 @@ fn run_throughput(
                 };
                 let c = crop(&page, rect);
                 n_units += 1;
-                if use_tess {
-                    eng.tess_today
-                        .as_mut()
-                        .ok_or_else(|| anyhow::anyhow!("no recogniser loaded"))?
-                        .recognize(&c)?;
-                    continue;
-                }
                 let rects = if unit == "blocks" {
                     blks[ui]
                         .1
@@ -1371,8 +1212,7 @@ fn run_throughput(
                 } else {
                     split_rects(best_split, &mut eng, &c, rect, &ctd_lines, &[])?.0
                 };
-                let bi = pp.expect("checked");
-                pp_balloon(&mut eng.recs[bi], &c, &rects, true)?;
+                pp_balloon(&mut eng.recs[pp], &c, &rects, true)?;
             }
             page_ms.push(ms_since(t0));
         }
@@ -1393,8 +1233,6 @@ fn run_throughput(
         loadavg_start,
         loadavg_end: crate::loadavg(),
         threads_after_detect: crate::read_status_field("Threads:").and_then(|v| v.parse().ok()),
-        tesseract_version: tesseract_rs::TesseractAPI::version(),
-        tessdata: String::new(),
     };
     let wall = (end - start) as f64;
     let res = Throughput {
@@ -1402,11 +1240,7 @@ fn run_throughput(
         env,
         threads: args.threads,
         detector: d.clone(),
-        recogniser: if use_tess {
-            "tess-today".into()
-        } else {
-            args.best_pp.clone()
-        },
+        recogniser: args.best_pp.clone(),
         split: if unit == "blocks" {
             "own lines".into()
         } else {
@@ -1434,16 +1268,12 @@ fn run_throughput(
 }
 
 #[expect(clippy::print_stderr, reason = "command-line progress output")]
-pub(crate) fn run(
-    args: &Args,
-    rt: &tokio::runtime::Runtime,
-    pages: &[PageFile],
-) -> anyhow::Result<()> {
+pub(crate) fn run(args: &Args, pages: &[PageFile]) -> anyhow::Result<()> {
     if args.throughput {
-        return run_throughput(args, rt, pages);
+        return run_throughput(args, pages);
     }
     let loadavg_start = crate::loadavg();
-    let mut eng = load_engines(args, rt)?;
+    let mut eng = load_engines(args)?;
     let mut outs = Vec::new();
     let mut timing = TimingOut::default();
     for (i, pf) in pages.iter().enumerate() {
@@ -1468,28 +1298,17 @@ pub(crate) fn run(
             groups.entry(r.engine.clone()).or_default().push(r.clone());
         }
     }
-    let clean_for = |engine: &str| engine.starts_with("tess");
     let a_recognition = groups
         .iter()
         .map(|(k, v)| {
-            let c = clean_for(k);
             (
                 k.clone(),
                 grouped(
                     v,
-                    |r| rec_metric(r, c),
+                    rec_metric,
                     |r| r.kind.as_str(),
                     |r| r.colour_case.as_str(),
                 ),
-            )
-        })
-        .collect();
-    let a_recognition_raw = groups
-        .iter()
-        .map(|(k, v)| {
-            (
-                k.clone(),
-                aggregate(v.iter().map(|r| rec_metric(r, !clean_for(k)))),
             )
         })
         .collect();
@@ -1550,46 +1369,34 @@ pub(crate) fn run(
     let c_taps = tap_groups
         .iter()
         .map(|(k, v)| {
-            let c = k.contains("tess");
             (
                 k.clone(),
                 grouped(
                     v,
-                    |r| rec_metric(r, c),
+                    rec_metric,
                     |r| r.kind.as_str(),
                     |r| r.colour_case.as_str(),
                 ),
             )
         })
         .collect();
-    let c_taps_raw = tap_groups
-        .iter()
-        .map(|(k, v)| {
-            (
-                k.clone(),
-                aggregate(v.iter().map(|r| rec_metric(r, !k.contains("tess")))),
-            )
-        })
-        .collect();
 
-    // Worst 25 per recogniser (best split for PP, both Tesseract paths).
+    // Worst 25 per recogniser, on the best split.
     let mut worst = BTreeMap::new();
     if args.cand {
         let dir = args.out.join(format!("{}-worst", args.label));
         for (k, v) in &groups {
-            let keep = k.starts_with("tess")
-                || k.ends_with(&format!("/{}", args.best_split))
+            let keep = k.ends_with(&format!("/{}", args.best_split))
                 || k.ends_with(&format!("/{}@tight", args.best_split));
             if !keep {
                 continue;
             }
-            let c = clean_for(k);
             let mut v: Vec<&Rec> = v.iter().collect();
             v.sort_by(|a, b| {
-                rec_metric(b, c)
+                rec_metric(b)
                     .0
                     .unwrap_or(1.0)
-                    .total_cmp(&rec_metric(a, c).0.unwrap_or(1.0))
+                    .total_cmp(&rec_metric(a).0.unwrap_or(1.0))
             });
             let sub = dir.join(crate::sanitize(k));
             std::fs::create_dir_all(&sub)?;
@@ -1606,27 +1413,27 @@ pub(crate) fn run(
                 );
                 let ip = sub.join(format!("{base}.png"));
                 crop(&img, r.crop_px).save(&ip)?;
-                let produced = if c { r.clean.clone() } else { r.raw.clone() };
+                let produced = r.text.clone();
                 std::fs::write(
                     sub.join(format!("{base}.txt")),
                     format!(
                         "reference: {}\nengine ({k}): {}\nCER: {:.3}\n",
                         r.reference,
                         produced.replace('\n', " / "),
-                        rec_metric(r, c).0.unwrap_or(1.0)
+                        rec_metric(r).0.unwrap_or(1.0)
                     ),
                 )?;
                 let _ = writeln!(
                     index,
                     "{base}\tCER {:.3}\tREF {}\tGOT {}",
-                    rec_metric(r, c).0.unwrap_or(1.0),
+                    rec_metric(r).0.unwrap_or(1.0),
                     r.reference,
                     produced.replace('\n', " / ")
                 );
                 rows.push(WorstRow {
                     page: r.page.clone(),
                     ref_id: r.ref_id.clone(),
-                    cer: rec_metric(r, c).0.unwrap_or(1.0),
+                    cer: rec_metric(r).0.unwrap_or(1.0),
                     reference: r.reference.clone(),
                     produced,
                     image: ip.display().to_string(),
@@ -1657,10 +1464,6 @@ pub(crate) fn run(
         loadavg_start,
         loadavg_end: crate::loadavg(),
         threads_after_detect: crate::read_status_field("Threads:").and_then(|v| v.parse().ok()),
-        tesseract_version: tesseract_rs::TesseractAPI::version(),
-        tessdata: crate::tessdata_dir()
-            .map(|p| p.display().to_string())
-            .unwrap_or_default(),
     };
     let res = Stage2 {
         label: args.label.clone(),
@@ -1675,14 +1478,12 @@ pub(crate) fn run(
         vm_hwm_mb: status_kb("VmHWM:").map(|k| k as f64 / 1024.0),
         pages: outs,
         a_recognition,
-        a_recognition_raw,
         a_time,
         split_time,
         ctd_line_fallbacks: (0, 0),
         b_detection,
         det_time,
         c_taps,
-        c_taps_raw,
         timing: args.cand_timing.then_some(timing),
         timing_summary,
         worst,
@@ -1796,7 +1597,7 @@ fn markdown(r: &Stage2, args: &Args) -> String {
     let e = &r.env;
     let _ = writeln!(
         o,
-        "# OCR bench, candidates: {}\n\n- Build profile **{}**; CPU {}; CPUs allowed `{}`; ONNX Runtime intra-op threads for candidate sessions: {} (0 = ORT default)\n- Load average start `{}`, end `{}`; peak RSS (VmHWM) {:.0} MB\n- Pages with a reference: {}\n- Recognition crops: reference box + {:.0}% margin. Tesseract rows are scored after Folio's postprocess (what the reader shows); PP rows on the raw text (Folio's cleanup was written for Tesseract debris); the other score is in the JSON.\n",
+        "# OCR bench, candidates: {}\n\n- Build profile **{}**; CPU {}; CPUs allowed `{}`; ONNX Runtime intra-op threads for candidate sessions: {} (0 = ORT default)\n- Load average start `{}`, end `{}`; peak RSS (VmHWM) {:.0} MB\n- Pages with a reference: {}\n- Recognition crops: reference box + {:.0}% margin. Rows are scored on the recogniser's text as read.\n",
         r.label,
         e.profile,
         e.cpu_model,
@@ -1806,7 +1607,7 @@ fn markdown(r: &Stage2, args: &Args) -> String {
         e.loadavg_end,
         r.vm_hwm_mb.unwrap_or(f64::NAN),
         r.pages.len(),
-        args.variant_margin * 100.0
+        args.margin * 100.0
     );
     let _ = writeln!(
         o,
