@@ -23,6 +23,9 @@
  * Workflow inside the panel:
  *   1. **Check for updates** dry-runs every list (nothing is applied) and
  *      returns which ones have upstream changes with their diff counts.
+ *      One server call has a time budget; the check carries on with the
+ *      lists a call did not reach (`checkAllUntilDone`) and the status
+ *      line counts the lists checked so far.
  *   2. The review list shows each changed list with its diff as tone
  *      badges (+added / −removed / reordered / newly matched) and a
  *      checkbox. Update them one at a time, pick a subset and **Update
@@ -78,6 +81,7 @@ import { Progress } from "@/components/ui/progress";
 import { apiMutate } from "@/lib/api/mutations/_core";
 import { useCheckAllCblLists } from "@/lib/api/mutations";
 import type { CblBulkItemView, ImportSummary } from "@/lib/api/types";
+import type { CheckAllProgress } from "@/lib/cbl/check-all-rounds";
 import {
   summarizeBatch,
   summaryChanged,
@@ -136,7 +140,10 @@ export function CblUpdatesProvider({
   lists: DashboardList[];
   children: React.ReactNode;
 }) {
-  const checkAll = useCheckAllCblLists();
+  // How far a check that is carrying on (more than one server call) got;
+  // `null` until the first call answered.
+  const [progress, setProgress] = React.useState<CheckAllProgress | null>(null);
+  const checkAll = useCheckAllCblLists(setProgress);
   const batch = useBatchRefresh();
   const [results, setResults] = React.useState<CblBulkItemView[] | null>(null);
   const [checkedAt, setCheckedAt] = React.useState<string | null>(null);
@@ -201,7 +208,9 @@ export function CblUpdatesProvider({
     setPanelOpen(true);
     setAppliedIds(new Set());
     setSelected(new Set());
+    setProgress(null);
     runCheck(undefined, {
+      onSettled: () => setProgress(null),
       onSuccess: (d) => {
         const items = d?.items ?? [];
         setResults(items);
@@ -274,6 +283,8 @@ export function CblUpdatesProvider({
   }, []);
 
   const statusLine = (() => {
+    if (checking && progress)
+      return `Checked ${progress.checked} of ${progress.total} ${progress.total === 1 ? "list" : "lists"} · still checking…`;
     if (checking)
       return `Checking ${count} ${count === 1 ? "list" : "lists"} for upstream changes…`;
     if (results === null)

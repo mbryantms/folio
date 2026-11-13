@@ -153,43 +153,65 @@ export async function apiMutate<T>({
   return text ? (JSON.parse(text) as T) : null;
 }
 
+/** Options of `useApiMutation` / `useApiRunMutation`: react-query's
+ *  mutation options plus the toast wiring. */
+export type ApiMutationOptions<TData, TInput> = Omit<
+  UseMutationOptions<TData | null, Error, TInput>,
+  "mutationFn"
+> & {
+  successMessage?: string | ((data: TData | null, input: TInput) => string);
+  /**
+   * Stable sonner toast `id`. When set, rapid-fire calls to the
+   * same mutation (e.g. bulk progress flipping read/unread back
+   * and forth) collapse into a single toast that updates in place
+   * rather than stacking N toasts. Use for bulk operations and
+   * autosave-like surfaces where each click is one logical event,
+   * not N. Sonner reuses the same toast element when an id repeats.
+   */
+  toastId?: string;
+  /**
+   * The toast variant for `successMessage`: `success` (the default) for a
+   * completion, `info` for an app-state notice such as "still running".
+   */
+  successVariant?:
+    | "success"
+    | "info"
+    | ((data: TData | null, input: TInput) => "success" | "info");
+  /**
+   * A link on the success toast to where the queued work can be
+   * watched (e.g. "View progress" → Background work). For mutations
+   * that only *start* something; the toast alone would otherwise be the
+   * last the admin hears of it.
+   */
+  successAction?:
+    | { label: string; href: string }
+    | ((
+        data: TData | null,
+        input: TInput,
+      ) => { label: string; href: string } | undefined);
+};
+
 export function useApiMutation<TData, TInput>(
   build: (input: TInput) => ApiMutationInput,
-  options?: Omit<
-    UseMutationOptions<TData | null, Error, TInput>,
-    "mutationFn"
-  > & {
-    successMessage?: string | ((data: TData | null, input: TInput) => string);
-    /**
-     * Stable sonner toast `id`. When set, rapid-fire calls to the
-     * same mutation (e.g. bulk progress flipping read/unread back
-     * and forth) collapse into a single toast that updates in place
-     * rather than stacking N toasts. Use for bulk operations and
-     * autosave-like surfaces where each click is one logical event,
-     * not N. Sonner reuses the same toast element when an id repeats.
-     */
-    toastId?: string;
-    /**
-     * The toast variant for `successMessage`: `success` (the default) for a
-     * completion, `info` for an app-state notice such as "still running".
-     */
-    successVariant?:
-      | "success"
-      | "info"
-      | ((data: TData | null, input: TInput) => "success" | "info");
-    /**
-     * A link on the success toast to where the queued work can be
-     * watched (e.g. "View progress" → Background work). For mutations
-     * that only *start* something; the toast alone would otherwise be the
-     * last the admin hears of it.
-     */
-    successAction?:
-      | { label: string; href: string }
-      | ((
-          data: TData | null,
-          input: TInput,
-        ) => { label: string; href: string } | undefined);
-  },
+  options?: ApiMutationOptions<TData, TInput>,
+) {
+  return useApiRunMutation<TData, TInput>(
+    (input) => apiMutate<TData>(build(input)),
+    options,
+  );
+}
+
+/**
+ * `useApiMutation` for a mutation that is more than one request (e.g. a
+ * bulk check that carries on with the lists an earlier call did not
+ * reach). `run` makes the requests, normally through `apiMutate`, and
+ * resolves to the combined result; the toasts, the Retry action and every
+ * option behave exactly as on `useApiMutation`. Prefer `useApiMutation`
+ * whenever one request does the job.
+ */
+export function useApiRunMutation<TData, TInput>(
+  run: (input: TInput) => Promise<TData | null>,
+  options?: ApiMutationOptions<TData, TInput>,
 ) {
   const {
     successMessage,
@@ -207,7 +229,7 @@ export function useApiMutation<TData, TInput>(
   // round-trip later), the ref is set.
   const mutateRef = React.useRef<((input: TInput) => void) | null>(null);
   const mutation = useMutation<TData | null, Error, TInput>({
-    mutationFn: (input) => apiMutate<TData>(build(input)),
+    mutationFn: run,
     // react-query v5.79+ appends a 4th `context` arg to mutation
     // lifecycle callbacks: (data, variables, onMutateResult, context).
     // The 3rd arg (onMutate's return) keeps its position; forward all

@@ -7,6 +7,7 @@
  * + extracted `_core.ts` + the thumbnails cluster. Remaining clusters
  * (CBL, markers, saved-views, pages, admin) are mechanical follow-ups.
  */
+import * as React from "react";
 import { useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { usePathname, useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -19,7 +20,16 @@ import { queryKeys, type EntityKindPath } from "../queries";
 import { apiPath } from "../path";
 import { cancelCardLists, resumeCardLists } from "../card-list-cache";
 import { buildQuery } from "../build-query";
-import { getCsrfToken, useApiMutation } from "./_core";
+import {
+  apiMutate,
+  getCsrfToken,
+  useApiMutation,
+  useApiRunMutation,
+} from "./_core";
+import {
+  checkAllUntilDone,
+  type CheckAllProgress,
+} from "@/lib/cbl/check-all-rounds";
 import {
   applyOptimisticProgress,
   capturePriorProgress,
@@ -42,7 +52,9 @@ export {
   apiMutate,
   getCsrfToken,
   useApiMutation,
+  useApiRunMutation,
   type ApiMutationInput,
+  type ApiMutationOptions,
 } from "./_core";
 export * from "./thumbnails";
 export * from "./duplicates";
@@ -72,6 +84,7 @@ import type {
   AdminUserView,
   AddEntryReq,
   CblBulkItemView,
+  CblBulkReq,
   CblBulkResultView,
   CblEntryView,
   CblListView,
@@ -2109,11 +2122,31 @@ export function useCheckCblList(id: string) {
   );
 }
 
-/** Dry-run every reading list at once and report which have updates
- *  available. Nothing is applied — the user reviews, then updates. */
-export function useCheckAllCblLists() {
-  return useApiMutation<CblBulkResultView, void>(
-    () => ({ path: `/me/cbl-lists/check-all`, method: "POST" }),
+/** Dry-run every reading list and report which have updates available.
+ *  Nothing is applied — the user reviews, then updates. One server call
+ *  has a time budget, so this carries on with the lists a call did not
+ *  reach until every list was checked (`checkAllUntilDone`); `onProgress`
+ *  hears how far it got before each further call. */
+export function useCheckAllCblLists(
+  onProgress?: (p: CheckAllProgress) => void,
+) {
+  const progressRef = React.useRef(onProgress);
+  React.useEffect(() => {
+    progressRef.current = onProgress;
+  }, [onProgress]);
+  return useApiRunMutation<CblBulkResultView, void>(
+    () =>
+      checkAllUntilDone(
+        (listIds) =>
+          apiMutate<CblBulkResultView>({
+            path: `/me/cbl-lists/check-all`,
+            method: "POST",
+            ...(listIds
+              ? { body: { list_ids: listIds } satisfies CblBulkReq }
+              : {}),
+          }),
+        (p) => progressRef.current?.(p),
+      ),
     {
       successMessage: (data) => {
         if (!data) return "Checked";
