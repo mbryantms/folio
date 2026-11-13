@@ -779,16 +779,19 @@ pub(crate) fn choose_crop(
 }
 
 /// Pick the box a drawn rectangle snaps to: the candidate with the
-/// largest intersection area against the user's rect, and among equals
-/// the smallest box (a rectangle drawn wholly inside a balloon that
-/// itself lies in a larger region snaps to the balloon). Both are in
+/// largest intersection area against the user's rect. Both are in
 /// page-pixel coordinates. Candidates with zero overlap or that round
 /// out to an empty rect are discarded.
 ///
-/// The candidates are the page's regions for the current engines
-/// ([`regions::regions`]: balloons and free text, near-duplicates
-/// removed). For the legacy engines they are every box of the detection,
-/// blocks and lines alike, as they always were.
+/// - **Current engines**: the candidates are the page's regions
+///   ([`regions::regions`]: balloons and free text, near-duplicates
+///   removed), and among candidates with the same overlap the smallest
+///   box wins (a rectangle drawn wholly inside a balloon that itself
+///   lies in a larger region snaps to the balloon).
+/// - **Legacy engines**: exactly what the release before the engine
+///   change did. The candidates are every box of the detection, blocks
+///   and lines alike, and among candidates with the same overlap the
+///   last in detector order wins.
 fn pick_bbox_page(
     engines: EngineSet,
     bboxes: &[CachedBbox],
@@ -804,17 +807,18 @@ fn pick_bbox_page(
         }
         EngineSet::Legacy => bboxes,
     };
-    candidates
-        .iter()
-        .filter_map(|b| {
-            let r = bbox_to_rect(b, page_w, page_h)?;
-            let overlap = r.intersection(user)?.area();
-            Some((overlap, r))
-        })
-        .max_by(|(overlap_a, a), (overlap_b, b)| {
+    let overlapping = candidates.iter().filter_map(|b| {
+        let r = bbox_to_rect(b, page_w, page_h)?;
+        let overlap = r.intersection(user)?.area();
+        Some((overlap, r))
+    });
+    match engines {
+        EngineSet::Current => overlapping.max_by(|(overlap_a, a), (overlap_b, b)| {
             overlap_a.cmp(overlap_b).then(b.area().cmp(&a.area()))
-        })
-        .map(|(_, r)| r)
+        }),
+        EngineSet::Legacy => overlapping.max_by_key(|(overlap, _)| *overlap),
+    }
+    .map(|(_, r)| r)
 }
 
 /// A detector box as a whole-pixel rectangle on a `w × h` page (rounded,
@@ -930,8 +934,8 @@ mod tests {
     }
 
     /// A rectangle drawn wholly inside a balloon that lies in a larger
-    /// region overlaps both in full: the snap takes the smaller box,
-    /// whichever was detected first.
+    /// region overlaps both in full: with the current engines the snap
+    /// takes the smaller box, whichever was detected first.
     #[test]
     fn a_snap_tie_goes_to_the_smaller_box() {
         let caption = classed(2, 50.0, 50.0, 900.0, 700.0);
@@ -941,13 +945,10 @@ mod tests {
             [caption.clone(), balloon.clone()],
             [balloon.clone(), caption.clone()],
         ] {
-            for engines in [EngineSet::Current, EngineSet::Legacy] {
-                assert_eq!(
-                    pick_bbox_page(engines, &boxes, &user, 1000, 1500),
-                    Some(BALLOON),
-                    "{engines:?}"
-                );
-            }
+            assert_eq!(
+                pick_bbox_page(EngineSet::Current, &boxes, &user, 1000, 1500),
+                Some(BALLOON)
+            );
         }
         // A larger overlap still beats a smaller box.
         let reaching_out = rect(250, 150, 100, 60);
@@ -960,6 +961,32 @@ mod tests {
                 1500
             ),
             Some(rect(50, 50, 850, 650))
+        );
+    }
+
+    /// The legacy engines keep the tie rule of the release before the
+    /// engine change: among boxes with the same overlap, the last in
+    /// detector order, whatever its size.
+    #[test]
+    fn a_legacy_snap_tie_goes_to_the_last_box_in_detector_order() {
+        let block = classed(0, 50.0, 50.0, 900.0, 700.0);
+        let line = classed(1, 100.0, 100.0, 300.0, 400.0);
+        let user = rect(150, 150, 60, 60);
+        assert_eq!(
+            pick_bbox_page(
+                EngineSet::Legacy,
+                &[block.clone(), line.clone()],
+                &user,
+                1000,
+                1500
+            ),
+            Some(BALLOON),
+            "the line, detected last"
+        );
+        assert_eq!(
+            pick_bbox_page(EngineSet::Legacy, &[line, block], &user, 1000, 1500),
+            Some(rect(50, 50, 850, 650)),
+            "the block, detected last, although it is the larger box"
         );
     }
 
@@ -976,7 +1003,7 @@ mod tests {
             confidence: 0.85,
             ..classed(0, 400.0, 380.0, 747.0, 428.0)
         };
-        let boxes = [as_text, as_balloon];
+        let boxes = [as_balloon, as_text];
         // Inside both: without the de-duplication the tie would go to
         // the smaller, lower-scored box.
         let user = rect(500, 390, 50, 20);
@@ -984,6 +1011,7 @@ mod tests {
             pick_bbox_page(EngineSet::Current, &boxes, &user, 1000, 1500),
             Some(rect(400, 380, 347, 48))
         );
+        // No de-duplication for the legacy engines: the last of the two.
         assert_eq!(
             pick_bbox_page(EngineSet::Legacy, &boxes, &user, 1000, 1500),
             Some(rect(399, 381, 347, 46))
@@ -1117,7 +1145,7 @@ mod tests {
             assert_eq!((tap.read, tap.refined_bbox), (BALLOON, None));
             // Snapping takes any box of the legacy detector: the drawn
             // rectangle lies in the block and in its line, and of two
-            // full overlaps the smaller box wins.
+            // full overlaps the one detected last wins (here the line).
             let snapped = crop_of(
                 EngineSet::Legacy,
                 Language::Manga,
