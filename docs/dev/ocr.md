@@ -621,7 +621,10 @@ lettering (236), and the 17 Japanese pages (135).
   on), 54 ms on 1.31 with spinning off; every balloon of the page
   1.39–1.42 s against 0.85 s. One Japanese read on the 17 pages'
   reference boxes: 149 ms median (spinning off; 572 ms with it on).
-  No Japanese figure was taken on 1.22.
+  No Japanese figure was taken on 1.22. A repeat of the fixture-page
+  runs on 2026-11-13 (three alternating rounds, load average 2–3) gave
+  page detection 67–68 ms on 1.22 and 86–87 ms on 1.31, one balloon
+  98–104 ms and 55 ms, every balloon of the page 1.45–1.49 s and 0.87 s.
 
 ### Japanese
 
