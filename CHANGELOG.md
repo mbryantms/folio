@@ -13,6 +13,38 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.82.0](https://github.com/mbryantms/folio/compare/v0.81.0...v0.82.0) (2026-11-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* **ocr:** Tesseract is removed from the server, the image and the benchmark tool ([#1641](https://github.com/mbryantms/folio/issues/1641))
+* **ocr:** text reading on ONNX Runtime 1.31; x86_64 hosts need AVX2 ([#1636](https://github.com/mbryantms/folio/issues/1636))
+
+* **ocr:** Tesseract is removed from the server, the image and the benchmark tool ([#1641](https://github.com/mbryantms/folio/issues/1641)) ([ab98f62](https://github.com/mbryantms/folio/commit/ab98f629f0386dc98b8a7312f7936baa511df7a0))
+
+
+### Added
+
+* **ocr:** own Japanese recogniser; the previous detector and its switch are removed ([#1634](https://github.com/mbryantms/folio/issues/1634)) ([e4691d7](https://github.com/mbryantms/folio/commit/e4691d71e8be94828ef7e5f0b827d4a9314a1f7c))
+
+
+### Fixed
+
+* **docker:** build the server on Debian 13 so ONNX Runtime 1.31 links ([#1639](https://github.com/mbryantms/folio/issues/1639)) ([d183e52](https://github.com/mbryantms/folio/commit/d183e527fd046969f21a27a9c7100f05a45eacbb))
+
+
+### Changed
+
+* **ocr:** text reading on ONNX Runtime 1.31; x86_64 hosts need AVX2 ([#1636](https://github.com/mbryantms/folio/issues/1636)) ([f992a78](https://github.com/mbryantms/folio/commit/f992a78e2b047016b0c52b5559b6f6a4ef668b60))
+
+
+### Dependencies
+
+* update dependency @scalar/api-reference-react to v0.9.89 ([#1640](https://github.com/mbryantms/folio/issues/1640)) ([ccc2640](https://github.com/mbryantms/folio/commit/ccc2640860eeb2b0914b2e69d170b4f9cf37b68e))
+* update dependency lucide-react to v1.71.0 ([#1632](https://github.com/mbryantms/folio/issues/1632)) ([22130eb](https://github.com/mbryantms/folio/commit/22130eb869d8a5f6447acf3309a3f0c851995d8f))
+* update dependency next-intl to v4.14.10 ([#1635](https://github.com/mbryantms/folio/issues/1635)) ([e642299](https://github.com/mbryantms/folio/commit/e6422995d5c2eb4caff2b44b78f8bf942c1014d8))
+
 ## [0.81.0](https://github.com/mbryantms/folio/compare/v0.80.0...v0.81.0) (2026-11-13)
 
 
