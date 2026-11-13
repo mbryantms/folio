@@ -15,6 +15,8 @@
 # Pruned 2026-11-12: RUSTSEC-2025-0119 (number_prefix) and
 # RUSTSEC-2024-0436 (paste) left the graph with the comic-text-detector
 # crate and its candle / imageproc stack.
+# Pruned 2026-11-13: RUSTSEC-2026-0367, -0368, -0369 and -0429 (zip < 9)
+# left the graph with tesseract-rs, whose build script pulled zip 8.6.0.
 
 [advisories]
 ignore = [
@@ -30,20 +32,6 @@ ignore = [
     # OIDC id_tokens; our own tokens are EdDSA. deny.toml carries the full
     # rationale and the delete-when condition.
     "RUSTSEC-2026-0387",
-    # `zip` < 9 extraction advisories (SUID/SGID bits, symlink escape,
-    # permissions through symlinks) - all about `ZipArchive::extract()` /
-    # `ZipStreamReader::extract()` over attacker-controlled archives.
-    # Folio's own zip is 9.x (patched); the stale copy is a stuck
-    # transitive pin: `zip 8.6.0` <- tesseract-rs 0.4.0 build.rs (unpacks
-    # pinned tesseract/leptonica source tags at build time). It does not
-    # call `extract()`. deny.toml carries the full rationale. Revisit when
-    # tesseract-rs bumps to zip 9.
-    "RUSTSEC-2026-0367",
-    "RUSTSEC-2026-0368",
-    "RUSTSEC-2026-0369",
-    # Same stale `zip` copy: `ZipArchive::extract()` aborts on a crafted
-    # symlink entry (was GHSA-q7v9-x93c-xqv3). The copy does not call `extract()`.
-    "RUSTSEC-2026-0429",
     # `astral-tokio-tar` unmaintained: test-only, via testcontainers 0.28
     # (latest). deny.toml carries the full rationale.
     "RUSTSEC-2026-0440",
@@ -52,10 +40,4 @@ ignore = [
     # 0.39. Folio's only open (`local_db::open`) is `immutable=true`, which
     # never reads a WAL. deny.toml carries the full rationale.
     "RUSTSEC-2026-0459",
-    # No entry for the rest of the 2026-10-29 `zip` GHSA batch
-    # (GHSA-m665-v7pm-7grj, -hjqx-j4rw-g7xv, -8hxf-qr8p-62x4,
-    # -9hj8-73fh-9963): the RustSec db has no id for them (2026-11-08), so cargo-audit never reports them and
-    # an unknown id here would read as stale. They are accepted on the
-    # `osv-only:` lines in deny.toml and mirrored in osv-scanner.toml; add
-    # the RUSTSEC id here and in deny.toml once the db assigns one.
 ]

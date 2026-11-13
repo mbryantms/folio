@@ -8,9 +8,6 @@
 //!  - fetch model files from Hugging Face on first run (24 MB for the
 //!    current Western engines, 37 MB for every registered line
 //!    recogniser, ~440 MB for manga-ocr), OR
-//!  - need the Tesseract toolchain and language data (the Tesseract
-//!    recogniser, which no request uses any more and which is kept for
-//!    `crates/tools/ocr-bench` until its removal), OR
 //!  - run real inference.
 //!
 //! Run them with `cargo test -p server --test ocr_recognizer -- --ignored`
@@ -35,19 +32,17 @@ use server::ocr::recognizer::{
     Language, Recognizer,
     ctc::{CtcRecognizer, LineOcr},
     manga::MangaOcr,
-    western::WesternOcr,
 };
 
 /// Compile-time witness that the engines satisfy the pipeline's traits.
 /// If a future refactor accidentally drops a trait bound the test crate
 /// won't compile — caught by `cargo check` before any model has to load.
 fn _trait_witness<'a>(
-    w: &'a WesternOcr,
     m: &'a MangaOcr,
     l: &'a LineOcr,
     d: &'a BubbleDetector,
-) -> ([&'a dyn Recognizer; 3], &'a dyn PageDetector) {
-    ([w, m, l], d)
+) -> ([&'a dyn Recognizer; 2], &'a dyn PageDetector) {
+    ([m, l], d)
 }
 
 #[test]
@@ -460,61 +455,12 @@ async fn timing_on_the_fixture_page() {
     assert!(median(&detect) < 10_000.0 && median(&reads) < 10_000.0);
 }
 
-// ─── Tesseract (kept for ocr-bench) and manga-ocr ────────────────
+// ─── manga-ocr ────────────────────────────────────────────────────
 
 /// Blank white grayscale tile: every recogniser must answer it without
 /// panicking, with a well-shaped result.
 fn blank_tile(w: u32, h: u32) -> DynamicImage {
     DynamicImage::ImageLuma8(GrayImage::from_pixel(w, h, Luma([255])))
-}
-
-#[tokio::test]
-#[ignore = "requires the build-time-compiled tesseract toolchain"]
-async fn western_recognizes_a_blank_tile_without_panicking() {
-    let ocr = WesternOcr::shared()
-        .await
-        .expect("western init should succeed once tessdata is staged");
-    let out = ocr
-        .recognize(&blank_tile(120, 60))
-        .expect("recognize should return Ok even for empty input");
-    // No text expected — blank image. We only assert the contract.
-    assert!(
-        out.text.is_empty(),
-        "blank tile produced text: {:?}",
-        out.text
-    );
-    assert!(
-        (0.0..=1.0).contains(&out.confidence),
-        "confidence outside [0, 1]: {}",
-        out.confidence
-    );
-    assert!(
-        out.words.is_none(),
-        "a blank tile must not yield word boxes"
-    );
-}
-
-#[tokio::test]
-#[ignore = "requires the build-time-compiled tesseract toolchain"]
-async fn western_word_boxes_stay_in_crop_bounds() {
-    let ocr = WesternOcr::shared()
-        .await
-        .expect("western init should succeed once tessdata is staged");
-    // Hand-synthesized glyphs are too brittle to assert recognized
-    // content here; real-text word coverage lives in the golden
-    // fixture suite (ocr_golden.rs). This pins the geometry
-    // contract: word boxes, when present, are mapped back out of
-    // the padded/upscaled space into crop coordinates.
-    let out = ocr
-        .recognize(&blank_tile(120, 60))
-        .expect("recognize should return Ok");
-    if let Some(words) = out.words {
-        for w in &words {
-            assert!((0.0..=1.0).contains(&w.confidence));
-            assert!(w.xmax >= w.xmin && w.ymax >= w.ymin);
-            assert!(w.xmax <= 120.0 && w.ymax <= 60.0);
-        }
-    }
 }
 
 #[tokio::test]

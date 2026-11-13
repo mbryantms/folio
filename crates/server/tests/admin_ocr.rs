@@ -119,14 +119,14 @@ async fn non_admin_user_gets_403() {
 
 #[tokio::test]
 async fn admin_gets_full_model_list() {
-    // We deliberately don't touch HF_HOME / TESSDATA_PREFIX here:
+    // We deliberately don't touch HF_HOME here:
     // mutating process-wide env from a tokio test races with other
     // parallel tests in the same binary. The byte-sum behavior is
     // covered by the unit tests in `api::admin_ocr::tests` (which
     // operate on isolated tempdirs without touching env). What
     // this integration test pins is the wiring: admin reaches the
     // handler, the response carries the expected models in stable
-    // order, totals add up, and the env-probe fields are populated.
+    // order, totals add up, and the env-probe field is populated.
     let app = TestApp::spawn().await;
     let admin = register(&app, "ocr-models-admin@example.com").await;
     let (status, body) = get_models(&app, Some(&admin)).await;
@@ -164,8 +164,8 @@ async fn admin_gets_full_model_list() {
         .sum();
     assert_eq!(body["total_bytes_on_disk"].as_u64().unwrap(), sum);
 
-    // Env-probe fields are present and non-empty (`tessdata_dir` is no
-    // longer used by the server but keeps the response's shape).
+    // The env-probe field is present and non-empty; the Tesseract
+    // language-data field is gone.
     assert!(body["hf_home"].as_str().is_some_and(|s| !s.is_empty()));
-    assert!(body["tessdata_dir"].as_str().is_some_and(|s| !s.is_empty()));
+    assert!(body.get("tessdata_dir").is_none(), "{body}");
 }

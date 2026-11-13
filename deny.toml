@@ -54,30 +54,6 @@ ignore = [
     # it). Drop this entry once both move to 0.10 and `cargo tree -i
     # rsa@0.9.10` comes back empty.
     "RUSTSEC-2023-0071",
-    # --- `zip` < 9 extraction advisories (2026-10-09 batch, patched only
-    # in 9.x): RUSTSEC-2026-0367 (SUID/SGID bits preserved on extract),
-    # -0368 (symlink targets escape the destination), -0369 (permissions
-    # applied through symlinks). All three are about the whole-archive
-    # helpers `ZipArchive::extract()` / `ZipStreamReader::extract()` run
-    # over an attacker-controlled archive. Folio's own `zip` is the
-    # patched 9.x line; the one stale copy is a transitive pin we can't
-    # move (re-checked 2026-10-19; the `zip 7.x` copy under candle-core
-    # left the graph with comic-text-detector on 2026-11-12):
-    #  - `zip 8.6.0` <- `tesseract-rs 0.4.0` build-dependency (`^8.6`,
-    #    latest release). Its build.rs unpacks the pinned leptonica
-    #    1.87.0 / tesseract 5.5.2 GitHub tag archives by iterating
-    #    `by_index` + `io::copy` (no `extract()`), at build time only;
-    #    nothing from it ships in the binary.
-    # Revisit when tesseract-rs moves to zip 9.
-    "RUSTSEC-2026-0367",
-    "RUSTSEC-2026-0368",
-    "RUSTSEC-2026-0369",
-    # GHSA-q7v9-x93c-xqv3 from the batch below, now in the RustSec db
-    # (CVE-2026-115909, CVSS 7.5): `ZipArchive::extract()` sizes a
-    # symlink-target buffer from the declared size, so a crafted entry aborts
-    # the process. Same stale copy, which does not call `extract()`, and
-    # Folio's own zip is patched. Delete with the three ids above.
-    "RUSTSEC-2026-0429",
     # `astral-tokio-tar` unmaintained (RUSTSEC-2026-0440, 2026-11-03): Astral
     # ended the crate; no fixed version. Test-only: `testcontainers` 0.28
     # (latest, dev-dependency of crates/server) uses it to pack the build
@@ -102,39 +78,11 @@ ignore = [
     # sqlx-sqlite allows libsqlite3-sys 0.39 and `cargo tree -i
     # libsqlite3-sys` shows it.
     "RUSTSEC-2026-0459",
-    # --- `zip` < 9, 2026-10-29 batch: GitHub advisories, patched in
-    # 9.0.5 / 9.0.0. The RustSec db carries none of the four below (re-checked
-    # 2026-11-08; the fifth became RUSTSEC-2026-0429, above), so cargo-deny has nothing to match — a RUSTSEC-less id
-    # in this array only warns as `advisory-not-detected` and reads as stale to the daily sweep. They are recorded on
-    # the `osv-only:` lines below instead: osv-scanner is the one scanner
-    # that reports them (it reads osv-scanner.toml), and
-    # scripts/ci/check-advisory-ignores.py takes these lines as the
-    # rationale of record behind that file's GHSA entries. Same stale
-    # copy as RUSTSEC-2026-0367..0369 (Folio's own zip is 9.x, patched
-    # for all of them): `zip 8.6.0` <- tesseract-rs 0.4.0 build.rs. It
-    # pulls zip with `default-features = false` plus `deflate`, so
-    # `aes-crypto` and `legacy-zip` are not compiled in.
-    #  - GHSA-m665-v7pm-7grj (CVE-2026-115905, <= 9.0.4, "zip cloaking"):
-    #    the central-directory reader (`ZipArchive`) and the local-header
-    #    reader (`ZipStreamReader`) disagree on an entry's name/contents,
-    #    so a filesystem extract can write a path the inspecting reader
-    #    never showed. The copy uses neither `ZipStreamReader` nor
-    #    `extract()`: tesseract-rs iterates `by_index` + `io::copy` over the pinned
-    #    leptonica 1.87.0 / tesseract 5.5.2 GitHub tag archives at build
-    #    time, and nothing from it ships in the binary.
-    #  - GHSA-hjqx-j4rw-g7xv (CVE-2026-115908): lexical symlink-target
-    #    validation in `extract()`. Same.
-    #  - GHSA-8hxf-qr8p-62x4 (CVE-2026-115906): AES-entry HMAC skipped on
-    #    premature EOF. Needs `aes-crypto`, which the copy does not enable.
-    #  - GHSA-9hj8-73fh-9963 (CVE-2026-115907): Shrink/Reduce/Implode
-    #    capacity-overflow panic in `extract()`. Needs `legacy-zip`, which
-    #    the copy does not enable.
-    # Delete when tesseract-rs moves to zip 9 (the condition on
-    # the three RUSTSEC entries above). Move an id into the array the day
-    # the RustSec db gains an entry for it — the daily sweep's stale check
-    # names it.
-    # osv-only: GHSA-m665-v7pm-7grj GHSA-hjqx-j4rw-g7xv
-    # osv-only: GHSA-8hxf-qr8p-62x4 GHSA-9hj8-73fh-9963
+    # Pruned 2026-11-13 (`zip` < 9; the one affected copy, zip 8.6.0 under
+    # tesseract-rs, left the graph with Tesseract, and Folio's zip is 9.5):
+    # RUSTSEC-2026-0367, -0368, -0369 and -0429, and the GitHub-only
+    # GHSA-m665-v7pm-7grj, GHSA-hjqx-j4rw-g7xv, GHSA-8hxf-qr8p-62x4 and
+    # GHSA-9hj8-73fh-9963.
     # Pruned 2026-11-08: GHSA-qwgh-2vcv-g2f7 (block-buffer) — GitHub narrowed
     # the range to >=0.11, <0.12.1; our copies are 0.10.4 and 0.12.1.
 ]

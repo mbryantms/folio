@@ -8,9 +8,8 @@
 //! The list, in order: the balloon detector, the line finder, the line
 //! recogniser and `manga-ocr` (encoder + decoder + vocab), each from its
 //! [`crate::ocr::models`] pins, fetched on first use. Models the server no
-//! longer loads (`comic-text-detector`, the Tesseract language data) are
-//! not listed; files an upgraded install still holds for them stay on
-//! disk until someone deletes them.
+//! longer loads (`comic-text-detector`) are not listed; files an upgraded
+//! install still holds for them stay on disk until someone deletes them.
 //!
 //! ONNX models sit in the hub cache,
 //! `<root>/hub/models--<org>--<repo>/`. The loader's root is
@@ -70,10 +69,6 @@ pub struct OcrModelsView {
     /// Resolved `HF_HOME` — useful for operators wanting to
     /// pre-stage models on disk in air-gapped deploys.
     pub hf_home: String,
-    /// Resolved Tesseract language-data directory (`TESSDATA_PREFIX`,
-    /// else `${HOME}/.tesseract-rs/tessdata`). The server no longer reads
-    /// it; the field stays so the response keeps its shape.
-    pub tessdata_dir: String,
     /// Per-model state.
     pub models: Vec<OcrModelView>,
     /// Sum of `bytes_on_disk` across every entry.
@@ -91,7 +86,6 @@ pub struct OcrModelsView {
 #[handler]
 pub async fn list(_admin: RequireAdmin) -> impl IntoResponse {
     let hf_home = hf_home_dir();
-    let tessdata_dir = tessdata_dir();
 
     // HF cache layout is `${HF_HOME}/hub/models--{org}--{repo}/…`.
     let models: Vec<OcrModelView> = ONNX_MODELS
@@ -103,7 +97,6 @@ pub async fn list(_admin: RequireAdmin) -> impl IntoResponse {
 
     Json(OcrModelsView {
         hf_home: hf_home.to_string_lossy().into_owned(),
-        tessdata_dir: tessdata_dir.to_string_lossy().into_owned(),
         models,
         total_bytes_on_disk,
     })
@@ -183,16 +176,6 @@ fn hf_home_dir() -> PathBuf {
 fn hf_repo_dir(hf_home: &Path, repo: &str) -> PathBuf {
     let mangled = format!("models--{}", repo.replace('/', "--"));
     hf_home.join("hub").join(mangled)
-}
-
-/// Mirror of the Tesseract recogniser's language-data resolution
-/// (`ocr::recognizer::western`), reported in `tessdata_dir` only.
-fn tessdata_dir() -> PathBuf {
-    if let Ok(p) = std::env::var("TESSDATA_PREFIX") {
-        return PathBuf::from(p);
-    }
-    let home = std::env::var("HOME").unwrap_or_default();
-    PathBuf::from(home).join(".tesseract-rs").join("tessdata")
 }
 
 // ───────── disk walking ─────────

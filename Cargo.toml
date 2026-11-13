@@ -190,17 +190,6 @@ ndarray = "0.17"
 # are kept under (`ocr::models`, which fetches and verifies them itself).
 # No features: nothing downloads through it.
 hf-hub = { version = "0.4", default-features = false }
-# Native Tesseract bindings. The `build-tesseract` feature compiles
-# Leptonica + Tesseract (0.4.0: 1.87.0 + 5.5.2) from source via cmake
-# on the build host and caches them at `~/.tesseract-rs/` across
-# rebuilds. It also downloads `eng` + `tur` traineddata from
-# `tessdata_best` to the same cache directory at first build (requires
-# internet; none of it is checksummed outside the Docker image build,
-# which pins all four files: scripts/docker/tesseract-inputs.sh, and a
-# tesseract-rs bump that changes them fails that build until the pins
-# move); set `TESSDATA_PREFIX` to point Folio at a pre-staged copy on
-# air-gapped operators. First build adds ~10 min one-time cost.
-tesseract-rs = { version = "0.4", features = ["build-tesseract"] }
 
 # Background jobs (Redis-backed via apalis)
 apalis = { version = "1.0", features = ["limit", "tracing"] }

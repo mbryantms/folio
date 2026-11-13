@@ -28,7 +28,7 @@
 //!
 //! Locking: one `std::sync::Mutex` over the map, held only for map
 //! updates — never while decoding, never across an `.await`, never
-//! together with the Tesseract or detector mutexes.
+//! together with an engine's session mutex.
 //!
 //! The handler (`api::issue_ocr`) consults the cache only after the
 //! visibility check and the archive checks, and only while holding an OCR

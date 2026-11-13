@@ -29130,7 +29130,6 @@
         "type": "object",
         "required": [
           "hf_home",
-          "tessdata_dir",
           "models",
           "total_bytes_on_disk"
         ],
@@ -29145,10 +29144,6 @@
               "$ref": "#/components/schemas/OcrModelView"
             },
             "description": "Per-model state."
-          },
-          "tessdata_dir": {
-            "type": "string",
-            "description": "Resolved Tesseract language-data directory (`TESSDATA_PREFIX`,\nelse `${HOME}/.tesseract-rs/tessdata`). The server no longer reads\nit; the field stays so the response keeps its shape."
           },
           "total_bytes_on_disk": {
             "type": "integer",

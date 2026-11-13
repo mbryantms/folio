@@ -13,11 +13,6 @@
 //! - [`recognizer::manga`]: the `manga-ocr` model for Japanese (encoder
 //!   and decoder), on the crop [`manga_crop`] chooses.
 //!
-//! [`recognizer::western`] (Tesseract) and the Tesseract cleanup rules in
-//! [`postprocess`] are no longer reached by any request. They stay
-//! compiled for `crates/tools/ocr-bench`, which uses them as its baseline,
-//! until the Tesseract build is removed.
-//!
 //! Around the engines:
 //!
 //! - [`pipeline`]: `detect → snap to a region → crop → recognize → clean`,
