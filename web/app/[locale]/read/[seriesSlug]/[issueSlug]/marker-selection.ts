@@ -66,11 +66,15 @@ export type OcrOptions = {
   /** Recognizer override. Omitted → the server resolves a default
    *  (series `text_language`, falling back to western). */
   lang?: "western" | "manga";
-  /** Run the server-side box detector and snap the region to the
-   *  tightest enclosing box. Only set this when the page's detect cache
-   *  is known-warm (a text-regions fetch succeeded) — a cold detector
-   *  run can take tens of seconds on weak hosts. Omitted → the server
-   *  only recognizes the rectangle it is given. */
+  /** Snap the rectangle to the detected region it overlaps most. Only
+   *  set this when the page's detect cache is known-warm (a text-regions
+   *  fetch succeeded) — with the server's previous engines a cold
+   *  detector run can take tens of seconds on weak hosts. Omitted → the
+   *  server reads the rectangle it is given. One exception either way:
+   *  for Japanese, a rectangle that is one of the page's balloons (a
+   *  tapped box, or the box a drag snapped to) is narrowed by the server
+   *  to the text box inside the balloon; a rectangle drawn by hand and
+   *  not snapped is read as sent. */
   detect?: boolean;
   /** Aborts the request (the server still finishes its own work). */
   signal?: AbortSignal;
@@ -79,8 +83,11 @@ export type OcrOptions = {
 export type OcrResult = {
   text: string;
   confidence: number;
-  /** Detector's snap-to-box rect in page pixels; `null` when the
-   *  detector didn't run or nothing overlapped the region. */
+  /** The detected box the server read, in page pixels, when that is
+   *  not the rectangle as sent: the region a `detect` request snapped
+   *  to, or, for Japanese, the text box inside the balloon (also for a
+   *  tap without `detect`). `null` when the rectangle was read as
+   *  sent. */
   refinedBbox: { x: number; y: number; w: number; h: number } | null;
   /** Recognizer the server resolved (`western` / `manga`) — the page-text
    *  panel maps it to a `lang` attribute for screen readers. */

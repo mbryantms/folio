@@ -29232,7 +29232,7 @@
               "boolean",
               "null"
             ],
-            "description": "When `true`, run the page detector (or use its cached result\nfor the page) and snap the rectangle to the detected text region\nit overlaps most; the snapped box comes back as `refined_bbox`.\nWhen `false` or omitted (the default), the rectangle is not\nsnapped: the way to read a region taken from the text-regions\nroute, which is already a detected box. (A Japanese request then\nstill reads the text box the detector found inside the region,\nwhen there is exactly one; see `refined_bbox`.)"
+            "description": "When `true`, run the page detector (or use its cached result\nfor the page) and snap the rectangle to the detected text region\nit overlaps most; the snapped box comes back as `refined_bbox`.\nWhen `false` or omitted (the default), the rectangle is not\nsnapped: the way to read a region taken from the text-regions\nroute, which is already a detected box. (A Japanese request for\nsuch a region, when it is a balloon, still reads the text box the\ndetector found inside it, when there is exactly one; see\n`refined_bbox`. Any other rectangle is read as sent.)"
           },
           "lang": {
             "type": [
@@ -29298,7 +29298,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/OcrRegion",
-                "description": "The detected box that was read, in page-pixel coords, when it\nis not the region as sent: the region a `detect: true` request\nwas snapped to, or, for Japanese, the text box inside the region.\nAbsent when the recognizer read the user's rect verbatim."
+                "description": "The detected box that was read, in page-pixel coords, when it\nis not the region as sent: the region a `detect: true` request\nwas snapped to, or, for Japanese, the text box inside a balloon.\nAbsent when the recognizer read the user's rect verbatim."
               },
               {
                 "type": "null"

@@ -12602,9 +12602,10 @@ export interface components {
              *     it overlaps most; the snapped box comes back as `refined_bbox`.
              *     When `false` or omitted (the default), the rectangle is not
              *     snapped: the way to read a region taken from the text-regions
-             *     route, which is already a detected box. (A Japanese request then
-             *     still reads the text box the detector found inside the region,
-             *     when there is exactly one; see `refined_bbox`.)
+             *     route, which is already a detected box. (A Japanese request for
+             *     such a region, when it is a balloon, still reads the text box the
+             *     detector found inside it, when there is exactly one; see
+             *     `refined_bbox`. Any other rectangle is read as sent.)
              */
             detect?: boolean | null;
             /**

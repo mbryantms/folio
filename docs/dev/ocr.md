@@ -102,11 +102,13 @@ build for one release behind
   text-regions route is read, since it already is a detected box. The
   reader sends `detect: true` for a rectangle the user dragged, and only
   when the page's text-regions fetch succeeded. A **Japanese** request
-  uses the page's detection whatever `detect` says: it reads the text
-  box inside its region (see [Japanese](#japanese)).
+  uses the page's detection whatever `detect` says: when its rectangle
+  is one of the page's balloons it reads the text box inside (see
+  [Japanese](#japanese)); a rectangle drawn by hand and not snapped is
+  read as sent.
 - `refined_bbox` is the detected box that was read when that is not
   the rectangle as sent: the region a `detect: true` request was
-  snapped to, or, for Japanese, the text box inside the region. Absent
+  snapped to, or, for Japanese, the text box inside a balloon. Absent
   when the rectangle was read as sent.
 - `raw_text` is the engine output before the postprocess cleanup;
   present only when cleanup changed the text. For Western text it holds
@@ -266,8 +268,9 @@ detect: true, or Japanese → detect       │
    detect: true: snap to the region with │
    the largest overlap, or keep the      │
    user's rect if none overlaps          │
-   Japanese: the text box inside the     │
-   region, when exactly one is clear     │
+   Japanese, when the rect is a balloon  │
+   of the page: the text box inside it,  │
+   when exactly one is clear             │
    │                                     │
    ▼                                     ▼
 crop → recognizer
@@ -336,11 +339,12 @@ Clients do no filtering of their own.
   rule the web reader used to apply itself, moved here unchanged, so the
   legacy set shows the boxes it always showed.
 - **Snap** (`detect: true`): the candidate with the largest overlap
-  with the drawn rectangle; among candidates with the same overlap, the
-  smallest (a rectangle drawn wholly inside a balloon that itself lies
-  in a larger region snaps to the balloon). Candidates are the regions
-  above for the current engines, and every raw box for the legacy
-  engines, as before.
+  with the drawn rectangle. Current engines: the candidates are the
+  regions above, and among candidates with the same overlap the
+  smallest wins (a rectangle drawn wholly inside a balloon that itself
+  lies in a larger region snaps to the balloon). Legacy engines: exactly
+  as the release before, the candidates are every raw box and among
+  equals the last in detector order wins.
 
 On the 12 benchmark pages (below) the de-duplication removes 4 of 151
 regions, one near-duplicate pair on each of four pages.
@@ -424,7 +428,14 @@ DB text detector).
   at its 1600-pixel ceiling and about 335 MB the recogniser. The
   recogniser's share is close to 20 MB per 1,000 columns of the bound
   (it was about 765 MB for the same request at the earlier bound of
-  96,000). Balloon-sized requests stay far below both.
+  96,000). The recogniser's share is for unusual regions only. The line
+  finder's is not: its input reaches the 1600-pixel ceiling for any
+  crop of 800 pixels or more on its long side, which a large balloon or
+  caption on a high-resolution scan already is (4 of the 139 benchmark
+  crops). The session keeps its largest buffers, so a server that has
+  read one such crop holds memory of that order from then on: about
+  560 MB here, for a 1088 × 1600 input; a squarer crop gives a larger
+  input, up to 1600 × 1600, which was not measured.
 
 **Another recogniser of the same family is a registry change.**
 `ocr::models::WESTERN_REC` names a `LineRecModel` (its pinned files,
@@ -528,14 +539,24 @@ pixels a Japanese request reads is one function,
 [`ocr::manga_crop::manga_crop`](../../crates/server/src/ocr/manga_crop.rs),
 with two behaviours:
 
-- `MangaCrop::Region`: the requested region as is (the balloon box);
-- `MangaCrop::TextInRegion`: the detector's class 1 box inside the
-  region, when exactly one has at least 80% of its area in the region
-  (a text box with a smaller share there belongs to a neighbour and is
-  not counted); the region when there is none or several. A region that
-  is one of the page's free-text boxes (class 2, each edge within 2
-  pixels) is always read as is: it is not a balloon, and a text box
-  lying in it belongs to a balloon drawn inside it.
+- `MangaCrop::Region`: the requested rectangle as is;
+- `MangaCrop::TextInRegion`: when the rectangle is one of the page's
+  balloons, the detector's class 1 box inside it, if exactly one has at
+  least 80% of its area in the balloon (a text box with a smaller share
+  there belongs to a neighbour and is not counted); the balloon when
+  there is none or several. Two kinds of rectangle are never narrowed:
+  - **a rectangle that is not a region of the page**, that is, one
+    drawn by hand and not snapped (a drag while the regions were not
+    loaded, Detect text on a highlight that was drawn by hand, another
+    client). It is read as sent: narrowing it would silently read less
+    than the user enclosed. A rectangle is a region when each of its
+    edges is within 2 pixels of a region box, which covers the percent
+    round trip of a tap;
+  - **a piece of free text** (class 2): it is not a balloon, and a text
+    box lying in it belongs to a balloon drawn inside it. A free-text
+    box that a class 0 box overlaps at the near-duplicate threshold
+    (IoU 0.8) is one balloon found twice, of which the regions kept the
+    free-text box; it is treated as the balloon.
 
 The constant `MANGA_CROP` picks one, and the server runs
 **`TextInRegion`**. A Japanese request therefore always uses the page's
@@ -545,6 +566,11 @@ normally filled, else by running the detector), also for a tap with
 was read. With `detect: true` the rectangle is first snapped to a
 region and the text box is then looked for inside that region. The mode
 and its two constants are part of the result-cache fingerprint.
+
+When the detector fails for a Japanese request, the request answers
+500 `ocr_failed` and nothing is cached, by design: a result read from
+the rectangle as sent would be stored under the same key as the
+narrowed one and served in its place for days.
 
 With the legacy engines a Japanese request reads what it always read:
 the requested rectangle, or the `comic-text-detector` box it was
@@ -597,11 +623,16 @@ Two known weaknesses of `TextInRegion`:
 
 The comparison was made with `ocr-bench`, which has its own copy of
 the rule and of the detector. The server's code was then run once, by
-hand, on the same pages: the detector returned the same boxes, and for
-all 135 tap targets the server read the same box and returned the same
-text as the text-box row above (134 narrowed to a text box, 1 read as
-the balloon). No tapped region on these pages is free text, so the
-"free text is read as is" part of the rule was not exercised.
+hand, on the same pages, each tap sent as the percent box the
+text-regions route returns and converted back as the OCR route does:
+the detector returned the same boxes, every one of the 139 regions
+came back with the same pixel rectangle, and for all 135 tap targets
+the server read the same box and returned the same text as the
+text-box row above (134 narrowed to a text box, 1 read as the
+balloon). No tapped region on these pages is free text, so the "free
+text is read as is" part of the rule was not exercised; and the
+comparison tapped regions only, so it says nothing about rectangles
+drawn by hand, which is why those are read as sent.
 
 Limits: one volume, so one lettering style and one kind of page; and,
 without a reference text, no count of how often either pipeline is
@@ -629,8 +660,9 @@ string per line, and the cleanup only joins them into one utterance.
   wraps.
 - **Whitespace.** Every other line break and every run of whitespace
   becomes one space.
-- Nothing is dropped and no character is rewritten, and the confidence
-  is the recogniser's. The rules below were written for what Tesseract
+- Nothing is dropped, the only character rewritten is that U+2010
+  hyphen at a joined line end, and the confidence is the recogniser's.
+  The rules below were written for what Tesseract
   makes of balloon borders; on this recogniser's output they would
   delete real text (a `|`, a low-scored word, a symbol outside the
   allowlist).
@@ -827,8 +859,8 @@ verbatim; a Japanese request with `detect: false` skips only step 5):
 5. Pick the region whose intersection with the user's rect is
    largest (the smallest among equals). Fall back to the user's rect
    verbatim if none overlap.
-6. Recognize the chosen crop; for Japanese, the text box inside it
-   when exactly one is clear.
+6. Recognize the chosen crop; for Japanese, when it is one of the
+   page's balloons, the text box inside it when exactly one is clear.
 7. Release the permit; write the detect cache (step 4 ran) and the
    result cache. These writes happen in the detached task, also when
    the request is gone.
@@ -1159,7 +1191,10 @@ rectangle and sends `detect: true` only when the regions fetch succeeded
 (cache warm ⇒ snap is cheap). For Japanese the server still consults the
 page's detection on a tap (the regions fetch has just cached it) and
 reads the text box inside the balloon; the saved highlight keeps the
-tapped balloon, while a dragged one takes the returned `refined_bbox`.
+tapped balloon, while a dragged one that snapped takes the returned
+`refined_bbox`. A rectangle that did not snap and is not a region
+(a drag without `detect`, Detect text on a highlight drawn by hand) is
+read as sent, for Japanese too.
 One capture runs at a time; leaving the
 mode (Esc, the pill's Cancel) cancels it — the request finishes but its
 answer is ignored and no editor opens. A tap that hits no box (or lands
@@ -1218,8 +1253,11 @@ recognized text.
 - Work that outlives its request is cached; the decoded-page cache
   (one decode per page, a hidden issue still 404s, a new content hash
   is a miss); the engine switch through the routes (regions, cleanup
-  and cache keys of each set); a Japanese request reading the text box
-  inside its balloon; all with debug-build model stand-ins:
+  and cache keys of each set, with a nested pair of boxes); a Japanese
+  request reading the text box inside its balloon, a free-text region
+  and a hand-drawn rectangle read as sent, and a failing detector
+  answering 500 with nothing cached; all with debug-build model
+  stand-ins:
   [`crates/server/tests/ocr_work.rs`](../../crates/server/tests/ocr_work.rs).
 - Tests that reach the real pipeline without stand-ins (the
   pipeline-reach cases in `issue_ocr.rs` and `ocr_permits.rs`) expect
