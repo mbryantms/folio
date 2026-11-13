@@ -482,13 +482,21 @@ rest as "not attempted" (`ok: false`, `attempted: false`); results keep
 the lists' own order. Both take an optional body `{"list_ids": [...]}`
 (at most `MAX_BULK_LIST_IDS` = 1000, 422 over it) that limits the call to
 those of the caller's refreshable lists; other and unknown ids are
-dropped silently, and no body means every list. Each call costs one
-import-quota token, a continuation call included. The web "Check for
-updates" (`lib/cbl/check-all-rounds.ts`) sends the not-attempted ids
-back until none are left, shows "Checked N of M lists · still
-checking…" meanwhile, and stops when a round checks nothing or fails
-(the lists checked so far are kept, the rest show that round's error
-with Retry). Matching a
+dropped silently, and no body means every list. The body fails closed:
+an unknown field is a 422 and a non-empty body that is not JSON a 415.
+A check (or refresh) costs one import-quota token however many rounds it
+takes: a call that leaves lists unreached stores their count as a
+single-use allowance (`cbl::quota::store_continuation`, 5 min), and the
+next call with `list_ids` takes it before any work and is free when it
+names no more distinct lists; a call without `list_ids` pays and clears
+it (`cbl::quota` module docs say why this keeps the quota's bound). The
+web "Check for updates" (`lib/cbl/check-all-rounds.ts`) sends the
+not-attempted ids back, at most 1000 per round, until none are left,
+shows "Checked N of M lists · still checking…" meanwhile, and stops when
+a round leaves as many lists unchecked as before or fails (the lists
+checked so far are kept, the rest show that round's error with Retry).
+Leaving the page stops it before the next round, without a toast.
+Matching a
 large list after a slow fetch can still take a request past the route
 timeout: the write is then rolled back and the request answers 408,
 while lists finished earlier in the same bulk request stay updated. The

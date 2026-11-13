@@ -6694,8 +6694,11 @@
               }
             }
           },
+          "415": {
+            "description": "a non-empty body that is not `application/json`"
+          },
           "422": {
-            "description": "more than 1000 `list_ids`, or an id that is not a UUID"
+            "description": "more than 1000 `list_ids`, an id that is not a UUID, or an unknown field"
           },
           "429": {
             "description": "per-user CBL import quota exceeded"
@@ -6733,8 +6736,11 @@
               }
             }
           },
+          "415": {
+            "description": "a non-empty body that is not `application/json`"
+          },
           "422": {
-            "description": "more than 1000 `list_ids`, or an id that is not a UUID"
+            "description": "more than 1000 `list_ids`, an id that is not a UUID, or an unknown field"
           },
           "429": {
             "description": "per-user CBL import quota exceeded"
@@ -17772,7 +17778,7 @@
       },
       "CblBulkReq": {
         "type": "object",
-        "description": "Optional body of `check-all` / `refresh-all`. With no body, or no\n`list_ids`, every list the caller may refresh is worked on.",
+        "description": "Optional body of `check-all` / `refresh-all`. With no body, or no\n`list_ids`, every list the caller may refresh is worked on. Fails\nclosed: an unknown field is a 422 and a non-empty body that is not\n`application/json` a 415, never \"every list\".",
         "properties": {
           "list_ids": {
             "type": [
@@ -17785,7 +17791,8 @@
             },
             "description": "Work on only these lists. Ids the caller may not refresh, and\nunknown ids, are left out of the result without an error; an\nempty array yields an empty result. At most 1000 ids."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "CblBulkResultView": {
         "type": "object",

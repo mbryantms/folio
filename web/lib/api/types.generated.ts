@@ -7722,7 +7722,9 @@ export interface components {
         };
         /**
          * @description Optional body of `check-all` / `refresh-all`. With no body, or no
-         *     `list_ids`, every list the caller may refresh is worked on.
+         *     `list_ids`, every list the caller may refresh is worked on. Fails
+         *     closed: an unknown field is a 422 and a non-empty body that is not
+         *     `application/json` a 415, never "every list".
          */
         CblBulkReq: {
             /**
@@ -23374,7 +23376,14 @@ export interface operations {
                     "application/json": components["schemas"]["CblBulkResultView"];
                 };
             };
-            /** @description more than 1000 `list_ids`, or an id that is not a UUID */
+            /** @description a non-empty body that is not `application/json` */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description more than 1000 `list_ids`, an id that is not a UUID, or an unknown field */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -23412,7 +23421,14 @@ export interface operations {
                     "application/json": components["schemas"]["CblBulkResultView"];
                 };
             };
-            /** @description more than 1000 `list_ids`, or an id that is not a UUID */
+            /** @description a non-empty body that is not `application/json` */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description more than 1000 `list_ids`, an id that is not a UUID, or an unknown field */
             422: {
                 headers: {
                     [name: string]: unknown;

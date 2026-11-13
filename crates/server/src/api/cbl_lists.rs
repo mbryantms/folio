@@ -34,7 +34,7 @@ use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
-use super::extractors::{OptionalValidated, Validated};
+use super::extractors::{StrictOptionalValidated, Validated};
 use crate::api::issue_card::IssueCardRow;
 use crate::auth::{CurrentUser, RequireAdmin};
 use crate::cbl::{
@@ -278,8 +278,11 @@ pub struct CblBulkItemView {
 pub const MAX_BULK_LIST_IDS: usize = 1000;
 
 /// Optional body of `check-all` / `refresh-all`. With no body, or no
-/// `list_ids`, every list the caller may refresh is worked on.
+/// `list_ids`, every list the caller may refresh is worked on. Fails
+/// closed: an unknown field is a 422 and a non-empty body that is not
+/// `application/json` a 415, never "every list".
 #[derive(Debug, Default, Deserialize, garde::Validate, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CblBulkReq {
     /// Work on only these lists. Ids the caller may not refresh, and
     /// unknown ids, are left out of the result without an error; an
@@ -2302,7 +2305,8 @@ pub async fn check_one(
     request_body(content = Option<CblBulkReq>, description = "Optional; `list_ids` limits the check to those lists. Omit the body to check every list"),
     responses(
         (status = 200, body = CblBulkResultView),
-        (status = 422, description = "more than 1000 `list_ids`, or an id that is not a UUID"),
+        (status = 415, description = "a non-empty body that is not `application/json`"),
+        (status = 422, description = "more than 1000 `list_ids`, an id that is not a UUID, or an unknown field"),
         (status = 429, description = "per-user CBL import quota exceeded"),
     )
 )]
@@ -2310,13 +2314,16 @@ pub async fn check_one(
 pub async fn check_all(
     State(app): State<AppState>,
     user: CurrentUser,
-    OptionalValidated(req): OptionalValidated<CblBulkReq>,
+    StrictOptionalValidated(req): StrictOptionalValidated<CblBulkReq>,
 ) -> impl IntoResponse {
-    // One token per call, a continuation call (`list_ids` = the lists an
-    // earlier call did not reach) included: the quota bounds the remote
-    // work per request, and every request is still held to the same
-    // `CBL_REQUEST_BULK_BUDGET` of it however many ids it names.
-    if let Err(resp) = crate::cbl::quota::consume_import(&app, &user).await {
+    // A check costs one import token however many rounds it takes: a call
+    // without `list_ids` pays and starts a run; a continuation call naming
+    // no more lists than the previous call left unreached spends that
+    // single-use allowance instead (`cbl::quota` module docs).
+    let op = crate::cbl::quota::BulkOp::Check;
+    if let Err(resp) =
+        crate::cbl::quota::consume_bulk(&app, &user, op, req.list_ids.as_deref()).await
+    {
         return resp;
     }
     let lists = match refreshable_lists(&app, &user, req.list_ids.as_deref()).await {
@@ -2344,7 +2351,10 @@ pub async fn check_all(
         };
         slots[idx] = Some(item);
     }
-    bulk_result(slots.into_iter().flatten().collect())
+    let items: Vec<CblBulkItemView> = slots.into_iter().flatten().collect();
+    let not_attempted = items.iter().filter(|i| !i.attempted).count();
+    crate::cbl::quota::store_continuation(&app, &user, op, not_attempted).await;
+    bulk_result(items)
 }
 
 #[utoipa::path(
@@ -2353,7 +2363,8 @@ pub async fn check_all(
     request_body(content = Option<CblBulkReq>, description = "Optional; `list_ids` limits the refresh to those lists. Omit the body to refresh every list"),
     responses(
         (status = 200, body = CblBulkResultView),
-        (status = 422, description = "more than 1000 `list_ids`, or an id that is not a UUID"),
+        (status = 415, description = "a non-empty body that is not `application/json`"),
+        (status = 422, description = "more than 1000 `list_ids`, an id that is not a UUID, or an unknown field"),
         (status = 429, description = "per-user CBL import quota exceeded"),
     )
 )]
@@ -2362,10 +2373,14 @@ pub async fn refresh_all(
     State(app): State<AppState>,
     user: CurrentUser,
     Extension(ctx): Extension<RequestContext>,
-    OptionalValidated(req): OptionalValidated<CblBulkReq>,
+    StrictOptionalValidated(req): StrictOptionalValidated<CblBulkReq>,
 ) -> impl IntoResponse {
-    // One token per call, continuation calls included; see [`check_all`].
-    if let Err(resp) = crate::cbl::quota::consume_import(&app, &user).await {
+    // One import token per refresh however many rounds it takes; see
+    // [`check_all`].
+    let op = crate::cbl::quota::BulkOp::Refresh;
+    if let Err(resp) =
+        crate::cbl::quota::consume_bulk(&app, &user, op, req.list_ids.as_deref()).await
+    {
         return resp;
     }
     let lists = match refreshable_lists(&app, &user, req.list_ids.as_deref()).await {
@@ -2417,7 +2432,10 @@ pub async fn refresh_all(
         };
         slots[idx] = Some(item);
     }
-    bulk_result(slots.into_iter().flatten().collect())
+    let items: Vec<CblBulkItemView> = slots.into_iter().flatten().collect();
+    let not_attempted = items.iter().filter(|i| !i.attempted).count();
+    crate::cbl::quota::store_continuation(&app, &user, op, not_attempted).await;
+    bulk_result(items)
 }
 
 #[utoipa::path(
