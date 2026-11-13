@@ -12551,12 +12551,6 @@ export interface components {
             /** @description Per-model state. */
             models: components["schemas"]["OcrModelView"][];
             /**
-             * @description Resolved Tesseract language-data directory (`TESSDATA_PREFIX`,
-             *     else `${HOME}/.tesseract-rs/tessdata`). The server no longer reads
-             *     it; the field stays so the response keeps its shape.
-             */
-            tessdata_dir: string;
-            /**
              * Format: int64
              * @description Sum of `bytes_on_disk` across every entry.
              */

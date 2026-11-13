@@ -157,7 +157,7 @@ describe("ocrCroppedRegion — server-side OCR", () => {
   });
 
   it("returns null when the server recognized no text", async () => {
-    // Tesseract's "blank tile" output: empty string + 0 confidence.
+    // The server's answer for a blank region: empty string + 0 confidence.
     // The reader treats this as "Couldn't read any text" and the
     // caller falls back to a plain highlight.
     mockedFetch.mockResolvedValueOnce(

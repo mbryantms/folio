@@ -15,8 +15,8 @@
 #     never touches, reporting how much each one freed.
 #
 # Nothing listed here is used by the build: the Rust toolchain comes from
-# rustup, nextest is a prebuilt binary, C/C++ deps (Tesseract/Leptonica,
-# aws-lc, zstd, libwebp) build with the image's gcc/g++ + cmake, and ort
+# rustup, nextest is a prebuilt binary, C/C++ deps (aws-lc, zstd, libwebp,
+# the UnRAR library) build with the image's gcc/g++ + cmake, and ort
 # downloads its own onnxruntime. `docker image prune` keeps the running
 # service containers' images (postgres/redis) and drops the rest.
 #

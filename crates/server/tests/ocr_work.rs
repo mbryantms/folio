@@ -1161,8 +1161,8 @@ impl PageDetector for ThreeClassDetector {
     }
 }
 
-/// A recognizer that reads a word between two bars (what a balloon's
-/// borders used to become in Tesseract's output).
+/// A recognizer that reads a word between two bars (symbols a cleanup
+/// that drops border debris would remove).
 struct BarsRecognizer;
 
 impl Recognizer for BarsRecognizer {
@@ -1178,7 +1178,7 @@ impl Recognizer for BarsRecognizer {
 /// With stand-ins for the models, the routes offer balloons and free
 /// text as regions (the text inside a balloon is not offered, and a
 /// balloon inside another region is a region of its own), keep what the
-/// recognizer read (no Tesseract cleanup, so no separate raw text), and
+/// recognizer read (nothing is dropped, so no separate raw text), and
 /// write the detection and the result under the server's cache keys.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_routes_offer_regions_keep_the_text_and_write_the_cache_keys() {

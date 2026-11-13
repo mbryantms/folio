@@ -848,11 +848,6 @@ mod tests {
         ] {
             assert!(current.reader_tuning.contains(&part), "{part}");
         }
-        assert!(
-            !current.western.contains("tesseract"),
-            "{}",
-            current.western
-        );
         for f in models::LINE_FINDER_FILES
             .iter()
             .chain(models::WESTERN_REC.files)

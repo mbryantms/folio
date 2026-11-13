@@ -1,10 +1,9 @@
-//! The two seams other engines plug into later, and Folio's engines
-//! behind them.
+//! The seam detectors plug into, and the previous detector's model.
 //!
-//! A detector takes a page and returns boxes; a recogniser takes a crop
-//! and returns text and a confidence. Timing, scoring, contact sheets and
-//! reports are shared and know nothing else about the engine. To add an
-//! engine, implement one trait and register it in `main.rs`.
+//! A detector takes a page and returns boxes. Timing, scoring, contact
+//! sheets and reports are shared and know nothing else about the engine.
+//! To add a detector, implement [`PageDetector`] and register it in
+//! `load_engines` (`stage2.rs`).
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -13,7 +12,6 @@ use std::time::Instant;
 use image::DynamicImage;
 use serde::Serialize;
 use server::ocr::models::{self, PinnedFile};
-use server::ocr::recognizer::{Recognition, Recognizer, western::WesternOcr};
 use sha2::{Digest, Sha256};
 
 use crate::cand::CtdOwn;
@@ -35,18 +33,6 @@ pub(crate) struct DetBox {
 pub(crate) trait PageDetector {
     fn name(&self) -> String;
     fn detect(&mut self, page: &DynamicImage) -> anyhow::Result<Vec<DetBox>>;
-}
-
-/// A recogniser's answer, plus an optional breakdown of its own stages
-/// (name, ms) for the timing tables.
-pub(crate) struct RecOutput {
-    pub rec: Recognition,
-    pub stages: Vec<(&'static str, f64)>,
-}
-
-pub(crate) trait CropRecognizer {
-    fn name(&self) -> String;
-    fn recognize(&mut self, crop: &DynamicImage) -> anyhow::Result<RecOutput>;
 }
 
 /// The `comic-text-detector` model the server ran before the engine
@@ -125,32 +111,4 @@ pub(crate) fn load_ctd(threads: usize) -> anyhow::Result<(CtdOwn, DetectorLoad)>
             model_bytes: bytes,
         },
     ))
-}
-
-/// Folio's Western recogniser, exactly as the pipeline calls it (the
-/// `detect: false` path: crop in, `WesternOcr::recognize`).
-pub(crate) struct FolioWestern {
-    ocr: &'static WesternOcr,
-}
-
-impl FolioWestern {
-    /// Returns the recogniser and its init time in ms.
-    pub(crate) async fn load() -> anyhow::Result<(Self, f64)> {
-        let t = Instant::now();
-        let ocr = WesternOcr::shared().await?;
-        Ok((FolioWestern { ocr }, ms_since(t)))
-    }
-}
-
-impl CropRecognizer for FolioWestern {
-    fn name(&self) -> String {
-        "folio-western (Tesseract via server::ocr::recognizer::western)".into()
-    }
-
-    fn recognize(&mut self, crop: &DynamicImage) -> anyhow::Result<RecOutput> {
-        Ok(RecOutput {
-            rec: self.ocr.recognize(crop)?,
-            stages: Vec::new(),
-        })
-    }
 }

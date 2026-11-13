@@ -11,24 +11,19 @@
 //! - [`manga::MangaOcr`]: vertical Japanese OCR, the `manga-ocr` model's
 //!   ViT encoder + BERT decoder on two ONNX Runtime sessions Folio builds
 //!   itself.
-//! - [`western::WesternOcr`]: native Tesseract 5 with the `tessdata_best`
-//!   LSTM models, vendored via `tesseract-rs`. No request reaches it; it is
-//!   kept for `crates/tools/ocr-bench` until the Tesseract build is
-//!   removed.
 
 pub mod ctc;
 pub mod manga;
-pub mod western;
 
 use image::DynamicImage;
 
 /// Output of a single OCR pass over a cropped bubble.
 ///
 /// `words` holds the pieces the engine read, with their boxes in crop
-/// pixels: one entry per word for Tesseract, one entry per text line for
-/// the CTC line recogniser (its unit is the line). `None` when the
-/// engine exposes no pieces (manga-ocr returns a single string) or read
-/// nothing. The client uses `text` for `marker.selection.text`.
+/// pixels: one entry per text line for the CTC line recogniser (its unit
+/// is the line). `None` when the engine exposes no pieces (manga-ocr
+/// returns a single string) or read nothing. The client uses `text`
+/// for `marker.selection.text`.
 #[derive(Debug, Clone)]
 pub struct Recognition {
     pub text: String,
@@ -44,10 +39,8 @@ pub struct Word {
     pub ymin: f32,
     pub xmax: f32,
     pub ymax: f32,
-    /// 0-based index of the textline the word sits on, in reading
-    /// order (for a line entry: the line's own index). Lets the
-    /// postprocess stage join hyphenated line breaks without
-    /// re-deriving geometry from the bboxes.
+    /// 0-based index of the text line the entry belongs to, in reading
+    /// order (for a line entry: the line's own index).
     pub line_index: u32,
 }
 
