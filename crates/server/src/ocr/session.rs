@@ -69,11 +69,12 @@ pub fn environment() -> anyhow::Result<&'static Environment> {
 
 /// Whether this CPU can run the ONNX Runtime library linked in. The
 /// prebuilt x86_64 library `ort` downloads (ONNX Runtime 1.31) is compiled
-/// for x86-64-v3 and executes AVX2 instructions; on a CPU without AVX2 the
-/// first inference would kill the whole server with SIGILL, which no
-/// `catch_unwind` can stop. Refusing to build the environment turns that
-/// into an OCR error instead.
-fn cpu_runs_the_prebuilt_runtime() -> bool {
+/// for x86-64-v3. On a CPU without AVX the process does not even reach
+/// `main` (a static initialiser of the library faults; checked under
+/// emulation). On a CPU with AVX but without AVX2 the server starts, and
+/// running a model would end it with SIGILL, which no `catch_unwind` can
+/// stop; refusing to build the environment turns that into an OCR error.
+pub(crate) fn cpu_runs_the_prebuilt_runtime() -> bool {
     #[cfg(target_arch = "x86_64")]
     {
         !ort::sys::USING_PYKE_BINARIES || std::is_x86_feature_detected!("avx2")
@@ -136,7 +137,6 @@ pub fn intra_threads(cap: usize) -> usize {
 pub fn build(path: &Path, intra_threads: usize) -> anyhow::Result<Session> {
     let env = environment()?;
     Session::builder(env)
-        .map_err(ort::Error::from)
         .and_then(|b| {
             b.with_optimization_level(GraphOptimizationLevel::All)
                 .and_then(|b| b.with_intra_threads(intra_threads))
@@ -180,6 +180,13 @@ mod tests {
 
     #[test]
     fn the_runtime_version_is_a_dotted_number() {
+        // On a CPU without AVX2 the library is never asked (see
+        // `runtime_build_info`); the test checks that branch instead.
+        if !cpu_runs_the_prebuilt_runtime() {
+            assert_eq!(runtime_build_info(), "unavailable: no AVX2");
+            assert_eq!(runtime_version(), None);
+            return;
+        }
         let v = runtime_version().unwrap_or_else(|| panic!("{:?}", runtime_build_info()));
         assert!(
             v.split('.').count() == 3 && v.split('.').all(|p| p.parse::<u32>().is_ok()),
@@ -198,6 +205,12 @@ mod tests {
 
     #[test]
     fn the_environment_is_built_once() {
+        // Without AVX2 the environment is refused, every time.
+        if !cpu_runs_the_prebuilt_runtime() {
+            assert!(environment().is_err());
+            assert!(environment().is_err());
+            return;
+        }
         let a = environment().expect("environment");
         let b = environment().expect("environment");
         assert!(std::ptr::eq(a, b));

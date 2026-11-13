@@ -798,10 +798,25 @@ mod tests {
             current.runtime.starts_with(&format!(
                 "ort={};onnxruntime=",
                 crate::ocr::session::ORT_CRATE_VERSION
-            )) && current.runtime.contains("git-branch=rel-"),
+            )),
             "{}",
             current.runtime
         );
+        // The build string comes from the library only on a CPU that can
+        // run it (AVX2); elsewhere it is a fixed marker.
+        if crate::ocr::session::cpu_runs_the_prebuilt_runtime() {
+            assert!(
+                current.runtime.contains("git-branch=rel-"),
+                "{}",
+                current.runtime
+            );
+        } else {
+            assert!(
+                current.runtime.ends_with("unavailable: no AVX2"),
+                "{}",
+                current.runtime
+            );
+        }
         assert_eq!(current.detector_pins, pins(models::BUBBLE_DETECTOR_FILES));
         assert_eq!(current.manga_pins, pins(models::MANGA_FILES));
         assert_eq!(

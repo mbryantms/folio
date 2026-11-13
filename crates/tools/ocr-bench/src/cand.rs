@@ -42,7 +42,8 @@ pub(crate) fn load_session(
     let env = server::ocr::session::environment()?;
     let mut b = Session::builder(env)?
         .with_optimization_level(GraphOptimizationLevel::All)
-        .and_then(|b| b.with_intra_op_spinning(false))
+        .map_err(ort::Error::<()>::from)?
+        .with_intra_op_spinning(false)
         .map_err(ort::Error::<()>::from)?;
     if intra_threads > 0 {
         b = b

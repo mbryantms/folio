@@ -107,6 +107,9 @@ impl MangaOcr {
 
     /// A recogniser of its own (tools; the server uses [`Self::shared`]).
     pub async fn load() -> anyhow::Result<Self> {
+        // Before any download: on a CPU that cannot run ONNX Runtime the
+        // engine fails here, not after fetching its models.
+        session::environment()?;
         models::ensure_pinned(models::MANGA_FILES).await?;
         let pin = |name: &str| {
             models::MANGA_FILES
