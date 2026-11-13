@@ -87,9 +87,8 @@ async fn set_bounded_ttl(
 ///
 /// History: v4 = Western text is read by the line finder and the CTC
 /// line recogniser, `words` holds one entry per line, and only the line
-/// join is applied to it; Japanese crops come from the balloon detector
-/// (the legacy engines keep the v3 behaviour under their own
-/// fingerprint); v3 = cleanup reads `|` as the pronoun `I`,
+/// join is applied to it; Japanese crops come from the balloon detector;
+/// v3 = cleanup reads `|` as the pronoun `I`,
 /// keeps the hyphen of a line-end join and the double dash of an
 /// interruption, keeps confident grawlix; v2 = Otsu/polarity/padding
 /// preprocessing + postprocess cleanup (OCR rework 1.0); v1 =
