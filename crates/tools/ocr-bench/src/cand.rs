@@ -609,6 +609,16 @@ impl PageDetector for Ogkalu {
 }
 
 // ─── comic-text-detector through our own session ─────────────────────
+//
+// Licence: the `CtdOwn` code below (to the end of its `PageDetector`
+// impl) is derived from the `comic-text-detector` crate 0.5.1 (koharu,
+// <https://github.com/mayocream/koharu>, by Mayo Takanashi), whose
+// licence is the GNU General Public License version 3. That code is
+// licensed under the GNU General Public License version 3, as the crate
+// is, and is combined with the rest of Folio (AGPL-3.0-or-later) as
+// section 13 of GPLv3 and of AGPLv3 permit; see `LICENSE-THIRD-PARTY.md`.
+// Modified by the Folio project, November 2026: run on a session the
+// tool builds, without the full-page mask.
 
 /// comic-text-detector's model with the crate's own pre/postprocessing
 /// (1024x1024 squash, CatmullRom, RGB/255; `blk` rows above confidence

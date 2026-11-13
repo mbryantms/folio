@@ -23,10 +23,6 @@
 //! its region. A Western tap on a region the client already has sends
 //! that region's rect and is read as is, without the detector.
 //!
-//! Which engines do the work is the [`EngineSet`] the caller passes to
-//! [`prepare_models`] / [`prepare_detector`]: nothing below reads it from
-//! configuration, so a tool can run both sets in one process.
-//!
 //! Detector inference + recognize run inside [`tokio::task::spawn_blocking`]
 //! so the reactor isn't stalled. The detector + recognizer singletons
 //! are held by `&'static` reference, which is `Send + Sync` thanks to
@@ -72,32 +68,20 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use image::DynamicImage;
 use redis::aio::ConnectionManager;
 
-use super::EngineSet;
 use super::bubbles::BubbleDetector;
 use super::cache::{self, CachedBbox, CachedDetection};
-use super::detector::Detector;
 use super::manga_crop::{MANGA_CROP, MangaCrop, manga_crop};
 use super::page_cache::SharedPage;
 use super::postprocess::{self, Cleaned};
-use super::recognizer::{Language, Recognizer, ctc::LineOcr, manga::MangaOcr, western::WesternOcr};
+use super::recognizer::{Language, Recognizer, ctc::LineOcr, manga::MangaOcr};
 use super::regions;
 use crate::api::issue_ocr::OcrResponse;
 
-/// Full-page text detection. The real ones are [`BubbleDetector`] and,
-/// with the legacy engine set, [`Detector`]; debug builds let a test
-/// stand in for it per content hash ([`test_models`]).
+/// Full-page text detection. The real one is [`BubbleDetector`]; debug
+/// builds let a test stand in for it per content hash ([`test_models`]).
 pub trait PageDetector: Send + Sync {
     /// Detect the text regions of a whole page. Blocking.
     fn detect(&self, page: &DynamicImage) -> anyhow::Result<CachedDetection>;
-}
-
-impl PageDetector for Detector {
-    fn detect(&self, page: &DynamicImage) -> anyhow::Result<CachedDetection> {
-        let started = std::time::Instant::now();
-        let detection = run_detector_blocking(self, page)?;
-        self.note_inference(started.elapsed());
-        Ok(detection)
-    }
 }
 
 /// Pixel rectangle in page coordinates. All four fields are
@@ -174,43 +158,26 @@ pub struct OcrOutput {
     pub refined_bbox: Option<Rect>,
 }
 
-/// Legacy detector (`comic-text-detector`): confidence threshold below
-/// which a candidate bbox is discarded. 0.5 matches dmMaze's default.
-const DETECTOR_CONF: f32 = 0.5;
-/// Legacy detector: non-max-suppression IoU threshold.
-const DETECTOR_NMS: f32 = 0.5;
-
-/// The initialised singletons one OCR run uses, and the engine set they
-/// belong to (it picks the cleanup rules and the detect-cache key).
+/// The initialised singletons one OCR run uses.
 pub struct OcrModels {
-    engines: EngineSet,
     detector: Option<&'static dyn PageDetector>,
     recognizer: &'static dyn Recognizer,
 }
 
 /// Whether a run needs the page's detection: to snap the user's rect to
-/// a region (`detect`), or, with the current engines, to look for the
-/// text box of a Japanese request ([`MangaCrop::TextInRegion`]).
-pub fn uses_detection(
-    engines: EngineSet,
-    language: Language,
-    detect: bool,
-    manga: MangaCrop,
-) -> bool {
-    detect
-        || (engines == EngineSet::Current
-            && language == Language::Manga
-            && manga == MangaCrop::TextInRegion)
+/// a region (`detect`), or to look for the text box of a Japanese request
+/// ([`MangaCrop::TextInRegion`]).
+pub fn uses_detection(language: Language, detect: bool, manga: MangaCrop) -> bool {
+    detect || (language == Language::Manga && manga == MangaCrop::TextInRegion)
 }
 
 /// Wait for the models a run needs: the recognizer for `language`, and the
-/// detector when the run needs the page's detection ([`uses_detection`]),
-/// both of the `engines` set. The first call per model waits on its
-/// verified download (`ocr::models`) and builds the session; later calls
-/// return at once. Call this before taking an OCR permit. `content_hash`
-/// only selects a test stand-in in debug builds ([`test_models`]).
+/// detector when the run needs the page's detection ([`uses_detection`]).
+/// The first call per model waits on its verified download
+/// (`ocr::models`) and builds the session; later calls return at once.
+/// Call this before taking an OCR permit. `content_hash` only selects a
+/// test stand-in in debug builds ([`test_models`]).
 pub async fn prepare_models(
-    engines: EngineSet,
     content_hash: &str,
     language: Language,
     detect: bool,
@@ -223,71 +190,58 @@ pub async fn prepare_models(
     // going to use it. The first-call cost includes a HF download +
     // ort session build — skipping that on the no-detect path means
     // operators with detection disabled never pay it.
-    let detect = uses_detection(engines, language, detect, MANGA_CROP);
+    let detect = uses_detection(language, detect, MANGA_CROP);
     let detector: Option<&'static dyn PageDetector> = if detect {
         #[cfg(debug_assertions)]
         if let Some(d) = stub.and_then(|s| s.detector) {
             return Ok(OcrModels {
-                engines,
                 detector: Some(d),
                 recognizer: match stub.and_then(|s| s.recognizer) {
                     Some(r) => r,
-                    None => real_recognizer(engines, language).await?,
+                    None => real_recognizer(language).await?,
                 },
             });
         }
-        Some(real_detector(engines).await?)
+        Some(real_detector().await?)
     } else {
         None
     };
     #[cfg(debug_assertions)]
     if let Some(r) = stub.and_then(|s| s.recognizer) {
         return Ok(OcrModels {
-            engines,
             detector,
             recognizer: r,
         });
     }
     Ok(OcrModels {
-        engines,
         detector,
-        recognizer: real_recognizer(engines, language).await?,
+        recognizer: real_recognizer(language).await?,
     })
 }
 
-/// The page detector of an engine set. Pages of every language use it.
-async fn real_detector(engines: EngineSet) -> anyhow::Result<&'static dyn PageDetector> {
-    Ok(match engines {
-        EngineSet::Current => BubbleDetector::shared().await?,
-        EngineSet::Legacy => Detector::shared().await?,
-    })
+/// The page detector. Pages of every language use it.
+async fn real_detector() -> anyhow::Result<&'static dyn PageDetector> {
+    Ok(BubbleDetector::shared().await?)
 }
 
-/// The recognizer for a language. Japanese is `manga-ocr` with either
-/// engine set.
-async fn real_recognizer(
-    engines: EngineSet,
-    language: Language,
-) -> anyhow::Result<&'static dyn Recognizer> {
-    Ok(match (language, engines) {
-        (Language::Western, EngineSet::Current) => LineOcr::shared().await?,
-        (Language::Western, EngineSet::Legacy) => WesternOcr::shared().await?,
-        (Language::Manga, _) => MangaOcr::shared().await?,
+/// The recognizer for a language: the line finder and line recogniser
+/// for Western text, the `manga-ocr` model for Japanese.
+async fn real_recognizer(language: Language) -> anyhow::Result<&'static dyn Recognizer> {
+    Ok(match language {
+        Language::Western => LineOcr::shared().await?,
+        Language::Manga => MangaOcr::shared().await?,
     })
 }
 
 /// [`prepare_models`] for the detector alone (the text-regions route).
-pub async fn prepare_detector(
-    engines: EngineSet,
-    content_hash: &str,
-) -> anyhow::Result<&'static dyn PageDetector> {
+pub async fn prepare_detector(content_hash: &str) -> anyhow::Result<&'static dyn PageDetector> {
     #[cfg(debug_assertions)]
     if let Some(d) = test_models::get(content_hash).and_then(|s| s.detector) {
         return Ok(d);
     }
     #[cfg(not(debug_assertions))]
     let _ = content_hash;
-    real_detector(engines).await
+    real_detector().await
 }
 
 /// Debug-build stand-ins for the models, per content hash, so the
@@ -390,12 +344,11 @@ pub async fn run_ocr<P: Send + 'static>(
     };
     let start = std::time::Instant::now();
     let OcrModels {
-        engines,
         detector,
         recognizer,
     } = models;
     // A model the caller did not prepare for this request is not used.
-    let wants_detection = uses_detection(engines, input.language, input.detect, MANGA_CROP);
+    let wants_detection = uses_detection(input.language, input.detect, MANGA_CROP);
     let detector = if wants_detection { detector } else { None };
     if wants_detection && detector.is_none() {
         return Err(anyhow::anyhow!("detector requested but not prepared"));
@@ -406,7 +359,7 @@ pub async fn run_ocr<P: Send + 'static>(
     // detector run entirely. The blocking task receives `None` for both
     // and falls through to "OCR the user's rect verbatim".
     let (detect_key, cached_detection) = if wants_detection {
-        let key = cache::detect_cache_key_for(engines, &input.content_hash, input.page);
+        let key = cache::detect_cache_key(&input.content_hash, input.page);
         let cached = cache::get_detect(&input.redis, &key).await;
         (Some(key), cached)
     } else {
@@ -421,7 +374,6 @@ pub async fn run_ocr<P: Send + 'static>(
         let result = async move {
             let ((detection_to_cache, output), permit) = blocking_with_permit(permit, move || {
                 run_blocking(
-                    engines,
                     detector,
                     recognizer,
                     input,
@@ -509,7 +461,6 @@ impl Drop for CancelGuard {
 /// even when the recognition then failed or was skipped because the
 /// request was gone, so the caller always caches a finished detection.
 fn run_blocking(
-    engines: EngineSet,
     detector: Option<&dyn PageDetector>,
     recognizer: &dyn Recognizer,
     input: OcrInput,
@@ -518,7 +469,6 @@ fn run_blocking(
     cancel: &AtomicBool,
 ) -> (Option<CachedDetection>, anyhow::Result<OcrOutput>) {
     match recognize_blocking(
-        engines,
         detector,
         recognizer,
         input,
@@ -534,7 +484,6 @@ fn run_blocking(
 /// [`run_blocking`] with the detector's own failures as the outer error.
 #[allow(clippy::type_complexity)]
 fn recognize_blocking(
-    engines: EngineSet,
     detector: Option<&dyn PageDetector>,
     recognizer: &dyn Recognizer,
     input: OcrInput,
@@ -573,7 +522,6 @@ fn recognize_blocking(
         (None, _) => (None, false),
     };
     let crop = choose_crop(
-        engines,
         input.language,
         input.detect,
         MANGA_CROP,
@@ -601,9 +549,8 @@ fn recognize_blocking(
     // A failed recognition (an error, or a panic from the engine) must not
     // lose a detection that already finished: it is handed back for the
     // cache either way. A panic is caught here for that reason only; an
-    // engine mutex that was held at that moment is poisoned by it, as
-    // before (Tesseract and manga-ocr hold theirs for the whole call, the
-    // sessions built here for the inference only).
+    // engine mutex that was held at that moment is poisoned by it (every
+    // session is locked for its inference only).
     let recognized = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         recognizer.recognize(&final_img)
     }));
@@ -627,7 +574,7 @@ fn recognize_blocking(
     metrics::histogram!("folio_ocr_recognize_seconds", "lang" => lang_label)
         .record(recognize_start.elapsed().as_secs_f64());
 
-    let mut cleaned = postprocess::clean_for(recognition, input.language, engines);
+    let mut cleaned = postprocess::clean_for(recognition, input.language);
     // Word (or line) boxes come back in crop coordinates; shift them
     // into page space here, where the crop origin is still known.
     if let Some(words) = cleaned.words.as_mut() {
@@ -649,40 +596,10 @@ fn recognize_blocking(
     ))
 }
 
-/// Run one full-page inference of the legacy detector. Blocking — call
-/// from inside `spawn_blocking`. The mutex serializes concurrent callers
-/// through the process-wide ONNX session.
-fn run_detector_blocking(
-    det: &Detector,
-    page_image: &DynamicImage,
-) -> anyhow::Result<CachedDetection> {
-    let det_out = {
-        let mut d = det.lock()?;
-        d.inference(page_image, DETECTOR_CONF, DETECTOR_NMS)?
-    };
-    Ok(CachedDetection {
-        page_w: page_image.width(),
-        page_h: page_image.height(),
-        bboxes: det_out
-            .bboxes
-            .iter()
-            .map(|b| CachedBbox {
-                xmin: b.xmin,
-                ymin: b.ymin,
-                xmax: b.xmax,
-                ymax: b.ymax,
-                confidence: b.confidence,
-                class: b.class as u32,
-            })
-            .collect(),
-    })
-}
-
 /// Full-page detection for the text-regions endpoint: run the
 /// detector over an owned page image and store the result under the
-/// page's detect-cache key for `engines` (the set `detector` belongs
-/// to) — the same entry [`run_ocr`] reads, so a regions fetch makes
-/// every subsequent OCR on that page recognize-only.
+/// page's detect-cache key — the same entry [`run_ocr`] reads, so a
+/// regions fetch makes every subsequent OCR on that page recognize-only.
 ///
 /// The detection and the cache write run in a detached task that owns
 /// `permit` (see the module docs): a detection that finishes after this
@@ -694,7 +611,6 @@ fn run_detector_blocking(
 /// skip the archive load + page decode entirely.
 pub async fn detect_and_cache_regions<P: Send + 'static>(
     redis: ConnectionManager,
-    engines: EngineSet,
     content_hash: &str,
     page: u32,
     page_image: SharedPage,
@@ -703,7 +619,7 @@ pub async fn detect_and_cache_regions<P: Send + 'static>(
 ) -> anyhow::Result<CachedDetection> {
     let cancel = Arc::new(AtomicBool::new(false));
     let _cancel_on_drop = CancelGuard(cancel.clone());
-    let key = cache::detect_cache_key_for(engines, content_hash, page);
+    let key = cache::detect_cache_key(content_hash, page);
     let gone = cancel.clone();
     let work = tokio::spawn(async move {
         let result = async move {
@@ -749,13 +665,11 @@ pub(crate) struct Crop {
 ///
 /// 1. With `detect`, the snap candidate that overlaps `user` most
 ///    replaces it ([`pick_bbox_page`]); with no overlap `user` stays.
-/// 2. A Japanese request with the current engines then goes through
-///    [`manga_crop`], which narrows a rectangle that is one of the page's
-///    regions (a tap, a snap) to the text box inside it; any other
-///    rectangle is read as sent (`manga` chooses; the legacy engines
-///    read the region as they always did).
+/// 2. A Japanese request then goes through [`manga_crop`], which narrows
+///    a rectangle that is one of the page's regions (a tap, a snap) to
+///    the text box inside it; any other rectangle is read as sent
+///    (`manga` chooses).
 pub(crate) fn choose_crop(
-    engines: EngineSet,
     language: Language,
     detect: bool,
     manga: MangaCrop,
@@ -764,14 +678,14 @@ pub(crate) fn choose_crop(
     (page_w, page_h): (u32, u32),
 ) -> Crop {
     let snapped = if detect {
-        pick_bbox_page(engines, boxes, &user, page_w, page_h)
+        pick_bbox_page(boxes, &user, page_w, page_h)
     } else {
         None
     };
     let region = snapped.unwrap_or(user);
-    let read = match (language, engines) {
-        (Language::Manga, EngineSet::Current) => manga_crop(manga, region, boxes, page_w, page_h),
-        (Language::Manga, EngineSet::Legacy) | (Language::Western, _) => region,
+    let read = match language {
+        Language::Manga => manga_crop(manga, region, boxes, page_w, page_h),
+        Language::Western => region,
     };
     Crop {
         read,
@@ -782,44 +696,23 @@ pub(crate) fn choose_crop(
 /// Pick the box a drawn rectangle snaps to: the candidate with the
 /// largest intersection area against the user's rect. Both are in
 /// page-pixel coordinates. Candidates with zero overlap or that round
-/// out to an empty rect are discarded.
-///
-/// - **Current engines**: the candidates are the page's regions
-///   ([`regions::regions`]: balloons and free text, near-duplicates
-///   removed), and among candidates with the same overlap the smallest
-///   box wins (a rectangle drawn wholly inside a balloon that itself
-///   lies in a larger region snaps to the balloon).
-/// - **Legacy engines**: exactly what the release before the engine
-///   change did. The candidates are every box of the detection, blocks
-///   and lines alike, and among candidates with the same overlap the
-///   last in detector order wins.
-fn pick_bbox_page(
-    engines: EngineSet,
-    bboxes: &[CachedBbox],
-    user: &Rect,
-    page_w: u32,
-    page_h: u32,
-) -> Option<Rect> {
-    let regions;
-    let candidates: &[CachedBbox] = match engines {
-        EngineSet::Current => {
-            regions = regions::regions(engines, bboxes, page_w, page_h);
-            &regions
-        }
-        EngineSet::Legacy => bboxes,
-    };
-    let overlapping = candidates.iter().filter_map(|b| {
-        let r = bbox_to_rect(b, page_w, page_h)?;
-        let overlap = r.intersection(user)?.area();
-        Some((overlap, r))
-    });
-    match engines {
-        EngineSet::Current => overlapping.max_by(|(overlap_a, a), (overlap_b, b)| {
+/// out to an empty rect are discarded. The candidates are the page's
+/// regions ([`regions::regions`]: balloons and free text, near-duplicates
+/// removed), and among candidates with the same overlap the smallest box
+/// wins (a rectangle drawn wholly inside a balloon that itself lies in a
+/// larger region snaps to the balloon).
+fn pick_bbox_page(bboxes: &[CachedBbox], user: &Rect, page_w: u32, page_h: u32) -> Option<Rect> {
+    regions::regions(bboxes, page_w, page_h)
+        .iter()
+        .filter_map(|b| {
+            let r = bbox_to_rect(b, page_w, page_h)?;
+            let overlap = r.intersection(user)?.area();
+            Some((overlap, r))
+        })
+        .max_by(|(overlap_a, a), (overlap_b, b)| {
             overlap_a.cmp(overlap_b).then(b.area().cmp(&a.area()))
-        }),
-        EngineSet::Legacy => overlapping.max_by_key(|(overlap, _)| *overlap),
-    }
-    .map(|(_, r)| r)
+        })
+        .map(|(_, r)| r)
 }
 
 /// A detector box as a whole-pixel rectangle on a `w × h` page (rounded,
@@ -887,56 +780,27 @@ mod tests {
     const BALLOON: Rect = rect(100, 100, 200, 300);
     const BALLOON_TEXT: Rect = rect(140, 130, 120, 240);
 
-    /// A drawn rectangle snaps to a region (a balloon or free text) of
-    /// the current engines, never to the text box inside a balloon, even
-    /// when that overlaps it more.
+    /// A drawn rectangle snaps to a region (a balloon or free text), never
+    /// to the text box inside a balloon, even when that overlaps it more.
     #[test]
     fn a_snap_takes_a_region_not_the_text_inside_a_balloon() {
         // Inside the balloon's text box entirely.
         let user = rect(150, 150, 60, 60);
         let boxes = page_boxes();
-        assert_eq!(
-            pick_bbox_page(EngineSet::Current, &boxes, &user, 1000, 1500),
-            Some(BALLOON)
-        );
+        assert_eq!(pick_bbox_page(&boxes, &user, 1000, 1500), Some(BALLOON));
         // On the caption.
         assert_eq!(
-            pick_bbox_page(
-                EngineSet::Current,
-                &boxes,
-                &rect(600, 110, 50, 20),
-                1000,
-                1500
-            ),
+            pick_bbox_page(&boxes, &rect(600, 110, 50, 20), 1000, 1500),
             Some(rect(500, 100, 300, 60))
         );
         // Only the text box under it: nothing to snap to.
         let text_only = [classed(1, 140.0, 130.0, 260.0, 370.0)];
-        assert_eq!(
-            pick_bbox_page(EngineSet::Current, &text_only, &user, 1000, 1500),
-            None
-        );
-        // The legacy detector's classes (0 block, 1 line) are all
-        // regions, as before: the larger overlap wins whatever the class.
-        let legacy = [
-            classed(0, 100.0, 100.0, 300.0, 400.0),
-            classed(1, 100.0, 100.0, 320.0, 420.0),
-        ];
-        assert_eq!(
-            pick_bbox_page(
-                EngineSet::Legacy,
-                &legacy,
-                &rect(250, 350, 100, 100),
-                1000,
-                1500
-            ),
-            Some(rect(100, 100, 220, 320))
-        );
+        assert_eq!(pick_bbox_page(&text_only, &user, 1000, 1500), None);
     }
 
     /// A rectangle drawn wholly inside a balloon that lies in a larger
-    /// region overlaps both in full: with the current engines the snap
-    /// takes the smaller box, whichever was detected first.
+    /// region overlaps both in full: the snap takes the smaller box,
+    /// whichever was detected first.
     #[test]
     fn a_snap_tie_goes_to_the_smaller_box() {
         let caption = classed(2, 50.0, 50.0, 900.0, 700.0);
@@ -946,56 +810,20 @@ mod tests {
             [caption.clone(), balloon.clone()],
             [balloon.clone(), caption.clone()],
         ] {
-            assert_eq!(
-                pick_bbox_page(EngineSet::Current, &boxes, &user, 1000, 1500),
-                Some(BALLOON)
-            );
+            assert_eq!(pick_bbox_page(&boxes, &user, 1000, 1500), Some(BALLOON));
         }
         // A larger overlap still beats a smaller box.
         let reaching_out = rect(250, 150, 100, 60);
         assert_eq!(
-            pick_bbox_page(
-                EngineSet::Current,
-                &[caption, balloon],
-                &reaching_out,
-                1000,
-                1500
-            ),
+            pick_bbox_page(&[caption, balloon], &reaching_out, 1000, 1500),
             Some(rect(50, 50, 850, 650))
         );
     }
 
-    /// The legacy engines keep the tie rule of the release before the
-    /// engine change: among boxes with the same overlap, the last in
-    /// detector order, whatever its size.
+    /// The snap sees the page's regions: of two boxes around the same
+    /// region only the one that was kept.
     #[test]
-    fn a_legacy_snap_tie_goes_to_the_last_box_in_detector_order() {
-        let block = classed(0, 50.0, 50.0, 900.0, 700.0);
-        let line = classed(1, 100.0, 100.0, 300.0, 400.0);
-        let user = rect(150, 150, 60, 60);
-        assert_eq!(
-            pick_bbox_page(
-                EngineSet::Legacy,
-                &[block.clone(), line.clone()],
-                &user,
-                1000,
-                1500
-            ),
-            Some(BALLOON),
-            "the line, detected last"
-        );
-        assert_eq!(
-            pick_bbox_page(EngineSet::Legacy, &[line, block], &user, 1000, 1500),
-            Some(rect(50, 50, 850, 650)),
-            "the block, detected last, although it is the larger box"
-        );
-    }
-
-    /// With the current engines the snap sees the page's regions: of two
-    /// boxes around the same region only the one that was kept. The
-    /// legacy engines snap to any box of the detection, as before.
-    #[test]
-    fn a_snap_uses_the_de_duplicated_regions_of_the_current_engines() {
+    fn a_snap_uses_the_de_duplicated_regions() {
         let as_text = CachedBbox {
             confidence: 0.80,
             ..classed(2, 399.0, 381.0, 746.0, 427.0)
@@ -1009,59 +837,34 @@ mod tests {
         // the smaller, lower-scored box.
         let user = rect(500, 390, 50, 20);
         assert_eq!(
-            pick_bbox_page(EngineSet::Current, &boxes, &user, 1000, 1500),
+            pick_bbox_page(&boxes, &user, 1000, 1500),
             Some(rect(400, 380, 347, 48))
-        );
-        // No de-duplication for the legacy engines: the last of the two.
-        assert_eq!(
-            pick_bbox_page(EngineSet::Legacy, &boxes, &user, 1000, 1500),
-            Some(rect(399, 381, 347, 46))
         );
     }
 
     #[test]
     fn a_run_needs_the_detection_to_snap_or_to_find_japanese_text() {
-        use EngineSet::{Current, Legacy};
         use Language::{Manga, Western};
         use MangaCrop::{Region, TextInRegion};
         // `detect` always does.
-        for engines in [Current, Legacy] {
-            for language in [Western, Manga] {
-                for manga in [Region, TextInRegion] {
-                    assert!(uses_detection(engines, language, true, manga));
-                }
+        for language in [Western, Manga] {
+            for manga in [Region, TextInRegion] {
+                assert!(uses_detection(language, true, manga));
             }
         }
-        // Without it, only a Japanese request of the current engines in
-        // the text-box mode.
-        assert!(uses_detection(Current, Manga, false, TextInRegion));
-        assert!(!uses_detection(Current, Manga, false, Region));
-        assert!(!uses_detection(Current, Western, false, TextInRegion));
-        assert!(!uses_detection(Legacy, Manga, false, TextInRegion));
+        // Without it, only a Japanese request in the text-box mode.
+        assert!(uses_detection(Manga, false, TextInRegion));
+        assert!(!uses_detection(Manga, false, Region));
+        assert!(!uses_detection(Western, false, TextInRegion));
         // As the server is configured: a Japanese tap needs the page's
         // detection (to find the balloon's text box), a Western one
         // reads without it.
-        assert!(uses_detection(Current, Manga, false, MANGA_CROP));
-        assert!(!uses_detection(Current, Western, false, MANGA_CROP));
-        assert!(!uses_detection(Legacy, Manga, false, MANGA_CROP));
+        assert!(uses_detection(Manga, false, MANGA_CROP));
+        assert!(!uses_detection(Western, false, MANGA_CROP));
     }
 
-    fn crop_of(
-        engines: EngineSet,
-        language: Language,
-        detect: bool,
-        manga: MangaCrop,
-        user: Rect,
-    ) -> Crop {
-        choose_crop(
-            engines,
-            language,
-            detect,
-            manga,
-            user,
-            &page_boxes(),
-            PAGE_SIZE,
-        )
+    fn crop_of(language: Language, detect: bool, manga: MangaCrop, user: Rect) -> Crop {
+        choose_crop(language, detect, manga, user, &page_boxes(), PAGE_SIZE)
     }
 
     /// Western text and the region mode: the user's rect as sent, or the
@@ -1074,26 +877,20 @@ mod tests {
             (Language::Western, MangaCrop::TextInRegion),
             (Language::Manga, MangaCrop::Region),
         ] {
-            let sent = crop_of(EngineSet::Current, language, false, manga, drawn);
+            let sent = crop_of(language, false, manga, drawn);
             assert_eq!((sent.read, sent.refined_bbox), (drawn, None));
-            let snapped = crop_of(EngineSet::Current, language, true, manga, drawn);
+            let snapped = crop_of(language, true, manga, drawn);
             assert_eq!(
                 (snapped.read, snapped.refined_bbox),
                 (BALLOON, Some(BALLOON))
             );
             // A tap sends the region itself: read as sent, nothing refined.
-            let tap = crop_of(EngineSet::Current, language, false, manga, BALLOON);
+            let tap = crop_of(language, false, manga, BALLOON);
             assert_eq!((tap.read, tap.refined_bbox), (BALLOON, None));
         }
         // Nothing under the rectangle: it is read as drawn.
         let nowhere = rect(900, 1400, 50, 50);
-        let missed = crop_of(
-            EngineSet::Current,
-            Language::Western,
-            true,
-            MangaCrop::Region,
-            nowhere,
-        );
+        let missed = crop_of(Language::Western, true, MangaCrop::Region, nowhere);
         assert_eq!((missed.read, missed.refined_bbox), (nowhere, None));
     }
 
@@ -1103,18 +900,12 @@ mod tests {
     #[test]
     fn a_japanese_request_in_text_box_mode_reads_the_text_box_and_says_so() {
         let mode = MangaCrop::TextInRegion;
-        let tap = crop_of(EngineSet::Current, Language::Manga, false, mode, BALLOON);
+        let tap = crop_of(Language::Manga, false, mode, BALLOON);
         assert_eq!(
             (tap.read, tap.refined_bbox),
             (BALLOON_TEXT, Some(BALLOON_TEXT))
         );
-        let snapped = crop_of(
-            EngineSet::Current,
-            Language::Manga,
-            true,
-            mode,
-            rect(150, 150, 60, 60),
-        );
+        let snapped = crop_of(Language::Manga, true, mode, rect(150, 150, 60, 60));
         assert_eq!(
             (snapped.read, snapped.refined_bbox),
             (BALLOON_TEXT, Some(BALLOON_TEXT))
@@ -1122,48 +913,18 @@ mod tests {
         // A rectangle drawn around the text that is not a region of the
         // page (no snap) is what the user enclosed: read as sent.
         let drawn = rect(130, 120, 140, 260);
-        let sent = crop_of(EngineSet::Current, Language::Manga, false, mode, drawn);
+        let sent = crop_of(Language::Manga, false, mode, drawn);
         assert_eq!((sent.read, sent.refined_bbox), (drawn, None));
         // The caption has no text box in it: read whole, nothing refined
         // for a tap, the caption for a snap.
         let caption = rect(500, 100, 300, 60);
-        let tap = crop_of(EngineSet::Current, Language::Manga, false, mode, caption);
+        let tap = crop_of(Language::Manga, false, mode, caption);
         assert_eq!((tap.read, tap.refined_bbox), (caption, None));
-        let snapped = crop_of(
-            EngineSet::Current,
-            Language::Manga,
-            true,
-            mode,
-            rect(600, 110, 50, 20),
-        );
+        let snapped = crop_of(Language::Manga, true, mode, rect(600, 110, 50, 20));
         assert_eq!(
             (snapped.read, snapped.refined_bbox),
             (caption, Some(caption))
         );
-    }
-
-    /// The legacy engines read Japanese as they always did: the mode
-    /// does not apply, and every class of that detector is a region.
-    #[test]
-    fn the_legacy_engines_ignore_the_japanese_crop_mode() {
-        for manga in [MangaCrop::Region, MangaCrop::TextInRegion] {
-            let tap = crop_of(EngineSet::Legacy, Language::Manga, false, manga, BALLOON);
-            assert_eq!((tap.read, tap.refined_bbox), (BALLOON, None));
-            // Snapping takes any box of the legacy detector: the drawn
-            // rectangle lies in the block and in its line, and of two
-            // full overlaps the one detected last wins (here the line).
-            let snapped = crop_of(
-                EngineSet::Legacy,
-                Language::Manga,
-                true,
-                manga,
-                rect(150, 150, 60, 60),
-            );
-            assert_eq!(
-                (snapped.read, snapped.refined_bbox),
-                (BALLOON_TEXT, Some(BALLOON_TEXT))
-            );
-        }
     }
 
     #[test]
@@ -1222,8 +983,7 @@ mod tests {
             bbox(120.0, 110.0, 250.0, 230.0, 0.7),  // big overlap → chosen
             bbox(500.0, 500.0, 600.0, 600.0, 0.95), // disjoint → discarded
         ];
-        let chosen =
-            pick_bbox_page(EngineSet::Current, &bboxes, &user, 1000, 1000).expect("pick a bbox");
+        let chosen = pick_bbox_page(&bboxes, &user, 1000, 1000).expect("pick a bbox");
         assert_eq!(chosen.x, 120);
         assert_eq!(chosen.y, 110);
     }
@@ -1237,7 +997,7 @@ mod tests {
             h: 50,
         };
         let bboxes = vec![bbox(500.0, 500.0, 600.0, 600.0, 0.9)];
-        assert!(pick_bbox_page(EngineSet::Current, &bboxes, &user, 1000, 1000).is_none());
+        assert!(pick_bbox_page(&bboxes, &user, 1000, 1000).is_none());
     }
 
     #[test]

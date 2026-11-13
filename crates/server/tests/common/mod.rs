@@ -640,9 +640,6 @@ pub struct SpawnOpts {
     /// Override `Config::filter_statement_timeout` (default 5 s) so a test
     /// can drive a saved-view filter query into the time box quickly.
     pub filter_statement_timeout: Option<std::time::Duration>,
-    /// Run the legacy OCR engine set (`Config::ocr_legacy_engines`, what
-    /// `COMIC_OCR_LEGACY_ENGINES=true` selects).
-    pub ocr_legacy_engines: bool,
 }
 
 impl TestApp {
@@ -681,16 +678,6 @@ impl TestApp {
 
     pub async fn spawn() -> Self {
         Self::spawn_inner(SpawnOpts::default()).await
-    }
-
-    /// [`spawn`] with the OCR rollback switch on: the server runs the
-    /// legacy engine set, as `COMIC_OCR_LEGACY_ENGINES=true` makes it.
-    pub async fn spawn_with_legacy_ocr_engines() -> Self {
-        Self::spawn_inner(SpawnOpts {
-            ocr_legacy_engines: true,
-            ..SpawnOpts::default()
-        })
-        .await
     }
 
     /// Spawn the way a fresh install with a minimal env boots: no sign-in
@@ -1108,7 +1095,6 @@ impl TestApp {
             watch_debounce_secs: 30,
             watch_poll_interval_secs: 300,
             watch_force_poll: false,
-            ocr_legacy_engines: opts.ocr_legacy_engines,
             archive_max_entries: 50_000,
             archive_max_total_bytes: 8 * 1024 * 1024 * 1024,
             archive_max_entry_bytes: 512 * 1024 * 1024,

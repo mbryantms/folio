@@ -19,14 +19,6 @@
 # ── Rust (mirrored from deny.toml + .cargo/audit.toml) ──────────────
 
 [[IgnoredVulns]]
-id = "RUSTSEC-2025-0119"
-reason = "`number_prefix` unmaintained (transitive via indicatif)."
-
-[[IgnoredVulns]]
-id = "RUSTSEC-2024-0436"
-reason = "`paste` no longer maintained (build-time proc-macro)."
-
-[[IgnoredVulns]]
 id = "RUSTSEC-2023-0071"
 reason = "`rsa 0.9.10` Marvin Attack — transitive via jsonwebtoken / openidconnect; we sign JWTs with Ed25519 only and RS256 id_token verification is a public-key op. Fixed in rsa 0.10 (our OIDC test dev-dep is on it); delete when jsonwebtoken and openidconnect move to 0.10 and `cargo tree -i rsa@0.9.10` is empty."
 
@@ -36,29 +28,19 @@ reason = "`crypto-bigint 0.5.5` constant-time variability — patched only in 0.
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0367"
-reason = "`zip` <9 SUID/SGID bits preserved on extract — stale transitive pins only: zip 7.4.0 via candle-core 0.9.2 (optional OCR stack) and zip 8.6.0 via tesseract-rs 0.4.0 build.rs; neither calls `extract()`. Folio's own zip is 9.x. Delete when candle and tesseract-rs move to zip 9."
+reason = "`zip` <9 SUID/SGID bits preserved on extract — stale transitive pin only: zip 8.6.0 via tesseract-rs 0.4.0 build.rs, which does not call `extract()`. Folio's own zip is 9.x. Delete when tesseract-rs moves to zip 9."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0368"
-reason = "`zip` <9 symlink target escape on extract — same stale candle-core / tesseract-rs pins as RUSTSEC-2026-0367; neither calls `extract()`."
+reason = "`zip` <9 symlink target escape on extract — same stale tesseract-rs pin as RUSTSEC-2026-0367, which does not call `extract()`."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0369"
-reason = "`zip` <9 permissions applied through symlinks on extract — same stale candle-core / tesseract-rs pins as RUSTSEC-2026-0367; neither calls `extract()`."
+reason = "`zip` <9 permissions applied through symlinks on extract — same stale tesseract-rs pin as RUSTSEC-2026-0367, which does not call `extract()`."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0459"
 reason = "Bundled SQLite <3.54 returns uninitialized page-cache memory with a mismatched `-wal` sibling — libsqlite3-sys 0.37 is pinned by sqlx-sqlite 0.9.0 (latest, `<0.38`; fix is 0.39). Folio's only open, `metadata::local_db::open`, uses `immutable=true`, which never reads a WAL. Delete when sqlx-sqlite allows libsqlite3-sys 0.39."
-
-# Unmaintained-only advisory. `cargo audit` reports these as allowed
-# warnings and exits 0 (the job runs `--deny unsound`, not `--deny
-# warnings`), so it needs no audit.toml entry; deny.toml carries it. OSV
-# has no warning tier — any finding is a non-zero exit — so it must be
-# ignored explicitly here.
-
-[[IgnoredVulns]]
-id = "RUSTSEC-2026-0192"
-reason = "`ttf-parser` unmaintained — transitive via owned_ttf_parser -> ab_glyph -> imageproc -> comic-text-detector, i.e. the optional OCR/ML stack's debug-image text rendering. Not reachable from the core reader/scanner request paths."
 
 # ── Rust, GitHub-advisory-only (mirrored from the `osv-only:` lines in ──
 # deny.toml). The RustSec db has no id for these yet, so cargo-deny and
@@ -70,11 +52,11 @@ reason = "`ttf-parser` unmaintained — transitive via owned_ttf_parser -> ab_gl
 
 [[IgnoredVulns]]
 id = "GHSA-m665-v7pm-7grj"
-reason = "`zip` <=9.0.4 \"zip cloaking\" parser differential between ZipArchive and ZipStreamReader on filesystem extract — stale transitive pins only: zip 7.4.0 via candle-core 0.9.2 (optional OCR stack; the shipped detector loads ONNX through ort, so candle's zip reader is never reached) and zip 8.6.0 via tesseract-rs 0.4.0 build.rs (by_index + io::copy over pinned source tags at build time). Neither uses ZipStreamReader or extract(). Folio's own zip is 9.x. Delete when candle and tesseract-rs move to zip 9."
+reason = "`zip` <=9.0.4 \"zip cloaking\" parser differential between ZipArchive and ZipStreamReader on filesystem extract — stale transitive pin only: zip 8.6.0 via tesseract-rs 0.4.0 build.rs (by_index + io::copy over pinned source tags at build time), which uses neither ZipStreamReader nor extract(). Folio's own zip is 9.x. Delete when tesseract-rs moves to zip 9."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0429"
-reason = "`zip` <9 extract() aborts on a symlink entry with a large declared size (was GHSA-q7v9-x93c-xqv3) — same stale candle-core / tesseract-rs pins as RUSTSEC-2026-0367; neither calls extract()."
+reason = "`zip` <9 extract() aborts on a symlink entry with a large declared size (was GHSA-q7v9-x93c-xqv3) — same stale tesseract-rs pin as RUSTSEC-2026-0367, which does not call extract()."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0440"
@@ -82,15 +64,15 @@ reason = "`astral-tokio-tar` unmaintained — test-only, via testcontainers 0.28
 
 [[IgnoredVulns]]
 id = "GHSA-hjqx-j4rw-g7xv"
-reason = "`zip` <9 lexical symlink-target validation in ZipArchive::extract() — same stale candle-core / tesseract-rs pins as GHSA-m665-v7pm-7grj; neither calls extract()."
+reason = "`zip` <9 lexical symlink-target validation in ZipArchive::extract() — same stale tesseract-rs pin as GHSA-m665-v7pm-7grj, which does not call extract()."
 
 [[IgnoredVulns]]
 id = "GHSA-8hxf-qr8p-62x4"
-reason = "`zip` <9 AES-entry HMAC skipped on premature EOF — needs the `aes-crypto` feature, which neither stale copy enables (both pull zip with default-features = false); same candle-core / tesseract-rs pins as GHSA-m665-v7pm-7grj."
+reason = "`zip` <9 AES-entry HMAC skipped on premature EOF — needs the `aes-crypto` feature, which the stale copy does not enable (tesseract-rs pulls zip with default-features = false); same tesseract-rs pin as GHSA-m665-v7pm-7grj."
 
 [[IgnoredVulns]]
 id = "GHSA-9hj8-73fh-9963"
-reason = "`zip` <9 Shrink/Reduce/Implode capacity-overflow panic in extract() — needs the `legacy-zip` feature, which neither stale copy enables, and neither calls extract(); same candle-core / tesseract-rs pins as GHSA-m665-v7pm-7grj."
+reason = "`zip` <9 Shrink/Reduce/Implode capacity-overflow panic in extract() — needs the `legacy-zip` feature, which the stale copy does not enable, and it does not call extract(); same tesseract-rs pin as GHSA-m665-v7pm-7grj."
 
 # ── npm (mirrored from pnpm-workspace.yaml auditConfig.ignoreGhsas) ──
 # Rationale for each lives in SECURITY-EXCEPTIONS.md.

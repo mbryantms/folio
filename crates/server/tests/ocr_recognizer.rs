@@ -8,8 +8,9 @@
 //!  - fetch model files from Hugging Face on first run (24 MB for the
 //!    current Western engines, 37 MB for every registered line
 //!    recogniser, ~440 MB for manga-ocr), OR
-//!  - need the Tesseract toolchain and language data (the legacy
-//!    Western recogniser), OR
+//!  - need the Tesseract toolchain and language data (the Tesseract
+//!    recogniser, which no request uses any more and which is kept for
+//!    `crates/tools/ocr-bench` until its removal), OR
 //!  - run real inference.
 //!
 //! Run them with `cargo test -p server --test ocr_recognizer -- --ignored`
@@ -23,7 +24,6 @@
 use std::time::{Duration, Instant};
 
 use image::{DynamicImage, GrayImage, Luma};
-use server::ocr::EngineSet;
 use server::ocr::bubbles::{BubbleDetector, CLASS_BUBBLE, CLASS_TEXT_BUBBLE, CLASS_TEXT_FREE};
 use server::ocr::cache::{CachedBbox, CachedDetection};
 use server::ocr::lines::LineRect;
@@ -135,7 +135,7 @@ fn area(b: &CachedBbox) -> f32 {
 /// balloons and free text, de-duplicated, without the text boxes inside
 /// balloons.
 fn regions(d: &CachedDetection) -> Vec<CachedBbox> {
-    server::ocr::regions::regions(EngineSet::Current, &d.bboxes, d.page_w, d.page_h)
+    server::ocr::regions::regions(&d.bboxes, d.page_w, d.page_h)
 }
 
 /// The region a tap at a percent point reads: the smallest one holding it.
@@ -159,13 +159,13 @@ fn rect_of(b: &CachedBbox) -> (u32, u32, u32, u32) {
 }
 
 /// Read a balloon crop the way the pipeline does: recognise, then the
-/// cleanup of the current engine set.
+/// Western cleanup.
 fn read(ocr: &LineOcr, crop: &DynamicImage) -> postprocess::Cleaned {
     let rec = ocr.recognize(crop).expect("recognize");
-    postprocess::clean_for(rec, Language::Western, EngineSet::Current)
+    postprocess::clean_for(rec, Language::Western)
 }
 
-// ─── Current engines ─────────────────────────────────────────────
+// ─── Page detector and Western recogniser ────────────────────────
 
 #[tokio::test]
 #[ignore = "loads the pinned page detector (11 MB, fetched on first run)"]
@@ -460,7 +460,7 @@ async fn timing_on_the_fixture_page() {
     assert!(median(&detect) < 10_000.0 && median(&reads) < 10_000.0);
 }
 
-// ─── Legacy Western recogniser and manga-ocr ─────────────────────
+// ─── Tesseract (kept for ocr-bench) and manga-ocr ────────────────
 
 /// Blank white grayscale tile: every recogniser must answer it without
 /// panicking, with a well-shaped result.
@@ -523,6 +523,8 @@ async fn manga_recognizes_a_blank_tile_without_panicking() {
     let ocr = MangaOcr::shared()
         .await
         .expect("manga-ocr init should succeed once models are cached");
+    // The vocabulary was checked against the decoder's classes at load.
+    assert_eq!(ocr.vocab_len(), 6144);
     let out = ocr
         .recognize(&blank_tile(224, 224))
         .expect("recognize should return Ok even for empty input");

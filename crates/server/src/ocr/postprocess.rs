@@ -5,7 +5,7 @@
 //! [`crate::ocr::pipeline::run_ocr`]). Which rules run depends on the
 //! engine that produced the text ([`clean_for`]):
 //!
-//! - **CTC line recogniser** (Western, current engine set): only the
+//! - **CTC line recogniser** (Western): only the
 //!   rules that do not depend on an engine's mistakes. The recogniser
 //!   returns one string per text line; the lines are joined into one
 //!   utterance with the line-end hyphen rule (W2 below) and single
@@ -15,8 +15,12 @@
 //!   borders, and on this recogniser's output they would delete real
 //!   text (a `|`, a low-scored word, a symbol outside the allowlist).
 //!   The confidence is the recogniser's.
-//! - **Tesseract** (Western, legacy engine set): the full W chain.
-//! - **manga-ocr**: control-character stripping only (see below).
+//! - **manga-ocr** (Japanese): control-character stripping only (see
+//!   below).
+//! - **Tesseract**: the full W chain ([`clean`] with
+//!   [`Language::Western`]). No request reaches it any more; it stays for
+//!   `crates/tools/ocr-bench`, whose Tesseract baseline uses it, until the
+//!   Tesseract build is removed.
 //!
 //! Raw Tesseract output from comic lettering carries OCR debris: bubble
 //! borders, tails, and halftone dots read back as stray `| ~ ' _`
@@ -69,7 +73,6 @@
 //! [`crate::ocr::cache::OCR_RESULT_VERSION`] when changing anything
 //! in this module.
 
-use super::EngineSet;
 use super::recognizer::{Language, Recognition, Word};
 
 /// W1: words below this confidence are dropped outright.
@@ -125,12 +128,12 @@ pub struct Cleaned {
 }
 
 /// Entry point for the pipeline: the cleanup that fits the engine that
-/// read `rec`. Western text from the current engine set (the CTC line
-/// recogniser) gets [`clean_lines`]; everything else gets [`clean`].
-pub fn clean_for(rec: Recognition, lang: Language, engines: EngineSet) -> Cleaned {
-    match (lang, engines) {
-        (Language::Western, EngineSet::Current) => clean_lines(rec),
-        (Language::Western, EngineSet::Legacy) | (Language::Manga, _) => clean(rec, lang),
+/// read `rec`. Western text (the CTC line recogniser) gets
+/// [`clean_lines`]; Japanese gets the manga rules of [`clean`].
+pub fn clean_for(rec: Recognition, lang: Language) -> Cleaned {
+    match lang {
+        Language::Western => clean_lines(rec),
+        Language::Manga => clean(rec, lang),
     }
 }
 
@@ -184,7 +187,9 @@ pub fn clean_lines(rec: Recognition) -> Cleaned {
 }
 
 /// Language-aware cleanup with the Tesseract rule chain for Western text
-/// (the legacy engine set) and the manga rules for Japanese.
+/// and the manga rules for Japanese. The pipeline calls it for Japanese
+/// only ([`clean_for`]); the Tesseract chain is kept for
+/// `crates/tools/ocr-bench` until the Tesseract build is removed.
 pub fn clean(rec: Recognition, lang: Language) -> Cleaned {
     let raw = rec.text.clone();
     let (text, confidence, words) = match lang {
@@ -911,23 +916,14 @@ mod tests {
     }
 
     #[test]
-    fn the_engine_set_picks_the_rule_chain() {
+    fn the_language_picks_the_rule_chain() {
         let bar = || rec("| HELLO |");
-        // Current engines: the line rules.
-        assert_eq!(
-            clean_for(bar(), Language::Western, EngineSet::Current).text,
-            "| HELLO |"
-        );
-        // Legacy engines: the Tesseract chain, as before.
-        assert_eq!(
-            clean_for(bar(), Language::Western, EngineSet::Legacy).text,
-            "HELLO"
-        );
-        // Japanese: the manga rules with either set.
-        for engines in [EngineSet::Current, EngineSet::Legacy] {
-            let out = clean_for(rec("す\u{200B}ごい | ！"), Language::Manga, engines);
-            assert_eq!(out.text, "すごい | ！");
-        }
+        // Western: the line rules, never the Tesseract chain.
+        assert_eq!(clean_for(bar(), Language::Western).text, "| HELLO |");
+        assert_eq!(clean(bar(), Language::Western).text, "HELLO");
+        // Japanese: the manga rules.
+        let out = clean_for(rec("す\u{200B}ごい | ！"), Language::Manga);
+        assert_eq!(out.text, "すごい | ！");
     }
 
     // ── Manga path: western rules must not fire ──

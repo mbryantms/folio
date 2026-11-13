@@ -6,13 +6,15 @@
 //!
 //! Implementations:
 //!
-//! - [`ctc::LineOcr`]: Western text with the current engine set. A line
-//!   finder splits the balloon, a CTC line model reads the lines.
-//! - [`manga::MangaOcr`]: vertical Japanese OCR backed by `manga-ocr`'s
-//!   ViT encoder + BERT decoder on ONNX Runtime (both engine sets).
-//! - [`western::WesternOcr`]: Western text with the legacy engine set.
-//!   Native Tesseract 5 with the `tessdata_best` LSTM models, vendored
-//!   via `tesseract-rs`.
+//! - [`ctc::LineOcr`]: Western text. A line finder splits the balloon, a
+//!   CTC line model reads the lines.
+//! - [`manga::MangaOcr`]: vertical Japanese OCR, the `manga-ocr` model's
+//!   ViT encoder + BERT decoder on two ONNX Runtime sessions Folio builds
+//!   itself.
+//! - [`western::WesternOcr`]: native Tesseract 5 with the `tessdata_best`
+//!   LSTM models, vendored via `tesseract-rs`. No request reaches it; it is
+//!   kept for `crates/tools/ocr-bench` until the Tesseract build is
+//!   removed.
 
 pub mod ctc;
 pub mod manga;
@@ -59,8 +61,8 @@ pub enum Language {
 }
 
 /// Anything that can take a cropped image and return text. The
-/// pipeline picks the implementation from the request's language and
-/// the engine set (`ocr::pipeline::prepare_models`).
+/// pipeline picks the implementation from the request's language
+/// (`ocr::pipeline::prepare_models`).
 pub trait Recognizer: Send + Sync {
     fn recognize(&self, image: &DynamicImage) -> anyhow::Result<Recognition>;
 }

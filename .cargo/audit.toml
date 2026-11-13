@@ -12,13 +12,12 @@
 # RUSTSEC-2026-0002 (lru 0.12 → 0.19), RUSTSEC-2026-0186 (memmap2 0.9.10
 # → 0.9.11), RUSTSEC-2026-0235 (rkyv no longer in Cargo.lock),
 # RUSTSEC-2026-0381 (webpki-roots 0.26.11 is explicitly unaffected).
+# Pruned 2026-11-12: RUSTSEC-2025-0119 (number_prefix) and
+# RUSTSEC-2024-0436 (paste) left the graph with the comic-text-detector
+# crate and its candle / imageproc stack.
 
 [advisories]
 ignore = [
-    # `number_prefix` unmaintained (transitive via indicatif).
-    "RUSTSEC-2025-0119",
-    # `paste` no longer maintained (build-time proc-macro).
-    "RUSTSEC-2024-0436",
     # `rsa 0.9.10` Marvin Attack — private-key timing sidechannel, fixed
     # in 0.10 (our OIDC test dev-dep is on it). 0.9.10 stays in the graph
     # via openidconnect (public-key RS256 verify only) and jsonwebtoken
@@ -34,17 +33,16 @@ ignore = [
     # `zip` < 9 extraction advisories (SUID/SGID bits, symlink escape,
     # permissions through symlinks) - all about `ZipArchive::extract()` /
     # `ZipStreamReader::extract()` over attacker-controlled archives.
-    # Folio's own zip is 9.x (patched); the stale copies are stuck
-    # transitive pins: `zip 7.4.0` <- candle-core 0.9.2 (`.npz` / `.pt` reads by
-    # name/index in the optional OCR stack) and `zip 8.6.0` <-
-    # tesseract-rs 0.4.0 build.rs (unpacks pinned tesseract/leptonica
-    # source tags at build time). Neither calls `extract()`. deny.toml
-    # carries the full rationale. Revisit when either bumps to zip 9.
+    # Folio's own zip is 9.x (patched); the stale copy is a stuck
+    # transitive pin: `zip 8.6.0` <- tesseract-rs 0.4.0 build.rs (unpacks
+    # pinned tesseract/leptonica source tags at build time). It does not
+    # call `extract()`. deny.toml carries the full rationale. Revisit when
+    # tesseract-rs bumps to zip 9.
     "RUSTSEC-2026-0367",
     "RUSTSEC-2026-0368",
     "RUSTSEC-2026-0369",
-    # Same stale `zip` copies: `ZipArchive::extract()` aborts on a crafted
-    # symlink entry (was GHSA-q7v9-x93c-xqv3). Neither copy calls `extract()`.
+    # Same stale `zip` copy: `ZipArchive::extract()` aborts on a crafted
+    # symlink entry (was GHSA-q7v9-x93c-xqv3). The copy does not call `extract()`.
     "RUSTSEC-2026-0429",
     # `astral-tokio-tar` unmaintained: test-only, via testcontainers 0.28
     # (latest). deny.toml carries the full rationale.

@@ -149,6 +149,21 @@ docker compose -f compose.prod.yml up -d --no-deps app
 
 ## Breaking changes by version
 
+### Unreleased — the previous text-reading engines and their switch are removed
+
+- `COMIC_OCR_LEGACY_ENGINES` is removed. No request uses
+  comic-text-detector or Tesseract any more, and there is no setting
+  that brings them back; v0.81.0 is the last version with the switch. A
+  value left in your environment is ignored and the server starts
+  normally; you can delete the line.
+- The previous detector's model file (about 95 MB, the
+  `models--mayocream--comic-text-detector-onnx/` folder in the Hugging
+  Face cache, `/data/.cache/huggingface/hub/` in the image) is no longer
+  used. Folio does not delete it; you may.
+- Cached text-reading results and page detections start fresh after the
+  upgrade (the cache keys no longer include the engine set); they are
+  recomputed on first use.
+
 ### Unreleased — reading lists show a failing refresh
 
 - Migration `m20271117_000001_cbl_refresh_outcome` adds five columns to

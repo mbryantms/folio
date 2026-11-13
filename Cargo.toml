@@ -174,29 +174,17 @@ tar = "0.4"
 # BZip2-coded 7z comics are vanishingly rare (they fail as Malformed).
 sevenz-rust2 = { version = "0.25", default-features = false, features = ["ppmd", "deflate"] }
 
-# OCR / text detection (text-detection-1.0 plan, Phase 1).
-# License: GPL-3.0-only on the koharu crates — compatible with
-# Folio's AGPL-3.0-or-later.
+# OCR / text detection (text-detection-1.0 plan).
 #
-# Pinned ort versions: `comic-text-detector` + `manga-ocr` both
-# resolve to `ort = 2.0.0-rc.10` (verified via lockfile probe
-# 2026-05-17); any bump that crosses crates needs a re-probe.
-comic-text-detector = "0.5.1"
-manga-ocr = "0.5.1"
 # ONNX Runtime binding and array crate for the sessions Folio builds
 # itself (`ocr::session`: balloon detector, line finder, line
-# recogniser). Both were already in the tree through the two crates
-# above; the exact `ort` pin is theirs, so there is one runtime, and it
-# moves together with them.
+# recogniser, Japanese encoder and decoder). `ort` is pinned exactly
+# (a release candidate); `ndarray` must be the version `ort` uses.
 ort = "=2.0.0-rc.10"
 ndarray = "0.16"
-# Only for `Cache` (the cache path the two crates above read): Folio
-# fetches and verifies the pinned model files itself (`ocr::models`).
-# No features: the download client stays the crates' own, unused once
-# the verified files are in place. It must resolve to the SAME version
-# those two crates use (one `hf-hub` in Cargo.lock; a test in
-# `ocr::models` checks it), so Renovate does not bump it on its own:
-# move it together with them.
+# Only for `Cache::default()`, the hub cache path the pinned model files
+# are kept under (`ocr::models`, which fetches and verifies them itself).
+# No features: nothing downloads through it.
 hf-hub = { version = "0.4", default-features = false }
 # Native Tesseract bindings. The `build-tesseract` feature compiles
 # Leptonica + Tesseract (0.4.0: 1.87.0 + 5.5.2) from source via cmake

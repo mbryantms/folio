@@ -18,7 +18,7 @@
 #               them for the machine at hand, see `lscpu -e`)
 #   LOAD_MAX    1-minute load average a timed run may start at (default 2)
 #   LOAD_WAIT   seconds to wait for it before giving up    (default 300)
-#   SKIP_TODAY  set to skip today's pipeline in time4/time8/timefree
+#   SKIP_TODAY  set to skip the previous pipeline in time4/time8/timefree
 #
 # STEP is one of:
 #   full     unconstrained baseline: timings, accuracy, Tesseract variants,
@@ -27,20 +27,20 @@
 #            recogniser the binary knows
 #   tap      accuracy only: section C for BEST_DET with each recogniser
 #            in TAP_RECS on BEST_SPLIT lines (plus the A and B rows for
-#            that pair). Does not run today's detector and does not wait
+#            that pair). Does not run the previous detector and does not wait
 #            for a quiet machine; ignore its time columns.
 #   time4    4 pinned cores (CPU4, OMP_NUM_THREADS=4, 4 intra-op
-#            threads): today's pipeline, the chosen pair, the
+#            threads): the previous pipeline, the chosen pair, the
 #            alternative detector, then the recogniser thread sweep
 #            (1/2/4) for BEST_PP and pp-v6-medium
-#   time8    8 pinned cores (CPU8, 8 threads): today's pipeline and the
+#   time8    8 pinned cores (CPU8, 8 threads): the previous pipeline and the
 #            chosen pair
-#   timefree unconstrained, ORT default threads: today's pipeline and
+#   timefree unconstrained, ORT default threads: the previous pipeline and
 #            the chosen pair
 #   workers  throughput of the chosen pair as W parallel processes x T
 #            intra-op threads: 1x8 2x4 4x2 8x1 on 8 cores, 1x4 2x2 4x1 on
 #            4 cores. Each worker builds its own sessions.
-#   omp      today's detector only on 4 pinned cores with OMP_NUM_THREADS
+#   omp      the previous detector only on 4 pinned cores with OMP_NUM_THREADS
 #            = 1, 4, 8 (does ONNX Runtime read it?)
 #
 # Each timed run waits for the 1-minute load average to fall to LOAD_MAX.
@@ -94,10 +94,11 @@ timed() {
 
 pair_runs() { # CFG CPUS THREADS
   local cfg=$1 cpus=$2 th=$3
-  # comic-text-detector takes tens of seconds a page: no warm repeat.
-  # Tesseract reads the whole crop: no PP splitter to load. SKIP_TODAY=1
-  # resumes a step after today's (slow) run.
-  [ -n "${SKIP_TODAY:-}" ] || BEST_SPLIT=profile timed "$cfg" "$cpus" "$th" "time-$cfg-today" --dets ctd-crate --recs tess-today \
+  # The previous pipeline: comic-text-detector's model (own session, $th
+  # threads) and Tesseract. The detector takes seconds a page: no warm
+  # repeat. Tesseract reads the whole crop: no PP splitter to load.
+  # SKIP_TODAY=1 resumes a step after that (slow) run.
+  [ -n "${SKIP_TODAY:-}" ] || BEST_SPLIT=profile timed "$cfg" "$cpus" "$th" "time-$cfg-today" --dets ctd --recs tess-today \
     --warm 0 --rec-warm 2 "${EXTRA[@]}"
   timed "$cfg" "$cpus" "$th" "time-$cfg-$BEST_DET-$BEST_PP" --dets "$BEST_DET" \
     --recs "$BEST_PP" --warm 2 --rec-warm 2 "${EXTRA[@]}"

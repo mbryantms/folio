@@ -29110,11 +29110,11 @@
           },
           "kind": {
             "type": "string",
-            "description": "`\"onnx\"` (HF-cached models) or `\"tessdata\"` (Tesseract LSTM)."
+            "description": "`\"onnx\"` (HF-cached models), the kind of every model listed."
           },
           "present": {
             "type": "boolean",
-            "description": "`true` if at least one model file is on disk under\n`cache_dir`. For HF entries this is \"the snapshot folder\nholds files\"; for tessdata, \"`eng.traineddata` exists\"."
+            "description": "`true` if at least one model file is on disk under\n`cache_dir` (\"the snapshot folder holds files\")."
           },
           "purpose": {
             "type": "string",
@@ -29122,7 +29122,7 @@
           },
           "source": {
             "type": "string",
-            "description": "Where the binary fetches this model from on first init.\n`\"huggingface.co/<repo>\"` or `\"tessdata_best (build script)\"`."
+            "description": "Where the binary fetches this model from on first init:\n`\"huggingface.co/<repo>\"`."
           }
         }
       },
@@ -29148,7 +29148,7 @@
           },
           "tessdata_dir": {
             "type": "string",
-            "description": "Resolved tessdata directory; see module doc for resolution\norder."
+            "description": "Resolved Tesseract language-data directory (`TESSDATA_PREFIX`,\nelse `${HOME}/.tesseract-rs/tessdata`). The server no longer reads\nit; the field stays so the response keeps its shape."
           },
           "total_bytes_on_disk": {
             "type": "integer",
@@ -36977,7 +36977,7 @@
           "class": {
             "type": "integer",
             "format": "int32",
-            "description": "What the detector took the region for: 0 = a balloon, 2 = text\noutside balloons (a caption on the art, a sound effect). Every\nregion is a box to read as a whole. (A server running the\nprevious engines, `COMIC_OCR_LEGACY_ENGINES`, sends that\ndetector's classes: 0 = text block, 1 = text line.)",
+            "description": "What the detector took the region for: 0 = a balloon, 2 = text\noutside balloons (a caption on the art, a sound effect). Every\nregion is a box to read as a whole.",
             "minimum": 0
           },
           "confidence": {

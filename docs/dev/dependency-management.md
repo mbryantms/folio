@@ -209,7 +209,7 @@ What is still unproven, in priority order:
 | Node                                                 | `engines.node >=24` (floor), `.nvmrc`, `node-version: 26` in workflows, `node:26-…` + distroless `nodejs<major>` in `web/Dockerfile` (bump together) |
 | OCR model files (not Renovate-managed)               | `crates/server/src/ocr/models.rs` (Hugging Face commit + SHA-256 per file, checked at runtime); update steps in [ocr.md](ocr.md#pinned-model-files) |
 | Leptonica + Tesseract sources and tessdata compiled/baked into the image (not Renovate-managed) | `scripts/docker/tesseract-inputs.sh` (URL + commit + SHA-256 per file), run by the `Dockerfile` `deps` stage; see "tesseract-rs build inputs" below |
-| `hf-hub` (Renovate updates disabled)                 | A direct dependency only so `ocr::models` uses the same cache path as `comic-text-detector` and `manga-ocr`, which holds while Cargo resolves one `hf-hub` for all three. Bump it by hand, together with those crates; a test in `ocr::models` fails if `Cargo.lock` holds two copies |
+| `hf-hub` (Renovate updates disabled)                 | `ocr::models` uses only `hf_hub::Cache::default()` (the cache path). The two OCR crates that also read it, `comic-text-detector` and `manga-ocr`, are no longer dependencies (2026-11), so the one-copy constraint behind the Renovate rule no longer applies and its lock-file test was removed; the rule in `renovate.json` was left as it is. 1.x has no `Cache`, so a major bump still needs code changes |
 
 ## tesseract-rs build inputs
 

@@ -132,8 +132,8 @@ async fn admin_gets_full_model_list() {
     let (status, body) = get_models(&app, Some(&admin)).await;
     assert_eq!(status, StatusCode::OK, "got {body}");
 
-    // The current engines first (balloon detector, line finder, line
-    // recogniser), then manga-ocr, then the two legacy engines.
+    // The balloon detector, the line finder, the line recogniser, then
+    // manga-ocr. Models the server no longer loads are not listed.
     let models = body["models"].as_array().expect("models array");
     let ids: Vec<&str> = models.iter().filter_map(|m| m["id"].as_str()).collect();
     assert_eq!(
@@ -143,18 +143,13 @@ async fn admin_gets_full_model_list() {
             "pp-ocrv5-mobile-det",
             "en-pp-ocrv5-mobile-rec",
             "manga-ocr",
-            "comic-text-detector",
-            "tesseract-eng",
         ]
     );
 
     // Required shape per model.
     for m in models {
         assert!(m["purpose"].as_str().is_some_and(|s| !s.is_empty()));
-        assert!(matches!(
-            m["kind"].as_str(),
-            Some("onnx") | Some("tessdata")
-        ));
+        assert_eq!(m["kind"].as_str(), Some("onnx"));
         assert!(m["cache_dir"].as_str().is_some_and(|s| !s.is_empty()));
         assert!(m["present"].is_boolean());
         assert!(m["bytes_on_disk"].is_u64());
@@ -169,7 +164,8 @@ async fn admin_gets_full_model_list() {
         .sum();
     assert_eq!(body["total_bytes_on_disk"].as_u64().unwrap(), sum);
 
-    // Env-probe fields are present and non-empty.
+    // Env-probe fields are present and non-empty (`tessdata_dir` is no
+    // longer used by the server but keeps the response's shape).
     assert!(body["hf_home"].as_str().is_some_and(|s| !s.is_empty()));
     assert!(body["tessdata_dir"].as_str().is_some_and(|s| !s.is_empty()));
 }

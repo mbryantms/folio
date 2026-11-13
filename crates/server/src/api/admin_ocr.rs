@@ -5,17 +5,12 @@
 //! plus bytes-on-disk per model. Lives under the `/admin/server` family
 //! so it picks up [`RequireAdmin`].
 //!
-//! The list, in order:
-//!
-//! - the current engines: the balloon detector, the line finder and the
-//!   line recogniser ([`crate::ocr::models`] pins, fetched on first use);
-//! - `manga-ocr` (encoder + decoder + vocab), used with either engine set;
-//! - the legacy engines, loaded only with `COMIC_OCR_LEGACY_ENGINES=true`:
-//!   `comic-text-detector` and the English Tesseract data
-//!   (`${TESSDATA_PREFIX}/eng.traineddata`, falling back to
-//!   `${HOME}/.tesseract-rs/tessdata/eng.traineddata`, the resolution
-//!   [`crate::ocr::recognizer::western`] uses). Without the switch the
-//!   detector is never fetched and stays "missing" on a new install.
+//! The list, in order: the balloon detector, the line finder, the line
+//! recogniser and `manga-ocr` (encoder + decoder + vocab), each from its
+//! [`crate::ocr::models`] pins, fetched on first use. Models the server no
+//! longer loads (`comic-text-detector`, the Tesseract language data) are
+//! not listed; files an upgraded install still holds for them stay on
+//! disk until someone deletes them.
 //!
 //! ONNX models sit in the hub cache,
 //! `<root>/hub/models--<org>--<repo>/`. The loader's root is
@@ -51,14 +46,13 @@ pub struct OcrModelView {
     pub id: &'static str,
     /// One-line operator-facing description.
     pub purpose: &'static str,
-    /// `"onnx"` (HF-cached models) or `"tessdata"` (Tesseract LSTM).
+    /// `"onnx"` (HF-cached models), the kind of every model listed.
     pub kind: &'static str,
     /// Absolute path the loader actually reads from. May not exist
     /// yet — pair with `present`.
     pub cache_dir: String,
     /// `true` if at least one model file is on disk under
-    /// `cache_dir`. For HF entries this is "the snapshot folder
-    /// holds files"; for tessdata, "`eng.traineddata` exists".
+    /// `cache_dir` ("the snapshot folder holds files").
     pub present: bool,
     /// Recursive sum of bytes under `cache_dir`. `0` when
     /// `present = false`.
@@ -66,8 +60,8 @@ pub struct OcrModelView {
     /// Size once fully downloaded (the sum of the pinned files for the
     /// ONNX models) — used by the UI to tell "downloading" from "ready".
     pub expected_bytes_approx: u64,
-    /// Where the binary fetches this model from on first init.
-    /// `"huggingface.co/<repo>"` or `"tessdata_best (build script)"`.
+    /// Where the binary fetches this model from on first init:
+    /// `"huggingface.co/<repo>"`.
     pub source: String,
 }
 
@@ -76,8 +70,9 @@ pub struct OcrModelsView {
     /// Resolved `HF_HOME` — useful for operators wanting to
     /// pre-stage models on disk in air-gapped deploys.
     pub hf_home: String,
-    /// Resolved tessdata directory; see module doc for resolution
-    /// order.
+    /// Resolved Tesseract language-data directory (`TESSDATA_PREFIX`,
+    /// else `${HOME}/.tesseract-rs/tessdata`). The server no longer reads
+    /// it; the field stays so the response keeps its shape.
     pub tessdata_dir: String,
     /// Per-model state.
     pub models: Vec<OcrModelView>,
@@ -99,25 +94,10 @@ pub async fn list(_admin: RequireAdmin) -> impl IntoResponse {
     let tessdata_dir = tessdata_dir();
 
     // HF cache layout is `${HF_HOME}/hub/models--{org}--{repo}/…`.
-    let tessdata_eng = tessdata_dir.join("eng.traineddata");
-    let tessdata_bytes = file_size(&tessdata_eng).unwrap_or(0);
-
-    let mut models: Vec<OcrModelView> = ONNX_MODELS
+    let models: Vec<OcrModelView> = ONNX_MODELS
         .iter()
         .map(|m| onnx_model_view(&hf_home, m))
         .collect();
-    models.push(OcrModelView {
-        id: "tesseract-eng",
-        purpose: "Legacy Western OCR: Tesseract LSTM, English `tessdata_best` \
-                  (loaded only with COMIC_OCR_LEGACY_ENGINES=true)",
-        kind: "tessdata",
-        cache_dir: tessdata_dir.to_string_lossy().into_owned(),
-        present: tessdata_bytes > 0,
-        bytes_on_disk: tessdata_bytes,
-        // `tessdata_best/eng.traineddata` on the v4.1 LSTM branch.
-        expected_bytes_approx: 15 * 1024 * 1024,
-        source: "tessdata_best (build script)".to_owned(),
-    });
 
     let total_bytes_on_disk = models.iter().map(|m| m.bytes_on_disk).sum();
 
@@ -139,9 +119,10 @@ struct OnnxModel {
     files: &'static [PinnedFile],
 }
 
-/// The ONNX models, in display order: the current engines, manga-ocr,
-/// then the legacy detector. Sizes and cache folders come from the pins,
-/// so the card cannot drift from what the loaders fetch.
+/// The ONNX models, in display order: the page detector, the Western
+/// line finder and recogniser, then manga-ocr. Sizes and cache folders
+/// come from the pins, so the card cannot drift from what the loaders
+/// fetch.
 const ONNX_MODELS: &[OnnxModel] = &[
     OnnxModel {
         id: "comic-text-and-bubble-detector",
@@ -162,11 +143,6 @@ const ONNX_MODELS: &[OnnxModel] = &[
         id: "manga-ocr",
         purpose: "Vertical Japanese OCR (encoder + decoder + vocab)",
         files: models::MANGA_FILES,
-    },
-    OnnxModel {
-        id: "comic-text-detector",
-        purpose: "Legacy page detector (loaded only with COMIC_OCR_LEGACY_ENGINES=true)",
-        files: models::DETECTOR_FILES,
     },
 ];
 
@@ -209,8 +185,8 @@ fn hf_repo_dir(hf_home: &Path, repo: &str) -> PathBuf {
     hf_home.join("hub").join(mangled)
 }
 
-/// Mirror of [`crate::ocr::recognizer::western::tessdata_dir`] — see
-/// that resolver for the canonical rationale.
+/// Mirror of the Tesseract recogniser's language-data resolution
+/// (`ocr::recognizer::western`), reported in `tessdata_dir` only.
 fn tessdata_dir() -> PathBuf {
     if let Ok(p) = std::env::var("TESSDATA_PREFIX") {
         return PathBuf::from(p);
@@ -250,23 +226,16 @@ fn dir_size(path: &Path) -> std::io::Result<u64> {
     Ok(total)
 }
 
-fn file_size(path: &Path) -> std::io::Result<u64> {
-    if !path.exists() {
-        return Ok(0);
-    }
-    Ok(path.metadata()?.len())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn hf_repo_dir_uses_org_repo_mangling() {
-        let p = hf_repo_dir(Path::new("/cache/hf"), "mayocream/comic-text-detector-onnx");
+        let p = hf_repo_dir(Path::new("/cache/hf"), "mayocream/manga-ocr-onnx");
         assert_eq!(
             p,
-            PathBuf::from("/cache/hf/hub/models--mayocream--comic-text-detector-onnx")
+            PathBuf::from("/cache/hf/hub/models--mayocream--manga-ocr-onnx")
         );
     }
 
@@ -307,7 +276,6 @@ mod tests {
                 "pp-ocrv5-mobile-det",
                 models::WESTERN_REC.id,
                 "manga-ocr",
-                "comic-text-detector",
             ]
         );
         for m in ONNX_MODELS {
@@ -329,11 +297,5 @@ mod tests {
             onnx_model_view(Path::new("/x"), &ONNX_MODELS[0]).expected_bytes_approx,
             11_120_765
         );
-    }
-
-    #[test]
-    fn file_size_returns_zero_for_missing() {
-        let p = PathBuf::from("/definitely/not/a/file/folio-test");
-        assert_eq!(file_size(&p).unwrap(), 0);
     }
 }

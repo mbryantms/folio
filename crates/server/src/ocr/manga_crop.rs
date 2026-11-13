@@ -52,12 +52,7 @@
 //! detector run. A request whose detection fails is an error; nothing is
 //! read without it, because a result read from the whole rectangle would
 //! be cached under the key of the narrowed one.
-//!
-//! Only the current engine set uses this. With the legacy set a Japanese
-//! request reads what it always read (the requested rectangle, or the
-//! `comic-text-detector` box it was snapped to).
 
-use super::EngineSet;
 use super::bubbles::{CLASS_BUBBLE, CLASS_TEXT_BUBBLE};
 use super::cache::CachedBbox;
 use super::pipeline::{Rect, bbox_to_rect};
@@ -128,7 +123,7 @@ pub fn manga_crop(
     }
     let rect_of = |b: &CachedBbox| bbox_to_rect(b, page_w, page_h);
     // The region boxes of the page this rectangle is (normally one).
-    let page_regions = regions::regions(EngineSet::Current, boxes, page_w, page_h);
+    let page_regions = regions::regions(boxes, page_w, page_h);
     let mut own = page_regions
         .iter()
         .filter(|b| rect_of(b).is_some_and(|r| same_box(&r, &region)))
@@ -430,7 +425,7 @@ mod tests {
         // edge, but well over the near-duplicate overlap.
         let as_balloon = scored(CLASS_BUBBLE, 0.80, 110.0, 110.0, 300.0, 400.0);
         let page = [as_free_text.clone(), as_balloon, own_text()];
-        let kept = regions::regions(EngineSet::Current, &page, PAGE.0, PAGE.1);
+        let kept = regions::regions(&page, PAGE.0, PAGE.1);
         assert_eq!(
             kept.iter().map(|b| b.class).collect::<Vec<_>>(),
             [CLASS_TEXT_FREE],

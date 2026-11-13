@@ -3,14 +3,12 @@
 //! Keyed by `(engine fingerprint, content_hash, page, lang, detect,
 //! region_hash)`:
 //!
-//! - **engine fingerprint** is a 16-hex hash of the engine set, the
-//!   version constants and the engines' identity: the pinned model
-//!   revisions and digests, and for the legacy set the Tesseract version
-//!   and a digest of the language data it loads ([`EngineInputs`]),
-//!   computed once per process and engine set. Anything that changes
-//!   one of them rolls every key; old entries age out via the TTL. The
-//!   detect cache carries a detector-only fingerprint. The two engine
-//!   sets never share a key.
+//! - **engine fingerprint** is a 16-hex hash of the version constants
+//!   and the engines' identity: the pinned model revisions and digests
+//!   and the constants that decide their output ([`EngineInputs`]),
+//!   computed once per process. Anything that changes one of them rolls
+//!   every key; old entries age out via the TTL. The detect cache carries
+//!   a detector-only fingerprint.
 //! - **`content_hash`** is the issue's BLAKE3 of the on-disk bytes,
 //!   not its (stable) row id. This makes invalidation automatic: a
 //!   rescan that retags the same issue with new content rolls the
@@ -40,7 +38,6 @@ use redis::AsyncCommands;
 use redis::aio::ConnectionManager;
 use serde::{Deserialize, Serialize};
 
-use super::EngineSet;
 use crate::api::issue_ocr::OcrResponse;
 
 /// 7-day TTL on cache entries. OCR results for a given
@@ -84,16 +81,14 @@ async fn set_bounded_ttl(
 /// Version byte folded into every result-cache key. Bump on any
 /// change that alters what the pipeline would produce for the same
 /// inputs: an engine's preprocessing or decoding (resize, normalisation,
-/// thresholds, line splitting; for Tesseract binarization, padding, DPI,
-/// PSM, variables), postprocess rules or their consts, or response
-/// semantics. Old-version keys age out via [`CACHE_TTL`] — no flush job
+/// thresholds, line splitting), postprocess rules or their consts, or
+/// response semantics. Old-version keys age out via [`CACHE_TTL`] — no flush job
 /// needed.
 ///
 /// History: v4 = Western text is read by the line finder and the CTC
 /// line recogniser, `words` holds one entry per line, and only the line
-/// join is applied to it; Japanese crops come from the balloon detector
-/// (the legacy engines keep the v3 behaviour under their own
-/// fingerprint); v3 = cleanup reads `|` as the pronoun `I`,
+/// join is applied to it; Japanese crops come from the balloon detector;
+/// v3 = cleanup reads `|` as the pronoun `I`,
 /// keeps the hyphen of a line-end join and the double dash of an
 /// interruption, keeps confident grawlix; v2 = Otsu/polarity/padding
 /// preprocessing + postprocess cleanup (OCR rework 1.0); v1 =
@@ -103,12 +98,10 @@ pub const OCR_RESULT_VERSION: u32 = 4;
 // ───────── engine fingerprint ─────────
 //
 // The version constants cover what this code does to an image; they do
-// not cover what the engines are. A change of engine set, a moved model
-// pin, or (legacy set) an image upgrade that changes the Tesseract
-// library or its language data would otherwise keep serving results
-// computed by the old engines until the TTL ran out. Both keys therefore
-// carry a short hash of everything that decides their payload. Old keys
-// simply age out.
+// not cover what the engines are. A moved model pin or a changed tuning
+// constant would otherwise keep serving results computed by the old
+// engines until the TTL ran out. Both keys therefore carry a short hash
+// of everything that decides their payload. Old keys simply age out.
 
 /// Hex characters of the fingerprint kept in a key (64 bits).
 const FINGERPRINT_HEX_LEN: usize = 16;
@@ -116,31 +109,25 @@ const FINGERPRINT_HEX_LEN: usize = 16;
 /// Everything that decides what a cached payload holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EngineInputs {
-    /// The engine set the payload was computed by.
-    pub engines: EngineSet,
     pub result_version: u32,
     pub detect_version: u32,
-    /// `repo@revision/file#sha256` of every pinned file of the set's
-    /// page detector.
+    /// `repo@revision/file#sha256` of every pinned file of the page
+    /// detector.
     pub detector_pins: Vec<String>,
-    /// The same for the manga-ocr files.
+    /// The same for the Japanese recogniser's files.
     pub manga_pins: Vec<String>,
-    /// The set's Western recogniser. Current set: the pins of the line
-    /// finder and of the line recogniser ([`line_reader_identity`]).
-    /// Legacy set: Tesseract version + language-data digest
-    /// ([`super::recognizer::western::engine_identity`]).
+    /// The Western recogniser: the pins of the line finder and of the
+    /// line recogniser ([`line_reader_identity`]).
     pub western: String,
-    /// What a Japanese request hands to manga-ocr
-    /// ([`super::manga_crop::MangaCrop::label`]); fixed for the legacy
-    /// set, which reads the region as it always did.
+    /// What a Japanese request hands to the recogniser
+    /// ([`super::manga_crop::MangaCrop::label`]).
     pub manga_crop: &'static str,
-    /// The constants of the set's page detector that decide a detection
-    /// ([`super::bubbles::fingerprint`]); empty for the legacy set, whose
-    /// detector is an upstream crate.
+    /// The constants of the page detector that decide a detection
+    /// ([`super::bubbles::fingerprint`]).
     pub detector_tuning: String,
     /// The other constants that decide a result: the line finder's, the
     /// recogniser's, the Japanese crop's and the region de-duplication's
-    /// ([`reader_tuning`]); empty for the legacy set.
+    /// ([`reader_tuning`]).
     pub reader_tuning: String,
     /// What decides a decoded page's size ([`page_size_key`]'s
     /// fingerprint): a percent region becomes a pixel rect through it, so
@@ -156,10 +143,10 @@ fn pins(files: &[super::models::PinnedFile]) -> Vec<String> {
         .collect()
 }
 
-/// The constants of the current set, beyond the detector's, that change
-/// what a request returns: how a crop is split into lines, how lines are
-/// fed to the recogniser, which box a Japanese request reads and which
-/// boxes a rectangle can snap to. Each module lists its own, so a changed
+/// The constants, beyond the detector's, that change what a request
+/// returns: how a crop is split into lines, how lines are fed to the
+/// recogniser, which box a Japanese request reads and which boxes a
+/// rectangle can snap to. Each module lists its own, so a changed
 /// threshold rolls the result keys without a manual version bump. (The
 /// version constants remain for changes in the code itself.)
 pub fn reader_tuning() -> String {
@@ -172,8 +159,8 @@ pub fn reader_tuning() -> String {
     .join("|")
 }
 
-/// Identity of the current set's Western path: every pinned file of the
-/// line finder and of the line recogniser the server runs
+/// Identity of the Western path: every pinned file of the line finder
+/// and of the line recogniser the server runs
 /// ([`super::models::WESTERN_REC`], model and dictionary).
 pub fn line_reader_identity() -> String {
     format!(
@@ -185,48 +172,28 @@ pub fn line_reader_identity() -> String {
 }
 
 impl EngineInputs {
-    /// What this process runs with `engines`. For the legacy set this is
-    /// blocking: it hashes the Tesseract language data. Call through
-    /// [`fingerprints_for`] (once per process and set).
-    pub fn current(engines: EngineSet) -> Self {
-        use super::manga_crop::{MANGA_CROP, MangaCrop};
+    /// What this process runs.
+    pub fn current() -> Self {
+        use super::manga_crop::MANGA_CROP;
         use super::models;
-        let (detector, western, manga_crop, detector_tuning, reader_tuning) = match engines {
-            EngineSet::Current => (
-                models::BUBBLE_DETECTOR_FILES,
-                line_reader_identity(),
-                MANGA_CROP,
-                super::bubbles::fingerprint(),
-                reader_tuning(),
-            ),
-            EngineSet::Legacy => (
-                models::DETECTOR_FILES,
-                super::recognizer::western::engine_identity(),
-                MangaCrop::Region,
-                String::new(),
-                String::new(),
-            ),
-        };
         Self {
-            engines,
-            manga_crop: manga_crop.label(),
-            detector_tuning,
-            reader_tuning,
+            manga_crop: MANGA_CROP.label(),
+            detector_tuning: super::bubbles::fingerprint(),
+            reader_tuning: reader_tuning(),
             result_version: OCR_RESULT_VERSION,
             detect_version: OCR_DETECT_VERSION,
-            detector_pins: pins(detector),
+            detector_pins: pins(models::BUBBLE_DETECTOR_FILES),
             manga_pins: pins(models::MANGA_FILES),
-            western,
+            western: line_reader_identity(),
             page_size: page_size_fingerprint().to_owned(),
         }
     }
 
-    /// Fingerprint for result-cache keys: the engine set, the cleanup +
-    /// preprocessing version, both recognizers, and the detector (a
-    /// `detect: true` result is read from the detector's crop).
+    /// Fingerprint for result-cache keys: the cleanup + preprocessing
+    /// version, both recognizers, and the detector (a `detect: true`
+    /// result is read from the detector's crop).
     pub fn result_fingerprint(&self) -> String {
         let mut parts = vec![
-            format!("engines={}", self.engines.label()),
             format!("result-v{}", self.result_version),
             format!("detect-v{}", self.detect_version),
             self.western.clone(),
@@ -240,12 +207,10 @@ impl EngineInputs {
         short_hash(&parts)
     }
 
-    /// Fingerprint for detect-cache keys: the engine set and its
-    /// detector alone (its pins and the constants that decide which
-    /// boxes it keeps).
+    /// Fingerprint for detect-cache keys: the detector alone (its pins
+    /// and the constants that decide which boxes it keeps).
     pub fn detect_fingerprint(&self) -> String {
         let mut parts = vec![
-            format!("engines={}", self.engines.label()),
             format!("detect-v{}", self.detect_version),
             format!("detector-tuning={}", self.detector_tuning),
         ];
@@ -267,81 +232,31 @@ fn short_hash(parts: &[String]) -> String {
     hex
 }
 
-/// The two key fingerprints of one engine set in this process.
+/// The two key fingerprints of this process.
 #[derive(Debug, Clone)]
 pub struct Fingerprints {
     pub result: String,
     pub detect: String,
 }
 
-fn fingerprint_slot(engines: EngineSet) -> &'static std::sync::OnceLock<Fingerprints> {
-    static CURRENT: std::sync::OnceLock<Fingerprints> = std::sync::OnceLock::new();
-    static LEGACY: std::sync::OnceLock<Fingerprints> = std::sync::OnceLock::new();
-    match engines {
-        EngineSet::Current => &CURRENT,
-        EngineSet::Legacy => &LEGACY,
-    }
-}
-
-/// [`fingerprints_for`] the default engine set ([`EngineSet::Current`]).
+/// This process's fingerprints, computed once (every input is a
+/// constant) and logged the first time.
 pub fn fingerprints() -> Fingerprints {
-    fingerprints_for(EngineSet::Current)
-}
-
-/// This process's fingerprints for `engines`. The first complete
-/// computation is kept for the life of the process. For the current set
-/// that is the first one (model pins are constants). For the legacy set
-/// it hashes the Tesseract language data (blocking, tens of ms), so the
-/// handlers call [`warm_fingerprints_for`] first to do that off the
-/// async runtime; while the language data is missing or unreadable the
-/// result is *not* kept: it is computed again on every call (a failed
-/// `open`, cheap), so data staged later is picked up without a restart.
-pub fn fingerprints_for(engines: EngineSet) -> Fingerprints {
-    let slot = fingerprint_slot(engines);
-    if let Some(fp) = slot.get() {
-        return fp.clone();
-    }
-    let inputs = EngineInputs::current(engines);
-    let fp = Fingerprints {
-        result: inputs.result_fingerprint(),
-        detect: inputs.detect_fingerprint(),
-    };
-    if engines == EngineSet::Current || western_identity_complete(&inputs.western) {
-        let kept = slot.get_or_init(|| {
-            tracing::info!(
-                engines = engines.label(),
-                result = %fp.result,
-                detect = %fp.detect,
-                western = %inputs.western,
-                "ocr cache: engine fingerprints"
-            );
-            fp
-        });
-        return kept.clone();
-    }
-    tracing::debug!(western = %inputs.western, "ocr cache: Tesseract language data not readable yet");
-    fp
-}
-
-/// `false` when the language data could not be hashed (see
-/// [`super::recognizer::western::engine_identity`]).
-fn western_identity_complete(western: &str) -> bool {
-    !["=missing", "=unreadable", "=no-tessdata-dir"]
-        .iter()
-        .any(|m| western.contains(m))
-}
-
-/// [`warm_fingerprints_for`] the default engine set.
-pub async fn warm_fingerprints() {
-    warm_fingerprints_for(EngineSet::Current).await;
-}
-
-/// Compute [`fingerprints_for`] `engines` on the blocking pool if none is
-/// kept yet.
-pub async fn warm_fingerprints_for(engines: EngineSet) {
-    if fingerprint_slot(engines).get().is_none() {
-        let _ = tokio::task::spawn_blocking(move || fingerprints_for(engines)).await;
-    }
+    static SLOT: std::sync::OnceLock<Fingerprints> = std::sync::OnceLock::new();
+    SLOT.get_or_init(|| {
+        let inputs = EngineInputs::current();
+        let fp = Fingerprints {
+            result: inputs.result_fingerprint(),
+            detect: inputs.detect_fingerprint(),
+        };
+        tracing::info!(
+            result = %fp.result,
+            detect = %fp.detect,
+            "ocr cache: engine fingerprints"
+        );
+        fp
+    })
+    .clone()
 }
 
 /// Longest a cache read may take. The connection's own response timeout
@@ -370,27 +285,8 @@ async fn get_bounded(redis: &ConnectionManager, key: &str, what: &str) -> Option
     }
 }
 
-/// [`cache_key_for`] the default engine set ([`EngineSet::Current`]):
-/// the key a server without the legacy switch uses. Public so tests can
+/// Build the Redis key for one result-cache entry. Public so tests can
 /// pre-seed entries without going through the full handler path.
-pub fn cache_key(
-    content_hash: &str,
-    page: u32,
-    lang: &str,
-    detect: bool,
-    region_hash: &str,
-) -> String {
-    cache_key_for(
-        EngineSet::Current,
-        content_hash,
-        page,
-        lang,
-        detect,
-        region_hash,
-    )
-}
-
-/// Build the Redis key for one result-cache entry of an engine set.
 ///
 /// `detect` distinguishes snap-to-bubble results (`true` → `d`) from
 /// raw-rect results (`false` → `r`). The recognized text differs
@@ -399,9 +295,8 @@ pub fn cache_key(
 /// operator (or future per-call override) flips detection state.
 ///
 /// The segment after the version is the engine fingerprint
-/// ([`Fingerprints::result`]), which differs between the engine sets.
-pub fn cache_key_for(
-    engines: EngineSet,
+/// ([`Fingerprints::result`]).
+pub fn cache_key(
     content_hash: &str,
     page: u32,
     lang: &str,
@@ -409,7 +304,7 @@ pub fn cache_key_for(
     region_hash: &str,
 ) -> String {
     result_key_with(
-        &fingerprints_for(engines).result,
+        &fingerprints().result,
         content_hash,
         page,
         lang,
@@ -482,16 +377,13 @@ pub async fn put(redis: &ConnectionManager, key: &str, response: &OcrResponse) {
 // Result-cache hits skip the detector but require the *same* region.
 // Caching the detector output per `(content_hash, page)` lets reads of
 // *different* regions of the same page skip the detector too, and lets
-// the text-regions route answer without touching the archive. (With the
-// legacy detector, tens of seconds a page, this cache is what made the
-// feature usable at all.)
+// the text-regions route answer without touching the archive.
 
 /// One detected box in page pixels, as stored in Redis under the
 /// per-page detect cache. `class` is the detector's own class index:
-/// 0 (balloon), 1 (the text inside a balloon) or 2 (free text) from the
-/// current detector (`ocr::bubbles`), 0 (block) or 1 (line) from the
-/// legacy one. Which classes are regions for clients is
-/// [`EngineSet::is_region_class`].
+/// 0 (balloon), 1 (the text inside a balloon) or 2 (free text)
+/// (`ocr::bubbles`). Which classes are regions for clients is
+/// [`super::bubbles::is_region_class`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedBbox {
     pub xmin: f32,
@@ -514,23 +406,15 @@ pub struct CachedDetection {
 }
 
 /// Version byte in the detect-cache key. v3 = the boxes are those of the
-/// balloon detector, all three classes (the legacy detector's boxes sit
-/// under their own fingerprint); v2 = payload grew page dimensions
+/// balloon detector, all three classes; v2 = payload grew page dimensions
 /// ([`CachedDetection`]); v1 stored a bare bbox array. Old-version keys
 /// age out via [`CACHE_TTL`].
 pub const OCR_DETECT_VERSION: u32 = 3;
 
-/// [`detect_cache_key_for`] the default engine set
-/// ([`EngineSet::Current`]).
+/// Redis key for the per-page detector output cache. The segment after
+/// the version is the detector fingerprint ([`Fingerprints::detect`]).
 pub fn detect_cache_key(content_hash: &str, page: u32) -> String {
-    detect_cache_key_for(EngineSet::Current, content_hash, page)
-}
-
-/// Redis key for the per-page detector output cache of an engine set.
-/// The segment after the version is the detector fingerprint
-/// ([`Fingerprints::detect`]).
-pub fn detect_cache_key_for(engines: EngineSet, content_hash: &str, page: u32) -> String {
-    detect_key_with(&fingerprints_for(engines).detect, content_hash, page)
+    detect_key_with(&fingerprints().detect, content_hash, page)
 }
 
 fn detect_key_with(fingerprint: &str, content_hash: &str, page: u32) -> String {
@@ -647,7 +531,6 @@ mod tests {
 
     fn inputs() -> EngineInputs {
         EngineInputs {
-            engines: EngineSet::Legacy,
             manga_crop: "region",
             detector_tuning: "detector:input=640;score=0.5".into(),
             reader_tuning: "lines:scale=2".into(),
@@ -658,7 +541,7 @@ mod tests {
                 "acme/manga@bbb/enc.onnx#222".into(),
                 "acme/manga@bbb/vocab.txt#333".into(),
             ],
-            western: "tesseract=5.5.0;eng.traineddata=abc".into(),
+            western: "line-finder=acme/lines@ddd/det.onnx#555".into(),
             page_size: "0011223344556677".into(),
         }
     }
@@ -709,13 +592,6 @@ mod tests {
         assert_eq!(fp, inputs().result_fingerprint(), "deterministic");
         let variants: Vec<(&str, EngineInputs)> = vec![
             (
-                "engine set",
-                EngineInputs {
-                    engines: EngineSet::Current,
-                    ..inputs()
-                },
-            ),
-            (
                 "result version",
                 EngineInputs {
                     result_version: 4,
@@ -754,9 +630,9 @@ mod tests {
                 },
             ),
             (
-                "tesseract version",
+                "western recogniser pin",
                 EngineInputs {
-                    western: "tesseract=5.5.1;eng.traineddata=abc".into(),
+                    western: "line-finder=acme/lines@eee/det.onnx#555".into(),
                     ..inputs()
                 },
             ),
@@ -788,13 +664,6 @@ mod tests {
                     ..inputs()
                 },
             ),
-            (
-                "language data",
-                EngineInputs {
-                    western: "tesseract=5.5.0;eng.traineddata=abd".into(),
-                    ..inputs()
-                },
-            ),
         ];
         for (what, v) in variants {
             assert_ne!(
@@ -810,13 +679,6 @@ mod tests {
         let fp = inputs().detect_fingerprint();
         assert!(is_fingerprint(&fp));
         for (what, v) in [
-            (
-                "engine set",
-                EngineInputs {
-                    engines: EngineSet::Current,
-                    ..inputs()
-                },
-            ),
             (
                 "detect version",
                 EngineInputs {
@@ -850,9 +712,9 @@ mod tests {
                 },
             ),
             (
-                "tesseract",
+                "western recogniser",
                 EngineInputs {
-                    western: "tesseract=6".into(),
+                    western: "line-finder=other".into(),
                     ..inputs()
                 },
             ),
@@ -886,37 +748,13 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_legacy_fingerprint_names_tesseract_and_every_pin() {
-        let legacy = EngineInputs::current(EngineSet::Legacy);
-        assert!(
-            legacy.western.starts_with("tesseract="),
-            "{}",
-            legacy.western
-        );
-        assert!(
-            legacy.western.contains("eng.traineddata="),
-            "{}",
-            legacy.western
-        );
-        assert_eq!(
-            legacy.detector_pins,
-            pins(super::super::models::DETECTOR_FILES)
-        );
-        assert_eq!(
-            legacy.manga_pins.len(),
-            super::super::models::MANGA_FILES.len()
-        );
-    }
-
-    /// The current set's fingerprint inputs name every file its engines
-    /// load: the balloon detector, the line finder, the line recogniser
-    /// with its dictionary, and manga-ocr.
+    /// The fingerprint inputs name every file the engines load: the
+    /// balloon detector, the line finder, the line recogniser with its
+    /// dictionary, and the Japanese recogniser.
     #[test]
     fn the_current_fingerprint_covers_every_model_file() {
         use super::super::models;
-        let current = EngineInputs::current(EngineSet::Current);
-        assert_eq!(current.engines, EngineSet::Current);
+        let current = EngineInputs::current();
         assert_eq!(current.result_version, OCR_RESULT_VERSION);
         assert_eq!(current.detect_version, OCR_DETECT_VERSION);
         assert_eq!(current.detector_pins, pins(models::BUBBLE_DETECTOR_FILES));
@@ -950,9 +788,6 @@ mod tests {
         ] {
             assert!(current.reader_tuning.contains(&part), "{part}");
         }
-        // The legacy set carries none of them.
-        let legacy = EngineInputs::current(EngineSet::Legacy);
-        assert!(legacy.detector_tuning.is_empty() && legacy.reader_tuning.is_empty());
         assert!(
             !current.western.contains("tesseract"),
             "{}",
@@ -980,35 +815,6 @@ mod tests {
         };
         assert_ne!(moved.result_fingerprint(), current.result_fingerprint());
         assert_eq!(moved.detect_fingerprint(), current.detect_fingerprint());
-    }
-
-    /// The two engine sets never share a result or a detection: their
-    /// fingerprints, and so their keys, differ.
-    #[test]
-    fn the_engine_sets_have_different_keys() {
-        let current = fingerprints_for(EngineSet::Current);
-        let legacy = fingerprints_for(EngineSet::Legacy);
-        assert!(is_fingerprint(&current.result) && is_fingerprint(&current.detect));
-        assert_ne!(current.result, legacy.result);
-        assert_ne!(current.detect, legacy.detect);
-        assert_ne!(
-            cache_key_for(EngineSet::Current, "h", 0, "western", false, "rh"),
-            cache_key_for(EngineSet::Legacy, "h", 0, "western", false, "rh")
-        );
-        assert_ne!(
-            detect_cache_key_for(EngineSet::Current, "h", 0),
-            detect_cache_key_for(EngineSet::Legacy, "h", 0)
-        );
-        // The shorthand functions are the default (current) set's keys.
-        assert_eq!(
-            cache_key("h", 0, "western", false, "rh"),
-            cache_key_for(EngineSet::Current, "h", 0, "western", false, "rh")
-        );
-        assert_eq!(
-            detect_cache_key("h", 0),
-            detect_cache_key_for(EngineSet::Current, "h", 0)
-        );
-        assert_eq!(fingerprints().result, current.result);
     }
 
     #[test]
@@ -1129,26 +935,5 @@ mod page_size_tests {
         assert_eq!(parts[4..], ["hashA", "7"]);
         assert_ne!(page_size_key("hashA", 7), page_size_key("hashB", 7));
         assert_ne!(page_size_key("hashA", 7), page_size_key("hashA", 8));
-    }
-}
-
-#[cfg(test)]
-mod fingerprint_memo_tests {
-    use super::*;
-
-    /// Only a fingerprint with hashed language data is kept for the life
-    /// of the process; one computed while the data is missing is not.
-    #[test]
-    fn only_a_complete_western_identity_is_kept() {
-        assert!(western_identity_complete(
-            "tesseract=5.5.0;eng.traineddata=0123abcd"
-        ));
-        for incomplete in [
-            "tesseract=5.5.0;eng.traineddata=missing",
-            "tesseract=5.5.0;eng.traineddata=unreadable:PermissionDenied",
-            "tesseract=5.5.0;eng.traineddata=no-tessdata-dir",
-        ] {
-            assert!(!western_identity_complete(incomplete), "{incomplete}");
-        }
     }
 }

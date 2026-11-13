@@ -19,14 +19,14 @@ ignore = [
     # (lru 0.12). Re-add if a dep bump reintroduces them.
     # Pruned 2026-09-15: RUSTSEC-2026-0173 (proc-macro-error2) — left the
     # graph when sea-orm 2.0.3 dropped sea-bae.
+    # Pruned 2026-11-12: RUSTSEC-2025-0119 (number_prefix, via indicatif),
+    # RUSTSEC-2024-0436 (paste) and RUSTSEC-2026-0192 (ttf-parser) — all
+    # three left the graph with the comic-text-detector crate and its
+    # candle / imageproc stack. So did `ureq 2` and the `webpki-roots
+    # 0.26` copy behind the RUSTSEC-2026-0381 note (that crate turned on
+    # hf-hub's default blocking client; Folio's hf-hub has no default
+    # features), and the `memmap2` copy under candle (RUSTSEC-2026-0186).
     #
-    # `number_prefix` unmaintained — transitive via indicatif (CLI
-    # progress bars in scanner). Cosmetic formatter; no security
-    # surface.
-    "RUSTSEC-2025-0119",
-    # `paste` no longer maintained — proc-macro used at build time by
-    # several macro crates. Doesn't ship to runtime. Tracked upstream.
-    "RUSTSEC-2024-0436",
     # `crypto-bigint 0.5` timing variability in constant-time ops
     # (RUSTSEC-2026-0387, 2026-10-23). Patched only in the 0.7 line
     # (>= 0.7.6), i.e. the RustCrypto 0.14 release train; we get 0.5.5
@@ -39,25 +39,6 @@ ignore = [
     # Delete when `cargo tree -i crypto-bigint` shows no 0.5 (jsonwebtoken /
     # openidconnect move to p256 0.14).
     "RUSTSEC-2026-0387",
-    # --- OCR / ML stack (candle → comic-text-detector → imageproc), confined
-    # to the optional OCR path; not reachable from the core reader/scanner
-    # request paths. (audit DEP-1, 2026-07-01.)
-    #
-    # `ttf-parser 0.25.1` unmaintained (RUSTSEC-2026-0192) — transitive via
-    # `imageproc → ab_glyph → owned_ttf_parser`. Upstream states "no safe
-    # upgrade available"; the suggested alternative (`skrifa`) isn't adoptable
-    # at our edge. Revisit when comic-text-detector bumps its imageproc pin.
-    "RUSTSEC-2026-0192",
-    # Pruned 2026-10-23: RUSTSEC-2026-0381 (webpki-roots 0.26 emSign roots)
-    # — cargo-deny reports `advisory-not-detected` since 2026-10-22 although
-    # 0.26.11 is still in the graph via `hf-hub 0.4 → ureq 2`; the advisory
-    # was narrowed upstream. Re-add if it returns.
-    # NOTE: `memmap2 0.9.10` unsound (RUSTSEC-2026-0186, transitive via
-    # `candle-core`) is intentionally NOT ignored here — cargo-deny's DB does
-    # not match it, so an ignore entry would only warn as
-    # `advisory-not-detected`. cargo-audit surfaces it as a non-failing warning
-    # (bare `cargo audit` exits 0 on unsound/informational). Revisit when
-    # candle bumps its memmap2 pin.
     # `rsa 0.9.10` Marvin Attack (RUSTSEC-2023-0071 / CVE-2023-49092) —
     # timing sidechannel in RSA *private-key* operations (decrypt/sign).
     # Fixed in `rsa` 0.10.0 (the advisory's patched range since 2026-11),
@@ -79,27 +60,22 @@ ignore = [
     # applied through symlinks). All three are about the whole-archive
     # helpers `ZipArchive::extract()` / `ZipStreamReader::extract()` run
     # over an attacker-controlled archive. Folio's own `zip` is the
-    # patched 9.x line; the two stale copies are transitive pins we can't
-    # move (re-checked 2026-10-19):
-    #  - `zip 7.2.0` <- `candle-core 0.9.2` (`^7.2`, via
-    #    comic-text-detector in the optional OCR/ML stack). Candle only
-    #    opens `.npz` / PyTorch `.pt` tensor files with `by_index` / `by_name` reads and
-    #    never calls `extract()`; the files are the operator's detector
-    #    model, not user uploads. candle `main` still pins `zip 8.6.0`,
-    #    so an upstream release wouldn't clear it yet either.
+    # patched 9.x line; the one stale copy is a transitive pin we can't
+    # move (re-checked 2026-10-19; the `zip 7.x` copy under candle-core
+    # left the graph with comic-text-detector on 2026-11-12):
     #  - `zip 8.6.0` <- `tesseract-rs 0.4.0` build-dependency (`^8.6`,
     #    latest release). Its build.rs unpacks the pinned leptonica
     #    1.87.0 / tesseract 5.5.2 GitHub tag archives by iterating
     #    `by_index` + `io::copy` (no `extract()`), at build time only;
     #    nothing from it ships in the binary.
-    # Revisit when candle and tesseract-rs move to zip 9.
+    # Revisit when tesseract-rs moves to zip 9.
     "RUSTSEC-2026-0367",
     "RUSTSEC-2026-0368",
     "RUSTSEC-2026-0369",
     # GHSA-q7v9-x93c-xqv3 from the batch below, now in the RustSec db
     # (CVE-2026-115909, CVSS 7.5): `ZipArchive::extract()` sizes a
     # symlink-target buffer from the declared size, so a crafted entry aborts
-    # the process. Same two stale copies, neither calls `extract()`, and
+    # the process. Same stale copy, which does not call `extract()`, and
     # Folio's own zip is patched. Delete with the three ids above.
     "RUSTSEC-2026-0429",
     # `astral-tokio-tar` unmaintained (RUSTSEC-2026-0440, 2026-11-03): Astral
@@ -129,36 +105,31 @@ ignore = [
     # --- `zip` < 9, 2026-10-29 batch: GitHub advisories, patched in
     # 9.0.5 / 9.0.0. The RustSec db carries none of the four below (re-checked
     # 2026-11-08; the fifth became RUSTSEC-2026-0429, above), so cargo-deny has nothing to match — a RUSTSEC-less id
-    # in this array only warns as `advisory-not-detected` (the memmap2 gap
-    # above) and reads as stale to the daily sweep. They are recorded on
+    # in this array only warns as `advisory-not-detected` and reads as stale to the daily sweep. They are recorded on
     # the `osv-only:` lines below instead: osv-scanner is the one scanner
     # that reports them (it reads osv-scanner.toml), and
     # scripts/ci/check-advisory-ignores.py takes these lines as the
-    # rationale of record behind that file's GHSA entries. Same two stale
-    # copies as RUSTSEC-2026-0367..0369 (Folio's own zip is 9.x, patched
-    # for all of them): `zip 7.4.0` <- candle-core 0.9.2 and `zip 8.6.0` <-
-    # tesseract-rs 0.4.0 build.rs. Both pull zip with
-    # `default-features = false` (candle adds nothing, tesseract-rs adds
-    # `deflate`), so `aes-crypto` and `legacy-zip` are not compiled in.
+    # rationale of record behind that file's GHSA entries. Same stale
+    # copy as RUSTSEC-2026-0367..0369 (Folio's own zip is 9.x, patched
+    # for all of them): `zip 8.6.0` <- tesseract-rs 0.4.0 build.rs. It
+    # pulls zip with `default-features = false` plus `deflate`, so
+    # `aes-crypto` and `legacy-zip` are not compiled in.
     #  - GHSA-m665-v7pm-7grj (CVE-2026-115905, <= 9.0.4, "zip cloaking"):
     #    the central-directory reader (`ZipArchive`) and the local-header
     #    reader (`ZipStreamReader`) disagree on an entry's name/contents,
     #    so a filesystem extract can write a path the inspecting reader
-    #    never showed. Neither copy uses `ZipStreamReader` or `extract()`:
-    #    candle opens `.npz` / `.pt` tensor files by name/index through
-    #    `ZipArchive`, and the detector Folio ships loads an ONNX model
-    #    through `ort`, so candle's zip reader is never even reached;
-    #    tesseract-rs iterates `by_index` + `io::copy` over the pinned
+    #    never showed. The copy uses neither `ZipStreamReader` nor
+    #    `extract()`: tesseract-rs iterates `by_index` + `io::copy` over the pinned
     #    leptonica 1.87.0 / tesseract 5.5.2 GitHub tag archives at build
     #    time, and nothing from it ships in the binary.
     #  - GHSA-hjqx-j4rw-g7xv (CVE-2026-115908): lexical symlink-target
     #    validation in `extract()`. Same.
     #  - GHSA-8hxf-qr8p-62x4 (CVE-2026-115906): AES-entry HMAC skipped on
-    #    premature EOF. Needs `aes-crypto`, which neither copy enables.
+    #    premature EOF. Needs `aes-crypto`, which the copy does not enable.
     #  - GHSA-9hj8-73fh-9963 (CVE-2026-115907): Shrink/Reduce/Implode
     #    capacity-overflow panic in `extract()`. Needs `legacy-zip`, which
-    #    neither copy enables.
-    # Delete when candle and tesseract-rs move to zip 9 (the condition on
+    #    the copy does not enable.
+    # Delete when tesseract-rs moves to zip 9 (the condition on
     # the three RUSTSEC entries above). Move an id into the array the day
     # the RustSec db gains an entry for it — the daily sweep's stale check
     # names it.
@@ -185,14 +156,6 @@ allow = [
     "CDLA-Permissive-2.0",   # webpki-roots (rustls cert store); LF permissive
     "AGPL-3.0",
     "AGPL-3.0-or-later",
-    # comic-text-detector ships under GPL-3.0-or-later. Folio is
-    # AGPL-3.0-or-later; the GPL family is one-way compatible into AGPL
-    # (AGPL is GPL + the network-use clause).
-    "GPL-3.0-or-later",
-    # `libfuzzer-sys` carries the trifecta `(MIT OR Apache-2.0) AND
-    # NCSA`. NCSA is the University of Illinois open-source license
-    # used by LLVM-adjacent projects; OSI-approved + FSF-free.
-    "NCSA",
     # `xxhash-rust` (redis ≥ 1.x transitive, RESP3 hashing). Boost Software
     # License 1.0: OSI-approved, permissive, no copyleft.
     "BSL-1.0",

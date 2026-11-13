@@ -159,11 +159,10 @@ COPY --from=apt-source   /usr/bin/tini                  /sbin/tini
 # placed the pinned `eng` + `tur` traineddata from `tessdata_best` in
 # `/root/.tesseract-rs/tessdata/` (where the `tesseract-rs` build
 # script looks), and rust-builder re-checked them after the build;
-# we bake those files into the image so the OCR endpoint works
-# out of the box without a runtime download. The `TESSDATA_PREFIX`
-# env below points the recognizer here. Operators on air-gapped
-# deploys can override via `TESSDATA_PREFIX` to use a pre-staged
-# directory.
+# they are baked into the image and `TESSDATA_PREFIX` below points at
+# them. No OCR request uses Tesseract any more (the server reads text
+# with ONNX models, `docs/dev/ocr.md`); the Tesseract build and these
+# files go away in a later change.
 COPY --from=rust-builder /root/.tesseract-rs/tessdata   /app/tessdata
 
 VOLUME ["/library", "/data"]
@@ -178,15 +177,13 @@ ENV COMIC_BIND_ADDR=0.0.0.0:8080 \
     HF_HOME=/data/.cache/huggingface
 
 # HOME=/data is the load-bearing override here, not HF_HOME.
-# Upstream `comic-text-detector` 0.5.1 calls `hf_hub::api::sync::Api::new()`,
-# which uses `Cache::default()` and resolves via `dirs::home_dir()` —
-# `HF_HOME` is *only* honored by `Api::from_env()`, which the crate
-# doesn't use. Pointing `HOME` at the persistent volume makes the
-# detector + manga-ocr ONNX caches land under `/data/.cache/...`
-# instead of the ephemeral `/home/nonroot/.cache/...`. The
-# `HF_HOME` env stays for documentation + future hf-hub bumps that
-# fix the precedence; `GET /admin/ocr/models` reads it first and
-# falls back to HOME, so both pointers land on the same path.
+# The OCR model cache path is `hf_hub::Cache::default()` (`ocr::models`),
+# which resolves via `dirs::home_dir()`; `HF_HOME` is not read for it.
+# Pointing `HOME` at the persistent volume makes the ONNX model caches
+# land under `/data/.cache/...` instead of the ephemeral
+# `/home/nonroot/.cache/...`. The `HF_HOME` env stays for documentation;
+# `GET /admin/ocr/models` reads it first and falls back to HOME, so both
+# pointers land on the same path.
 
 # Healthcheck handled by the orchestrator via `/app/server --healthcheck`
 # (see `compose.prod.yml`). Inline `HEALTHCHECK` would bake the cadence into
