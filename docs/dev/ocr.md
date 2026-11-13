@@ -508,10 +508,14 @@ statically is compiled for that baseline (`ort`'s rc.11 release notes
 say its prebuilt binaries target it from then on); the ONNX Runtime
 1.22 library of `ort` rc.10 was not.
 
-- **Without AVX** the server does not start: the process dies with
-  SIGILL before `main`, in a static initialiser of the ONNX Runtime
-  library (`onnxruntime::ProviderLibrary::ProviderLibrary`). No Folio
-  code has run, so nothing in Folio can catch it.
+- **Without AVX** the server does not start. Without a check, the
+  process dies with SIGILL before `main`, in a static initialiser of the
+  ONNX Runtime library (`onnxruntime::ProviderLibrary::ProviderLibrary`).
+  The `server` binary therefore checks for AVX in a `.preinit_array`
+  entry (`main.rs`, module `avx_check`), which runs before those
+  initialisers, prints `folio: this CPU has no AVX. This build needs an
+  x86_64 CPU with AVX2 (x86-64-v3) and cannot start; see
+  docs/dev/ocr.md.` to standard error and exits with status 1.
 - **With AVX but not AVX2** the server starts and everything works
   except text reading. `session::environment()` refuses to start ONNX
   Runtime (running a model would end the process with SIGILL, which

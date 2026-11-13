@@ -81,9 +81,9 @@ From this version Folio's x86_64 builds need a CPU with **AVX2**
 (OCR), is compiled for it.
 
 - **Without AVX** the server does not start: ONNX Runtime executes AVX
-  instructions while the process starts, before any Folio code runs. The
-  process is killed by an illegal-instruction signal (exit status 132
-  under Docker) and logs nothing.
+  instructions while the process starts. The server checks first, logs
+  `folio: this CPU has no AVX. …` and exits with status 1 (so a
+  container restart loop shows that line).
 - **With AVX but not AVX2** the server starts and everything works except
   text reading: both OCR routes (`POST /api/me/issues/{id}/ocr` and the
   page text-regions route) answer `500` with error code `ocr_failed`, and
