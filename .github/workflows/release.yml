@@ -65,7 +65,6 @@ jobs:
               - 'Dockerfile'
               - 'web/Dockerfile'
               - '.dockerignore'
-              - 'scripts/docker/**'
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'

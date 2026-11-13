@@ -87,9 +87,6 @@ jobs:
               - 'Dockerfile'
               - 'web/Dockerfile'
               - '.dockerignore'
-              # Run by the Dockerfile (tesseract-rs input pins): a pin-only
-              # change must build the image here, not first on main.
-              - 'scripts/docker/**'
               - '.github/workflows/ci.yml'
             cargo_deps:
               - 'Cargo.toml'
@@ -271,8 +268,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # A toolchain bump invalidates every rust-cache key, so this job
-      # occasionally runs fully cold — and a cold workspace build (Tesseract/
-      # Leptonica C++, ort, dozens of debug test binaries) overflows what's
+      # occasionally runs fully cold — and a cold workspace build (aws-lc,
+      # zstd and libwebp C, ort, dozens of debug test binaries) overflows what's
       # free on a hosted runner. PR #429 died twice this way: first ld
       # SIGBUS (mmap write on a full disk), then an explicit "No space left on
       # device". Since the 2026-07-20 image rollout some runners have 72 GB
