@@ -468,7 +468,12 @@ resolver and the proxy environment, follows at most 2 redirects, each
 required to stay on https and refused when its host is an internal
 address literal, bounds each request at 30 s including the body, and
 reads the tree listing (16 MiB) and blob (4 MiB) with a running cap that
-also refuses an oversize `Content-Length` before reading.
+also refuses an oversize `Content-Length` before reading. Refresh and
+"Check for updates" read the path's blob SHA from the (cached) index
+first (`cbl::catalog::index_entry`): when it equals the list's stored
+`github_blob_sha` the blob is not downloaded, and the list only
+re-matches. A forced refresh always downloads; the size cap applies to a
+blob about to be downloaded, not to unchanged stored content.
 
 **Matching.** `cbl::matcher::match_entries` resolves a whole list in a
 fixed number of statements: one id lookup (ComicVine, then Metron) and

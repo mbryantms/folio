@@ -3,6 +3,9 @@
 //! Talks to the Git Trees API to enumerate `.cbl` files in a configured
 //! repo, caches the parsed tree on the `catalog_sources` row keyed by
 //! the response ETag, and fetches raw blobs from `raw.githubusercontent.com`.
+//! [`index_entry`] answers a path's blob SHA from the index alone, so a
+//! refresh or check whose stored SHA is current never downloads the blob
+//! ([`download_blob`] is the only blob request).
 //!
 //! Auth: defaults to anonymous (60 req/hr/IP). When the env var
 //! `COMIC_GITHUB_TOKEN` is set, requests are sent as
@@ -233,19 +236,47 @@ pub async fn refresh_index<C: ConnectionTrait>(
 
 /// Fetch one `.cbl` raw blob by path. Refreshes the index implicitly on
 /// the first call so the path → SHA mapping is current; pass `force =
-/// true` to skip the cache.
+/// true` to skip the cache. [`index_entry`] followed by [`download_blob`].
 pub async fn fetch_blob<C: ConnectionTrait>(
     db: &C,
     source: &catalog_source::Model,
     path: &str,
     force_index_refresh: bool,
 ) -> Result<FetchedBlob, CatalogError> {
+    let entry = index_entry(db, source, path, force_index_refresh).await?;
+    download_blob(source, &entry).await
+}
+
+/// The index's entry for `path` (its blob SHA and size), without
+/// downloading the blob. Refreshes the index as [`refresh_index`] does
+/// (`force_index_refresh` skips the cache). A path the index does not
+/// list is [`CatalogError::PathMissing`].
+///
+/// A refresh or check compares the entry's `sha` with the list's stored
+/// `github_blob_sha` and only calls [`download_blob`] when they differ.
+pub async fn index_entry<C: ConnectionTrait>(
+    db: &C,
+    source: &catalog_source::Model,
+    path: &str,
+    force_index_refresh: bool,
+) -> Result<CatalogEntry, CatalogError> {
     let index = refresh_index(db, source, force_index_refresh).await?;
-    let entry = index
+    index
         .entries
-        .iter()
+        .into_iter()
         .find(|e| e.path == path)
-        .ok_or_else(|| CatalogError::PathMissing(path.to_owned()))?;
+        .ok_or_else(|| CatalogError::PathMissing(path.to_owned()))
+}
+
+/// Download the blob of an index entry from `raw.githubusercontent.com`.
+/// Refused with [`CatalogError::TooLarge`] before any request when the
+/// index lists it over [`MAX_BLOB_BYTES`], and while streaming when the
+/// body runs past it.
+pub async fn download_blob(
+    source: &catalog_source::Model,
+    entry: &CatalogEntry,
+) -> Result<FetchedBlob, CatalogError> {
+    let path = entry.path.as_str();
     if (entry.size as usize) > MAX_BLOB_BYTES {
         return Err(CatalogError::TooLarge {
             limit: MAX_BLOB_BYTES,
