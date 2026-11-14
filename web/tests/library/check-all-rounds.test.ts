@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiMutationError } from "@/lib/api/mutations/_core";
 import type { CblBulkItemView, CblBulkResultView } from "@/lib/api/types";
 import {
+  GONE,
   MAX_IDS_PER_ROUND,
   checkAllUntilDone,
   type CheckAllProgress,
@@ -192,6 +193,23 @@ describe("checkAllUntilDone", () => {
       checkAllUntilDone(request, undefined, controller.signal),
     ).rejects.toMatchObject({ name: "AbortError" });
     expect(calls).toEqual([undefined]);
+  });
+
+  it("resolves a list a round asked about but did not answer for, and never asks again", async () => {
+    // `c` was deleted (or is no longer refreshable) between rounds.
+    const { request, calls } = rounds(
+      result([item("a"), missed("b"), missed("c")]),
+      result([missed("b")]),
+      result([item("b")]),
+    );
+    const out = await checkAllUntilDone(request);
+    expect(calls).toEqual([undefined, ["b", "c"], ["b"]]);
+    expect(out.items.map((i) => [i.id, i.ok, i.attempted, i.error])).toEqual([
+      ["a", true, true, null],
+      ["b", true, true, null],
+      ["c", false, true, GONE],
+    ]);
+    expect(out.failed_count).toBe(1);
   });
 
   it("ignores lists a later round returns that were not asked about", async () => {

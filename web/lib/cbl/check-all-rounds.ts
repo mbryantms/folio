@@ -7,8 +7,14 @@
  * `attempted: false`. This asks again with those ids (`list_ids`, at most
  * `MAX_IDS_PER_ROUND` per round) until none are left, and merges the
  * rounds into one result in the lists' original order, as if a single
- * response had covered them all. The server charges the whole run one
- * import token (`cbl::quota` continuation allowance).
+ * response had covered them all. The whole run costs one import token:
+ * the server keeps the set of lists a call left unreached, and a call
+ * that asks only for lists in that set (which every continuation round
+ * here does) is free (`cbl::quota` continuation allowance).
+ *
+ * A list a round asked about and that is missing from its answer (deleted,
+ * or no longer refreshable by the caller) is resolved as couldn't be
+ * checked (`GONE`) and never asked about again.
  *
  * Stops early when:
  *   - a round leaves as many lists unchecked as before it (no progress):
@@ -35,6 +41,9 @@ export type CheckAllRequest = (
 
 /** Lists checked so far out of all lists in the run. */
 export type CheckAllProgress = { checked: number; total: number };
+
+/** The row of a list a round asked about and did not answer for. */
+export const GONE = "no longer available to check";
 
 function notAttempted(item: CblBulkItemView): boolean {
   return item.attempted === false;
@@ -91,8 +100,17 @@ export async function checkAllUntilDone(
     // Only answers to this round's question count: an id the round did not
     // ask about (e.g. one already resolved) never overwrites its row.
     const askedSet = new Set(asked);
+    const answered = new Set<string>();
     for (const item of next?.items ?? []) {
-      if (askedSet.has(item.id)) byId.set(item.id, item);
+      if (askedSet.has(item.id)) {
+        byId.set(item.id, item);
+        answered.add(item.id);
+      }
+    }
+    for (const id of asked) {
+      if (answered.has(id)) continue;
+      const row = byId.get(id)!;
+      byId.set(id, { ...row, ok: false, attempted: true, error: GONE });
     }
     before = left.length;
     left = unchecked();

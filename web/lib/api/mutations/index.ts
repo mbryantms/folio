@@ -2130,36 +2130,65 @@ export type CheckAllCallbacks = {
   onProgress?: (p: CheckAllProgress) => void;
   /** The merged result of a finished check. */
   onResult?: (data: CblBulkResultView) => void;
-  /** A check ended: finished, failed or abandoned. */
+  /** A check that started has ended: finished, failed or abandoned. */
   onSettled?: () => void;
 };
 
-/** Input of a check: `signal` abandons it (no further rounds, no toast). */
-export type CheckAllInput = { signal?: AbortSignal };
+function refusedRun(): DOMException {
+  return new DOMException("a check is not possible now", "AbortError");
+}
 
 /** Dry-run every reading list and report which have updates available.
  *  Nothing is applied — the user reviews, then updates. One server call
  *  has a time budget, so this carries on with the lists a call did not
- *  reach until every list was checked (`checkAllUntilDone`). */
+ *  reach until every list was checked (`checkAllUntilDone`).
+ *
+ *  The hook owns the run: unmounting aborts its controller, so a check in
+ *  flight sends no further round, and a run (a click or an error toast's
+ *  Retry) cannot start once the page was left or while another run of
+ *  this hook is in flight. Such a refusal sends nothing and shows no toast
+ *  (an `AbortError`). `checking` is true while a run that started is
+ *  going. */
 export function useCheckAllCblLists(callbacks: CheckAllCallbacks = {}) {
   const callbacksRef = React.useRef(callbacks);
   React.useEffect(() => {
     callbacksRef.current = callbacks;
   });
-  return useApiRunMutation<CblBulkResultView, CheckAllInput>(
-    (input) =>
-      checkAllUntilDone(
-        (listIds) =>
-          apiMutate<CblBulkResultView>({
-            path: `/me/cbl-lists/check-all`,
-            method: "POST",
-            ...(listIds
-              ? { body: { list_ids: listIds } satisfies CblBulkReq }
-              : {}),
-          }),
-        (p) => callbacksRef.current.onProgress?.(p),
-        input.signal,
-      ),
+  // One controller per mount: React strict mode's development
+  // mount/unmount/mount aborts the first and creates a fresh one.
+  const controllerRef = React.useRef<AbortController | null>(null);
+  React.useEffect(() => {
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    return () => controller.abort();
+  }, []);
+  const runningRef = React.useRef(false);
+  const [checking, setChecking] = React.useState(false);
+  const mutation = useApiRunMutation<CblBulkResultView, void>(
+    async () => {
+      const signal = controllerRef.current?.signal;
+      if (!signal || signal.aborted || runningRef.current) throw refusedRun();
+      runningRef.current = true;
+      setChecking(true);
+      try {
+        return await checkAllUntilDone(
+          (listIds) =>
+            apiMutate<CblBulkResultView>({
+              path: `/me/cbl-lists/check-all`,
+              method: "POST",
+              ...(listIds
+                ? { body: { list_ids: listIds } satisfies CblBulkReq }
+                : {}),
+            }),
+          (p) => callbacksRef.current.onProgress?.(p),
+          signal,
+        );
+      } finally {
+        runningRef.current = false;
+        setChecking(false);
+        callbacksRef.current.onSettled?.();
+      }
+    },
     {
       successMessage: (data) => {
         if (!data) return "Checked";
@@ -2176,9 +2205,11 @@ export function useCheckAllCblLists(callbacks: CheckAllCallbacks = {}) {
       onSuccess: (data) => {
         if (data) callbacksRef.current.onResult?.(data);
       },
-      onSettled: () => callbacksRef.current.onSettled?.(),
     },
   );
+  const { mutate } = mutation;
+  const check = React.useCallback(() => mutate(), [mutate]);
+  return { check, checking };
 }
 
 /** Manual issue match for a CBL entry. `entryId` is the cbl_entries row id. */

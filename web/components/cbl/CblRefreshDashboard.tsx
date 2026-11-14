@@ -158,11 +158,8 @@ export function CblUpdatesProvider({
     new Set(),
   );
   const [panelOpen, setPanelOpen] = React.useState(false);
-  // The run in flight; leaving the page abandons it (no further rounds,
-  // no toast). One controller per run, so React strict mode's development
-  // unmount/remount cannot abort a later check.
-  const runRef = React.useRef<AbortController | null>(null);
-  React.useEffect(() => () => runRef.current?.abort(), []);
+  // Leaving the page abandons a check in flight (no further rounds, no
+  // toast); the hook owns that.
   const checkAll = useCheckAllCblLists({
     onProgress: setProgress,
     // Here rather than on the `mutate` call, so the error toast's Retry
@@ -204,7 +201,7 @@ export function CblUpdatesProvider({
     [subscribe],
   );
 
-  const checking = checkAll.isPending;
+  const checking = checkAll.checking;
   const busy = checking || batch.state.running;
   const pending = React.useMemo(
     () =>
@@ -223,16 +220,13 @@ export function CblUpdatesProvider({
     [results],
   );
 
-  const { mutate: runCheck } = checkAll;
+  const { check: runCheck } = checkAll;
   const check = React.useCallback(() => {
     setPanelOpen(true);
     setAppliedIds(new Set());
     setSelected(new Set());
     setProgress(null);
-    runRef.current?.abort();
-    const run = new AbortController();
-    runRef.current = run;
-    runCheck({ signal: run.signal });
+    runCheck();
   }, [runCheck]);
 
   const { clear: clearBatch, start: startRaw } = batch;
