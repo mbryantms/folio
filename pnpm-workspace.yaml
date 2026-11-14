@@ -166,4 +166,4 @@ overrides:
   # takes minimatch 11 (13.x walks minimatch 10's RegExp sets), so the two
   # entries move together.
   # Delete when `pnpm why glob` shows no in-range (<14.0.2) consumers.
-  "glob@>=9.0.0 <14.0.2": "14.0.4"
+  "glob@>=9.0.0 <14.0.2": "14.0.5"
