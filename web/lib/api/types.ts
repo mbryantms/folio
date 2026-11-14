@@ -360,6 +360,7 @@ export type ManualMatchReq = Schemas["ManualMatchReq"];
 export type RefreshLogEntryView = Schemas["RefreshLogEntryView"];
 export type RefreshLogListView = Schemas["RefreshLogListView"];
 export type CblBulkItemView = Schemas["CblBulkItemView"];
+export type CblBulkReq = Schemas["CblBulkReq"];
 export type CblBulkResultView = Schemas["CblBulkResultView"];
 export type CatalogSourceView = Schemas["CatalogSourceView"];
 export type CatalogSourceListView = Schemas["CatalogSourceListView"];

@@ -7,6 +7,7 @@
  * + extracted `_core.ts` + the thumbnails cluster. Remaining clusters
  * (CBL, markers, saved-views, pages, admin) are mechanical follow-ups.
  */
+import * as React from "react";
 import { useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { usePathname, useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -19,7 +20,16 @@ import { queryKeys, type EntityKindPath } from "../queries";
 import { apiPath } from "../path";
 import { cancelCardLists, resumeCardLists } from "../card-list-cache";
 import { buildQuery } from "../build-query";
-import { getCsrfToken, useApiMutation } from "./_core";
+import {
+  apiMutate,
+  getCsrfToken,
+  useApiMutation,
+  useApiRunMutation,
+} from "./_core";
+import {
+  checkAllUntilDone,
+  type CheckAllProgress,
+} from "@/lib/cbl/check-all-rounds";
 import {
   applyOptimisticProgress,
   capturePriorProgress,
@@ -42,7 +52,9 @@ export {
   apiMutate,
   getCsrfToken,
   useApiMutation,
+  useApiRunMutation,
   type ApiMutationInput,
+  type ApiMutationOptions,
 } from "./_core";
 export * from "./thumbnails";
 export * from "./duplicates";
@@ -72,6 +84,7 @@ import type {
   AdminUserView,
   AddEntryReq,
   CblBulkItemView,
+  CblBulkReq,
   CblBulkResultView,
   CblEntryView,
   CblListView,
@@ -2109,11 +2122,73 @@ export function useCheckCblList(id: string) {
   );
 }
 
-/** Dry-run every reading list at once and report which have updates
- *  available. Nothing is applied — the user reviews, then updates. */
-export function useCheckAllCblLists() {
-  return useApiMutation<CblBulkResultView, void>(
-    () => ({ path: `/me/cbl-lists/check-all`, method: "POST" }),
+/** What the reading-list updates panel hears from a check. Held in a ref,
+ *  so the latest callbacks run, and attached to the mutation itself (not
+ *  to one `mutate` call), so the error toast's Retry reaches them too. */
+export type CheckAllCallbacks = {
+  /** How far a check got, before each further server call. */
+  onProgress?: (p: CheckAllProgress) => void;
+  /** The merged result of a finished check. */
+  onResult?: (data: CblBulkResultView) => void;
+  /** A check that started has ended: finished, failed or abandoned. */
+  onSettled?: () => void;
+};
+
+function refusedRun(): DOMException {
+  return new DOMException("a check is not possible now", "AbortError");
+}
+
+/** Dry-run every reading list and report which have updates available.
+ *  Nothing is applied — the user reviews, then updates. One server call
+ *  has a time budget, so this carries on with the lists a call did not
+ *  reach until every list was checked (`checkAllUntilDone`).
+ *
+ *  The hook owns the run: unmounting aborts its controller, so a check in
+ *  flight sends no further round, and a run (a click or an error toast's
+ *  Retry) cannot start once the page was left or while another run of
+ *  this hook is in flight. Such a refusal sends nothing and shows no toast
+ *  (an `AbortError`). `checking` is true while a run that started is
+ *  going. */
+export function useCheckAllCblLists(callbacks: CheckAllCallbacks = {}) {
+  const callbacksRef = React.useRef(callbacks);
+  React.useEffect(() => {
+    callbacksRef.current = callbacks;
+  });
+  // One controller per mount: React strict mode's development
+  // mount/unmount/mount aborts the first and creates a fresh one.
+  const controllerRef = React.useRef<AbortController | null>(null);
+  React.useEffect(() => {
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    return () => controller.abort();
+  }, []);
+  const runningRef = React.useRef(false);
+  const [checking, setChecking] = React.useState(false);
+  const mutation = useApiRunMutation<CblBulkResultView, void>(
+    async () => {
+      const signal = controllerRef.current?.signal;
+      if (!signal || signal.aborted || runningRef.current) throw refusedRun();
+      runningRef.current = true;
+      setChecking(true);
+      try {
+        return await checkAllUntilDone(
+          (listIds) =>
+            apiMutate<CblBulkResultView>({
+              path: `/me/cbl-lists/check-all`,
+              method: "POST",
+              ...(listIds
+                ? { body: { list_ids: listIds } satisfies CblBulkReq }
+                : {}),
+            }),
+          (p) => callbacksRef.current.onProgress?.(p),
+          signal,
+        );
+      } finally {
+        runningRef.current = false;
+        setChecking(false);
+        callbacksRef.current.onSettled?.();
+      }
+    },
     {
       successMessage: (data) => {
         if (!data) return "Checked";
@@ -2127,8 +2202,14 @@ export function useCheckAllCblLists() {
               : `${changed} lists have updates available`;
         return failed > 0 ? `${base} · ${failed} couldn't be checked` : base;
       },
+      onSuccess: (data) => {
+        if (data) callbacksRef.current.onResult?.(data);
+      },
     },
   );
+  const { mutate } = mutation;
+  const check = React.useCallback(() => mutate(), [mutate]);
+  return { check, checking };
 }
 
 /** Manual issue match for a CBL entry. `entryId` is the cbl_entries row id. */

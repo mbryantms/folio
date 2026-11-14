@@ -105,56 +105,111 @@ where
     type Rejection = Response;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        let has_json_content_type = req
-            .headers()
-            .get(axum::http::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .map(|ct| {
-                let essence = ct
-                    .split(';')
-                    .next()
-                    .unwrap_or("")
-                    .trim()
-                    .to_ascii_lowercase();
-                essence == "application/json" || essence.ends_with("+json")
-            })
-            .unwrap_or(false);
-        if !has_json_content_type {
-            return Ok(OptionalValidated(T::default()));
-        }
-        let bytes = axum::body::Bytes::from_request(req, state)
+        optional_json_body(req, state, false)
             .await
-            .map_err(|e| {
-                if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
-                    respond(
-                        StatusCode::PAYLOAD_TOO_LARGE,
-                        ApiErrorCode::TooLarge,
-                        e.body_text(),
-                    )
-                } else {
-                    respond(
-                        StatusCode::BAD_REQUEST,
-                        ApiErrorCode::Validation,
-                        e.to_string(),
-                    )
-                }
-            })?;
-        if bytes.iter().all(u8::is_ascii_whitespace) {
-            return Ok(OptionalValidated(T::default()));
-        }
-        let payload: T = serde_json::from_slice(&bytes).map_err(|e| {
-            let status = if e.is_data() {
-                StatusCode::UNPROCESSABLE_ENTITY
-            } else {
-                StatusCode::BAD_REQUEST
-            };
-            respond(status, ApiErrorCode::Validation, e.to_string())
-        })?;
-        if let Err(report) = payload.validate() {
-            return Err(from_garde(&report));
-        }
-        Ok(OptionalValidated(payload))
+            .map(|body| OptionalValidated(body.unwrap_or_default()))
     }
+}
+
+/// Like [`OptionalValidated<T>`] but fails closed on a body it would
+/// otherwise ignore, and tells "no body" apart from a body: an empty (or
+/// whitespace-only) body with any or no `Content-Type` is `None`; a
+/// **non-empty** body whose `Content-Type` is not JSON is a 415
+/// `unsupported_media_type`; a JSON body is parsed and validated into
+/// `Some(T)`.
+///
+/// Use where "no body" means "do everything" and the endpoint writes
+/// (`refresh-all`): a client that meant to narrow the call but sent the
+/// wrong content type, a misspelled key or a body without the narrowing
+/// field must not get the widest call instead. Pair with
+/// `#[serde(deny_unknown_fields)]` and required fields on `T`.
+#[derive(Debug, Clone, Default)]
+pub struct StrictOptionalValidated<T>(pub Option<T>);
+
+impl<S, T> FromRequest<S> for StrictOptionalValidated<T>
+where
+    S: Send + Sync,
+    T: DeserializeOwned + garde::Validate<Context = ()> + 'static,
+{
+    type Rejection = Response;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        optional_json_body(req, state, true)
+            .await
+            .map(StrictOptionalValidated)
+    }
+}
+
+/// The body handling shared by [`OptionalValidated`] (`strict = false`:
+/// no JSON content type ⇒ `None`, body unread) and
+/// [`StrictOptionalValidated`] (`strict = true`: the body is read first;
+/// empty ⇒ `None` whatever the content type, non-empty without a JSON
+/// content type ⇒ 415). An empty JSON body is `None` in both.
+async fn optional_json_body<S, T>(
+    req: Request,
+    state: &S,
+    strict: bool,
+) -> Result<Option<T>, Response>
+where
+    S: Send + Sync,
+    T: DeserializeOwned + garde::Validate<Context = ()>,
+{
+    let has_json_content_type = req
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|ct| {
+            let essence = ct
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
+            essence == "application/json" || essence.ends_with("+json")
+        })
+        .unwrap_or(false);
+    if !has_json_content_type && !strict {
+        return Ok(None);
+    }
+    let bytes = axum::body::Bytes::from_request(req, state)
+        .await
+        .map_err(|e| {
+            if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
+                respond(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    ApiErrorCode::TooLarge,
+                    e.body_text(),
+                )
+            } else {
+                respond(
+                    StatusCode::BAD_REQUEST,
+                    ApiErrorCode::Validation,
+                    e.to_string(),
+                )
+            }
+        })?;
+    if bytes.iter().all(u8::is_ascii_whitespace) {
+        return Ok(None);
+    }
+    if !has_json_content_type {
+        return Err(respond(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            ApiErrorCode::UnsupportedMediaType,
+            "a request body must be sent as application/json",
+        ));
+    }
+    let payload: T = serde_json::from_slice(&bytes).map_err(|e| {
+        let status = if e.is_data() {
+            StatusCode::UNPROCESSABLE_ENTITY
+        } else {
+            StatusCode::BAD_REQUEST
+        };
+        respond(status, ApiErrorCode::Validation, e.to_string())
+    })?;
+    if let Err(report) = payload.validate() {
+        return Err(from_garde(&report));
+    }
+    Ok(Some(payload))
 }
 
 fn json_rejection_to_response(rej: JsonRejection) -> Response {

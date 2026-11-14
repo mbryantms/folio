@@ -3520,3 +3520,611 @@ async fn a_failed_outcome_write_does_not_change_the_refresh_result() {
     assert_eq!(body["error"]["code"], "refresh_failed");
     assert_eq!(outcome(&db, bad).await.count, 0, "outcome not written");
 }
+
+// ───── bulk check / refresh: `list_ids` and `attempted` ─────
+
+async fn upload_tiny(app: &TestApp, auth: &Authed) -> Uuid {
+    let (status, view) = upload_cbl(app, auth, "tiny.cbl", TINY_CBL.as_bytes()).await;
+    assert_eq!(status, StatusCode::CREATED, "{view}");
+    Uuid::parse_str(view["id"].as_str().unwrap()).unwrap()
+}
+
+/// The ids of a bulk result, in response order.
+fn bulk_ids(body: &serde_json::Value) -> Vec<String> {
+    body["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{body:#?}"))
+        .iter()
+        .map(|i| i["id"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// POST a bulk endpoint with a raw body and content type.
+async fn bulk_raw(
+    app: &TestApp,
+    auth: &Authed,
+    path: &str,
+    content_type: Option<&str>,
+    body: &'static str,
+) -> (StatusCode, serde_json::Value) {
+    let mut builder = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/api/me/cbl-lists/{path}"))
+        .header(
+            header::COOKIE,
+            format!(
+                "__Host-comic_session={}; __Host-comic_csrf={}",
+                auth.session, auth.csrf
+            ),
+        )
+        .header("X-CSRF-Token", &auth.csrf);
+    if let Some(ct) = content_type {
+        builder = builder.header(header::CONTENT_TYPE, ct);
+    }
+    let resp = app
+        .router
+        .clone()
+        .oneshot(builder.body(Body::from(body)).unwrap())
+        .await
+        .unwrap();
+    let status = resp.status();
+    (status, body_json(resp.into_body()).await)
+}
+
+/// `check-all` with `list_ids` works on and returns only those of the
+/// caller's refreshable lists; another user's list, a shared list sent by
+/// a non-admin and an unknown id are left out with no error, so the
+/// answer does not tell them apart. Every item a check reaches is
+/// `attempted`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn check_all_with_list_ids_checks_only_the_callers_lists() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "ids-admin@example.com").await;
+    let user = register(&app, "ids-user@example.com").await;
+    let other = register(&app, "ids-other@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+
+    let a = upload_tiny(&app, &user).await;
+    let b = upload_tiny(&app, &user).await;
+    let c = upload_tiny(&app, &user).await;
+    let others = upload_tiny(&app, &other).await;
+    let shared = upload_tiny(&app, &admin).await;
+    let row = cbl_list::Entity::find_by_id(shared)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: cbl_list::ActiveModel = row.into();
+    am.owner_user_id = Set(None);
+    am.update(&db).await.unwrap();
+
+    let (status, all) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists/check-all",
+        Some(&user),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{all}");
+    let all_ids = bulk_ids(&all);
+    assert_eq!(all_ids.len(), 3, "{all}");
+
+    let unknown = Uuid::now_v7();
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists/check-all",
+        Some(&user),
+        Some(serde_json::json!({ "list_ids": [c, others, shared, unknown, a] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // The lists' own order, not the order of `list_ids`.
+    let expected: Vec<String> = all_ids
+        .iter()
+        .filter(|id| *id != &b.to_string())
+        .cloned()
+        .collect();
+    assert_eq!(bulk_ids(&body), expected, "{body}");
+    for item in body["items"].as_array().unwrap() {
+        assert_eq!(item["ok"], true, "{item}");
+        assert_eq!(item["attempted"], true, "{item}");
+        assert_eq!(item["error"], serde_json::Value::Null, "{item}");
+    }
+    assert_eq!(body["failed_count"], 0, "{body}");
+
+    // Lists the caller cannot refresh, alone, answer exactly like an
+    // unknown id: an empty result.
+    for id in [others, shared, unknown] {
+        let (status, body) = http(
+            &app,
+            Method::POST,
+            "/api/me/cbl-lists/check-all",
+            Some(&user),
+            Some(serde_json::json!({ "list_ids": [id] })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body,
+            serde_json::json!({"items": [], "changed_count": 0, "failed_count": 0}),
+        );
+    }
+
+    // The admin may refresh the shared list.
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists/check-all",
+        Some(&admin),
+        Some(serde_json::json!({ "list_ids": [shared, a] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(bulk_ids(&body), vec![shared.to_string()], "{body}");
+
+    // A single-list check is always `attempted`.
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        &format!("/api/me/cbl-lists/{a}/check"),
+        Some(&user),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["attempted"], true, "{body}");
+}
+
+/// The body is optional: no body and an empty one with the JSON content
+/// type work on every list; `{"list_ids": []}` on none. A body without
+/// `list_ids` (`{}`, `null`) is a 422, never every list. Over the id bound
+/// is a 422 naming the field; malformed JSON stays 400, and an id that is
+/// not a UUID is 422.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_body_forms() {
+    let app = TestApp::spawn().await;
+    let _admin = register(&app, "forms-admin@example.com").await;
+    let user = register(&app, "forms-user@example.com").await;
+    upload_tiny(&app, &user).await;
+    upload_tiny(&app, &user).await;
+
+    for path in ["check-all", "refresh-all"] {
+        for (ct, body, want) in [
+            (None, "", 2),
+            (Some("application/json"), "", 2),
+            (Some("application/json"), r#"{"list_ids": []}"#, 0),
+        ] {
+            let (status, resp) = bulk_raw(&app, &user, path, ct, body).await;
+            assert_eq!(status, StatusCode::OK, "{path} {ct:?} {body:?}: {resp}");
+            assert_eq!(
+                bulk_ids(&resp).len(),
+                want,
+                "{path} {ct:?} {body:?}: {resp}"
+            );
+        }
+        for body in ["{}", r#"{"list_ids": null}"#] {
+            let (status, resp) = bulk_raw(&app, &user, path, Some("application/json"), body).await;
+            assert_eq!(
+                status,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{path} {body}: {resp}"
+            );
+            assert_eq!(resp["error"]["code"], "validation", "{path} {body}");
+        }
+    }
+
+    let over: Vec<Uuid> = (0..=server::api::cbl_lists::MAX_BULK_LIST_IDS)
+        .map(|_| Uuid::now_v7())
+        .collect();
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists/check-all",
+        Some(&user),
+        Some(serde_json::json!({ "list_ids": over })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["error"]["code"], "validation", "{body}");
+    assert_eq!(body["error"]["details"][0]["field"], "list_ids", "{body}");
+
+    let (status, body) = bulk_raw(
+        &app,
+        &user,
+        "check-all",
+        Some("application/json"),
+        r#"{"list_ids": ["#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let (status, body) = bulk_raw(
+        &app,
+        &user,
+        "check-all",
+        Some("application/json"),
+        r#"{"list_ids": ["not-a-uuid"]}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+
+    // Fails closed on both routes: a body it cannot read as the narrowing
+    // the client meant is refused, never treated as "every list".
+    for path in ["check-all", "refresh-all"] {
+        let (status, body) = bulk_raw(
+            &app,
+            &user,
+            path,
+            Some("application/x-www-form-urlencoded"),
+            "list_ids=0190c0de-0000-7000-8000-000000000000",
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE, "{path}: {body}");
+        assert_eq!(body["error"]["code"], "unsupported_media_type", "{path}");
+        let (status, body) = bulk_raw(&app, &user, path, None, r#"{"list_ids": []}"#).await;
+        assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE, "{path}: {body}");
+        let (status, body) = bulk_raw(
+            &app,
+            &user,
+            path,
+            Some("application/json"),
+            r#"{"listIds": []}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{path}: {body}");
+        assert_eq!(body["error"]["code"], "validation", "{path}");
+        // An empty body with a non-JSON content type still means every list.
+        let (status, body) = bulk_raw(&app, &user, path, Some("text/plain"), "").await;
+        assert_eq!(status, StatusCode::OK, "{path}: {body}");
+        assert_eq!(bulk_ids(&body).len(), 2, "{path}: {body}");
+    }
+}
+
+/// `refresh-all` honours `list_ids` like `check-all`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn refresh_all_with_list_ids_refreshes_only_those() {
+    let app = TestApp::spawn().await;
+    let _admin = register(&app, "rids-admin@example.com").await;
+    let user = register(&app, "rids-user@example.com").await;
+    let a = upload_tiny(&app, &user).await;
+    let _b = upload_tiny(&app, &user).await;
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists/refresh-all",
+        Some(&user),
+        Some(serde_json::json!({ "list_ids": [a] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(bulk_ids(&body), vec![a.to_string()], "{body}");
+    let item = bulk_item(&body, &a.to_string());
+    assert_eq!(item["applied"], true, "{item}");
+    assert_eq!(item["attempted"], true, "{item}");
+    assert_eq!(item["ok"], true, "{item}");
+}
+
+/// The out-of-time path end to end: stalled sources use up the bulk
+/// budget, the lists not reached come back `attempted: false` with the
+/// "not attempted" error, and a second call with exactly those ids checks
+/// them without spending a second import token. (Takes the 45 s bulk
+/// budget to run.)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn check_all_reports_lists_it_did_not_reach_and_a_second_call_checks_them() {
+    let app = TestApp::spawn().await;
+    // First registered user is the (quota-exempt) admin; the caller is not.
+    let _admin = register(&app, "budget-admin@example.com").await;
+    let auth = register(&app, "budget@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    // Four lists that each use a whole per-list budget: three fill the
+    // 45 s, the fourth (at least) is not reached.
+    let mut urls = std::collections::HashMap::new();
+    for _ in 0..4 {
+        let id = upload_tiny(&app, &auth).await;
+        let url = format!("https://lists.example.test/{id}/slow.cbl");
+        make_url_list(&db, id, &url, None).await;
+        stub_source_for_tests(&url, TestSource::Stall);
+        urls.insert(id.to_string(), url);
+    }
+
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists/check-all",
+        Some(&auth),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 4, "{body}");
+    let missed: Vec<String> = items
+        .iter()
+        .filter(|i| i["attempted"] == false)
+        .map(|i| i["id"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(!missed.is_empty(), "the budget ran out: {body:#}");
+    for item in items {
+        assert_eq!(item["ok"], false, "{item}");
+        if item["attempted"] == false {
+            assert_eq!(
+                item["error"], "not attempted: the request ran out of time; run it again",
+                "{item}"
+            );
+        } else {
+            assert!(
+                item["error"].as_str().unwrap().contains("timed out"),
+                "{item}"
+            );
+        }
+    }
+    assert_eq!(body["failed_count"], 4, "{body}");
+    // Four uploads and the check.
+    assert_eq!(tokens_used(&app, auth.user_id).await, 5);
+
+    // The sources of the lists not reached answer now.
+    for id in &missed {
+        stub_source_for_tests(&urls[id], TestSource::Body(TINY_CBL.as_bytes().to_vec()));
+    }
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists/check-all",
+        Some(&auth),
+        Some(serde_json::json!({ "list_ids": missed })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let mut got = bulk_ids(&body);
+    got.sort();
+    let mut want = missed.clone();
+    want.sort();
+    assert_eq!(got, want, "{body}");
+    for item in body["items"].as_array().unwrap() {
+        assert_eq!(item["attempted"], true, "{item}");
+        assert_eq!(item["ok"], true, "{item}");
+    }
+    assert_eq!(body["failed_count"], 0, "{body}");
+    assert_eq!(
+        tokens_used(&app, auth.user_id).await,
+        5,
+        "the continuation call is free"
+    );
+}
+
+// ───── bulk continuation allowance (`cbl::quota::consume_bulk`) ─────
+
+use server::cbl::quota::{
+    BulkGrant, BulkOp, MAX_STORED_CONTINUATION_IDS, allowance_key, consume_bulk,
+    store_continuation, window_key,
+};
+use std::collections::HashSet;
+
+async fn tokens_used(app: &TestApp, user_id: Uuid) -> i64 {
+    let mut redis = app.state().jobs.redis.clone();
+    redis::AsyncCommands::get::<_, Option<i64>>(&mut redis, window_key(user_id))
+        .await
+        .unwrap()
+        .unwrap_or(0)
+}
+
+/// The stored allowance: the ids the run has not reached yet.
+async fn allowance(app: &TestApp, op: BulkOp, user_id: Uuid) -> Option<HashSet<Uuid>> {
+    let mut redis = app.state().jobs.redis.clone();
+    let raw: Option<String> = redis::AsyncCommands::get(&mut redis, allowance_key(op, user_id))
+        .await
+        .unwrap();
+    raw.map(|r| serde_json::from_str(&r).unwrap())
+}
+
+fn caller(id: Uuid, role: entity::user::UserRole) -> server::auth::CurrentUser {
+    server::auth::CurrentUser {
+        id,
+        role,
+        display_name: "caller".into(),
+        email: None,
+        app_password_scope: None,
+    }
+}
+
+fn ids(n: usize) -> Vec<Uuid> {
+    (0..n).map(|_| Uuid::now_v7()).collect()
+}
+
+fn set(ids: &[Uuid]) -> HashSet<Uuid> {
+    ids.iter().copied().collect()
+}
+
+/// Store `unreached` as a fresh allowance (as after a call that paid).
+async fn seed(app: &TestApp, user: &server::auth::CurrentUser, op: BulkOp, unreached: &[Uuid]) {
+    store_continuation(
+        &app.state(),
+        user,
+        op,
+        BulkGrant::default(),
+        unreached.iter().copied(),
+    )
+    .await;
+}
+
+/// A run costs one token and checks each list at most once per token: a
+/// call with `list_ids` is free only when every id it names is in the
+/// stored set of lists the run has not reached; the set is single use,
+/// per operation, becomes previous minus asked plus unreached, and is
+/// cleared by a fresh run only once that run's token was granted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_continuation_allowance_rules() {
+    use entity::user::UserRole;
+    let app = TestApp::spawn().await;
+    let state = app.state();
+    let _admin = register(&app, "allow-admin@example.com").await;
+    let auth = register(&app, "allow-user@example.com").await;
+    let user = caller(auth.user_id, UserRole::User);
+    let op = BulkOp::Check;
+    let used = || tokens_used(&app, auth.user_id);
+    let stored = || allowance(&app, op, auth.user_id);
+
+    // No allowance: a call with ids pays, and so does a fresh run.
+    consume_bulk(&state, &user, op, Some(&ids(2)))
+        .await
+        .unwrap();
+    assert_eq!(used().await, 1);
+    consume_bulk(&state, &user, op, None).await.unwrap();
+    assert_eq!(used().await, 2);
+
+    // Nothing left unreached: nothing stored.
+    seed(&app, &user, op, &[]).await;
+    assert_eq!(stored().await, None);
+
+    // A subset of the stored set (duplicates count once): free, and taken.
+    let left = ids(5);
+    seed(&app, &user, op, &left).await;
+    assert_eq!(stored().await, Some(set(&left)));
+    let asked = [left[0], left[0], left[1], left[2]];
+    let grant = consume_bulk(&state, &user, op, Some(&asked)).await.unwrap();
+    assert_eq!(used().await, 2, "free continuation");
+    assert_eq!(stored().await, None, "taken before the work");
+    // After the work: previous minus asked plus unreached. left[3..] were
+    // not sent yet and stay covered; left[1] was asked and not reached.
+    store_continuation(&state, &user, op, grant, [left[1]]).await;
+    assert_eq!(stored().await, Some(set(&[left[1], left[3], left[4]])));
+
+    // Single use: once a call took the set, another call before the next
+    // store pays, even for ids in it.
+    let grant = consume_bulk(&state, &user, op, Some(&[left[1]]))
+        .await
+        .unwrap();
+    assert_eq!(used().await, 2, "free continuation");
+    consume_bulk(&state, &user, op, Some(&[left[3]]))
+        .await
+        .unwrap();
+    assert_eq!(used().await, 3, "single use");
+    store_continuation(&state, &user, op, grant, []).await;
+    assert_eq!(stored().await, Some(set(&[left[3], left[4]])));
+
+    // One id outside the set pays, and the paid call's own unreached ids
+    // are the whole new set.
+    seed(&app, &user, op, &left).await;
+    let outsider = Uuid::now_v7();
+    let grant = consume_bulk(&state, &user, op, Some(&[left[0], outsider]))
+        .await
+        .unwrap();
+    assert_eq!(used().await, 4);
+    store_continuation(&state, &user, op, grant, [outsider]).await;
+    assert_eq!(stored().await, Some(set(&[outsider])));
+
+    // An id already checked in this run is outside the set: pays.
+    let grant = consume_bulk(&state, &user, op, Some(&[left[0]]))
+        .await
+        .unwrap();
+    assert_eq!(used().await, 5);
+    store_continuation(&state, &user, op, grant, []).await;
+
+    // Over the storage bound nothing is stored.
+    seed(&app, &user, op, &ids(MAX_STORED_CONTINUATION_IDS + 1)).await;
+    assert_eq!(stored().await, None);
+
+    // Per operation: a refresh allowance does not pay for a check.
+    seed(&app, &user, BulkOp::Refresh, &left).await;
+    consume_bulk(&state, &user, op, Some(&left[..1]))
+        .await
+        .unwrap();
+    assert_eq!(used().await, 6);
+    assert!(
+        allowance(&app, BulkOp::Refresh, auth.user_id)
+            .await
+            .is_some()
+    );
+
+    // A fresh run clears it, but only once its token was granted.
+    for _ in used().await..server::cbl::quota::IMPORTS_PER_HOUR {
+        consume_bulk(&state, &user, op, None).await.unwrap();
+    }
+    let refused = consume_bulk(&state, &user, BulkOp::Refresh, None).await;
+    assert_eq!(refused.unwrap_err().status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        allowance(&app, BulkOp::Refresh, auth.user_id).await,
+        Some(set(&left)),
+        "a refused call leaves a running refresh's allowance alone"
+    );
+    // ... while the continuation it allows is still free.
+    consume_bulk(&state, &user, BulkOp::Refresh, Some(&left[..2]))
+        .await
+        .unwrap();
+    let granted_user = caller(Uuid::now_v7(), UserRole::User);
+    seed(&app, &granted_user, BulkOp::Refresh, &left).await;
+    consume_bulk(&state, &granted_user, BulkOp::Refresh, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        allowance(&app, BulkOp::Refresh, granted_user.id).await,
+        None,
+        "cleared once the token was granted"
+    );
+
+    // Admins skip all of it.
+    let admin = caller(Uuid::now_v7(), UserRole::Admin);
+    let grant = consume_bulk(&state, &admin, op, None).await.unwrap();
+    store_continuation(&state, &admin, op, grant, ids(3)).await;
+    assert_eq!(allowance(&app, op, admin.id).await, None);
+    assert_eq!(tokens_used(&app, admin.id).await, 0);
+}
+
+/// Over HTTP, on both routes: a continuation naming only lists in the
+/// stored set costs no token, one naming a list outside it costs one; a
+/// call that reached every list stores no allowance.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_calls_spend_the_allowance_only_on_lists_left_unreached() {
+    use entity::user::UserRole;
+    let app = TestApp::spawn().await;
+    let _admin = register(&app, "allow-http-admin@example.com").await;
+    let auth = register(&app, "allow-http@example.com").await;
+    let user = caller(auth.user_id, UserRole::User);
+    let a = upload_tiny(&app, &auth).await;
+    let b = upload_tiny(&app, &auth).await;
+    assert_eq!(tokens_used(&app, auth.user_id).await, 2);
+    let post = |path: &'static str, body: Option<serde_json::Value>| {
+        let app = &app;
+        let auth = &auth;
+        async move {
+            let (status, body) = http(
+                app,
+                Method::POST,
+                &format!("/api/me/cbl-lists/{path}"),
+                Some(auth),
+                body,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{path}: {body}");
+            body
+        }
+    };
+    for (path, op) in [
+        ("check-all", BulkOp::Check),
+        ("refresh-all", BulkOp::Refresh),
+    ] {
+        let before = tokens_used(&app, auth.user_id).await;
+        seed(&app, &user, op, &[a, b]).await;
+        let body = post(path, Some(serde_json::json!({ "list_ids": [a] }))).await;
+        assert_eq!(bulk_ids(&body), vec![a.to_string()], "{body}");
+        assert_eq!(
+            tokens_used(&app, auth.user_id).await,
+            before,
+            "{path}: free"
+        );
+        assert_eq!(allowance(&app, op, auth.user_id).await, Some(set(&[b])));
+        // `a` was checked already in this run: outside the set.
+        post(path, Some(serde_json::json!({ "list_ids": [a, b] }))).await;
+        assert_eq!(
+            tokens_used(&app, auth.user_id).await,
+            before + 1,
+            "{path}: pays"
+        );
+        // Every list reached: nothing stored.
+        assert_eq!(allowance(&app, op, auth.user_id).await, None);
+        post(path, None).await;
+        assert_eq!(allowance(&app, op, auth.user_id).await, None);
+        assert_eq!(tokens_used(&app, auth.user_id).await, before + 2);
+    }
+}
