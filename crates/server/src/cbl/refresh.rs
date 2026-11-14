@@ -9,8 +9,10 @@
 //!     `If-Modified-Since`, through the same vetted fetch as the import
 //!     ([`super::fetch::fetch_cbl_url`]). 304 → skip re-parse; otherwise
 //!     persist the new bytes.
-//!   - `'catalog'` — fetch the path from the configured catalog source;
-//!     compare blob SHAs to skip when unchanged.
+//!   - `'catalog'` — look the path up in the configured catalog source's
+//!     index; when its blob SHA equals the stored one the blob is not
+//!     downloaded and the refresh only re-matches (a forced refresh always
+//!     downloads).
 //!
 //! New content (a changed URL body or catalog blob) with more than
 //! [`super::MAX_BOOKS_PER_LIST`] entries is refused
@@ -432,15 +434,19 @@ pub async fn check(
                 .one(db)
                 .await?
                 .ok_or(RefreshError::NotFound)?;
-            let blob = within_budget(budget, async {
-                Ok::<_, RefreshError>(catalog::fetch_blob(db, &source, path, false).await?)
-            })
-            .await?;
-            if list.github_blob_sha.as_deref() == Some(blob.blob_sha.as_str()) {
-                None
-            } else {
-                let xml = String::from_utf8_lossy(&blob.bytes).into_owned();
-                Some((xml, Some(blob.blob_sha)))
+            // The index's SHA decides first: an unchanged blob is not
+            // downloaded (nor size-checked; see `catalog_blob_if_changed`).
+            match within_budget(
+                budget,
+                catalog_blob_if_changed(db, &source, path, &list, false),
+            )
+            .await?
+            {
+                None => None,
+                Some(blob) => {
+                    let xml = String::from_utf8_lossy(&blob.bytes).into_owned();
+                    Some((xml, Some(blob.blob_sha)))
+                }
             }
         }
         other => return Err(RefreshError::Http(format!("unknown source_kind: {other}"))),
@@ -603,7 +609,7 @@ async fn fetch_url_source(
 
 /// Run the remote part of one refresh / check under the budget's
 /// `list_budget`. Only network work and the catalog's own index bookkeeping
-/// go in here (`catalog::fetch_blob` may update the catalog source row, a
+/// go in here (`catalog::index_entry` may update the catalog source row, a
 /// single-row write that is harmless if cut off); list entries are never
 /// written inside it.
 async fn within_budget<T>(
@@ -826,14 +832,12 @@ async fn fetch_catalog_and_apply(
         .await?
         .ok_or(RefreshError::NotFound)?;
 
-    let blob = within_budget(budget, async {
-        Ok::<_, RefreshError>(catalog::fetch_blob(db, &source, path, force).await?)
-    })
+    let blob = within_budget(
+        budget,
+        catalog_blob_if_changed(db, &source, path, list, force),
+    )
     .await?;
-    if !force
-        && let Some(prev_sha) = list.github_blob_sha.as_deref()
-        && prev_sha == blob.blob_sha
-    {
+    let Some(blob) = blob else {
         // Same SHA → upstream unchanged. Re-match only.
         let rematched = import::rematch_existing(db, list.id, trigger).await?;
         let mut summary = ImportSummary {
@@ -844,7 +848,7 @@ async fn fetch_catalog_and_apply(
         };
         backfill_status_counts(db, list.id, &mut summary).await?;
         return Ok(summary);
-    }
+    };
     let xml = String::from_utf8_lossy(&blob.bytes).into_owned();
     let parsed = parse_fetched(&xml, &list.raw_sha256)?;
     apply_atomically(
@@ -857,6 +861,33 @@ async fn fetch_catalog_and_apply(
         None,
     )
     .await
+}
+
+/// A catalog list's blob when it changed upstream, `None` when it did not.
+///
+/// The catalog index (refreshed per its TTL, or always when `force`) is
+/// read first. Unless `force`, an index SHA equal to the list's stored
+/// `github_blob_sha` means the stored content is current: `None`, with no
+/// download. A path the index no longer lists is
+/// [`catalog::CatalogError::PathMissing`] either way.
+///
+/// The size check sits after the SHA comparison, inside
+/// [`catalog::download_blob`]: stored content that has not changed is not
+/// re-checked (the same rule as the entry cap, see the module docs), so
+/// only a blob that is about to be downloaded can be refused as too large.
+/// A forced refresh always downloads.
+async fn catalog_blob_if_changed(
+    db: &sea_orm::DatabaseConnection,
+    source: &catalog_source::Model,
+    path: &str,
+    list: &cbl_list::Model,
+    force: bool,
+) -> Result<Option<catalog::FetchedBlob>, RefreshError> {
+    let entry = catalog::index_entry(db, source, path, force).await?;
+    if !force && list.github_blob_sha.as_deref() == Some(entry.sha.as_str()) {
+        return Ok(None);
+    }
+    Ok(Some(catalog::download_blob(source, &entry).await?))
 }
 
 async fn update_url_metadata<C: ConnectionTrait>(
