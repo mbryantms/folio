@@ -13,6 +13,26 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.82.1](https://github.com/mbryantms/folio/compare/v0.82.0...v0.82.1) (2026-11-14)
+
+
+### Fixed
+
+* **cbl:** a check for updates carries on until every reading list is checked ([#1645](https://github.com/mbryantms/folio/issues/1645)) ([97a1607](https://github.com/mbryantms/folio/commit/97a16073ba620bef6b776b985fd7f42c2490d732))
+
+
+### Changed
+
+* **cbl:** a reading list is matched in one statement, not one per entry ([#1643](https://github.com/mbryantms/folio/issues/1643)) ([ed1fadb](https://github.com/mbryantms/folio/commit/ed1fadb24284d94539bb6599f4a379b176e8a6a5))
+
+
+### Dependencies
+
+* update dependency @ai-sdk/provider-utils@&lt;4.0.34 to v4.0.66 ([#1477](https://github.com/mbryantms/folio/issues/1477)) ([4d52998](https://github.com/mbryantms/folio/commit/4d529982d30c50910b1d629b7ab8b8425bddb61d))
+* update dependency minimatch@&gt;=10.0.0 &lt;11.0.1 to v11.0.6 ([#1481](https://github.com/mbryantms/folio/issues/1481)) ([b9766d6](https://github.com/mbryantms/folio/commit/b9766d6ea2cae3976ab84613169b119181152830))
+* update dependency minimatch@&gt;=10.0.0 &lt;11.0.1 to v11.0.7 ([#1644](https://github.com/mbryantms/folio/issues/1644)) ([041a562](https://github.com/mbryantms/folio/commit/041a5626d273904f3096f30712f2d0b54328b4ef))
+* update rust crate zip to v9.5.1 ([#1498](https://github.com/mbryantms/folio/issues/1498)) ([ed7dbfc](https://github.com/mbryantms/folio/commit/ed7dbfc54d9b9e4c5b0c48e783107f1d85d27523))
+
 ## [0.82.0](https://github.com/mbryantms/folio/compare/v0.81.0...v0.82.0) (2026-11-13)
 
 
