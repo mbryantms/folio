@@ -13,6 +13,19 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.82.2](https://github.com/mbryantms/folio/compare/v0.82.1...v0.82.2) (2026-11-14)
+
+
+### Dependencies
+
+* update dependency brace-expansion@&gt;=2.0.0 &lt;2.1.4 to v2.1.8 ([#1652](https://github.com/mbryantms/folio/issues/1652)) ([1b88583](https://github.com/mbryantms/folio/commit/1b885837fc4327ed997cb28248555454aca55c28))
+* update dependency brace-expansion@&gt;=5.0.0 &lt;5.0.9 to v5.0.13 ([#1653](https://github.com/mbryantms/folio/issues/1653)) ([971d37c](https://github.com/mbryantms/folio/commit/971d37cb70628f7f3e8b545122de50bbd9ef0ac4))
+* update dependency brace-expansion@&lt;1.1.18 to v1.1.22 ([#1654](https://github.com/mbryantms/folio/issues/1654)) ([a0ab099](https://github.com/mbryantms/folio/commit/a0ab09992c90a052797e428b548849b24f42fc2b))
+* update dependency lucide-react to v1.72.0 ([#1648](https://github.com/mbryantms/folio/issues/1648)) ([a9ca79f](https://github.com/mbryantms/folio/commit/a9ca79f18d71fcc947ceb0b61d9f844f23e2debb))
+* update dependency minimatch@&gt;=10.0.0 &lt;11.0.1 to v11.0.8 ([#1650](https://github.com/mbryantms/folio/issues/1650)) ([686cb97](https://github.com/mbryantms/folio/commit/686cb976368c260b3134a117c4a3f69d46c034bb))
+* update dependency next-intl to v4.15.0 ([#1649](https://github.com/mbryantms/folio/issues/1649)) ([3224aeb](https://github.com/mbryantms/folio/commit/3224aeb77f1cd56b1971760b35fbe9ccf354089b))
+* update google/osv-scanner-action action to v2.7.1 ([#1646](https://github.com/mbryantms/folio/issues/1646)) ([6910c4f](https://github.com/mbryantms/folio/commit/6910c4f47a6b319cdb1ec3e97d7e5ac5d2932f69))
+
 ## [0.82.1](https://github.com/mbryantms/folio/compare/v0.82.0...v0.82.1) (2026-11-14)
 
 
