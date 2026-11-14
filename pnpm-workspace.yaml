@@ -159,7 +159,7 @@ overrides:
   # typescript-estree, @ts-morph/common, glob) uses only minimatch() /
   # Minimatch#match, which v11 keeps.
   # Delete when `pnpm why minimatch` shows no in-range >=10 <11.0.1 consumers.
-  "minimatch@>=10.0.0 <11.0.1": "11.0.6"
+  "minimatch@>=10.0.0 <11.0.1": "11.0.7"
   # GHSA-3g3m-2fjr-6pw4 — glob >=9.0.0 <=14.0.1 keeps walking after an
   # AbortSignal fires (moderate). Dev/build only: @serwist/build 9.5.13
   # exact-pins 13.0.6 and calls only globSync. glob 14 is also the line that
