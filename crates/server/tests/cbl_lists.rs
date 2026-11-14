@@ -3677,8 +3677,9 @@ async fn check_all_with_list_ids_checks_only_the_callers_lists() {
     assert_eq!(body["attempted"], true, "{body}");
 }
 
-/// The body is optional: none, an empty one with the JSON content type and
-/// `{}` work on every list; `{"list_ids": []}` on none. Over the id bound
+/// The body is optional: no body and an empty one with the JSON content
+/// type work on every list; `{"list_ids": []}` on none. A body without
+/// `list_ids` (`{}`, `null`) is a 422, never every list. Over the id bound
 /// is a 422 naming the field; malformed JSON stays 400, and an id that is
 /// not a UUID is 422.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -3693,8 +3694,6 @@ async fn bulk_body_forms() {
         for (ct, body, want) in [
             (None, "", 2),
             (Some("application/json"), "", 2),
-            (Some("application/json"), "{}", 2),
-            (Some("application/json"), r#"{"list_ids": null}"#, 2),
             (Some("application/json"), r#"{"list_ids": []}"#, 0),
         ] {
             let (status, resp) = bulk_raw(&app, &user, path, ct, body).await;
@@ -3704,6 +3703,15 @@ async fn bulk_body_forms() {
                 want,
                 "{path} {ct:?} {body:?}: {resp}"
             );
+        }
+        for body in ["{}", r#"{"list_ids": null}"#] {
+            let (status, resp) = bulk_raw(&app, &user, path, Some("application/json"), body).await;
+            assert_eq!(
+                status,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{path} {body}: {resp}"
+            );
+            assert_eq!(resp["error"]["code"], "validation", "{path} {body}");
         }
     }
 
@@ -3887,7 +3895,11 @@ async fn check_all_reports_lists_it_did_not_reach_and_a_second_call_checks_them(
 
 // ───── bulk continuation allowance (`cbl::quota::consume_bulk`) ─────
 
-use server::cbl::quota::{BulkOp, allowance_key, consume_bulk, store_continuation, window_key};
+use server::cbl::quota::{
+    BulkGrant, BulkOp, MAX_STORED_CONTINUATION_IDS, allowance_key, consume_bulk,
+    store_continuation, window_key,
+};
+use std::collections::HashSet;
 
 async fn tokens_used(app: &TestApp, user_id: Uuid) -> i64 {
     let mut redis = app.state().jobs.redis.clone();
@@ -3897,11 +3909,13 @@ async fn tokens_used(app: &TestApp, user_id: Uuid) -> i64 {
         .unwrap_or(0)
 }
 
-async fn allowance(app: &TestApp, op: BulkOp, user_id: Uuid) -> Option<i64> {
+/// The stored allowance: the ids the run has not reached yet.
+async fn allowance(app: &TestApp, op: BulkOp, user_id: Uuid) -> Option<HashSet<Uuid>> {
     let mut redis = app.state().jobs.redis.clone();
-    redis::AsyncCommands::get(&mut redis, allowance_key(op, user_id))
+    let raw: Option<String> = redis::AsyncCommands::get(&mut redis, allowance_key(op, user_id))
         .await
-        .unwrap()
+        .unwrap();
+    raw.map(|r| serde_json::from_str(&r).unwrap())
 }
 
 fn caller(id: Uuid, role: entity::user::UserRole) -> server::auth::CurrentUser {
@@ -3918,9 +3932,27 @@ fn ids(n: usize) -> Vec<Uuid> {
     (0..n).map(|_| Uuid::now_v7()).collect()
 }
 
-/// A run costs one token: a call with `list_ids` is free while it names no
-/// more distinct lists than the previous call left unreached; the
-/// allowance is single use, per operation, and cleared by a fresh run.
+fn set(ids: &[Uuid]) -> HashSet<Uuid> {
+    ids.iter().copied().collect()
+}
+
+/// Store `unreached` as a fresh allowance (as after a call that paid).
+async fn seed(app: &TestApp, user: &server::auth::CurrentUser, op: BulkOp, unreached: &[Uuid]) {
+    store_continuation(
+        &app.state(),
+        user,
+        op,
+        BulkGrant::default(),
+        unreached.iter().copied(),
+    )
+    .await;
+}
+
+/// A run costs one token and checks each list at most once per token: a
+/// call with `list_ids` is free only when every id it names is in the
+/// stored set of lists the run has not reached; the set is single use,
+/// per operation, becomes previous minus asked plus unreached, and is
+/// cleared by a fresh run only once that run's token was granted.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bulk_continuation_allowance_rules() {
     use entity::user::UserRole;
@@ -3931,80 +3963,168 @@ async fn bulk_continuation_allowance_rules() {
     let user = caller(auth.user_id, UserRole::User);
     let op = BulkOp::Check;
     let used = || tokens_used(&app, auth.user_id);
+    let stored = || allowance(&app, op, auth.user_id);
 
-    // No allowance: a call with ids pays.
+    // No allowance: a call with ids pays, and so does a fresh run.
     consume_bulk(&state, &user, op, Some(&ids(2)))
         .await
         .unwrap();
     assert_eq!(used().await, 1);
-    // A fresh run pays.
     consume_bulk(&state, &user, op, None).await.unwrap();
     assert_eq!(used().await, 2);
 
     // Nothing left unreached: nothing stored.
-    store_continuation(&state, &user, op, 0).await;
-    assert_eq!(allowance(&app, op, auth.user_id).await, None);
+    seed(&app, &user, op, &[]).await;
+    assert_eq!(stored().await, None);
 
-    // Allowance large enough (duplicates count once): free, and taken.
-    store_continuation(&state, &user, op, 3).await;
-    let a = Uuid::now_v7();
-    let named = [a, a, Uuid::now_v7(), Uuid::now_v7()];
-    consume_bulk(&state, &user, op, Some(&named)).await.unwrap();
+    // A subset of the stored set (duplicates count once): free, and taken.
+    let left = ids(5);
+    seed(&app, &user, op, &left).await;
+    assert_eq!(stored().await, Some(set(&left)));
+    let asked = [left[0], left[0], left[1], left[2]];
+    let grant = consume_bulk(&state, &user, op, Some(&asked)).await.unwrap();
     assert_eq!(used().await, 2, "free continuation");
-    assert_eq!(allowance(&app, op, auth.user_id).await, None, "single use");
-    // Used once: the same call again pays.
-    consume_bulk(&state, &user, op, Some(&named)).await.unwrap();
-    assert_eq!(used().await, 3);
+    assert_eq!(stored().await, None, "taken before the work");
+    // After the work: previous minus asked plus unreached. left[3..] were
+    // not sent yet and stay covered; left[1] was asked and not reached.
+    store_continuation(&state, &user, op, grant, [left[1]]).await;
+    assert_eq!(stored().await, Some(set(&[left[1], left[3], left[4]])));
 
-    // Smaller than the request: pays, and the allowance is gone.
-    store_continuation(&state, &user, op, 2).await;
-    consume_bulk(&state, &user, op, Some(&ids(3)))
+    // Single use: once a call took the set, another call before the next
+    // store pays, even for ids in it.
+    let grant = consume_bulk(&state, &user, op, Some(&[left[1]]))
+        .await
+        .unwrap();
+    assert_eq!(used().await, 2, "free continuation");
+    consume_bulk(&state, &user, op, Some(&[left[3]]))
+        .await
+        .unwrap();
+    assert_eq!(used().await, 3, "single use");
+    store_continuation(&state, &user, op, grant, []).await;
+    assert_eq!(stored().await, Some(set(&[left[3], left[4]])));
+
+    // One id outside the set pays, and the paid call's own unreached ids
+    // are the whole new set.
+    seed(&app, &user, op, &left).await;
+    let outsider = Uuid::now_v7();
+    let grant = consume_bulk(&state, &user, op, Some(&[left[0], outsider]))
         .await
         .unwrap();
     assert_eq!(used().await, 4);
-    assert_eq!(allowance(&app, op, auth.user_id).await, None);
+    store_continuation(&state, &user, op, grant, [outsider]).await;
+    assert_eq!(stored().await, Some(set(&[outsider])));
 
-    // Per operation: a refresh allowance does not pay for a check.
-    store_continuation(&state, &user, BulkOp::Refresh, 5).await;
-    consume_bulk(&state, &user, op, Some(&ids(1)))
+    // An id already checked in this run is outside the set: pays.
+    let grant = consume_bulk(&state, &user, op, Some(&[left[0]]))
         .await
         .unwrap();
     assert_eq!(used().await, 5);
-    // A fresh refresh run clears it.
-    consume_bulk(&state, &user, BulkOp::Refresh, None)
+    store_continuation(&state, &user, op, grant, []).await;
+
+    // Over the storage bound nothing is stored.
+    seed(&app, &user, op, &ids(MAX_STORED_CONTINUATION_IDS + 1)).await;
+    assert_eq!(stored().await, None);
+
+    // Per operation: a refresh allowance does not pay for a check.
+    seed(&app, &user, BulkOp::Refresh, &left).await;
+    consume_bulk(&state, &user, op, Some(&left[..1]))
         .await
         .unwrap();
     assert_eq!(used().await, 6);
-    assert_eq!(allowance(&app, BulkOp::Refresh, auth.user_id).await, None);
+    assert!(
+        allowance(&app, BulkOp::Refresh, auth.user_id)
+            .await
+            .is_some()
+    );
+
+    // A fresh run clears it, but only once its token was granted.
+    for _ in used().await..server::cbl::quota::IMPORTS_PER_HOUR {
+        consume_bulk(&state, &user, op, None).await.unwrap();
+    }
+    let refused = consume_bulk(&state, &user, BulkOp::Refresh, None).await;
+    assert_eq!(refused.unwrap_err().status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        allowance(&app, BulkOp::Refresh, auth.user_id).await,
+        Some(set(&left)),
+        "a refused call leaves a running refresh's allowance alone"
+    );
+    // ... while the continuation it allows is still free.
+    consume_bulk(&state, &user, BulkOp::Refresh, Some(&left[..2]))
+        .await
+        .unwrap();
+    let granted_user = caller(Uuid::now_v7(), UserRole::User);
+    seed(&app, &granted_user, BulkOp::Refresh, &left).await;
+    consume_bulk(&state, &granted_user, BulkOp::Refresh, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        allowance(&app, BulkOp::Refresh, granted_user.id).await,
+        None,
+        "cleared once the token was granted"
+    );
 
     // Admins skip all of it.
     let admin = caller(Uuid::now_v7(), UserRole::Admin);
-    store_continuation(&state, &admin, op, 4).await;
+    let grant = consume_bulk(&state, &admin, op, None).await.unwrap();
+    store_continuation(&state, &admin, op, grant, ids(3)).await;
     assert_eq!(allowance(&app, op, admin.id).await, None);
-    consume_bulk(&state, &admin, op, None).await.unwrap();
     assert_eq!(tokens_used(&app, admin.id).await, 0);
 }
 
-/// Over HTTP: a call that left lists unreached stores the allowance; one
-/// that reached every list stores none.
+/// Over HTTP, on both routes: a continuation naming only lists in the
+/// stored set costs no token, one naming a list outside it costs one; a
+/// call that reached every list stores no allowance.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn bulk_calls_store_an_allowance_only_for_lists_left_unreached() {
+async fn bulk_calls_spend_the_allowance_only_on_lists_left_unreached() {
+    use entity::user::UserRole;
     let app = TestApp::spawn().await;
     let _admin = register(&app, "allow-http-admin@example.com").await;
     let auth = register(&app, "allow-http@example.com").await;
-    upload_tiny(&app, &auth).await;
-    for path in ["check-all", "refresh-all"] {
-        let (status, body) = http(
-            &app,
-            Method::POST,
-            &format!("/api/me/cbl-lists/{path}"),
-            Some(&auth),
-            None,
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
+    let user = caller(auth.user_id, UserRole::User);
+    let a = upload_tiny(&app, &auth).await;
+    let b = upload_tiny(&app, &auth).await;
+    assert_eq!(tokens_used(&app, auth.user_id).await, 2);
+    let post = |path: &'static str, body: Option<serde_json::Value>| {
+        let app = &app;
+        let auth = &auth;
+        async move {
+            let (status, body) = http(
+                app,
+                Method::POST,
+                &format!("/api/me/cbl-lists/{path}"),
+                Some(auth),
+                body,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{path}: {body}");
+            body
+        }
+    };
+    for (path, op) in [
+        ("check-all", BulkOp::Check),
+        ("refresh-all", BulkOp::Refresh),
+    ] {
+        let before = tokens_used(&app, auth.user_id).await;
+        seed(&app, &user, op, &[a, b]).await;
+        let body = post(path, Some(serde_json::json!({ "list_ids": [a] }))).await;
+        assert_eq!(bulk_ids(&body), vec![a.to_string()], "{body}");
+        assert_eq!(
+            tokens_used(&app, auth.user_id).await,
+            before,
+            "{path}: free"
+        );
+        assert_eq!(allowance(&app, op, auth.user_id).await, Some(set(&[b])));
+        // `a` was checked already in this run: outside the set.
+        post(path, Some(serde_json::json!({ "list_ids": [a, b] }))).await;
+        assert_eq!(
+            tokens_used(&app, auth.user_id).await,
+            before + 1,
+            "{path}: pays"
+        );
+        // Every list reached: nothing stored.
+        assert_eq!(allowance(&app, op, auth.user_id).await, None);
+        post(path, None).await;
+        assert_eq!(allowance(&app, op, auth.user_id).await, None);
+        assert_eq!(tokens_used(&app, auth.user_id).await, before + 2);
     }
-    assert_eq!(allowance(&app, BulkOp::Check, auth.user_id).await, None);
-    assert_eq!(allowance(&app, BulkOp::Refresh, auth.user_id).await, None);
-    assert_eq!(tokens_used(&app, auth.user_id).await, 3);
 }

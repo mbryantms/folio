@@ -7721,10 +7721,12 @@ export interface components {
             upstream_changed: boolean;
         };
         /**
-         * @description Optional body of `check-all` / `refresh-all`. With no body, or no
-         *     `list_ids`, every list the caller may refresh is worked on. Fails
-         *     closed: an unknown field is a 422 and a non-empty body that is not
-         *     `application/json` a 415, never "every list".
+         * @description Optional body of `check-all` / `refresh-all`. Only an empty body
+         *     means every list the caller may refresh. Fails closed: when a body is
+         *     sent, `list_ids` is required (`{}` and `{"list_ids": null}` are a 422,
+         *     so a client that left the field undefined never widens the call), an
+         *     unknown field is a 422 and a non-empty body that is not
+         *     `application/json` a 415.
          */
         CblBulkReq: {
             /**
@@ -7732,7 +7734,7 @@ export interface components {
              *     unknown ids, are left out of the result without an error; an
              *     empty array yields an empty result. At most 1000 ids.
              */
-            list_ids?: string[] | null;
+            list_ids: string[];
         };
         CblBulkResultView: {
             /**
@@ -23361,7 +23363,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        /** @description Optional; `list_ids` limits the check to those lists. Omit the body to check every list */
+        /** @description Optional; `list_ids` (required when a body is sent) limits the check to those lists. Send no body to check every list */
         requestBody?: {
             content: {
                 "application/json": components["schemas"]["CblBulkReq"] | null;
@@ -23383,7 +23385,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description more than 1000 `list_ids`, an id that is not a UUID, or an unknown field */
+            /** @description `list_ids` missing or null, more than 1000 of them, an id that is not a UUID, or an unknown field */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -23406,7 +23408,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        /** @description Optional; `list_ids` limits the refresh to those lists. Omit the body to refresh every list */
+        /** @description Optional; `list_ids` (required when a body is sent) limits the refresh to those lists. Send no body to refresh every list */
         requestBody?: {
             content: {
                 "application/json": components["schemas"]["CblBulkReq"] | null;
@@ -23428,7 +23430,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description more than 1000 `list_ids`, an id that is not a UUID, or an unknown field */
+            /** @description `list_ids` missing or null, more than 1000 of them, an id that is not a UUID, or an unknown field */
             422: {
                 headers: {
                     [name: string]: unknown;

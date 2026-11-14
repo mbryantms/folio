@@ -6668,7 +6668,7 @@
       "post": {
         "operationId": "cbl_lists_check_all",
         "requestBody": {
-          "description": "Optional; `list_ids` limits the check to those lists. Omit the body to check every list",
+          "description": "Optional; `list_ids` (required when a body is sent) limits the check to those lists. Send no body to check every list",
           "content": {
             "application/json": {
               "schema": {
@@ -6698,7 +6698,7 @@
             "description": "a non-empty body that is not `application/json`"
           },
           "422": {
-            "description": "more than 1000 `list_ids`, an id that is not a UUID, or an unknown field"
+            "description": "`list_ids` missing or null, more than 1000 of them, an id that is not a UUID, or an unknown field"
           },
           "429": {
             "description": "per-user CBL import quota exceeded"
@@ -6710,7 +6710,7 @@
       "post": {
         "operationId": "cbl_lists_refresh_all",
         "requestBody": {
-          "description": "Optional; `list_ids` limits the refresh to those lists. Omit the body to refresh every list",
+          "description": "Optional; `list_ids` (required when a body is sent) limits the refresh to those lists. Send no body to refresh every list",
           "content": {
             "application/json": {
               "schema": {
@@ -6740,7 +6740,7 @@
             "description": "a non-empty body that is not `application/json`"
           },
           "422": {
-            "description": "more than 1000 `list_ids`, an id that is not a UUID, or an unknown field"
+            "description": "`list_ids` missing or null, more than 1000 of them, an id that is not a UUID, or an unknown field"
           },
           "429": {
             "description": "per-user CBL import quota exceeded"
@@ -17778,13 +17778,13 @@
       },
       "CblBulkReq": {
         "type": "object",
-        "description": "Optional body of `check-all` / `refresh-all`. With no body, or no\n`list_ids`, every list the caller may refresh is worked on. Fails\nclosed: an unknown field is a 422 and a non-empty body that is not\n`application/json` a 415, never \"every list\".",
+        "description": "Optional body of `check-all` / `refresh-all`. Only an empty body\nmeans every list the caller may refresh. Fails closed: when a body is\nsent, `list_ids` is required (`{}` and `{\"list_ids\": null}` are a 422,\nso a client that left the field undefined never widens the call), an\nunknown field is a 422 and a non-empty body that is not\n`application/json` a 415.",
+        "required": [
+          "list_ids"
+        ],
         "properties": {
           "list_ids": {
-            "type": [
-              "array",
-              "null"
-            ],
+            "type": "array",
             "items": {
               "type": "string",
               "format": "uuid"

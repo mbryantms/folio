@@ -107,27 +107,29 @@ where
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         optional_json_body(req, state, false)
             .await
-            .map(OptionalValidated)
+            .map(|body| OptionalValidated(body.unwrap_or_default()))
     }
 }
 
 /// Like [`OptionalValidated<T>`] but fails closed on a body it would
-/// otherwise ignore: a **non-empty** body whose `Content-Type` is not JSON
-/// is a 415 `unsupported_media_type` instead of `T::default()`. An empty
-/// (or whitespace-only) body with any or no `Content-Type` still yields
-/// `T::default()`.
+/// otherwise ignore, and tells "no body" apart from a body: an empty (or
+/// whitespace-only) body with any or no `Content-Type` is `None`; a
+/// **non-empty** body whose `Content-Type` is not JSON is a 415
+/// `unsupported_media_type`; a JSON body is parsed and validated into
+/// `Some(T)`.
 ///
-/// Use where the default means "do everything" and the endpoint writes
+/// Use where "no body" means "do everything" and the endpoint writes
 /// (`refresh-all`): a client that meant to narrow the call but sent the
-/// wrong content type must not get the widest call instead. Pair with
-/// `#[serde(deny_unknown_fields)]` on `T` so a misspelled key fails too.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct StrictOptionalValidated<T>(pub T);
+/// wrong content type, a misspelled key or a body without the narrowing
+/// field must not get the widest call instead. Pair with
+/// `#[serde(deny_unknown_fields)]` and required fields on `T`.
+#[derive(Debug, Clone, Default)]
+pub struct StrictOptionalValidated<T>(pub Option<T>);
 
 impl<S, T> FromRequest<S> for StrictOptionalValidated<T>
 where
     S: Send + Sync,
-    T: DeserializeOwned + Default + garde::Validate<Context = ()> + 'static,
+    T: DeserializeOwned + garde::Validate<Context = ()> + 'static,
 {
     type Rejection = Response;
 
@@ -139,14 +141,18 @@ where
 }
 
 /// The body handling shared by [`OptionalValidated`] (`strict = false`:
-/// no JSON content type ⇒ default, body unread) and
+/// no JSON content type ⇒ `None`, body unread) and
 /// [`StrictOptionalValidated`] (`strict = true`: the body is read first;
-/// empty ⇒ default whatever the content type, non-empty without a JSON
-/// content type ⇒ 415).
-async fn optional_json_body<S, T>(req: Request, state: &S, strict: bool) -> Result<T, Response>
+/// empty ⇒ `None` whatever the content type, non-empty without a JSON
+/// content type ⇒ 415). An empty JSON body is `None` in both.
+async fn optional_json_body<S, T>(
+    req: Request,
+    state: &S,
+    strict: bool,
+) -> Result<Option<T>, Response>
 where
     S: Send + Sync,
-    T: DeserializeOwned + Default + garde::Validate<Context = ()>,
+    T: DeserializeOwned + garde::Validate<Context = ()>,
 {
     let has_json_content_type = req
         .headers()
@@ -163,7 +169,7 @@ where
         })
         .unwrap_or(false);
     if !has_json_content_type && !strict {
-        return Ok(T::default());
+        return Ok(None);
     }
     let bytes = axum::body::Bytes::from_request(req, state)
         .await
@@ -183,7 +189,7 @@ where
             }
         })?;
     if bytes.iter().all(u8::is_ascii_whitespace) {
-        return Ok(T::default());
+        return Ok(None);
     }
     if !has_json_content_type {
         return Err(respond(
@@ -203,7 +209,7 @@ where
     if let Err(report) = payload.validate() {
         return Err(from_garde(&report));
     }
-    Ok(payload)
+    Ok(Some(payload))
 }
 
 fn json_rejection_to_response(rej: JsonRejection) -> Response {

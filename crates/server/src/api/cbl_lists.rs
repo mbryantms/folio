@@ -277,19 +277,20 @@ pub struct CblBulkItemView {
 /// split its ids across calls.
 pub const MAX_BULK_LIST_IDS: usize = 1000;
 
-/// Optional body of `check-all` / `refresh-all`. With no body, or no
-/// `list_ids`, every list the caller may refresh is worked on. Fails
-/// closed: an unknown field is a 422 and a non-empty body that is not
-/// `application/json` a 415, never "every list".
-#[derive(Debug, Default, Deserialize, garde::Validate, utoipa::ToSchema)]
+/// Optional body of `check-all` / `refresh-all`. Only an empty body
+/// means every list the caller may refresh. Fails closed: when a body is
+/// sent, `list_ids` is required (`{}` and `{"list_ids": null}` are a 422,
+/// so a client that left the field undefined never widens the call), an
+/// unknown field is a 422 and a non-empty body that is not
+/// `application/json` a 415.
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CblBulkReq {
     /// Work on only these lists. Ids the caller may not refresh, and
     /// unknown ids, are left out of the result without an error; an
     /// empty array yields an empty result. At most 1000 ids.
-    #[serde(default)]
-    #[garde(inner(length(max = MAX_BULK_LIST_IDS)))]
-    pub list_ids: Option<Vec<Uuid>>,
+    #[garde(length(max = MAX_BULK_LIST_IDS))]
+    pub list_ids: Vec<Uuid>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -2302,11 +2303,11 @@ pub async fn check_one(
 #[utoipa::path(
     operation_id = "cbl_lists_check_all",    post,
     path = "/me/cbl-lists/check-all",
-    request_body(content = Option<CblBulkReq>, description = "Optional; `list_ids` limits the check to those lists. Omit the body to check every list"),
+    request_body(content = Option<CblBulkReq>, description = "Optional; `list_ids` (required when a body is sent) limits the check to those lists. Send no body to check every list"),
     responses(
         (status = 200, body = CblBulkResultView),
         (status = 415, description = "a non-empty body that is not `application/json`"),
-        (status = 422, description = "more than 1000 `list_ids`, an id that is not a UUID, or an unknown field"),
+        (status = 422, description = "`list_ids` missing or null, more than 1000 of them, an id that is not a UUID, or an unknown field"),
         (status = 429, description = "per-user CBL import quota exceeded"),
     )
 )]
@@ -2317,16 +2318,20 @@ pub async fn check_all(
     StrictOptionalValidated(req): StrictOptionalValidated<CblBulkReq>,
 ) -> impl IntoResponse {
     // A check costs one import token however many rounds it takes: a call
-    // without `list_ids` pays and starts a run; a continuation call naming
-    // no more lists than the previous call left unreached spends that
-    // single-use allowance instead (`cbl::quota` module docs).
-    let op = crate::cbl::quota::BulkOp::Check;
-    if let Err(resp) =
-        crate::cbl::quota::consume_bulk(&app, &user, op, req.list_ids.as_deref()).await
-    {
-        return resp;
+    // without `list_ids` pays and starts a run; a continuation call is free
+    // only when every id it names is one the run has not reached yet, so
+    // per token each list is checked at most once (`cbl::quota` docs).
+    let list_ids = req.as_ref().map(|r| r.list_ids.as_slice());
+    // Nothing asked for: no work, so no quota accounting either.
+    if list_ids.is_some_and(<[Uuid]>::is_empty) {
+        return bulk_result(Vec::new());
     }
-    let lists = match refreshable_lists(&app, &user, req.list_ids.as_deref()).await {
+    let op = crate::cbl::quota::BulkOp::Check;
+    let grant = match crate::cbl::quota::consume_bulk(&app, &user, op, list_ids).await {
+        Ok(g) => g,
+        Err(resp) => return resp,
+    };
+    let lists = match refreshable_lists(&app, &user, list_ids).await {
         Ok(l) => l,
         Err(resp) => return resp,
     };
@@ -2352,19 +2357,22 @@ pub async fn check_all(
         slots[idx] = Some(item);
     }
     let items: Vec<CblBulkItemView> = slots.into_iter().flatten().collect();
-    let not_attempted = items.iter().filter(|i| !i.attempted).count();
-    crate::cbl::quota::store_continuation(&app, &user, op, not_attempted).await;
+    let unreached = items
+        .iter()
+        .filter(|i| !i.attempted)
+        .filter_map(|i| Uuid::parse_str(&i.id).ok());
+    crate::cbl::quota::store_continuation(&app, &user, op, grant, unreached).await;
     bulk_result(items)
 }
 
 #[utoipa::path(
     operation_id = "cbl_lists_refresh_all",    post,
     path = "/me/cbl-lists/refresh-all",
-    request_body(content = Option<CblBulkReq>, description = "Optional; `list_ids` limits the refresh to those lists. Omit the body to refresh every list"),
+    request_body(content = Option<CblBulkReq>, description = "Optional; `list_ids` (required when a body is sent) limits the refresh to those lists. Send no body to refresh every list"),
     responses(
         (status = 200, body = CblBulkResultView),
         (status = 415, description = "a non-empty body that is not `application/json`"),
-        (status = 422, description = "more than 1000 `list_ids`, an id that is not a UUID, or an unknown field"),
+        (status = 422, description = "`list_ids` missing or null, more than 1000 of them, an id that is not a UUID, or an unknown field"),
         (status = 429, description = "per-user CBL import quota exceeded"),
     )
 )]
@@ -2375,15 +2383,19 @@ pub async fn refresh_all(
     Extension(ctx): Extension<RequestContext>,
     StrictOptionalValidated(req): StrictOptionalValidated<CblBulkReq>,
 ) -> impl IntoResponse {
-    // One import token per refresh however many rounds it takes; see
-    // [`check_all`].
-    let op = crate::cbl::quota::BulkOp::Refresh;
-    if let Err(resp) =
-        crate::cbl::quota::consume_bulk(&app, &user, op, req.list_ids.as_deref()).await
-    {
-        return resp;
+    // One import token per refresh however many rounds it takes; each list
+    // is refreshed at most once per token. See [`check_all`].
+    let list_ids = req.as_ref().map(|r| r.list_ids.as_slice());
+    // Nothing asked for: no work, so no quota accounting either.
+    if list_ids.is_some_and(<[Uuid]>::is_empty) {
+        return bulk_result(Vec::new());
     }
-    let lists = match refreshable_lists(&app, &user, req.list_ids.as_deref()).await {
+    let op = crate::cbl::quota::BulkOp::Refresh;
+    let grant = match crate::cbl::quota::consume_bulk(&app, &user, op, list_ids).await {
+        Ok(g) => g,
+        Err(resp) => return resp,
+    };
+    let lists = match refreshable_lists(&app, &user, list_ids).await {
         Ok(l) => l,
         Err(resp) => return resp,
     };
@@ -2433,8 +2445,11 @@ pub async fn refresh_all(
         slots[idx] = Some(item);
     }
     let items: Vec<CblBulkItemView> = slots.into_iter().flatten().collect();
-    let not_attempted = items.iter().filter(|i| !i.attempted).count();
-    crate::cbl::quota::store_continuation(&app, &user, op, not_attempted).await;
+    let unreached = items
+        .iter()
+        .filter(|i| !i.attempted)
+        .filter_map(|i| Uuid::parse_str(&i.id).ok());
+    crate::cbl::quota::store_continuation(&app, &user, op, grant, unreached).await;
     bulk_result(items)
 }
 

@@ -26,28 +26,33 @@
 //!
 //! **Bulk continuation allowance.** `check-all` / `refresh-all` stop starting
 //! lists after a fixed time budget and report the rest `attempted: false`;
-//! the client then sends exactly those ids back as `list_ids`, possibly over
-//! several rounds. A whole check or refresh still costs **one** token
-//! ([`consume_bulk`] / [`store_continuation`]): after a call that left lists
-//! unreached, the number of those lists is stored as a single-use allowance
-//! (one Redis key per [`BulkOp`] and user, [`CONTINUATION_TTL_SECS`]). The
-//! next call with `list_ids` takes it atomically (`GETDEL`) before any work
-//! and is free when it names no more distinct lists than the allowance; any
-//! other call pays a token, and a call without `list_ids` (a fresh run)
-//! clears the allowance. This keeps the bound the quota exists for:
+//! the client then sends those ids back as `list_ids`, possibly over several
+//! rounds. A whole check or refresh still costs **one** token
+//! ([`consume_bulk`] / [`store_continuation`]):
 //!
-//! - a free call may name no more lists than the previous call left
-//!   unreached, so the allowance only shrinks along a run;
-//! - every call reaches at least one list, because the first list of a call
-//!   always gets a budget, so a run ends after at most as many calls as it
-//!   has lists;
-//! - the allowance is taken before the work, so it cannot be replayed or
-//!   spent by two concurrent calls.
+//! - After the work, the **set of list ids** the run has still not reached
+//!   is stored as a single-use allowance (one value per [`BulkOp`] and user,
+//!   [`CONTINUATION_TTL_SECS`]): the previous allowance minus the ids this
+//!   call asked for, plus the ids it reports `attempted: false`. Ids the
+//!   client has not sent yet (it sends at most 1000 per round) stay covered;
+//!   ids it asked for and that were dropped (deleted, no longer refreshable)
+//!   fall out. Nothing is stored when the set is empty, or when it is over
+//!   [`MAX_STORED_CONTINUATION_IDS`] (the next call then simply pays).
+//! - A call with `list_ids` takes the stored set atomically (`GETDEL` of one
+//!   serialised value) **before** any work. It is free only when every id it
+//!   names (after de-duplication) is in that set; otherwise it pays a token
+//!   like any other call, and the set it took is gone.
+//! - A call without `list_ids` starts a fresh run: it pays first and only
+//!   once the token was granted clears the stored allowance, so a refused
+//!   call (429) or a second tab cannot wipe a running check's allowance.
 //!
-//! Per token the server therefore starts at most one check (or refresh) per
-//! list the caller named, which is what one pass cost before the bulk time
-//! limit existed. Redis failures fail open as elsewhere here: a failed read
-//! means no allowance, so the call takes the token path.
+//! The bound the quota exists for therefore holds exactly: a free call only
+//! names lists the run has not reached yet, each reached list leaves the set
+//! for good, and the take happens before the work, so the allowance cannot
+//! be replayed or spent by two calls at once. **Per token, each of the
+//! caller's lists is checked (or refreshed) at most once**, which is what one
+//! pass cost before the bulk time limit existed. Redis failures fail open as
+//! elsewhere here: a failed read means no allowance, so the call pays.
 
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::Response;
@@ -55,6 +60,7 @@ use entity::cbl_list;
 use entity::user::UserRole;
 use redis::AsyncCommands;
 use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
+use std::collections::HashSet;
 
 use crate::auth::CurrentUser;
 use crate::state::AppState;
@@ -138,67 +144,106 @@ impl BulkOp {
 /// the client asks again at once; a few minutes covers a slow network.
 pub const CONTINUATION_TTL_SECS: u64 = 5 * 60;
 
+/// Most list ids a stored allowance holds. A run that leaves more lists
+/// unreached stores none and its next call pays: that is far beyond what a
+/// caller owns in practice (50 server-fetched lists per user, uploads at 20
+/// an hour), and it keeps one Redis value small (about 150 KiB at most).
+pub const MAX_STORED_CONTINUATION_IDS: usize = 4000;
+
 /// Redis key of a user's continuation allowance for `op`.
 pub fn allowance_key(op: BulkOp, user_id: uuid::Uuid) -> String {
     format!("cbl_bulk_continuation:{}:{user_id}", op.as_str())
 }
 
+/// What [`consume_bulk`] granted; [`store_continuation`] needs it to compute
+/// the next allowance.
+#[derive(Debug, Default)]
+pub struct BulkGrant {
+    /// The quota does not apply (admin, rate limit off): store nothing.
+    exempt: bool,
+    /// The allowance this call was free under; empty when it paid.
+    previous: HashSet<uuid::Uuid>,
+    /// The distinct ids the call named.
+    asked: HashSet<uuid::Uuid>,
+}
+
 /// The quota gate of a `check-all` / `refresh-all` call (see the module
-/// docs). `list_ids` is the call's `list_ids`, `None` when it sent none.
+/// docs). `list_ids` is the call's `list_ids`, `None` when it sent no body.
 pub async fn consume_bulk(
     app: &AppState,
     user: &CurrentUser,
     op: BulkOp,
     list_ids: Option<&[uuid::Uuid]>,
-) -> Result<(), Response> {
+) -> Result<BulkGrant, Response> {
     if is_exempt(user) || !app.cfg().rate_limit_enabled {
-        return Ok(());
+        return Ok(BulkGrant {
+            exempt: true,
+            ..BulkGrant::default()
+        });
     }
     let mut redis = app.jobs.redis.clone();
     let key = allowance_key(op, user.id);
-    match list_ids {
-        None => {
-            if let Err(e) = redis.del::<_, ()>(&key).await {
-                tracing::warn!(error = %e, user_id = %user.id, "cbl quota: allowance DEL failed");
-            }
+    let Some(ids) = list_ids else {
+        consume_import(app, user).await?;
+        if let Err(e) = redis.del::<_, ()>(&key).await {
+            tracing::warn!(error = %e, user_id = %user.id, "cbl quota: allowance DEL failed");
         }
-        Some(ids) => {
-            let allowance: Option<u64> = match redis.get_del::<_, Option<String>>(&key).await {
-                Ok(v) => v.and_then(|s| s.parse().ok()),
-                Err(e) => {
-                    tracing::warn!(error = %e, user_id = %user.id, "cbl quota: allowance GETDEL failed; no allowance");
-                    None
-                }
-            };
-            let distinct = ids.iter().collect::<std::collections::HashSet<_>>().len() as u64;
-            if allowance.is_some_and(|a| distinct <= a) {
-                return Ok(());
-            }
+        return Ok(BulkGrant::default());
+    };
+    let asked: HashSet<uuid::Uuid> = ids.iter().copied().collect();
+    let stored: Option<HashSet<uuid::Uuid>> = match redis.get_del::<_, Option<String>>(&key).await {
+        Ok(v) => v.and_then(|s| serde_json::from_str(&s).ok()),
+        Err(e) => {
+            tracing::warn!(error = %e, user_id = %user.id, "cbl quota: allowance GETDEL failed; no allowance");
+            None
         }
+    };
+    if let Some(previous) = stored
+        && asked.is_subset(&previous)
+    {
+        return Ok(BulkGrant {
+            exempt: false,
+            previous,
+            asked,
+        });
     }
-    consume_import(app, user).await
+    consume_import(app, user).await?;
+    Ok(BulkGrant {
+        exempt: false,
+        previous: HashSet::new(),
+        asked,
+    })
 }
 
-/// Record what a `check-all` / `refresh-all` call left unreached: with
-/// `not_attempted > 0` the next call naming at most that many lists is free
-/// (see the module docs). Nothing is stored otherwise; the gate already
-/// took or cleared any earlier allowance.
+/// Store the next allowance after a call's work: what [`consume_bulk`]
+/// granted it under, minus what it asked for, plus `unreached` (the ids it
+/// reported `attempted: false`). Nothing is stored when that is empty or
+/// over [`MAX_STORED_CONTINUATION_IDS`].
 pub async fn store_continuation(
     app: &AppState,
     user: &CurrentUser,
     op: BulkOp,
-    not_attempted: usize,
+    grant: BulkGrant,
+    unreached: impl IntoIterator<Item = uuid::Uuid>,
 ) {
-    if not_attempted == 0 || is_exempt(user) || !app.cfg().rate_limit_enabled {
+    if grant.exempt {
         return;
     }
+    let mut next: HashSet<uuid::Uuid> = grant
+        .previous
+        .into_iter()
+        .filter(|id| !grant.asked.contains(id))
+        .collect();
+    next.extend(unreached);
+    if next.is_empty() || next.len() > MAX_STORED_CONTINUATION_IDS {
+        return;
+    }
+    let Ok(value) = serde_json::to_string(&next) else {
+        return;
+    };
     let mut redis = app.jobs.redis.clone();
     if let Err(e) = redis
-        .set_ex::<_, _, ()>(
-            allowance_key(op, user.id),
-            not_attempted as u64,
-            CONTINUATION_TTL_SECS,
-        )
+        .set_ex::<_, _, ()>(allowance_key(op, user.id), value, CONTINUATION_TTL_SECS)
         .await
     {
         tracing::warn!(error = %e, user_id = %user.id, "cbl quota: allowance SET failed");
