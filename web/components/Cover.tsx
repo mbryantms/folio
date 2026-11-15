@@ -4,7 +4,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 
 import { useCoverPriority } from "@/components/library/cover-priority";
 import { RetryingImg } from "@/components/RetryingImg";
-import { applyTint, getTone, rememberTone } from "@/lib/ui/cover-tone";
+import { useCoverTone } from "@/lib/ui/use-cover-tone";
 import { COVER_CARD_SIZES } from "@/lib/library/cover-size";
 import { coverThumbSrcSet } from "@/lib/urls";
 
@@ -32,7 +32,10 @@ import { coverThumbSrcSet } from "@/lib/urls";
 // Theme tokens, not hardcoded neutrals: the old neutral-600-on-
 // neutral-900 fallback text measured ≈2.3:1 (WCAG 1.4.3 wants 4.5:1)
 // and painted a near-black tile on the light/amber themes.
-const BOX =
+/** The cover box: the 2:3 placeholder every cover is drawn in, and the
+ *  element the hover glow lands on (`.cover-box`, globals.css). Shared
+ *  with `UpcomingCover`, the other component that draws one. */
+export const COVER_BOX =
   "cover-box aspect-[2/3] bg-muted rounded-md border border-border overflow-hidden";
 
 /** The `sizes` attribute for a cover: none without a `srcset`, `auto` for
@@ -63,33 +66,22 @@ export function Cover({
   const priority = useCoverPriority();
   const [loaded, setLoaded] = useState(priority);
   const ref = useRef<HTMLImageElement>(null);
-  const boxRef = useRef<HTMLDivElement>(null);
+  // The remembered colour as the placeholder, and the card's tint.
+  const { boxRef, remember } = useCoverTone(src);
 
   useLayoutEffect(() => {
     const el = ref.current;
     if (el && el.complete && el.naturalWidth > 0) {
       setLoaded(true);
-      if (src) rememberTone(src, el);
+      remember(el);
     }
     // Mount-only: `src` changes re-key the img via onLoad.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Before first paint: the remembered colour as the placeholder, and the
-  // card's tint (set on the DOM, so no extra render and no SSR mismatch).
-  useLayoutEffect(() => {
-    if (!src) return;
-    const tone = getTone(src);
-    if (!tone) return;
-    if (boxRef.current) {
-      boxRef.current.style.backgroundColor = `rgb(${tone.average})`;
-    }
-    applyTint(boxRef.current, tone);
-  }, [src]);
-
   const onLoad = () => {
     setLoaded(true);
-    if (src && ref.current) rememberTone(src, ref.current);
+    remember(ref.current);
   };
 
   if (src) {
@@ -105,7 +97,7 @@ export function Cover({
       // The box owns the aspect-ratio + placeholder + caller classes
       // (sizing, hover brightness); the img fills it and fades in, so the
       // dark placeholder stays visible underneath until the cover decodes.
-      <div ref={boxRef} className={`${BOX} ${className ?? ""}`}>
+      <div ref={boxRef} className={`${COVER_BOX} ${className ?? ""}`}>
         {/* A failed load re-requests twice after a back-off (a 429 from
             the thumbnail bucket), then shows as failed. */}
         <RetryingImg
@@ -130,7 +122,7 @@ export function Cover({
     <div
       role="img"
       aria-label={alt}
-      className={`${BOX} text-muted-foreground grid place-items-center ${className ?? ""}`}
+      className={`${COVER_BOX} text-muted-foreground grid place-items-center ${className ?? ""}`}
     >
       <span className="px-2 text-center text-xs tracking-widest uppercase">
         {fallback ?? "—"}

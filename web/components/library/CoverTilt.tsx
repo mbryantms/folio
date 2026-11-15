@@ -5,8 +5,8 @@ import { forwardRef, useCallback, useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { useVisualEffect } from "@/lib/visual-effects";
 
-/** Largest lean, in degrees, when the pointer sits on a cover's edge. */
-const MAX_TILT_DEG = 7;
+/** Largest lean, in degrees, when the pointer sits on a card cover's edge. */
+export const MAX_TILT_DEG = 7;
 
 /**
  * The positioned box that owns a card's cover (`<div className="relative">`
@@ -20,11 +20,20 @@ const MAX_TILT_DEG = 7;
  * under reduced motion via `useVisualEffect`.
  *
  * With the effect off this is a plain `div`, so cards look exactly as before.
+ *
+ * Cards do not use this directly: `CoverFrame` is the cover box every card
+ * shares, and it picks the lean.
  */
 export const CoverTilt = forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(function CoverTilt({ className, children, ...rest }, forwardedRef) {
+  React.HTMLAttributes<HTMLDivElement> & {
+    /** Largest lean in degrees (default: the card maximum). */
+    maxDeg?: number;
+  }
+>(function CoverTilt(
+  { className, children, maxDeg = MAX_TILT_DEG, ...rest },
+  forwardedRef,
+) {
   const on = useVisualEffect("cover_tilt");
   const box = useRef<HTMLDivElement | null>(null);
   const frame = useRef<number | null>(null);
@@ -61,11 +70,11 @@ export const CoverTilt = forwardRef<
     const { x, y } = target.current;
     el.style.setProperty(
       "--tilt-x",
-      `${((0.5 - y) * 2 * MAX_TILT_DEG).toFixed(2)}deg`,
+      `${((0.5 - y) * 2 * maxDeg).toFixed(2)}deg`,
     );
     el.style.setProperty(
       "--tilt-y",
-      `${((x - 0.5) * 2 * MAX_TILT_DEG).toFixed(2)}deg`,
+      `${((x - 0.5) * 2 * maxDeg).toFixed(2)}deg`,
     );
     el.style.setProperty("--sheen-x", `${(x * 100).toFixed(1)}%`);
     el.style.setProperty("--sheen-y", `${(y * 100).toFixed(1)}%`);

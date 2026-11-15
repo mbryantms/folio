@@ -111,9 +111,10 @@ export function rememberTone(src: string, img: HTMLImageElement): void {
 }
 
 /** Hand the vibrant colour to the enclosing card (`[data-card]`), which
- *  uses `--cover-tint` for its hover wash (globals.css). */
+ *  uses `--cover-tint` for its hover wash and glow (globals.css). A
+ *  page's header cover (`[data-cover-hero]`) takes it for the glow alone. */
 export function applyTint(el: Element | null, tone: Tone | null): void {
-  const card = el?.closest<HTMLElement>("[data-card]");
+  const card = el?.closest<HTMLElement>("[data-card], [data-cover-hero]");
   if (card && tone) {
     card.style.setProperty("--cover-tint", `rgb(${tone.vibrant})`);
   }

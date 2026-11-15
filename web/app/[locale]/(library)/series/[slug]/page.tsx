@@ -24,6 +24,7 @@ import { notFound, redirect } from "next/navigation";
 import { BackButton } from "@/components/shell/BackButton";
 import { Breadcrumbs } from "@/components/shell/Breadcrumbs";
 import { Cover } from "@/components/Cover";
+import { CoverFrame } from "@/components/library/CoverFrame";
 import { ChipList } from "@/components/library/ChipList";
 import {
   DetailSection,
@@ -267,17 +268,19 @@ export default async function SeriesPage({
             data-cover-hero={seriesCoverName(series.slug)}
             className="mx-auto w-4/5 max-w-full sm:w-56 lg:mx-0 lg:w-72"
           >
-            <ViewTransition
-              name={seriesCoverName(series.slug)}
-              share="morph"
-              default="none"
-            >
-              <Cover
-                src={series.cover_url}
-                alt={`Cover of ${series.name}`}
-                fallback={series.publisher ?? "—"}
-              />
-            </ViewTransition>
+            <CoverFrame lean="hero">
+              <ViewTransition
+                name={seriesCoverName(series.slug)}
+                share="morph"
+                default="none"
+              >
+                <Cover
+                  src={series.cover_url}
+                  alt={`Cover of ${series.name}`}
+                  fallback={series.publisher ?? "—"}
+                />
+              </ViewTransition>
+            </CoverFrame>
           </div>
           {/* Read CTA + a small gear for actions, always side by side —
               the Read button is the focus, so actions stay a compact icon

@@ -32,7 +32,7 @@ export function issueIdFromCoverUrl(
 /**
  * "Flip through pages on hover" (folio-flair-1.0, optional, off by default).
  *
- * Rendered inside a card's cover box (`CoverTilt`). With a mouse or pen
+ * Rendered inside a card's cover box (`CoverFrame`). With a mouse or pen
  * resting on the cover, moving across it shows a few of the issue's pages
  * in order, with a page marker along the bottom. It uses the small `strip`
  * page thumbnails and fetches nothing until the pointer has rested on the

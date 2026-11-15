@@ -7,7 +7,7 @@ import { ProgressFill } from "@/components/library/ProgressFill";
 import { ReadCheck } from "@/components/library/ReadCheck";
 import { Cover } from "@/components/Cover";
 import { CoverMorph } from "@/components/library/CoverMorph";
-import { CoverTilt } from "@/components/library/CoverTilt";
+import { CoverFrame } from "@/components/library/CoverFrame";
 import { PageScrub } from "@/components/library/PageScrub";
 import {
   CoverMenuButton,
@@ -145,9 +145,9 @@ export function CblIssueCard({
   const coverWrapperProps = inSelectMode ? {} : longPress.wrapperProps;
 
   const cover = (showActions: boolean) => (
-    <CoverTilt
+    <CoverFrame
       className={cn(
-        "relative rounded-md transition-all",
+        "rounded-md transition-all",
         // Match `CblWindowCard`'s anchor ring — same primary tint,
         // same ring-2 + ring-offset-2 so the detail page and the
         // home rail share one "this is your up-next" idiom.
@@ -231,7 +231,7 @@ export function CblIssueCard({
           />
         </>
       )}
-    </CoverTilt>
+    </CoverFrame>
   );
   const meta = (
     <div className="min-w-0 px-1">
