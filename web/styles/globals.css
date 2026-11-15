@@ -1272,6 +1272,102 @@ body {
   transition: box-shadow 260ms ease-out;
 }
 
+/* ── Cover chips (components/library/CoverChip.tsx) ──
+ * The one text pill drawn on cover art; the standard is written up in
+ * docs/dev/card-corner-conventions.md. It has to read on any picture, so:
+ *
+ *  - the backing is the page background at `--cover-chip-backing`
+ *    opacity, with a hairline ring. No `backdrop-filter`: the chip is
+ *    legible without it.
+ *  - a status tone is text colour plus an icon or dot. The theme's
+ *    status tokens are tuned for the page, not for this backing with a
+ *    cover showing through, so each is mixed `--cover-chip-tone` of the
+ *    way from the foreground. At these numbers every tone clears 4.5:1
+ *    on the backing over pure black and pure white art, in dark, light
+ *    and amber (tests/ui/cover-chip-contrast.test.ts reads them here).
+ *  - `error` is the only solid chip. Its fill is the destructive token
+ *    mixed `--cover-chip-solid` with the foreground, which is what makes
+ *    the light theme's label clear 4.5:1 too.
+ *
+ * In the components layer, so a call site's utilities can position a
+ * chip (`absolute top-2 right-2`) and cap its width. It must not restyle
+ * one. */
+:root {
+  --cover-chip-backing: 94%;
+  --cover-chip-tone: 75%;
+  --cover-chip-solid: 80%;
+}
+@layer components {
+  .cover-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    height: 1.25rem;
+    max-width: 100%;
+    padding-inline: 0.375rem;
+    border-radius: var(--radius-md);
+    font-size: 0.75rem;
+    line-height: 1;
+    font-weight: 500;
+    white-space: nowrap;
+    color: var(--foreground);
+    background-color: color-mix(
+      in oklab,
+      var(--background) var(--cover-chip-backing),
+      transparent
+    );
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--foreground) 14%, transparent),
+      0 1px 2px rgb(0 0 0 / 0.25);
+  }
+  .cover-chip[data-tone="success"] {
+    color: color-mix(
+      in oklab,
+      var(--success) var(--cover-chip-tone),
+      var(--foreground)
+    );
+  }
+  .cover-chip[data-tone="warning"] {
+    color: color-mix(
+      in oklab,
+      var(--warning) var(--cover-chip-tone),
+      var(--foreground)
+    );
+  }
+  .cover-chip[data-tone="info"] {
+    color: color-mix(
+      in oklab,
+      var(--info) var(--cover-chip-tone),
+      var(--foreground)
+    );
+  }
+  .cover-chip[data-tone="error"] {
+    color: var(--destructive-foreground);
+    background-color: color-mix(
+      in oklab,
+      var(--destructive) var(--cover-chip-solid),
+      var(--foreground)
+    );
+  }
+  .cover-chip__label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .cover-chip__icon {
+    width: 0.75rem;
+    height: 0.75rem;
+    flex-shrink: 0;
+  }
+  .cover-chip__dot {
+    width: 0.375rem;
+    height: 0.375rem;
+    flex-shrink: 0;
+    border-radius: 9999px;
+    background-color: currentColor;
+  }
+}
+
 /* ── Cover long press (components/CoverLongPressActions.tsx) ──
  * On touch devices a long press on a cover opens Folio's quick-actions
  * sheet, so the browser's own long-press callout (iOS link preview /

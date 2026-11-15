@@ -2,8 +2,14 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { CircleDashed, CircleHelp, type LucideIcon } from "lucide-react";
 
 import { ProgressFill } from "@/components/library/ProgressFill";
+import {
+  CoverChip,
+  coverChipLabel,
+  type CoverChipTone,
+} from "@/components/library/CoverChip";
 import { ReadCheck } from "@/components/library/ReadCheck";
 import { Cover } from "@/components/Cover";
 import { CoverMorph } from "@/components/library/CoverMorph";
@@ -17,7 +23,6 @@ import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { useCoverMenuCollectionActions } from "@/components/collections/useCoverMenuCollectionActions";
 import { QuickReadOverlay } from "@/components/QuickReadOverlay";
 import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
-import { Badge } from "@/components/ui/badge";
 import { useUpsertIssueProgress } from "@/lib/api/mutations";
 import { cardBadge, useCardProgress } from "@/lib/api/card-progress";
 import { issueLabel } from "@/lib/format";
@@ -25,6 +30,18 @@ import { issueCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
 import { cn } from "@/lib/utils";
 import type { CblEntryView, IssueSummaryView } from "@/lib/api/types";
 import { issueUrl, readerUrl } from "@/lib/urls";
+
+/** How an unresolved entry's match status reads on the cover. An
+ *  ambiguous entry is waiting on the reader's choice (warning); a missing
+ *  one is simply not in the library, which is context, not a fault. */
+function matchStatusChip(status: string): {
+  tone: CoverChipTone;
+  icon?: LucideIcon;
+} {
+  if (status === "ambiguous") return { tone: "warning", icon: CircleHelp };
+  if (status === "missing") return { tone: "neutral", icon: CircleDashed };
+  return { tone: "neutral" };
+}
 
 /** CBL-rail variant of `IssueCard` — same cover treatment but adds a
  *  position badge for the `<Books>` order and surfaces the entry's
@@ -183,19 +200,16 @@ export function CblIssueCard({
       {/* Position badge moved to bottom-left so top-left is free for the
        *  kebab affordance. Match-status badge stays at top-right (it's
        *  the highest-priority signal for unresolved entries). */}
-      <Badge
-        variant="secondary"
-        className="bg-background/80 absolute bottom-2 left-2 backdrop-blur"
-      >
+      <CoverChip className="absolute bottom-2 left-2 tabular-nums">
         {positionLabel}
-      </Badge>
+      </CoverChip>
       {entry.match_status !== "matched" && entry.match_status !== "manual" && (
-        <Badge
-          variant="destructive"
-          className="bg-background/80 absolute top-2 right-2 backdrop-blur"
+        <CoverChip
+          {...matchStatusChip(entry.match_status)}
+          className="absolute top-2 right-2 max-w-[calc(100%-1rem)]"
         >
-          {entry.match_status}
-        </Badge>
+          {coverChipLabel(entry.match_status)}
+        </CoverChip>
       )}
       {/* Read state — `top-2 right-2`. Matches `CblWindowCard`'s
        *  rail-card placement so detail + rail share one visual idiom.

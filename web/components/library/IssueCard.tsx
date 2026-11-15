@@ -3,9 +3,11 @@
 import { memo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { FileWarning, Lock } from "lucide-react";
 
 import { CoverSkeleton } from "@/components/CoverSkeleton";
 import { ProgressFill } from "@/components/library/ProgressFill";
+import { CoverChip } from "@/components/library/CoverChip";
 import { ReadCheck } from "@/components/library/ReadCheck";
 import { Cover } from "@/components/Cover";
 import { CoverFrame } from "@/components/library/CoverFrame";
@@ -20,7 +22,6 @@ import { useCoverMenuCollectionActions } from "@/components/collections/useCover
 import { QuickReadOverlay } from "@/components/QuickReadOverlay";
 import { CoverMorph } from "@/components/library/CoverMorph";
 import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
-import { Badge } from "@/components/ui/badge";
 import { useUpsertIssueProgress } from "@/lib/api/mutations";
 import { cardBadge, useCardProgress } from "@/lib/api/card-progress";
 import { issueCardTitle, issueLabel } from "@/lib/format";
@@ -242,13 +243,14 @@ function IssueCardImpl({
          *  finished check; freed up for future indicators — downloaded
          *  badge, age rating, queue marker, etc.). */}
         {issue.state !== "active" && (
-          <Badge
-            variant="destructive"
-            className="bg-background/80 absolute top-2 right-2 backdrop-blur"
+          <CoverChip
+            tone="error"
+            icon={issue.state === "encrypted" ? Lock : FileWarning}
+            className="absolute top-2 right-2 max-w-[calc(100%-1rem)]"
             title={issueStateHint(issue.state)}
           >
             {issueStateLabel(issue.state)}
-          </Badge>
+          </CoverChip>
         )}
         {issue.state === "active" && finished && (
           <ReadCheck className="absolute top-2 right-2" />
