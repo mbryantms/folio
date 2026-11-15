@@ -23415,15 +23415,6 @@
           }
         }
       },
-      "EntrySource": {
-        "type": "string",
-        "description": "Where an entry came from.",
-        "enum": [
-          "metron",
-          "pull_list",
-          "both"
-        ]
-      },
       "EventIssue": {
         "type": "object",
         "required": [
@@ -25230,15 +25221,6 @@
             "minimum": 0
           }
         }
-      },
-      "Freshness": {
-        "type": "string",
-        "description": "How far a snapshot can be trusted, by when Folio received it.",
-        "enum": [
-          "fresh",
-          "stale",
-          "expired"
-        ]
       },
       "FunnelBucket": {
         "type": "object",
@@ -29272,6 +29254,15 @@
           "reduced"
         ]
       },
+      "MylarFreshness": {
+        "type": "string",
+        "description": "How far a snapshot can be trusted, by when Folio received it.",
+        "enum": [
+          "fresh",
+          "stale",
+          "expired"
+        ]
+      },
       "MylarSnapshot": {
         "type": "object",
         "description": "The body of `POST /integrations/mylar/snapshot`. Unknown fields are\nignored, so a newer script can add to a version without breaking an\nolder server.",
@@ -29336,7 +29327,7 @@
             "type": "boolean"
           },
           "freshness": {
-            "$ref": "#/components/schemas/Freshness"
+            "$ref": "#/components/schemas/MylarFreshness"
           },
           "generated_at": {
             "type": "string",
@@ -29372,16 +29363,6 @@
             "format": "int32"
           }
         }
-      },
-      "MylarStatus": {
-        "type": "string",
-        "description": "What Mylar reported for an issue.",
-        "enum": [
-          "wanted",
-          "snatched",
-          "downloaded",
-          "failed"
-        ]
       },
       "MylarStatusView": {
         "type": "object",
@@ -37531,18 +37512,6 @@
           "exclude"
         ]
       },
-      "Stage": {
-        "type": "string",
-        "description": "The single thing a card says about a release, by precedence.",
-        "enum": [
-          "in_library",
-          "downloaded",
-          "snatched",
-          "wanted",
-          "tracked",
-          "announced"
-        ]
-      },
       "StarterListListView": {
         "type": "object",
         "required": [
@@ -38598,6 +38567,15 @@
           }
         }
       },
+      "UpcomingEntrySource": {
+        "type": "string",
+        "description": "Where an entry came from.",
+        "enum": [
+          "metron",
+          "pull_list",
+          "both"
+        ]
+      },
       "UpcomingEntryView": {
         "type": "object",
         "description": "One upcoming (or just released) issue.",
@@ -38656,7 +38634,7 @@
           "mylar_status": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/MylarStatus",
+                "$ref": "#/components/schemas/UpcomingMylarStatus",
                 "description": "What Mylar reported for the issue. Always absent for a caller who\nmay not see Mylar data."
               },
               {
@@ -38686,10 +38664,10 @@
             "type": "string"
           },
           "source": {
-            "$ref": "#/components/schemas/EntrySource"
+            "$ref": "#/components/schemas/UpcomingEntrySource"
           },
           "stage": {
-            "$ref": "#/components/schemas/Stage"
+            "$ref": "#/components/schemas/UpcomingStage"
           },
           "tracked": {
             "type": "boolean",
@@ -38711,6 +38689,16 @@
           }
         }
       },
+      "UpcomingMylarStatus": {
+        "type": "string",
+        "description": "What Mylar reported for an issue.",
+        "enum": [
+          "wanted",
+          "snatched",
+          "downloaded",
+          "failed"
+        ]
+      },
       "UpcomingMylarView": {
         "type": "object",
         "description": "Mylar's snapshot, for a caller allowed to see it.",
@@ -38720,7 +38708,7 @@
         ],
         "properties": {
           "freshness": {
-            "$ref": "#/components/schemas/Freshness"
+            "$ref": "#/components/schemas/MylarFreshness"
           },
           "received_at": {
             "type": "string",
@@ -38743,6 +38731,18 @@
             "type": "string"
           }
         }
+      },
+      "UpcomingStage": {
+        "type": "string",
+        "description": "The single thing a card says about a release, by precedence.",
+        "enum": [
+          "in_library",
+          "downloaded",
+          "snatched",
+          "wanted",
+          "tracked",
+          "announced"
+        ]
       },
       "UpcomingStatusView": {
         "type": "object",

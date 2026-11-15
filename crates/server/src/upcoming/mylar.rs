@@ -542,6 +542,7 @@ pub async fn purge(db: &DatabaseConnection) -> Result<(), DbErr> {
 /// How far a snapshot can be trusted, by when Folio received it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
+#[schema(as = MylarFreshness)]
 pub enum Freshness {
     /// Within `integrations.mylar.stale_after_minutes`.
     Fresh,

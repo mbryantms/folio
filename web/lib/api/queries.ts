@@ -46,7 +46,11 @@ import {
 // hooks below; re-exported (where the object used to live) so the
 // long-standing `import { queryKeys } from "@/lib/api/queries"` is
 // unchanged for every consumer.
-import { queryKeys, type SeriesMetadataIssueFilters } from "./query-keys";
+import {
+  queryKeys,
+  type SeriesMetadataIssueFilters,
+  type UpcomingFilters,
+} from "./query-keys";
 // First-load shards (reader bundle budget): the fetch helper, `useMe` and
 // the reader's hooks live in their own modules so first-load code can
 // import them without shipping this whole file. Re-exported here so every
@@ -90,6 +94,8 @@ import type {
   EmailStatusView,
   SettingsView,
   UpcomingStatusView,
+  UpcomingSummaryView,
+  UpcomingWeeksPage,
   CatalogEntriesView,
   CatalogSourceListView,
   CblEntryListView,
@@ -1598,6 +1604,52 @@ export function useAdminUpcomingStatus() {
     queryFn: () => jsonFetch<UpcomingStatusView>("/admin/upcoming/status"),
     refetchInterval: 15_000,
     staleTime: 5_000,
+  });
+}
+
+/** Weeks of upcoming releases (upcoming-releases 1.0), reconciled on the
+ *  server. Every filter is a query param: the page never narrows what it
+ *  was sent. Cursor-paginated by week; `total` rides the first page. */
+export function useUpcomingInfinite(
+  filters: UpcomingFilters,
+  opts?: { enabled?: boolean; weeksPerPage?: number },
+) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.upcoming(filters),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<UpcomingWeeksPage>(
+        `/upcoming${buildQuery({
+          today: filters.today,
+          scope: filters.scope,
+          publisher: filters.publisher,
+          tracked: filters.tracked ? "true" : undefined,
+          in_library: filters.inLibrary ? "true" : undefined,
+          first_issues: filters.firstIssues ? "true" : undefined,
+          limit: opts?.weeksPerPage ?? 3,
+          cursor: pageParam,
+        })}`,
+      ),
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
+    enabled: opts?.enabled ?? true,
+    staleTime: 60_000,
+  });
+}
+
+/** Whether the feature is on, this week's count for the nav badge, each
+ *  source's age and the publisher list for the filter. */
+export function useUpcomingSummary(
+  today: string,
+  opts?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: queryKeys.upcomingSummary(today),
+    queryFn: () =>
+      jsonFetch<UpcomingSummaryView>(
+        `/upcoming/summary${buildQuery({ today })}`,
+      ),
+    enabled: opts?.enabled ?? true,
+    staleTime: 60_000,
   });
 }
 

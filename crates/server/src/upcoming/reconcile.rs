@@ -74,6 +74,7 @@ pub struct PullLine {
 /// Where an entry came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
+#[schema(as = UpcomingEntrySource)]
 pub enum EntrySource {
     /// Metron's calendar only.
     Metron,
@@ -86,6 +87,7 @@ pub enum EntrySource {
 /// What Mylar reported for an issue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
+#[schema(as = UpcomingMylarStatus)]
 pub enum MylarStatus {
     Wanted,
     Snatched,
@@ -110,6 +112,7 @@ impl MylarStatus {
 /// The single thing a card says about a release, by precedence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
+#[schema(as = UpcomingStage)]
 pub enum Stage {
     /// Folio already has the issue.
     InLibrary,

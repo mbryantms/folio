@@ -38,6 +38,17 @@ import type {
   UserListFilters,
 } from "./queries";
 
+/** Server-side filters of `GET /upcoming`. `today` is the viewer's local
+ *  date; it is part of the key so the list refetches when the day turns. */
+export type UpcomingFilters = {
+  today: string;
+  scope: "mine" | "all";
+  publisher?: string;
+  tracked?: boolean;
+  inLibrary?: boolean;
+  firstIssues?: boolean;
+};
+
 /** Server-side filters of `GET /series/{slug}/metadata/issues`. */
 export type SeriesMetadataIssueFilters = {
   tier?: "complete" | "partial" | "needs_metadata" | "accepted" | "incomplete";
@@ -474,6 +485,11 @@ export const queryKeys = {
   adminSettings: ["admin", "settings"] as const,
   /** `GET /admin/upcoming/status` — the release calendar's state. */
   adminUpcomingStatus: ["admin", "upcoming", "status"] as const,
+  /** `GET /upcoming` — weeks of releases under one set of server filters. */
+  upcoming: (filters: UpcomingFilters) =>
+    ["upcoming", "list", filters] as const,
+  /** `GET /upcoming/summary` — nav-badge counts and each source's age. */
+  upcomingSummary: (today: string) => ["upcoming", "summary", today] as const,
   /** Last-result probe for the outbound email pipeline (M2). */
   adminEmailStatus: ["admin", "email", "status"] as const,
   /** Resolved sidebar layout (built-ins + libraries + saved views in

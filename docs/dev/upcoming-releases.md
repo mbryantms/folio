@@ -99,15 +99,20 @@ adds nothing:
 
 ## The enrich sweep
 
-`upcoming::calendar::enrich`, a cron closure every five minutes
+`upcoming::calendar::enrich`, a cron closure once a minute
 (`jobs::release_calendar::sweep`) with a Redis overlap lock. It stands
 aside while a list pass is in flight or stopped part-way: both draw on
 the same per-minute budget, and the listing goes first. Up to 10
-series per tick, never-fetched first, get their detail
-(`fetch_series_cached`, which also warms `metadata_cache`). A series
+series per tick get their detail (`fetch_series_cached`, which also
+warms `metadata_cache`): never-fetched first, **soonest release first**,
+so this week and next are complete within the first quarter of an hour
+of a fresh calendar and the whole window (a few hundred series) in under
+an hour. Until a series has its detail the page cannot tell that Mylar
+tracks it, unless Mylar's pull list names the issue. A series
 still without a ComicVine id is asked again after 3 days while it has a
-release today or later, with an uncached request: a new #1 often gains
-the id after it is announced. A failed fetch is stamped too, so one bad
+release this week or later, with an uncached request: a new #1 often
+gains the id after it is announced. A tick with nothing to fetch costs
+two small reads. A failed fetch is stamped too, so one bad
 series cannot hold the head of the queue.
 
 While a tick is fetching it holds a `release_calendar_enrich` background
@@ -124,7 +129,7 @@ pause, not a failure.
 
 A normal pass is eleven requests, which fits a fresh minute bucket with
 the reserve intact. A wider window pauses once and the sweep resumes it
-within five minutes.
+within a minute.
 
 ## Settings
 
@@ -324,6 +329,52 @@ one image host the CSP allows for it.
 | on | off | Metron only; stored `mylar_*` rows are ignored |
 | on | on | reconciled, for viewers who may see Mylar data |
 
+## The page (`/upcoming`)
+
+`web/components/upcoming/UpcomingView.tsx`, a client component. Not
+prefetched on the server: "this week" depends on the viewer's local date,
+which only the browser knows, so `useLocalToday` is `null` until
+hydration and the two queries (`useUpcomingSummary`,
+`useUpcomingInfinite`) start then.
+
+- **One section per week**, loaded three weeks at a time behind
+  `InfiniteSentinel`. A week with no matching release is not sent.
+- **Every control is a server query param.** The scope toggle
+  (My series | All releases), the chips (Tracked, In library, New #1s)
+  and the publisher select all become `UpcomingFilters`; the page never
+  filters the rows it was sent. Controls a viewer cannot use are not
+  drawn: no scope toggle or publisher list for a viewer held to their own
+  series, no Tracked chip without visible Mylar data, no In library chip
+  where every row is already in the library.
+- **Two layouts**, saved per browser (`folio.upcoming.layout`): covers on
+  the app-wide cover grid, or rows (a table from `sm` up, stacked `Item`
+  rows below).
+- **`UpcomingCard`** follows
+  [card-corner-conventions.md](card-corner-conventions.md): top-right is
+  the stage badge, bottom-left the release day, the other corners are
+  empty, nothing dims. A release nobody tracks ("announced") carries no
+  badge on its cover, so in All releases the badges mark the reader's own
+  series; the list and the dialog still say "Announced". A failed
+  download reads "Failed" (Mylar's own stage for it is still "wanted").
+- **The dialog** is read-only: dates, the stage in a sentence, where the
+  release was listed, a link to the series in Folio and one to Metron.
+  Covers are hotlinked from `static.metron.cloud` (the one host the API
+  passes through and the CSP allows) at Metron's full size, lazily.
+- **Phone layout** ([phone-layout.md](phone-layout.md)): the filters are
+  tools you need while scrolling, so the control row is the page's one
+  pinned band: `StickyToolbarRow` from `sm` up, `PhoneControlsBar`
+  (`pageTop`, the title in its leading slot) below. The scope toggle sits
+  in flow under the phone bar. Week headings never pin.
+- **States**: feature off (admins get a link to `/admin/upcoming`), the
+  calendar never fetched, nothing in my series (offers All releases), no
+  match for the filters (offers Clear filters).
+
+**Sidebar.** The `upcoming` built-in (`api/sidebar_layout.rs`) is emitted
+only while `upcoming.enabled` is on. A built-in that a saved layout has
+no row for now takes its place directly after the built-in before it in
+the registry, instead of its default index, which drifts by one for every
+other built-in the layout predates.
+
 ## Metrics
 
 `folio_release_calendar_issues` and
@@ -353,3 +404,11 @@ code makes no outbound request.
 script — tests"): the snapshot's content, that nothing sensitive leaves
 the host, change detection and the heartbeat, failures.
 `web/tests/admin/upcoming-admin.test.tsx` covers the admin page.
+`web/tests/dom/upcoming-view.test.tsx`: every filter reaches the list
+hook, a restricted viewer gets no Mylar control, the dialog has links
+and no action, each empty state. `web/tests/upcoming/stage.test.ts`: the
+week and stage wording. `web/tests/e2e/upcoming.spec.ts` (Playwright,
+`chromium-admin`): settings on, token, a snapshot pushed with the token
+alone, the page, the dialog, both layouts and the phone width under axe,
+then everything put back. `crates/server/tests/sidebar_layout.rs` covers
+the conditional entry and its place in an older saved layout.

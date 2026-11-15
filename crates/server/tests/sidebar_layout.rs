@@ -1092,3 +1092,139 @@ async fn patch_rejects_more_entries_than_the_cap_with_field_details() {
     assert_eq!(body["error"]["code"], "validation");
     assert_eq!(body["error"]["details"][0]["field"], "entries");
 }
+
+fn set_upcoming_enabled(app: &TestApp, on: bool) {
+    let mut cfg = (*app.state().cfg()).clone();
+    cfg.upcoming_enabled = on;
+    app.state().replace_cfg(cfg);
+}
+
+/// The Upcoming built-in follows `upcoming.enabled`: absent while the
+/// feature is off (the default), last of the built-ins once it is on, and
+/// gone again when it is turned off.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn upcoming_builtin_follows_the_setting() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+
+    let entries = layout(&app, &admin).await;
+    assert!(builtin(&entries, "upcoming").is_none(), "off by default");
+
+    set_upcoming_enabled(&app, true);
+    let entries = layout(&app, &admin).await;
+    let entry = builtin(&entries, "upcoming").expect("upcoming present");
+    assert_eq!(entry["visible"], true);
+    assert_eq!(entry["label"], "Upcoming");
+    assert_eq!(entry["href"], "/upcoming");
+    assert_eq!(entry["icon"], "Calendar");
+    let keys: Vec<&str> = entries
+        .iter()
+        .filter(|e| e["kind"] == "builtin")
+        .map(|e| e["ref_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(keys.last(), Some(&"upcoming"), "keys: {keys:?}");
+
+    set_upcoming_enabled(&app, false);
+    let entries = layout(&app, &admin).await;
+    assert!(builtin(&entries, "upcoming").is_none(), "off again");
+}
+
+/// A reader who hid the Upcoming entry keeps it hidden, and the saved
+/// row does not make the entry appear while the feature is off.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hidden_upcoming_builtin_stays_hidden_and_never_shows_while_off() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    set_upcoming_enabled(&app, true);
+
+    let body = serde_json::json!({
+        "entries": [
+            { "kind": "builtin", "ref_id": "upcoming", "visible": false, "position": 3 }
+        ]
+    });
+    let (status, json) = http(
+        &app,
+        Method::PATCH,
+        "/api/me/sidebar-layout",
+        Some(&admin),
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "json: {json:#?}");
+    let entries = layout(&app, &admin).await;
+    assert_eq!(
+        builtin(&entries, "upcoming").expect("still listed")["visible"],
+        false
+    );
+
+    set_upcoming_enabled(&app, false);
+    let entries = layout(&app, &admin).await;
+    assert!(
+        builtin(&entries, "upcoming").is_none(),
+        "an override row must not surface an unavailable built-in"
+    );
+
+    set_upcoming_enabled(&app, true);
+    let entries = layout(&app, &admin).await;
+    assert_eq!(
+        builtin(&entries, "upcoming").expect("back")["visible"],
+        false,
+        "the saved choice returns with the feature"
+    );
+}
+
+/// A layout saved before two built-ins existed (Reading lists, then
+/// Upcoming): each new entry follows the built-in before it in the
+/// registry, so Upcoming closes the Browse section instead of drifting
+/// under the Libraries header.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn upcoming_builtin_stays_in_its_section_of_an_older_saved_layout() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    seed_library(&app, "Comics").await;
+
+    // The layout as it was saved back then: dense positions, no row for
+    // either later built-in.
+    let entries = layout(&app, &admin).await;
+    let saved: Vec<serde_json::Value> = entries
+        .iter()
+        .filter(|e| !(e["kind"] == "builtin" && e["ref_id"] == "reading_lists"))
+        .enumerate()
+        .map(|(position, e)| {
+            let mut row = serde_json::json!({
+                "kind": e["kind"],
+                "ref_id": e["ref_id"],
+                "visible": true,
+                "position": position,
+            });
+            if e["kind"] == "header" {
+                row["label"] = e["label"].clone();
+            }
+            row
+        })
+        .collect();
+    let (status, json) = http(
+        &app,
+        Method::PATCH,
+        "/api/me/sidebar-layout",
+        Some(&admin),
+        Some(serde_json::json!({ "entries": saved })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "patch failed: {json:#?}");
+
+    set_upcoming_enabled(&app, true);
+    let entries = layout(&app, &admin).await;
+    let refs: Vec<&str> = entries
+        .iter()
+        .map(|e| e["ref_id"].as_str().unwrap())
+        .collect();
+    let at = |k: &str| refs.iter().position(|x| *x == k).unwrap();
+    assert_eq!(at("reading_lists"), at("collections") + 1, "refs: {refs:?}");
+    assert_eq!(at("upcoming"), at("want_to_read") + 1, "refs: {refs:?}");
+    assert_eq!(
+        at("default:libraries"),
+        at("upcoming") + 1,
+        "Upcoming closes the Browse section: {refs:?}"
+    );
+}
