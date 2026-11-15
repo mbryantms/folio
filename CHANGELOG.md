@@ -13,6 +13,37 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.83.0](https://github.com/mbryantms/folio/compare/v0.82.1...v0.83.0) (2026-11-15)
+
+
+### Added
+
+* **upcoming:** accept read-only Mylar snapshots pushed from the Mylar host ([#1662](https://github.com/mbryantms/folio/issues/1662)) ([a1414d1](https://github.com/mbryantms/folio/commit/a1414d118803f6cfc1f86afc71c03cf3cd142c20))
+* **upcoming:** in-app alerts and the admin view of Mylar's activity ([#1665](https://github.com/mbryantms/folio/issues/1665)) ([47bea2a](https://github.com/mbryantms/folio/commit/47bea2adcfe378495f6a13c201bc942e796382aa))
+* **upcoming:** reconcile the calendar with Mylar's snapshot and serve it to readers ([#1663](https://github.com/mbryantms/folio/issues/1663)) ([c85fee2](https://github.com/mbryantms/folio/commit/c85fee20af91c4b7efce2d12818baadc081197ef))
+* **upcoming:** release calendar from Metron with an admin status page ([#1661](https://github.com/mbryantms/folio/issues/1661)) ([db6dce1](https://github.com/mbryantms/folio/commit/db6dce136822fa55dbb3f1b12f79981109a41e39))
+* **upcoming:** the Upcoming page ([#1664](https://github.com/mbryantms/folio/issues/1664)) ([a0edda7](https://github.com/mbryantms/folio/commit/a0edda73b0a7551801a1ebdd1eebaa641174cad4))
+
+
+### Dependencies
+
+* update dependency @hookform/resolvers to v7.0.6 ([#1659](https://github.com/mbryantms/folio/issues/1659)) ([a35eab3](https://github.com/mbryantms/folio/commit/a35eab301ce075441ec98ef7ddfcafc0b80b96be))
+* update dependency brace-expansion@&gt;=2.0.0 &lt;2.1.4 to v2.1.8 ([#1652](https://github.com/mbryantms/folio/issues/1652)) ([1b88583](https://github.com/mbryantms/folio/commit/1b885837fc4327ed997cb28248555454aca55c28))
+* update dependency brace-expansion@&gt;=5.0.0 &lt;5.0.9 to v5.0.13 ([#1653](https://github.com/mbryantms/folio/issues/1653)) ([971d37c](https://github.com/mbryantms/folio/commit/971d37cb70628f7f3e8b545122de50bbd9ef0ac4))
+* update dependency brace-expansion@&lt;1.1.18 to v1.1.22 ([#1654](https://github.com/mbryantms/folio/issues/1654)) ([a0ab099](https://github.com/mbryantms/folio/commit/a0ab09992c90a052797e428b548849b24f42fc2b))
+* update dependency glob@&gt;=9.0.0 &lt;14.0.2 to v14.0.5 ([#1655](https://github.com/mbryantms/folio/issues/1655)) ([3bcb1f9](https://github.com/mbryantms/folio/commit/3bcb1f9c5577e5845d525dd2d7734c5fbd93b05c))
+* update dependency glob@&gt;=9.0.0 &lt;14.0.2 to v14.0.6 ([#1668](https://github.com/mbryantms/folio/issues/1668)) ([45c20c2](https://github.com/mbryantms/folio/commit/45c20c22421c0be24680d5efd0200c997ced5842))
+* update dependency lucide-react to v1.72.0 ([#1648](https://github.com/mbryantms/folio/issues/1648)) ([a9ca79f](https://github.com/mbryantms/folio/commit/a9ca79f18d71fcc947ceb0b61d9f844f23e2debb))
+* update dependency minimatch@&gt;=10.0.0 &lt;11.0.1 to v11.0.8 ([#1650](https://github.com/mbryantms/folio/issues/1650)) ([686cb97](https://github.com/mbryantms/folio/commit/686cb976368c260b3134a117c4a3f69d46c034bb))
+* update dependency next-intl to v4.15.0 ([#1649](https://github.com/mbryantms/folio/issues/1649)) ([3224aeb](https://github.com/mbryantms/folio/commit/3224aeb77f1cd56b1971760b35fbe9ccf354089b))
+* update dependency next-intl to v4.15.1 ([#1667](https://github.com/mbryantms/folio/issues/1667)) ([951f0c7](https://github.com/mbryantms/folio/commit/951f0c7719b13fd397f44876730d3bca3e49958c))
+* update dependency pnpm to v12.20.0 ([#1496](https://github.com/mbryantms/folio/issues/1496)) ([9ecc0b0](https://github.com/mbryantms/folio/commit/9ecc0b073d275cc6a4e8e26bc571a8b5fdec0635))
+* update dependency react-hook-form to v7.92.0 ([#1651](https://github.com/mbryantms/folio/issues/1651)) ([25a30bb](https://github.com/mbryantms/folio/commit/25a30bbc9b4b910385fa44fb6c6adcce79fc3241))
+* update docker/dockerfile docker tag to v1.29 ([#1658](https://github.com/mbryantms/folio/issues/1658)) ([d6e9cdd](https://github.com/mbryantms/folio/commit/d6e9cddec5cbc2b1849c3de1f17cae2b1049b784))
+* update google/osv-scanner-action action to v2.7.1 ([#1646](https://github.com/mbryantms/folio/issues/1646)) ([6910c4f](https://github.com/mbryantms/folio/commit/6910c4f47a6b319cdb1ec3e97d7e5ac5d2932f69))
+* update node.js to 5df7998 ([#1656](https://github.com/mbryantms/folio/issues/1656)) ([21508b8](https://github.com/mbryantms/folio/commit/21508b8d3bb28772a7f76ab473739cb6c9db543d))
+* update redis:8-alpine docker digest to 7958cfb ([#1657](https://github.com/mbryantms/folio/issues/1657)) ([8c8f34f](https://github.com/mbryantms/folio/commit/8c8f34ff72cfa546de3c6d1e8e29ea76a3897577))
+
 ## [0.82.1](https://github.com/mbryantms/folio/compare/v0.82.0...v0.82.1) (2026-11-14)
 
 
