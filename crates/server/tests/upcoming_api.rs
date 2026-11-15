@@ -162,6 +162,7 @@ async fn seed_release(app: &TestApp, r: Release<'_>) {
         metron_modified: Set(None),
         first_seen_at: Set(now),
         last_seen_at: Set(now),
+        ..Default::default()
     }
     .insert(db)
     .await
@@ -498,6 +499,66 @@ async fn an_entry_carries_what_a_card_shows() {
     off_host.update(&w.app.state().db).await.unwrap();
     let (_, body) = get(&w.app, ALL, Some(&w.admin)).await;
     assert!(find(&body, "Saga", "70")["cover_url"].is_null());
+}
+
+#[tokio::test]
+async fn an_entry_carries_its_covers_colour_only_for_the_current_image() {
+    let w = world().await;
+    let db = &w.app.state().db;
+    let url = "https://static.metron.cloud/media/issue/1001.jpg";
+
+    // Not read yet: the field is absent, not null.
+    let (_, body) = get(&w.app, ALL, Some(&w.admin)).await;
+    assert!(
+        find(&body, "Action Comics", "1104")
+            .get("cover_tone")
+            .is_none()
+    );
+
+    let set = |tone: &str, tone_url: &str| {
+        let (tone, tone_url) = (tone.to_owned(), tone_url.to_owned());
+        async move {
+            let mut row = release_calendar_issue::Entity::find_by_id(1001_i64)
+                .one(db)
+                .await
+                .unwrap()
+                .unwrap()
+                .into_active_model();
+            row.cover_tone = Set(Some(tone));
+            row.cover_tone_url = Set(Some(tone_url));
+            row.update(db).await.unwrap();
+        }
+    };
+
+    // Read from the image the release still has.
+    set("c8281ef0a020", url).await;
+    let (_, body) = get(&w.app, ALL, Some(&w.admin)).await;
+    assert_eq!(
+        find(&body, "Action Comics", "1104")["cover_tone"],
+        "c8281ef0a020"
+    );
+
+    // Read from an image it no longer has: not this cover's colours.
+    set(
+        "c8281ef0a020",
+        "https://static.metron.cloud/media/issue/old.jpg",
+    )
+    .await;
+    let (_, body) = get(&w.app, ALL, Some(&w.admin)).await;
+    assert!(
+        find(&body, "Action Comics", "1104")
+            .get("cover_tone")
+            .is_none()
+    );
+
+    // Anything that is not twelve hex digits never reaches a client.
+    set("red; background: url(x)", url).await;
+    let (_, body) = get(&w.app, ALL, Some(&w.admin)).await;
+    assert!(
+        find(&body, "Action Comics", "1104")
+            .get("cover_tone")
+            .is_none()
+    );
 }
 
 // ────────────────────── reconciliation, as an admin ──────────────────────

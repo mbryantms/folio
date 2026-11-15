@@ -375,6 +375,8 @@ async fn upsert(
         metron_modified: Set(i.modified.map(|m| m.fixed_offset())),
         first_seen_at: Set(now),
         last_seen_at: Set(now),
+        // The cover colour columns belong to `read_cover_tones`.
+        ..Default::default()
     });
     release_calendar_issue::Entity::insert_many(rows)
         .on_conflict(
@@ -429,6 +431,153 @@ async fn prune(db: &DatabaseConnection, today: NaiveDate) -> Result<(), DbErr> {
     )
     .await?;
     Ok(())
+}
+
+/// Covers whose colours are read per sweep tick. Each is one image
+/// request to Metron's image host (not its API, so it draws on no rate
+/// bucket): thirty a minute fills a first window of some 800 covers in
+/// under half an hour and is a trickle afterwards.
+pub const COVER_TONES_PER_TICK: u64 = 30;
+/// A cover that could not be fetched or decoded is tried again after
+/// this long.
+const COVER_TONE_RETRY_HOURS: i64 = 24;
+const COVER_TONE_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+/// A tick stops starting downloads after this long, so a slow image host
+/// cannot hold the sweep's lock (four minutes) past the next ticks.
+const COVER_TONE_TICK_BUDGET: std::time::Duration = std::time::Duration::from_secs(40);
+
+/// The pooled, SSRF-vetted client the cover fetches share.
+fn cover_client() -> reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            crate::util::ssrf::shared_public_client(
+                crate::build_info::USER_AGENT_COVER,
+                COVER_TONE_FETCH_TIMEOUT,
+                2,
+                true,
+            )
+        })
+        .clone()
+}
+
+#[derive(Debug, FromQueryResult)]
+struct TonePick {
+    metron_issue_id: i64,
+    image_url: String,
+}
+
+/// Download and decode one cover and read its colours. `None` on any
+/// failure: the caller stamps the attempt and moves on.
+async fn fetch_cover_tone(url: String) -> Option<String> {
+    let fetched = match crate::util::ssrf::fetch_public_bytes_pooled(
+        &cover_client(),
+        &url,
+        crate::util::ssrf::MAX_IMAGE_BYTES,
+        COVER_TONE_FETCH_TIMEOUT,
+        true,
+    )
+    .await
+    {
+        Ok(fetched) => fetched,
+        Err(e) => {
+            tracing::debug!(url, error = %e, "release calendar: cover fetch failed");
+            return None;
+        }
+    };
+    let bytes = fetched.bytes;
+    tokio::task::spawn_blocking(move || {
+        let img = crate::util::image_decode::decode_limited(&bytes).ok()?;
+        crate::metadata::cover_tone::tone_from_image(&img).map(|t| t.encode())
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// Read the colours of up to [`COVER_TONES_PER_TICK`] covers that have
+/// none for their current image, soonest release first (this week's
+/// before the far end of the window). Returns how many were read.
+///
+/// A cover read before whose image has since changed is read again at
+/// once. One that has never been read successfully waits out
+/// [`COVER_TONE_RETRY_HOURS`] between attempts.
+///
+/// Metron's image host sends no CORS headers, so the browser cannot do
+/// this itself; the server downloads each cover once instead (owner
+/// decision, 2026-11-15). These are image requests, not API requests, so
+/// the tick does not wait on the Metron budget gate; its cap, the daily
+/// retry and one request at a time keep it polite. Only covers on
+/// [`super::COVER_HOST_PREFIX`] are fetched, the same ones the browser is
+/// allowed to show, and only while the calendar is fed by Metron itself:
+/// with `metron_base_url` pointed elsewhere (a test double, a mirror)
+/// the covers are not ours to assume, and nothing is fetched.
+pub async fn read_cover_tones(state: &AppState) -> Result<u32, DbErr> {
+    if state.cfg().metron_base_url.is_some() {
+        return Ok(0);
+    }
+    read_cover_tones_with(state, fetch_cover_tone).await
+}
+
+/// [`read_cover_tones`] with the download swapped out, so its picking,
+/// stamping and retry rules can be tested without the network.
+pub async fn read_cover_tones_with<F, Fut>(state: &AppState, fetch: F) -> Result<u32, DbErr>
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Option<String>>,
+{
+    let db = &state.db;
+    let now = Utc::now().fixed_offset();
+    let picks = TonePick::find_by_statement(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "SELECT metron_issue_id, image_url \
+         FROM release_calendar_issue \
+         WHERE image_url IS NOT NULL \
+           AND cover_tone_url IS DISTINCT FROM image_url \
+           AND (cover_tone_url IS NOT NULL \
+                OR cover_tone_checked_at IS NULL \
+                OR cover_tone_checked_at < $1) \
+         ORDER BY (store_date < $2), store_date, metron_issue_id \
+         LIMIT $3",
+        [
+            (now - Duration::hours(COVER_TONE_RETRY_HOURS)).into(),
+            super::week_start(now.date_naive()).into(),
+            (COVER_TONES_PER_TICK as i64).into(),
+        ],
+    ))
+    .all(db)
+    .await?;
+
+    let started = std::time::Instant::now();
+    let mut read = 0u32;
+    for pick in picks {
+        if started.elapsed() > COVER_TONE_TICK_BUDGET {
+            break;
+        }
+        let tone = if pick.image_url.starts_with(super::COVER_HOST_PREFIX) {
+            fetch(pick.image_url.clone())
+                .await
+                .filter(|t| crate::metadata::cover_tone::is_encoded(t))
+        } else {
+            None
+        };
+        let mut row = release_calendar_issue::ActiveModel {
+            metron_issue_id: Set(pick.metron_issue_id),
+            cover_tone_checked_at: Set(Some(now)),
+            ..Default::default()
+        };
+        if let Some(tone) = tone {
+            row.cover_tone = Set(Some(tone));
+            row.cover_tone_url = Set(Some(pick.image_url));
+            read += 1;
+        }
+        // The row can vanish under a list pass; that is not an error.
+        match row.update(db).await {
+            Ok(_) | Err(DbErr::RecordNotUpdated) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(read)
 }
 
 #[derive(Debug, FromQueryResult)]

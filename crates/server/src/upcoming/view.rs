@@ -106,6 +106,12 @@ async fn calendar_rows(
                 number: i.number,
                 store_date: i.store_date,
                 cover_date: i.cover_date,
+                // Colours read from an image the release no longer has
+                // are not this cover's.
+                cover_tone: i
+                    .cover_tone
+                    .filter(|_| i.cover_tone_url.is_some() && i.cover_tone_url == i.image_url)
+                    .filter(|t| crate::metadata::cover_tone::is_encoded(t)),
                 image_url: i.image_url,
             })
         })

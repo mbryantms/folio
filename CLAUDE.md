@@ -714,6 +714,14 @@ Default admin (first registered user becomes admin):
   - **Metron budget.** The calendar jobs read the rate buckets before
     every request (`calendar::budget_ok`) and pause while 8 or fewer per
     minute, or 1,000 or fewer per day, remain. A pause is not a failure.
+  - **Cover colours come from the image host, once.** A browser cannot
+    sample a Metron cover (no CORS headers), so the sweep's
+    `calendar::read_cover_tones` downloads each one once through the
+    SSRF-vetted client and stores `release_calendar_issue.cover_tone`
+    (`metadata::cover_tone`, shared with library covers). That is an image
+    request to `static.metron.cloud`, not a Metron API request: it uses no
+    rate bucket and skips the budget gate, bounded by a per-tick cap and a
+    daily retry instead.
   - **Off means absent.** With `upcoming.enabled` off the jobs idle, the
     ingest answers 403, the reader endpoints answer empty, and the sidebar
     built-in and the "Out this week" rail are not emitted

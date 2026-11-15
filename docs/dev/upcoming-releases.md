@@ -118,6 +118,52 @@ series cannot hold the head of the queue.
 While a tick is fetching it holds a `release_calendar_enrich` background
 task, so it shows on **Admin → Background work**.
 
+## Cover colours
+
+A cover card washes and glows in its cover's colour on hover
+([card-corner-conventions.md](card-corner-conventions.md), "The cover
+frame"). For a library cover the browser samples the decoded image. It
+cannot do that for an upcoming release: the cover is a hotlink to
+`static.metron.cloud`, which answers image requests without
+`Access-Control-Allow-Origin` (checked 2026-11-15), so a canvas may not
+read it, and loading it with `crossOrigin` would stop it loading at all.
+
+So the server reads each cover once (owner decision, 2026-11-15).
+`upcoming::calendar::read_cover_tones` runs in the same once-a-minute
+sweep, after the enrich tick and under the same lock. Unlike the enrich
+tick it also runs while a list pass is stopped part-way, since it does
+not touch the budget the pass is waiting for:
+
+- It takes up to 30 releases (`COVER_TONES_PER_TICK`) whose current
+  `image_url` has no colours yet, this week's first, downloads the image
+  through the SSRF-vetted pooled client (`util::ssrf`, 24 MiB cap),
+  decodes it and stores `metadata::cover_tone`'s two colours in
+  `release_calendar_issue.cover_tone` (twelve hex digits: the average,
+  then the most vibrant), with the URL they came from in
+  `cover_tone_url`.
+- A release whose image changes is read again, because the colours count
+  only while `cover_tone_url` equals `image_url`.
+- A cover that cannot be fetched or decoded is stamped
+  (`cover_tone_checked_at`) and tried again after 24 hours.
+- Only `static.metron.cloud` is fetched, the one host the API passes on
+  and the CSP allows.
+- With `metron_base_url` set (tests, a mirror) nothing is fetched, even
+  if it is set to Metron's own address. Leave it unset to use Metron.
+- A tick stops starting downloads after 40 seconds, so a slow image
+  host cannot hold the sweep's lock into the next ticks.
+
+**This is not a Metron API request.** It goes to the image host, draws
+on neither rate bucket, and does not wait on the budget gate. The cap and
+the daily retry are what keep it polite: a first window of about 800
+covers fills in under half an hour, and after that the tick handles the
+handful of releases a list pass adds.
+
+`UpcomingEntryView.cover_tone` carries the value (omitted until the cover
+has been read); `view::load` reads it from the row it already selects, so
+the reader endpoints cost the same statements as before. In the web app
+`UpcomingCover` hands it to `useCoverTone`, which sets the placeholder
+colour and the card's `--cover-tint`.
+
 ## Metron budget
 
 Nothing reserves Metron headroom for interactive matching: every caller

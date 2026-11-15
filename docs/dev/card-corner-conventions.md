@@ -17,7 +17,7 @@ It has three parts, and a card gets all of them by using it:
 |---|---|---|
 | Tilt and sheen | `CoverFrame` (via `CoverTilt`) | The cover leans toward a mouse or pen pointer and a highlight follows it, when the account's "Cover tilt and sheen" effect is on and motion is not reduced. A plain box otherwise. Touch never tilts. |
 | The cover box | `<Cover>` (library art) or `<UpcomingCover>` (a provider image), drawn inside the frame | The 2:3 placeholder with the rounded border, class `.cover-box`: the element the hover glow lands on. |
-| The cover's colour | `useCoverTone`, called by those two | The placeholder takes the cover's average colour while the image loads, and the enclosing `[data-card]` gets `--cover-tint` for its hover wash and glow. |
+| The cover's colour | `useCoverTone`, called by those two | The placeholder takes the cover's average colour while the image loads, and the enclosing `[data-card]` gets `--cover-tint` for its hover wash and glow. The colours come from the server when it sent them (an upcoming release's `cover_tone`), else from this device's cache of covers it has decoded. |
 
 So a card needs `data-card` on its outer element, a `<CoverFrame>`, and a
 `<Cover>` (or `<UpcomingCover>`) inside it. In development the frame logs

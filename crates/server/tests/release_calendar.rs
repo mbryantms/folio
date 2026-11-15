@@ -23,7 +23,9 @@ use axum::{
 use chrono::{Duration, NaiveDate, Utc};
 use common::TestApp;
 use entity::{release_calendar_issue, release_calendar_series, release_calendar_state};
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel, PaginatorTrait, QueryFilter, Set,
+};
 use serde_json::{Value, json};
 use server::jobs::release_calendar as job;
 use server::metadata::rate_limit;
@@ -162,6 +164,7 @@ async fn seed_issue(app: &TestApp, id: i64, series_id: i64, store_date: NaiveDat
         metron_modified: Set(None),
         first_seen_at: Set(then),
         last_seen_at: Set(then),
+        ..Default::default()
     }
     .insert(db)
     .await
@@ -584,6 +587,166 @@ async fn enrich_stops_at_the_budget_reserve() {
         }
     );
     assert!(series(&app, 50).await.unwrap().detail_fetched_at.is_none());
+}
+
+// ───────────────────────── cover colours (WP-9.6) ─────────────────────────
+
+async fn set_image(app: &TestApp, id: i64, url: &str) {
+    let mut row = issue(app, id).await.unwrap().into_active_model();
+    row.image_url = Set(Some(url.to_owned()));
+    row.update(&app.state().db).await.unwrap();
+}
+
+fn metron_cover(id: i64) -> String {
+    format!("https://static.metron.cloud/media/issue/{id}.jpg")
+}
+
+#[tokio::test]
+async fn cover_colours_are_read_once_soonest_release_first() {
+    let mock = MockServer::start().await;
+    let app = spawn(&mock).await;
+    enable(&app);
+    let today = Utc::now().date_naive();
+    // 1: far out. 2: this week. 3: no cover at all.
+    seed_issue(&app, 1, 50, today + Duration::days(30)).await;
+    seed_issue(&app, 2, 50, today).await;
+    seed_issue(&app, 3, 50, today + Duration::days(2)).await;
+    set_image(&app, 1, &metron_cover(1)).await;
+    set_image(&app, 2, &metron_cover(2)).await;
+
+    let asked = std::sync::Mutex::new(Vec::<String>::new());
+    let fetch = |url: String| {
+        asked.lock().unwrap().push(url);
+        async { Some("c8281ef0a020".to_owned()) }
+    };
+    assert_eq!(
+        calendar::read_cover_tones_with(&app.state(), fetch)
+            .await
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        *asked.lock().unwrap(),
+        vec![metron_cover(2), metron_cover(1)],
+        "this week's cover first; a release without a cover is not asked for"
+    );
+    let row = issue(&app, 2).await.unwrap();
+    assert_eq!(row.cover_tone.as_deref(), Some("c8281ef0a020"));
+    assert_eq!(row.cover_tone_url, row.image_url);
+    assert!(row.cover_tone_checked_at.is_some());
+    assert!(
+        issue(&app, 3)
+            .await
+            .unwrap()
+            .cover_tone_checked_at
+            .is_none()
+    );
+
+    // Read: the next tick asks for nothing.
+    asked.lock().unwrap().clear();
+    assert_eq!(
+        calendar::read_cover_tones_with(&app.state(), fetch)
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(asked.lock().unwrap().is_empty());
+
+    // Metron replaces the art: that cover is read again, the other is not.
+    set_image(
+        &app,
+        2,
+        "https://static.metron.cloud/media/issue/2-final.jpg",
+    )
+    .await;
+    assert_eq!(
+        calendar::read_cover_tones_with(&app.state(), fetch)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        *asked.lock().unwrap(),
+        vec!["https://static.metron.cloud/media/issue/2-final.jpg".to_owned()]
+    );
+}
+
+#[tokio::test]
+async fn a_cover_that_cannot_be_read_waits_a_day_and_other_hosts_are_never_fetched() {
+    let mock = MockServer::start().await;
+    let app = spawn(&mock).await;
+    enable(&app);
+    let today = Utc::now().date_naive();
+    seed_issue(&app, 1, 50, today).await;
+    seed_issue(&app, 2, 50, today).await;
+    set_image(&app, 1, &metron_cover(1)).await;
+    set_image(&app, 2, "https://elsewhere.example/cover.jpg").await;
+
+    let asked = std::sync::Mutex::new(Vec::<String>::new());
+    // The download fails; a malformed value would be dropped the same way.
+    let fetch = |url: String| {
+        asked.lock().unwrap().push(url);
+        async { None }
+    };
+    assert_eq!(
+        calendar::read_cover_tones_with(&app.state(), fetch)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        *asked.lock().unwrap(),
+        vec![metron_cover(1)],
+        "only Metron's image host is fetched"
+    );
+    for id in [1, 2] {
+        let row = issue(&app, id).await.unwrap();
+        assert!(row.cover_tone.is_none());
+        assert!(row.cover_tone_checked_at.is_some(), "attempt {id} stamped");
+    }
+
+    // Inside the retry window nothing is asked again.
+    asked.lock().unwrap().clear();
+    calendar::read_cover_tones_with(&app.state(), fetch)
+        .await
+        .unwrap();
+    assert!(asked.lock().unwrap().is_empty());
+
+    // A day later the failed cover is tried once more.
+    let mut row = issue(&app, 1).await.unwrap().into_active_model();
+    row.cover_tone_checked_at = Set(Some(Utc::now().fixed_offset() - Duration::hours(25)));
+    row.update(&app.state().db).await.unwrap();
+    let bad = |url: String| {
+        asked.lock().unwrap().push(url);
+        async { Some("not a colour".to_owned()) }
+    };
+    assert_eq!(
+        calendar::read_cover_tones_with(&app.state(), bad)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(*asked.lock().unwrap(), vec![metron_cover(1)]);
+    assert!(issue(&app, 1).await.unwrap().cover_tone.is_none());
+}
+
+#[tokio::test]
+async fn a_calendar_fed_from_another_endpoint_fetches_no_covers() {
+    // Every test app points Metron at a mock, which is exactly the case:
+    // the real entry point returns before touching the network.
+    let mock = MockServer::start().await;
+    let app = spawn(&mock).await;
+    enable(&app);
+    seed_issue(&app, 1, 50, Utc::now().date_naive()).await;
+    set_image(&app, 1, &metron_cover(1)).await;
+    assert_eq!(calendar::read_cover_tones(&app.state()).await.unwrap(), 0);
+    assert!(
+        issue(&app, 1)
+            .await
+            .unwrap()
+            .cover_tone_checked_at
+            .is_none()
+    );
 }
 
 #[tokio::test]

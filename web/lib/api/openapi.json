@@ -38741,6 +38741,13 @@
             ],
             "format": "date"
           },
+          "cover_tone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The cover's colours, read once by the server because the image\nhost does not let a browser sample them: twelve hex digits, the\naverage colour then the most vibrant. Absent until the cover has\nbeen read."
+          },
           "cover_url": {
             "type": [
               "string",
