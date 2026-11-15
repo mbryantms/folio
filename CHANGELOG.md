@@ -13,6 +13,31 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.84.0](https://github.com/mbryantms/folio/compare/v0.83.0...v0.84.0) (2026-11-15)
+
+
+### Added
+
+* **covers:** cover colours come from the server, on first paint ([#1679](https://github.com/mbryantms/folio/issues/1679)) ([5509ea4](https://github.com/mbryantms/folio/commit/5509ea4294ca0b5d20bbc484ff6bad3729199c8c))
+* **upcoming:** upcoming cards answer in their cover's colour ([#1677](https://github.com/mbryantms/folio/issues/1677)) ([980ddab](https://github.com/mbryantms/folio/commit/980ddabf0d5a1179cfbe65d114c3257f1abd01fe))
+* **web:** a drawn Folio lockup in every title bar ([#1675](https://github.com/mbryantms/folio/issues/1675)) ([6786763](https://github.com/mbryantms/folio/commit/67867633859711508f6a5009335b05c3bcc57def))
+* **web:** a view card opens from anywhere on it ([#1673](https://github.com/mbryantms/folio/issues/1673)) ([4ede97e](https://github.com/mbryantms/folio/commit/4ede97e04ffab926e71f48d30db3006f77d9618c))
+* **web:** every pill on a cover follows the standard ([#1678](https://github.com/mbryantms/folio/issues/1678)) ([2fb51de](https://github.com/mbryantms/folio/commit/2fb51dee400e5d5a3ba12e5ba53874b3f5132c5a))
+* **web:** one cover frame, so every cover card tilts and shines ([#1674](https://github.com/mbryantms/folio/issues/1674)) ([3a5b2e0](https://github.com/mbryantms/folio/commit/3a5b2e065c1df4bb016dd56248211529c710a1c1))
+* **web:** one standard pill for cover art ([#1676](https://github.com/mbryantms/folio/issues/1676)) ([466c6ca](https://github.com/mbryantms/folio/commit/466c6ca22162f952b15fc5501a549da644d7475b))
+
+
+### Fixed
+
+* clear clippy 1.100 lints blocking the rust toolchain bump ([#1669](https://github.com/mbryantms/folio/issues/1669)) ([b34137c](https://github.com/mbryantms/folio/commit/b34137c426d7462fb29a3a6ca6355dd7d91baaec))
+
+
+### Dependencies
+
+* update dependency @scalar/api-reference-react to v0.9.90 ([#1670](https://github.com/mbryantms/folio/issues/1670)) ([95125a4](https://github.com/mbryantms/folio/commit/95125a415641d56cd6d4cd7f618b909b79e8a8ec))
+* update dependency cron-parser to v5.10.5 ([#1672](https://github.com/mbryantms/folio/issues/1672)) ([4a4518a](https://github.com/mbryantms/folio/commit/4a4518a9042ca3faea2270e667ee2b1554c1e327))
+* update rust to v1.100.0 ([#1660](https://github.com/mbryantms/folio/issues/1660)) ([d3c1c70](https://github.com/mbryantms/folio/commit/d3c1c70cef1c078c6961f142fcb2e9b6cbbf987b))
+
 ## [0.83.0](https://github.com/mbryantms/folio/compare/v0.82.1...v0.83.0) (2026-11-15)
 
 
