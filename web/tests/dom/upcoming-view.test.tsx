@@ -271,4 +271,20 @@ describe("UpcomingView empty states", () => {
       screen.getByText("The release calendar is not filled yet"),
     ).toBeTruthy();
   });
+
+  it("blames the filter, not the unfetched calendar, when a filter is on", () => {
+    // Mylar's pull list can fill the page before the calendar is fetched;
+    // a filter that hides those rows is the reason the list is empty.
+    state.summary = summary({ calendar_synced_at: null });
+    render(<UpcomingView />);
+    fireEvent.click(toolbar().getByRole("button", { name: "New #1s" }));
+    expect(screen.getByText("No releases match these filters")).toBeTruthy();
+    expect(
+      screen.queryByText("The release calendar is not filled yet"),
+    ).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(
+      screen.getByText("The release calendar is not filled yet"),
+    ).toBeTruthy();
+  });
 });

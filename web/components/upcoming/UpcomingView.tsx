@@ -490,6 +490,22 @@ function NothingUpcoming({
   onClearFilters: () => void;
   onShowAll: () => void;
 }) {
+  // Filters first: with a filter on, "nothing" says the filter is too
+  // narrow, whatever the calendar's state (Mylar's pull list can fill the
+  // page before the calendar has ever been fetched).
+  if (filtered) {
+    return (
+      <EmptyState
+        icon={CalendarDays}
+        title="No releases match these filters"
+        action={
+          <Button variant="outline" onClick={onClearFilters}>
+            Clear filters
+          </Button>
+        }
+      />
+    );
+  }
   if (neverSynced) {
     return (
       <EmptyState
@@ -502,19 +518,6 @@ function NothingUpcoming({
               <Link href="/admin/upcoming">Check the calendar status</Link>
             </Button>
           ) : undefined
-        }
-      />
-    );
-  }
-  if (filtered) {
-    return (
-      <EmptyState
-        icon={CalendarDays}
-        title="No releases match these filters"
-        action={
-          <Button variant="outline" onClick={onClearFilters}>
-            Clear filters
-          </Button>
         }
       />
     );
