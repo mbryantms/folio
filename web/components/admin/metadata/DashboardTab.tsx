@@ -106,6 +106,7 @@ export function DashboardTab() {
       <VariantCoverBackfillCard />
 
       <CoverVariantBackfillCard />
+      <CoverToneBackfillCard />
       <NameSuffixBackfillCard />
       <CsvCacheBackfillCard />
     </div>
@@ -289,6 +290,18 @@ function CoverVariantBackfillCard() {
       endpoint="/admin/metadata/cover-variant-backfill"
       icon={<Images className="mr-2 size-4" />}
       label="Generate cover variants"
+    />
+  );
+}
+
+function CoverToneBackfillCard() {
+  return (
+    <BackfillCard
+      title="Cover colours"
+      description="Read each cover's average and most vibrant colour from the cover thumbnail already on disk, so cards show the cover's own colour while it loads and on hover, on every device, from the first visit. New covers get it automatically; this fills in the back catalogue. No archive access; runs in the background; safe to re-run."
+      endpoint="/admin/metadata/cover-tone-backfill"
+      icon={<Images className="mr-2 size-4" />}
+      label="Read cover colours"
     />
   );
 }

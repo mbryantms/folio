@@ -234,6 +234,9 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
                 // docs) and thumbnail encoding. Decoding once spares
                 // a second zip-read + decode per issue.
                 let mut cover_hashes: Option<crate::metadata::phash::ArchiveCoverHashes> = None;
+                // The colours of the cover as displayed (after the front
+                // crop and a chosen cover), for `issues.cover_tone`.
+                let mut cover_tone: Option<String> = None;
                 let cover_result: Result<(), thumbnails::ThumbError> =
                     if matches!(kind, ThumbsJobKind::Cover | ThumbsJobKind::CoverAndStrip) {
                         match thumbnails::decode_page(&mut *archive, cover_page_index) {
@@ -276,6 +279,8 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
                                     }
                                     None => img,
                                 };
+                                cover_tone = crate::metadata::cover_tone::tone_from_image(&img)
+                                    .map(|t| t.encode());
                                 let cover = thumbnails::encode_cover_from_image(
                                     &data_dir,
                                     &issue_id,
@@ -338,7 +343,7 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
                             )
                         }),
                     };
-                outcome.map(|o| (o, cover_hashes))
+                outcome.map(|o| (o, cover_hashes, cover_tone))
             })
             .await
         }
@@ -351,7 +356,7 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
     };
 
     match outcome {
-        Ok(Ok((o, cover_hashes))) => {
+        Ok(Ok((o, cover_hashes, cover_tone))) => {
             if !o.failed.is_empty() {
                 let preview = o
                     .failed
@@ -386,6 +391,19 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
                         issue_id = %row.id,
                         error = %e,
                         "thumbs job: cover phash persist failed (non-fatal)"
+                    );
+                }
+                // The colours of the cover just encoded, for the cards'
+                // placeholder and hover tint. Non-fatal: the browser's
+                // own sampling is the fallback.
+                if let Some(tone) = cover_tone
+                    && let Err(e) =
+                        crate::metadata::cover_tone::store_issue_tone(&app.db, &row.id, &tone).await
+                {
+                    tracing::debug!(
+                        issue_id = %row.id,
+                        error = %e,
+                        "thumbs job: cover colour persist failed (non-fatal)"
                     );
                 }
             }

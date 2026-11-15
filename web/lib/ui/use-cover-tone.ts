@@ -36,7 +36,7 @@ export function useCoverTone(
 
   useLayoutEffect(() => {
     if (!src) return;
-    const tone = decodeTone(known ?? undefined) ?? getTone(src);
+    const tone = decodeTone(known) ?? getTone(src);
     if (!tone) return;
     if (boxRef.current) {
       boxRef.current.style.backgroundColor = `rgb(${tone.average})`;

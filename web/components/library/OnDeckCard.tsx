@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { CoverSkeleton } from "@/components/CoverSkeleton";
 import { Cover } from "@/components/Cover";
 import { issueCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
+import { coverTintStyle } from "@/lib/ui/cover-tone-style";
 import { CoverFrame } from "@/components/library/CoverFrame";
 import {
   CoverMenuButton,
@@ -134,6 +135,7 @@ export function OnDeckCard({
     <>
       <Link
         data-card=""
+        style={coverTintStyle(issue.cover_tone)}
         href={issueUrl(issue, { cbl: cblParam })}
         onClick={morph.onClick}
         className={cn(
@@ -145,6 +147,7 @@ export function OnDeckCard({
           <CoverMorph name={morph.name} landing={morph.landing}>
             <Cover
               src={issue.cover_url}
+              tone={issue.cover_tone}
               alt={heading}
               fallback={numberLabel}
               className="w-full transition group-hover:brightness-110"

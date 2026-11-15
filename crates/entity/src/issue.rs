@@ -293,6 +293,13 @@ pub struct Model {
     /// Matching-accuracy-1.0 M6.
     #[serde(default)]
     pub cover_page_index: i32,
+    /// The displayed cover's average and most vibrant colours, twelve hex
+    /// digits (`metadata::cover_tone`, migration `m20271123`). Written by
+    /// the cover thumbnail job from the image it encodes, so it follows a
+    /// chosen cover page; NULL until that job (or the `cover_tone`
+    /// backfill) has run.
+    #[sea_orm(nullable)]
+    pub cover_tone: Option<String>,
 
     /// Operator "this is as complete as it'll get" acknowledgement
     /// (metadata-at-scale B4). When set, the per-request completeness tier

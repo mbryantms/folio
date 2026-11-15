@@ -2080,6 +2080,7 @@ mod tests {
             last_sidecar_rewrite_at: None,
             metron_info_raw: None,
             cover_page_index: 0,
+            cover_tone: None,
             metadata_review_accepted_at: None,
             metadata_review_accepted_by: None,
         }

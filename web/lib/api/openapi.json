@@ -1138,6 +1138,26 @@
         }
       }
     },
+    "/api/admin/metadata/cover-tone-backfill": {
+      "post": {
+        "operationId": "metadata_cover_tone_backfill",
+        "responses": {
+          "202": {
+            "description": "backfill job enqueued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackfillEnqueuedResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
     "/api/admin/metadata/cover-variant-backfill": {
       "post": {
         "operationId": "metadata_cover_variant_backfill",
@@ -16259,7 +16279,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "`cover_phash` | `variant_cover` | `cover_variant` | `name_suffixes` |\n`csv_cache`."
+            "description": "`cover_phash` | `variant_cover` | `cover_variant` | `name_suffixes` |\n`csv_cache` | `cover_tone`."
           }
         }
       },
@@ -25981,6 +26001,13 @@
             "format": "int32",
             "description": "0-based index of the page used as the cover. Surfaced so the page\neditor can highlight the current cover. `archive-rewrite-1.0`."
           },
+          "cover_tone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The cover's colours (see `IssueSummaryView.cover_tone`), for the\npage's header cover. Absent until the cover has been read."
+          },
           "created_at": {
             "type": "string"
           },
@@ -26710,6 +26737,13 @@
           "updated_at"
         ],
         "properties": {
+          "cover_tone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The cover's colours, so a card can show its placeholder colour and\nhover tint before the image has loaded: twelve hex digits, the\naverage colour then the most vibrant. Absent until the cover\nthumbnail job (or the `cover_tone` backfill) has read the cover."
+          },
           "cover_url": {
             "type": [
               "string",
@@ -36677,6 +36711,13 @@
             "items": {
               "type": "string"
             }
+          },
+          "cover_tone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "That cover's colours (see `IssueSummaryView.cover_tone`). Absent\nuntil the cover has been read."
           },
           "cover_url": {
             "type": [

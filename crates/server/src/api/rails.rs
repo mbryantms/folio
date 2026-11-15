@@ -1068,6 +1068,7 @@ pub async fn on_this_day(
         year: Option<i32>,
         page_count: Option<i32>,
         special_type: Option<String>,
+        cover_tone: Option<String>,
         created_at: chrono::DateTime<chrono::FixedOffset>,
         updated_at: chrono::DateTime<chrono::FixedOffset>,
         series_slug: String,
@@ -1090,6 +1091,7 @@ pub async fn on_this_day(
         r#"
             SELECT i.id, i.slug, i.series_id, i.title, i.number_raw,
                    i.sort_number, i.year, i.page_count, i.special_type,
+                   i.cover_tone,
                    i.created_at, i.updated_at,
                    s.slug AS series_slug, s.name AS series_name
               FROM issues i
@@ -1133,6 +1135,7 @@ pub async fn on_this_day(
             page_count: r.page_count,
             state: entity::issue::IssueState::Active,
             special_type: r.special_type,
+            cover_tone: crate::api::issue_card::card_cover_tone(r.cover_tone),
             created_at: r.created_at.to_rfc3339(),
             updated_at: r.updated_at.to_rfc3339(),
             progress: None,
@@ -1272,6 +1275,7 @@ pub async fn recent_issues(State(app): State<AppState>, user: CurrentUser) -> Re
         year: Option<i32>,
         page_count: Option<i32>,
         special_type: Option<String>,
+        cover_tone: Option<String>,
         created_at: chrono::DateTime<chrono::FixedOffset>,
         updated_at: chrono::DateTime<chrono::FixedOffset>,
         series_slug: String,
@@ -1332,6 +1336,7 @@ pub async fn recent_issues(State(app): State<AppState>, user: CurrentUser) -> Re
             r#"
             SELECT i.id, i.slug, i.series_id, i.title, i.number_raw,
                    i.sort_number, i.year, i.page_count, i.special_type,
+                   i.cover_tone,
                    i.created_at, i.updated_at,
                    s.slug AS series_slug, s.name AS series_name
             FROM issues i
@@ -1399,6 +1404,7 @@ pub async fn recent_issues(State(app): State<AppState>, user: CurrentUser) -> Re
                 state: entity::issue::IssueState::Active,
                 cover_url,
                 special_type: r.special_type,
+                cover_tone: crate::api::issue_card::card_cover_tone(r.cover_tone),
                 created_at: r.created_at.to_rfc3339(),
                 updated_at: r.updated_at.to_rfc3339(),
                 progress: None,

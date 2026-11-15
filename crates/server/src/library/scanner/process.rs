@@ -1955,6 +1955,8 @@ pub async fn persist_prepared<C: ConnectionTrait + sea_orm::TransactionTrait>(
             cover_page_index: Set(
                 parsers::comicinfo::front_cover_page_index(&info.pages).unwrap_or(0)
             ),
+            // Written by the cover thumbnail job from the image it encodes.
+            cover_tone: Set(None),
             pages: Set(pages_json),
             comic_info_raw: Set(comic_info_raw),
             alternate_series: Set(info.alternate_series.clone()),

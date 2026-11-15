@@ -259,6 +259,7 @@ pub async fn thumb(
         match r {
             Ok(Ok(path)) => {
                 app.cache_thumb_path(cache_key, path.clone());
+                refresh_cover_tone(&app, &row.id, &path);
                 return serve_file(&path, &headers).await;
             }
             Ok(Err(e)) => {
@@ -338,6 +339,11 @@ pub async fn thumb(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
+    // A cover made here, not by the thumbnail job, gets its colours the
+    // same way: read from the file just written.
+    if matches!(variant, Variant::Cover | Variant::CoverSmall) {
+        refresh_cover_tone(&app, &row.id, &path);
+    }
 
     // Background catchup: enqueue one deduped strip job so the rest of the
     // page map doesn't have to take the inline path next time. Best-effort
@@ -565,4 +571,25 @@ async fn sniff_cover_file(file: &mut tokio::fs::File) -> Option<archive::image_s
     }
     file.seek(std::io::SeekFrom::Start(0)).await.ok()?;
     archive::image_sniff::sniff(&head[..filled])
+}
+
+/// Store the colours of a cover this endpoint just generated
+/// (`issues.cover_tone`, roadmap WP-9.7), off the request: the thumbnail
+/// job does this for the covers it makes, and a library with the job off,
+/// or a cover re-made after a cover pick, comes through here instead.
+/// Best-effort; the web app's own sampling is the fallback.
+fn refresh_cover_tone(app: &AppState, issue_id: &str, path: &std::path::Path) {
+    let (db, id, path) = (app.db.clone(), issue_id.to_owned(), path.to_path_buf());
+    tokio::spawn(async move {
+        let tone =
+            tokio::task::spawn_blocking(move || crate::metadata::cover_tone::tone_from_file(&path))
+                .await
+                .ok()
+                .flatten();
+        if let Some(tone) = tone
+            && let Err(e) = crate::metadata::cover_tone::store_issue_tone(&db, &id, &tone).await
+        {
+            tracing::debug!(issue_id = %id, error = %e, "cover colour persist failed (non-fatal)");
+        }
+    });
 }

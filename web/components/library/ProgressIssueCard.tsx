@@ -8,6 +8,7 @@ import { ProgressFill } from "@/components/library/ProgressFill";
 import { Cover } from "@/components/Cover";
 import { CoverMorph } from "@/components/library/CoverMorph";
 import { issueCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
+import { coverTintStyle } from "@/lib/ui/cover-tone-style";
 import { CoverFrame } from "@/components/library/CoverFrame";
 import {
   CoverMenuButton,
@@ -137,7 +138,11 @@ export function ProgressIssueCard({
   // across portals, so a click inside the dialog would otherwise
   // propagate to the Link and route away.
   return (
-    <div className={cn("flex flex-col", className)} data-card="">
+    <div
+      className={cn("flex flex-col", className)}
+      data-card=""
+      style={coverTintStyle(issue.cover_tone)}
+    >
       <Link
         href={resumesOnTap ? resumeHref : detailsHref}
         onClick={morph.onClick}
@@ -156,6 +161,7 @@ export function ProgressIssueCard({
           <CoverMorph name={morph.name} landing={morph.landing}>
             <Cover
               src={issue.cover_url}
+              tone={issue.cover_tone}
               alt={headerTitle}
               fallback={numberLabel}
               className="w-full transition group-hover:brightness-110"

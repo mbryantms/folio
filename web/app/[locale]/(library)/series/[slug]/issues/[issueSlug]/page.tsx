@@ -29,6 +29,7 @@ import { IssueActivityTab } from "@/components/activity/IssueActivityTab";
 import { Cover } from "@/components/Cover";
 import { MorphLink } from "@/components/library/MorphLink";
 import { CoverFrame } from "@/components/library/CoverFrame";
+import { coverTintStyle } from "@/lib/ui/cover-tone-style";
 import { ChipList } from "@/components/library/ChipList";
 import {
   DetailSection,
@@ -302,6 +303,7 @@ export default async function IssuePage({
         <div className="flex flex-col gap-3 sm:gap-4">
           <div
             data-cover-hero={issueCoverName(issue.series_slug, issue.slug)}
+            style={coverTintStyle(issue.cover_tone)}
             className="mx-auto w-4/5 max-w-full sm:w-56 lg:mx-0 lg:w-72"
           >
             <CoverFrame lean="hero">
@@ -316,6 +318,7 @@ export default async function IssuePage({
                       ? `/issues/${issue.id}/pages/0/thumb`
                       : null
                   }
+                  tone={issue.cover_tone}
                   alt={heading}
                   fallback={
                     issue.state === "active"
@@ -1264,12 +1267,14 @@ function MoreInSeriesIssueCard({ issue }: { issue: IssueSummaryView }) {
       href={issueUrl(issue)}
       // `data-card`: same cover-colour hover glow as every other card.
       data-card=""
+      style={coverTintStyle(issue.cover_tone)}
       className="group block min-w-0 space-y-1.5 rounded-md focus-visible:outline-none"
     >
       {/* Same tilt + sheen as the library cards (when that effect is on). */}
       <CoverFrame>
         <Cover
           src={issue.cover_url}
+          tone={issue.cover_tone}
           alt={issueLabel(issue)}
           fallback={
             issue.state === "active" ? "Cover" : issueStateLabel(issue.state)

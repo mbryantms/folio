@@ -25,6 +25,7 @@ import { BackButton } from "@/components/shell/BackButton";
 import { Breadcrumbs } from "@/components/shell/Breadcrumbs";
 import { Cover } from "@/components/Cover";
 import { CoverFrame } from "@/components/library/CoverFrame";
+import { coverTintStyle } from "@/lib/ui/cover-tone-style";
 import { ChipList } from "@/components/library/ChipList";
 import {
   DetailSection,
@@ -266,6 +267,7 @@ export default async function SeriesPage({
         <div className="flex flex-col gap-3 sm:gap-4">
           <div
             data-cover-hero={seriesCoverName(series.slug)}
+            style={coverTintStyle(series.cover_tone)}
             className="mx-auto w-4/5 max-w-full sm:w-56 lg:mx-0 lg:w-72"
           >
             <CoverFrame lean="hero">
@@ -276,6 +278,7 @@ export default async function SeriesPage({
               >
                 <Cover
                   src={series.cover_url}
+                  tone={series.cover_tone}
                   alt={`Cover of ${series.name}`}
                   fallback={series.publisher ?? "—"}
                 />

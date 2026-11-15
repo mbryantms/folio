@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ProgressFill } from "@/components/library/ProgressFill";
 import { Cover } from "@/components/Cover";
 import { issueCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
+import { coverTintStyle } from "@/lib/ui/cover-tone-style";
 import {
   CoverMenuButton,
   type CoverMenuAction,
@@ -125,6 +126,7 @@ export function CblWindowCard({
     <>
       <Link
         data-card=""
+        style={coverTintStyle(issue.cover_tone)}
         href={issueUrl(issue, { cbl: cblSavedViewId })}
         onClick={morph.onClick}
         className={cn(
@@ -145,6 +147,7 @@ export function CblWindowCard({
           <CoverMorph name={morph.name} landing={morph.landing}>
             <Cover
               src={issue.cover_url}
+              tone={issue.cover_tone}
               alt={heading}
               fallback={numberLabel}
               className={cn(

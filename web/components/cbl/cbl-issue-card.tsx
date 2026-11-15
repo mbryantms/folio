@@ -27,6 +27,7 @@ import { useUpsertIssueProgress } from "@/lib/api/mutations";
 import { cardBadge, useCardProgress } from "@/lib/api/card-progress";
 import { issueLabel } from "@/lib/format";
 import { issueCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
+import { coverTintStyle } from "@/lib/ui/cover-tone-style";
 import { cn } from "@/lib/utils";
 import type { CblEntryView, IssueSummaryView } from "@/lib/api/types";
 import { issueUrl, readerUrl } from "@/lib/urls";
@@ -186,6 +187,7 @@ export function CblIssueCard({
       >
         <Cover
           src={issue?.cover_url}
+          tone={issue?.cover_tone}
           alt={heading}
           fallback={numberLabel}
           className={cn(
@@ -287,6 +289,7 @@ export function CblIssueCard({
             aria-pressed={selectMode?.isSelected ?? false}
             className={wrapClass}
             data-card=""
+            style={coverTintStyle(issue?.cover_tone)}
           >
             {cover(issue.state === "active")}
             {meta}
@@ -296,6 +299,7 @@ export function CblIssueCard({
             href={issueUrl(issue, { cbl: cblSavedViewId })}
             className={wrapClass}
             data-card=""
+            style={coverTintStyle(issue?.cover_tone)}
             onClick={morph.onClick}
           >
             {cover(issue.state === "active")}

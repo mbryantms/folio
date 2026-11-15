@@ -296,6 +296,7 @@ async fn seed(app: &TestApp) -> (Uuid, String) {
         last_sidecar_rewrite_at: Set(None),
         metron_info_raw: Set(None),
         cover_page_index: Set(0),
+        cover_tone: Set(None),
         metadata_review_accepted_at: Set(None),
         metadata_review_accepted_by: Set(None),
     }

@@ -49,6 +49,8 @@ pub(crate) struct IssueCardRow {
     /// WP-2.7 age-rating cap checks: the issue's own rating (its series'
     /// rating is checked as well).
     pub age_rating: Option<String>,
+    /// The displayed cover's colours (`issues.cover_tone`).
+    pub cover_tone: Option<String>,
 }
 
 impl From<issue::Model> for IssueCardRow {
@@ -70,8 +72,16 @@ impl From<issue::Model> for IssueCardRow {
             created_at: m.created_at,
             updated_at: m.updated_at,
             age_rating: m.age_rating,
+            cover_tone: m.cover_tone,
         }
     }
+}
+
+/// A stored cover colour as a card may send it: only the twelve hex digits
+/// `metadata::cover_tone` writes. The web app puts the value into inline
+/// styles, so nothing else is passed on.
+pub(crate) fn card_cover_tone(stored: Option<String>) -> Option<String> {
+    stored.filter(|t| crate::metadata::cover_tone::is_encoded(t))
 }
 
 impl IssueCardRow {
@@ -94,6 +104,7 @@ impl IssueCardRow {
             state: self.state,
             cover_url,
             special_type: self.special_type,
+            cover_tone: card_cover_tone(self.cover_tone),
             created_at: self.created_at.to_rfc3339(),
             updated_at: self.updated_at.to_rfc3339(),
             progress: None,
