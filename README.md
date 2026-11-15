@@ -90,6 +90,9 @@ the library stays portable and Folio's database is only a cache.
   custom pages of your own.
 - Search across series, issues, people and your own markers.
 - Reading stats and a reading log per user.
+- **Upcoming releases**: new issues week by week from Metron's release
+  calendar, your own series first, with an optional read-only view of
+  what a Mylar install is tracking and downloading.
 
 ### Read anywhere
 

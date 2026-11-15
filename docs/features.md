@@ -31,6 +31,10 @@ image-rich feature showcase (a suggested shot list is at the end).
 - **CBL reading lists as a first-class citizen** — import from a file, a
   URL, or a built-in GitHub catalog browser; three-tier matching; refresh
   with a structural diff history; export back to `.cbl`.
+- **See what is coming** — a week-by-week view of upcoming issues from
+  Metron's release calendar, with your own series first. If you run
+  Mylar, it can show what Mylar is doing about each one, without Folio
+  ever being able to control it.
 - **Read anywhere over OPDS** — OPDS 1.2 and 2.0, Page Streaming, and
   bidirectional progress sync with Panels (via a Komga-compatible shim) and
   KOReader (via a sync-server shim).
@@ -395,6 +399,43 @@ cover dates) and proposes the mappings for you to accept.
   whose image is gone stays on its page number and is tagged
   `page-drift`.
 - **Ratings** — half-star precision on both issues and series.
+
+## Upcoming releases
+
+Off by default; an admin turns it on under **Admin → Upcoming releases**.
+It needs Metron enabled with credentials.
+
+- **A release calendar for about eight weeks ahead.** Folio reads Metron's
+  in-store dates once a day and keeps the coming weeks (the window is a
+  setting, up to twelve). Metron lists a full week of releases roughly six
+  weeks out and thins after that, so the far weeks fill in as they
+  approach.
+- **`/upcoming` opens on your series.** A release is "yours" when its
+  series is in a library you can open, or on Mylar's watchlist. A toggle
+  shows every publisher's releases. Filter by publisher, new #1s, tracked
+  or in library; view covers or a compact list.
+- **One badge says where each issue stands**: In library, Downloaded,
+  Downloading, Wanted, Failed, Tracked. Select a release for its dates,
+  the stage in words, and links to the series and to Metron.
+- **Alerts inside the app**: an "Out this week" home rail you can pin, a
+  count on the sidebar entry, and a "Next issue" line on each series page.
+  There is no email or push.
+- **Mylar, view only.** A small script on the Mylar host reads Mylar's
+  database read-only and pushes a snapshot to Folio every 15 minutes when
+  something changed ([setup](install/mylar.md)). Folio never contacts
+  Mylar, stores no Mylar address or key, and has no button that changes
+  anything in it. If your firewall keeps everything away from Mylar, it
+  can stay that way.
+- **Who sees what.** The calendar is public information. What Mylar tracks
+  spans your whole collection, so Mylar's badges show only to accounts
+  that can open every library (admins, or a full grant with no age-rating
+  cap). Everyone else gets the calendar with "in library" for the series
+  they can see. Mylar's download queue, failures and wanted backlog are
+  on the admin page only.
+
+Limits worth knowing: releases beyond Metron's reach (about eight weeks)
+are not shown; small publishers Metron does not list appear only for the
+current week, from Mylar's pull list; covers are hotlinked from Metron.
 
 ## Search
 

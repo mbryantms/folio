@@ -167,6 +167,43 @@ docker compose -f compose.prod.yml up -d --no-deps app
 
 ## Breaking changes by version
 
+### Unreleased — upcoming releases (off by default)
+
+Nothing changes until an admin turns it on.
+
+- Migrations `m20271118_000001` to `m20271121_000001` add the release
+  calendar tables (`release_calendar_series`, `release_calendar_issue`,
+  `release_calendar_state`), the Mylar snapshot tables
+  (`integration_tokens`, `mylar_snapshot`, `mylar_watch`, `mylar_pull`,
+  `mylar_wanted`), one index on `series_provider_range`, and one built-in
+  home rail ("Out this week", not pinned for anyone). All are new and
+  empty; nothing to do.
+- Four settings, all off or at their defaults, changed under **Admin →
+  Upcoming releases**: `upcoming.enabled`, `upcoming.weeks_ahead` (8),
+  `integrations.mylar.enabled`, `integrations.mylar.stale_after_minutes`
+  (180). None has an environment variable.
+- When on, Folio asks Metron for the release calendar once a day (about
+  eleven requests) and fetches each new series' details in the background.
+  Both stop while fewer than 8 of Metron's 20 requests a minute, or 1,000
+  of its 5,000 a day, remain, so interactive matching keeps its budget.
+  The first fill of a few hundred series takes under an hour.
+- A new job queue ("Release calendar sync" on Admin → Background work)
+  and two scheduler entries
+  (daily at 05:15 UTC, and a once-a-minute sweep that does nothing while
+  the feature is off). With several replicas every replica runs both, as
+  with the other crons; the daily pass still runs once.
+- Showing Mylar's status is a separate, optional step: a script you
+  install on the Mylar host pushes a read-only snapshot to
+  `POST /integrations/mylar/snapshot` with a token you generate in the
+  admin page. See [mylar.md](mylar.md). Folio never connects to Mylar, so
+  no firewall rule needs to change on the Mylar side; the Mylar host needs
+  to reach Folio over HTTPS.
+- Three new metrics: `folio_release_calendar_issues`,
+  `folio_release_calendar_last_sync_timestamp_seconds`,
+  `folio_mylar_snapshot_received_timestamp_seconds`.
+- The sidebar gains an "Upcoming" entry while the feature is on. A saved
+  sidebar layout keeps its order; the new entry closes the Browse section.
+
 ### Unreleased — Tesseract is removed from the image
 
 - `TESSDATA_PREFIX` is no longer read. The image no longer sets it, and
