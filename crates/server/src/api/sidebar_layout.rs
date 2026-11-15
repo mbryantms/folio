@@ -476,10 +476,14 @@ pub(crate) async fn compute_layout(
             .await?;
         let view_by_id: HashMap<Uuid, saved_view::Model> =
             view_rows.into_iter().map(|v| (v.id, v)).collect();
+        let cfg = app.cfg();
         for p in pin_rows {
             let Some(v) = view_by_id.get(&p.view_id) else {
                 continue;
             };
+            if !crate::api::saved_views::system_view_available(&cfg, v) {
+                continue;
+            }
             defaults.push(SidebarEntryView {
                 kind: KIND_VIEW,
                 ref_id: v.id.to_string(),
@@ -603,6 +607,11 @@ fn view_default_icon(v: &saved_view::Model) -> String {
 }
 
 fn view_href(v: &saved_view::Model) -> String {
+    // "Out this week" has no page of its own: the rail is the first week
+    // of the Upcoming page.
+    if v.system_key.as_deref() == Some(crate::api::saved_views::SYSTEM_KEY_UPCOMING_THIS_WEEK) {
+        return "/upcoming".to_string();
+    }
     if v.kind == SavedViewKind::System
         && let Some(key) = v.system_key.as_ref()
     {

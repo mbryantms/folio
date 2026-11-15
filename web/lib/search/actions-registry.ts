@@ -19,6 +19,7 @@ import {
   BookmarkCheck,
   BookOpen,
   BookOpenCheck,
+  CalendarDays,
   Compass,
   Copy,
   Download,
@@ -279,6 +280,14 @@ export const SEARCH_ACTIONS: readonly SearchAction[] = [
     keywords: ["cbl", "reading order", "imported lists"],
   },
   {
+    id: "go-upcoming",
+    label: "Upcoming",
+    group: "Library",
+    icon: CalendarDays,
+    href: "/upcoming",
+    keywords: ["releases", "new issues", "this week", "calendar", "pull list"],
+  },
+  {
     id: "go-want-to-read",
     label: "Want to Read",
     group: "Library",
@@ -373,6 +382,15 @@ export const SEARCH_ACTIONS: readonly SearchAction[] = [
     href: "/admin/metadata",
     role: "admin",
     keywords: ["comicvine", "providers", "match", "tags"],
+  },
+  {
+    id: "admin-upcoming",
+    label: "Upcoming releases",
+    group: "Admin",
+    icon: CalendarDays,
+    href: "/admin/upcoming",
+    role: "admin",
+    keywords: ["metron", "mylar", "release calendar", "pull list", "token"],
   },
   {
     id: "admin-duplicates",

@@ -16,6 +16,7 @@ import { CountUp } from "@/components/CountUp";
 import { HeroBackdrop } from "@/components/library/HeroBackdrop";
 import { MorphLink } from "@/components/library/MorphLink";
 import { RecordVisit } from "@/components/search/RecordVisit";
+import { SeriesNextIssueFact } from "@/components/upcoming/SeriesNextIssueFact";
 import { seriesVisit } from "@/lib/search/recent-visits";
 import { seriesCoverName } from "@/lib/ui/cover-morph-names";
 import { notFound, redirect } from "next/navigation";
@@ -814,9 +815,10 @@ function SeriesFactRow({
       label: series.language_code.toUpperCase(),
     });
   }
-  if (facts.length === 0) return null;
   return (
-    <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs sm:gap-x-4 sm:gap-y-2 sm:text-sm">
+    // `empty:hidden`: the next-issue fact is a client component that may
+    // render nothing, and a series can have no other fact.
+    <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs empty:hidden sm:gap-x-4 sm:gap-y-2 sm:text-sm">
       {facts.map((f, i) => (
         <span key={i} className="inline-flex items-center gap-1.5">
           {/* Icons drop on mobile so the row stays compact and on a
@@ -827,6 +829,8 @@ function SeriesFactRow({
           <span>{f.label}</span>
         </span>
       ))}
+      {/* The next announced issue, from the release calendar. */}
+      <SeriesNextIssueFact slug={series.slug} />
     </div>
   );
 }

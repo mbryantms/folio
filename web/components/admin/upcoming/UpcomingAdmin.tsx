@@ -37,6 +37,7 @@ import type {
 import { formatRelativeDate } from "@/lib/format";
 import { monthShort } from "@/lib/log/overview";
 
+import { MylarActivityCard } from "./MylarActivityCard";
 import { MylarCard } from "./MylarCard";
 import { statusToneText } from "@/lib/ui/status-tone";
 
@@ -86,6 +87,7 @@ export function UpcomingAdmin() {
       />
       <CalendarStatusCard status={status.data} />
       <MylarCard mylar={status.data.mylar} upcomingEnabled={enabled} />
+      {status.data.mylar.snapshot ? <MylarActivityCard /> : null}
     </div>
   );
 }

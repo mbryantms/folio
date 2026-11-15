@@ -81,6 +81,7 @@ import type {
   MarkerSearchView,
   MarkerTagMatch,
   MarkerTagsView,
+  MylarActivityView,
   TextRegionsView,
   AdminOverviewView,
   AdminUserDetailView,
@@ -95,6 +96,7 @@ import type {
   SettingsView,
   UpcomingStatusView,
   UpcomingSummaryView,
+  UpcomingThisWeekView,
   UpcomingWeeksPage,
   CatalogEntriesView,
   CatalogSourceListView,
@@ -158,6 +160,7 @@ import type {
   ProgressView,
   ScanRunView,
   SeriesListView,
+  SeriesNextReleaseView,
   SeriesSort,
   SeriesView,
   LatestReleaseView,
@@ -1648,6 +1651,53 @@ export function useUpcomingSummary(
       jsonFetch<UpcomingSummaryView>(
         `/upcoming/summary${buildQuery({ today })}`,
       ),
+    enabled: opts?.enabled ?? true,
+    // The sidebar reads this on every page; counts move a few times a day.
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** This week's releases in the caller's series: the "Out this week" home
+ *  rail. Whole (a week is bounded), so a plain query. */
+export function useUpcomingThisWeek(
+  today: string,
+  opts?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: queryKeys.upcomingThisWeek(today),
+    queryFn: () =>
+      jsonFetch<UpcomingThisWeekView>(
+        `/me/upcoming-this-week${buildQuery({ today })}`,
+      ),
+    enabled: opts?.enabled ?? true,
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** The next releases of one series, soonest first (at most two). Empty
+ *  while the feature is off. */
+export function useSeriesNextRelease(
+  slug: string,
+  today: string,
+  opts?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: queryKeys.seriesNextRelease(slug, today),
+    queryFn: () =>
+      jsonFetch<SeriesNextReleaseView>(
+        `/series/${encodeURIComponent(slug)}/next-release${buildQuery({ today })}`,
+      ),
+    enabled: opts?.enabled ?? true,
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** What the stored Mylar snapshot says Mylar is doing (admin only). */
+export function useAdminMylarActivity(opts?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: queryKeys.adminMylarActivity,
+    queryFn: () =>
+      jsonFetch<MylarActivityView>("/admin/integrations/mylar/activity"),
     enabled: opts?.enabled ?? true,
     staleTime: 60_000,
   });

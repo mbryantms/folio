@@ -1,5 +1,6 @@
-//! `GET /api/upcoming`, `/api/upcoming/summary` and
-//! `/api/series/{slug}/next-release` cost a fixed number of statements
+//! `GET /api/upcoming`, `/api/upcoming/summary`,
+//! `/api/series/{slug}/next-release` and `/api/me/upcoming-this-week`
+//! cost a fixed number of statements
 //! (upcoming-releases 1.0, part D "Cost").
 //!
 //! One `#[tokio::test]` on purpose: the guard uses the same process-wide
@@ -17,7 +18,7 @@ use axum::{
     body::{Body, to_bytes},
     http::{Method, Request, StatusCode, header},
 };
-use chrono::{Duration, NaiveDate, Utc};
+use chrono::{NaiveDate, Utc};
 use common::TestApp;
 use common::seed::{LibrarySeed, SeriesSeed};
 use entity::{external_id, release_calendar_issue, release_calendar_series};
@@ -168,10 +169,10 @@ async fn get(app: &TestApp, session: &str, path: &str) -> (StatusCode, Value) {
     )
 }
 
-/// Two days from now: always "today or later", whatever the weekday,
-/// and inside the two weeks the summary counts.
+/// Every seeded release is out today: inside this week (the rail and the
+/// summary count it) and not in the past (`next-release` lists it).
 fn release_day() -> NaiveDate {
-    Utc::now().date_naive() + Duration::days(2)
+    Utc::now().date_naive()
 }
 
 /// One release `n`: a calendar row, a local series linked by ComicVine
@@ -258,6 +259,7 @@ async fn push(app: &TestApp, watch: &[Value], pull: &[Value]) {
 const MAX_LIST: u64 = 14;
 const MAX_SUMMARY: u64 = 16;
 const MAX_NEXT: u64 = 16;
+const MAX_RAIL: u64 = 14;
 
 use sea_orm::EntityTrait;
 
@@ -285,6 +287,7 @@ async fn upcoming_endpoints_cost_a_fixed_number_of_statements() {
     let list = "/api/upcoming?scope=all&limit=12";
     let summary = "/api/upcoming/summary";
     let next = format!("/api/series/{slug}/next-release");
+    let rail = "/api/me/upcoming-this-week";
     let measure = |path: String| {
         let (app, admin) = (&app, &admin);
         async move {
@@ -320,6 +323,13 @@ async fn upcoming_endpoints_cost_a_fixed_number_of_statements() {
         "{next_small} statements: {next_sql:#?}"
     );
 
+    let (rail_small, rail_sql, body) = measure(rail.to_owned()).await;
+    assert_eq!(body["items"].as_array().unwrap().len(), 3, "{body}");
+    assert!(
+        rail_small <= MAX_RAIL,
+        "{rail_small} statements: {rail_sql:#?}"
+    );
+
     // Ten times the releases, series, watch rows and pull lines.
     for n in 4..=33 {
         let (w, p, _) = seed_release(&app, lib, n).await;
@@ -338,6 +348,9 @@ async fn upcoming_endpoints_cost_a_fixed_number_of_statements() {
     assert_eq!(summary_big, summary_small, "{summary_sql:#?}");
     let (next_big, next_sql, _) = measure(next).await;
     assert_eq!(next_big, next_small, "{next_sql:#?}");
+    let (rail_big, rail_sql, body) = measure(rail.to_owned()).await;
+    assert_eq!(body["items"].as_array().unwrap().len(), 33, "{body}");
+    assert_eq!(rail_big, rail_small, "{rail_sql:#?}");
 
     // The watchlist is asked about the ids on the page, never read whole.
     assert!(

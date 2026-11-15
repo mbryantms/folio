@@ -2682,6 +2682,10 @@ export function useUpdateSettings() {
         qc.invalidateQueries({ queryKey: ["admin", "metadata"] });
         // upcoming-releases: `upcoming.*` switches the calendar on or off.
         qc.invalidateQueries({ queryKey: queryKeys.adminUpcomingStatus });
+        // …and with it what readers see: the page, the nav count, and
+        // whether the "Out this week" rail is offered at all.
+        qc.invalidateQueries({ queryKey: ["upcoming"] });
+        qc.invalidateQueries({ queryKey: ["saved-views", "list"] });
       },
     },
   );

@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type { SavedViewListView, SavedViewView } from "@/lib/api/types";
@@ -41,5 +41,8 @@ export default async function ViewPage({
     found = list.items.find((v) => v.system_key === systemKey);
   }
   if (!found) notFound();
+  // "Out this week" has no detail page: the rail is the first week of the
+  // Upcoming page (a pinned-view link or an old bookmark lands here).
+  if (found.system_key === "upcoming_this_week") redirect("/upcoming");
   return <ViewClient view={found} />;
 }

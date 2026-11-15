@@ -490,6 +490,15 @@ export const queryKeys = {
     ["upcoming", "list", filters] as const,
   /** `GET /upcoming/summary` — nav-badge counts and each source's age. */
   upcomingSummary: (today: string) => ["upcoming", "summary", today] as const,
+  /** `GET /me/upcoming-this-week` — the "Out this week" home rail. */
+  upcomingThisWeek: (today: string) =>
+    ["upcoming", "this-week", today] as const,
+  /** `GET /series/{slug}/next-release` — the series page's "Next issue". */
+  seriesNextRelease: (slug: string, today: string) =>
+    ["upcoming", "next-release", slug, today] as const,
+  /** `GET /admin/integrations/mylar/activity` — the stored snapshot's
+   *  wanted list, queue, history and job times. */
+  adminMylarActivity: ["admin", "upcoming", "mylar-activity"] as const,
   /** Last-result probe for the outbound email pipeline (M2). */
   adminEmailStatus: ["admin", "email", "status"] as const,
   /** Resolved sidebar layout (built-ins + libraries + saved views in

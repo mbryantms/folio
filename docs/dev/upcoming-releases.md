@@ -151,14 +151,20 @@ admin card says so. Turning a switch off deletes nothing.
 
 `/admin/upcoming`: the two calendar settings, a status card (rows,
 per-week counts, last full sync, a paused or failed pass, series waiting
-for details) with **Sync now**, and the Mylar card (the switch, the
+for details) with **Sync now**, the Mylar card (the switch, the
 stale threshold, the ingest token, and the last snapshot's time and
-counts).
+counts), and, once a snapshot has arrived, **What Mylar is doing**: the
+issues Mylar wants or failed to get, its download queue by status with
+the newest open entries, what it fetched in the last two weeks, and when
+its own jobs last ran and run next. That card has tabs and no button:
+every row is something Mylar's host pushed, and Folio has no way to act
+on it. It is admin-only because those titles span the whole collection.
 
 | Endpoint | |
 | --- | --- |
 | `GET /api/admin/upcoming/status` | read-only; in the audit-check allowlist |
 | `POST /api/admin/upcoming/sync` | 202; audited as `admin.upcoming.sync`; 409 while the calendar cannot run |
+| `GET /api/admin/integrations/mylar/activity` | read-only; the stored snapshot's wanted list (from `mylar_wanted`, soonest first), queue, history and jobs (the JSON columns); empty lists when there is no snapshot; in the allowlist |
 
 ## The Mylar snapshot
 
@@ -313,6 +319,7 @@ All `CurrentUser`, read-only, answered from Postgres alone.
 | `GET /api/upcoming` | `CursorPage` of weeks. The cursor is opaque (a week); `total` on the first page. Params: `limit` (weeks, 1–12, default 3), `today`, `scope=mine\|all`, `publisher`, `tracked`, `in_library`, `first_issues`. Every filter runs on the server. Starts at the Monday of the current week; weeks with nothing to show are skipped |
 | `GET /api/upcoming/summary` | `enabled`, "my series" counts for this week and next, when the calendar last synced, the Mylar snapshot's time and freshness (only for a viewer who may see it), the publishers in the window, `all_releases_available` |
 | `GET /api/series/{slug}/next-release` | up to two releases of that series dated today or later; 404 for a series the viewer cannot see |
+| `GET /api/me/upcoming-this-week` | the "Out this week" rail: this week's "my series" releases, whole (a week is bounded) |
 
 `today` is the caller's local date. The server only knows UTC, and "this
 week" turns over at the caller's midnight, so a date within one day of
@@ -375,6 +382,33 @@ no row for now takes its place directly after the built-in before it in
 the registry, instead of its default index, which drifts by one for every
 other built-in the layout predates.
 
+## Alert surfaces
+
+In-app only, by the owner's decision: no email and no push.
+
+- **Home rail "Out this week"**: a `kind = 'system'` saved view
+  (`system_key = 'upcoming_this_week'`, id `…0018`, seeded by
+  `m20271121_000001`, `auto_pin = false`, so users pin it from the picker).
+  `GET /me/saved-views` and the sidebar leave the row out while
+  `upcoming.enabled` is off (`saved_views::system_view_available`); pins
+  on it are kept. The body (`UpcomingThisWeekRailBody`) draws the page's
+  own cards and opens the same dialog; it hides when empty. It has no
+  detail page: the header and "View all" lead to `/upcoming`, and
+  `/views/upcoming-this-week` redirects there. Cards cannot be dismissed
+  one by one (rail dismissals target issues, series and lists). Not
+  prefetched on the server, like On this day: it is keyed by the
+  browser's local date.
+- **Sidebar count**: this week's "my series" releases, on the Upcoming
+  entry (`MainSidebar`, `useUpcomingSummary`, five-minute stale time),
+  capped at `99+`, absent at zero. The entry only exists while the feature
+  is on, so there is no request otherwise.
+- **Series page**: "Next issue #27 · Wed 25 Nov" in the fact row
+  (`SeriesNextIssueFact`), with the stage badge when someone tracks it.
+  It names the first announced issue the library does not hold yet, and
+  renders nothing otherwise.
+- **Command palette**: "Upcoming" (`/upcoming`) and, for admins,
+  "Upcoming releases" (`/admin/upcoming`).
+
 ## Metrics
 
 `folio_release_calendar_issues` and
@@ -396,7 +430,8 @@ the stage precedence, owned-by-number.
 `crates/server/tests/upcoming_api.rs`: paging, filters, reconciliation
 end to end, and the access rules (full grant, partial grant, age cap,
 Mylar off, expired snapshot, a hidden series is a 404).
-`crates/server/tests/upcoming_query_count.rs`: the fixed statement count.
+`crates/server/tests/upcoming_query_count.rs`: the fixed statement count
+of all four reader endpoints.
 `crates/server/tests/upcoming_view_only.rs`: the only Mylar route is the
 snapshot POST, no setting holds a Mylar address or key, and the Mylar
 code makes no outbound request.
@@ -404,6 +439,8 @@ code makes no outbound request.
 script — tests"): the snapshot's content, that nothing sensitive leaves
 the host, change detection and the heartbeat, failures.
 `web/tests/admin/upcoming-admin.test.tsx` covers the admin page.
+`web/tests/dom/upcoming-alerts.test.tsx`: the rail body and its empty
+check, the series page's Next issue fact.
 `web/tests/dom/upcoming-view.test.tsx`: every filter reaches the list
 hook, a restricted viewer gets no Mylar control, the dialog has links
 and no action, each empty state. `web/tests/upcoming/stage.test.ts`: the

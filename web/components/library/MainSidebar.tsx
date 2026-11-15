@@ -22,7 +22,8 @@ import {
 } from "@/components/folio/sidebar";
 import { SlidingNavHighlight } from "@/components/shell/SlidingNavHighlight";
 import { UserFooter } from "@/components/shell/UserFooter";
-import { useMarkerCount } from "@/lib/api/queries";
+import { useMarkerCount, useUpcomingSummary } from "@/lib/api/queries";
+import { useLocalToday } from "@/lib/upcoming/today";
 import { useSidebarSectionCollapse } from "@/lib/use-sidebar-section-collapse";
 
 import { mainNavIcons } from "./main-nav-icons";
@@ -50,6 +51,17 @@ export function MainSidebar({
   const collapsed = useSidebarCollapsed();
   const { isMobile } = useSidebar();
   const markerCount = useMarkerCount({ enabled: showMarkerCount });
+  // The Upcoming entry exists only while the feature is on, so its
+  // presence is what turns the count on: this week's releases in the
+  // reader's series.
+  const hasUpcoming = sections.some((s) =>
+    s.items.some((i) => i.kind === "builtin" && i.refId === "upcoming"),
+  );
+  const today = useLocalToday();
+  const upcoming = useUpcomingSummary(today ?? "", {
+    enabled: hasUpcoming && today !== null,
+  });
+  const upcomingThisWeek = upcoming.data?.this_week ?? 0;
   const sectionCollapse = useSidebarSectionCollapse();
   const navRef = useRef<HTMLElement | null>(null);
 
@@ -164,15 +176,23 @@ export function MainSidebar({
                           (itemPath !== "" &&
                             pathname.startsWith(itemPath + "/"));
                       }
+                      const capped = (n: number) =>
+                        n > 99 ? "99+" : String(n);
                       const badge =
                         showMarkerCount &&
                         isBuiltin("bookmarks") &&
                         markerCount.data &&
                         markerCount.data.total > 0
-                          ? markerCount.data.total > 99
-                            ? "99+"
-                            : String(markerCount.data.total)
-                          : null;
+                          ? {
+                              text: capped(markerCount.data.total),
+                              label: `${markerCount.data.total} markers`,
+                            }
+                          : isBuiltin("upcoming") && upcomingThisWeek > 0
+                            ? {
+                                text: capped(upcomingThisWeek),
+                                label: `${upcomingThisWeek} out this week`,
+                              }
+                            : null;
                       return (
                         <SidebarMenuItem key={`${item.href}-${item.label}`}>
                           <SidebarMenuButton
@@ -195,10 +215,8 @@ export function MainSidebar({
                             </Link>
                           </SidebarMenuButton>
                           {badge ? (
-                            <SidebarMenuBadge
-                              aria-label={`${markerCount.data?.total} markers`}
-                            >
-                              {badge}
+                            <SidebarMenuBadge aria-label={badge.label}>
+                              {badge.text}
                             </SidebarMenuBadge>
                           ) : null}
                         </SidebarMenuItem>

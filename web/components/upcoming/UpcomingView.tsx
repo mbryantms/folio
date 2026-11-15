@@ -42,7 +42,8 @@ import { COVER_GRID_STYLE } from "@/lib/library/cover-size";
 import { timeAgo } from "@/lib/sessions";
 import { statusToneText } from "@/lib/ui/status-tone";
 import { type UpcomingLayout, useUpcomingLayout } from "@/lib/upcoming/layout";
-import { localToday, weekHeading, weekRange } from "@/lib/upcoming/stage";
+import { weekHeading, weekRange } from "@/lib/upcoming/stage";
+import { useLocalToday } from "@/lib/upcoming/today";
 import { cn } from "@/lib/utils";
 
 const SCOPE_OPTIONS: ReadonlyArray<{ value: UpcomingScope; label: string }> = [
@@ -55,19 +56,6 @@ const LAYOUT_OPTIONS: ReadonlyArray<{ value: UpcomingLayout; label: string }> =
     { value: "grid", label: "Covers" },
     { value: "list", label: "List" },
   ];
-
-const noopSubscribe = () => () => {};
-
-/** The viewer's local date, or `null` on the server and during
- *  hydration: "this week" turns over at the viewer's midnight, which the
- *  server cannot know, so nothing date-dependent renders before then. */
-function useLocalToday(): string | null {
-  return React.useSyncExternalStore(
-    noopSubscribe,
-    () => localToday(),
-    () => null,
-  );
-}
 
 /**
  * `/upcoming`: what is coming out, week by week, from Metron's release

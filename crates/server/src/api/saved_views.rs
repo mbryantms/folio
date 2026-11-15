@@ -591,6 +591,16 @@ fn to_view(
     }
 }
 
+/// `system_key` of the "Out this week" rail (upcoming-releases 1.0),
+/// seeded by `m20271121_000001`.
+pub const SYSTEM_KEY_UPCOMING_THIS_WEEK: &str = "upcoming_this_week";
+
+/// Whether a saved view is offered on this server right now. Only a
+/// built-in tied to a server setting can be unavailable.
+pub(crate) fn system_view_available(cfg: &crate::config::Config, view: &saved_view::Model) -> bool {
+    view.system_key.as_deref() != Some(SYSTEM_KEY_UPCOMING_THIS_WEEK) || cfg.upcoming_enabled
+}
+
 // ───── handlers ─────
 
 #[utoipa::path(
@@ -696,6 +706,10 @@ pub async fn list(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
+    // A built-in whose feature is off is not offered: no picker row, no
+    // rail, no sidebar entry. Pins on it are kept and return with it.
+    let cfg = app.cfg();
+    rows.retain(|m| system_view_available(&cfg, m));
     let cbl_ids: Vec<Uuid> = rows
         .iter()
         .filter(|m| m.kind == KIND_CBL)

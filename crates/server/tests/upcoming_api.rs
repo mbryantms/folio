@@ -864,3 +864,86 @@ async fn next_release_lists_a_series_own_upcoming_issues() {
         "{body}"
     );
 }
+
+// ────────────────────── the home rail ──────────────────────
+
+const RAIL: &str = "/api/me/upcoming-this-week";
+
+fn rail_names(body: &Value) -> Vec<String> {
+    body["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|e| {
+            format!(
+                "{} #{}",
+                e["series_name"].as_str().unwrap(),
+                e["number"].as_str().unwrap()
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn the_rail_is_this_week_of_my_series_under_the_same_access_rules() {
+    let w = world().await;
+    let (status, body) = get(&w.app, RAIL, Some(&w.admin)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let mut names = rail_names(&body);
+    names.sort();
+    assert_eq!(
+        names,
+        ["Absolute Batman #1", "Action Comics #1104", "Saga #70"],
+        "this week only, my series only: {body}"
+    );
+    let (_, summary) = get(&w.app, "/api/upcoming/summary", Some(&w.admin)).await;
+    assert_eq!(
+        summary["this_week"], 3,
+        "the nav count is the rail's length"
+    );
+
+    // A reader with one library: that library's series, and nothing Mylar
+    // said about anything.
+    let reader = register(&w.app, "reader@example.com").await;
+    grant(&w.app, &reader, w.lib_a, None).await;
+    let (_, body) = get(&w.app, RAIL, Some(&reader)).await;
+    assert_eq!(rail_names(&body), ["Action Comics #1104"]);
+    for e in body["items"].as_array().unwrap() {
+        assert_eq!(e["tracked"], false, "{e}");
+        assert!(e["mylar_status"].is_null(), "{e}");
+        assert_eq!(e["source"], "metron", "{e}");
+    }
+
+    // Off: empty for everyone. No session: refused.
+    set_flags(&w.app, false, true);
+    let (status, body) = get(&w.app, RAIL, Some(&w.admin)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["items"], json!([]));
+    let (status, _) = get(&w.app, RAIL, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn the_rail_is_offered_only_while_the_feature_is_on() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let rail = |body: &Value| {
+        body["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .find(|v| v["system_key"] == "upcoming_this_week")
+            .cloned()
+    };
+
+    let (status, off) = get(&app, "/api/me/saved-views", Some(&admin)).await;
+    assert_eq!(status, StatusCode::OK, "{off}");
+    assert!(rail(&off).is_none(), "not offered while the feature is off");
+
+    set_flags(&app, true, false);
+    let (_, on) = get(&app, "/api/me/saved-views", Some(&admin)).await;
+    let view = rail(&on).expect("offered once the feature is on");
+    assert_eq!(view["name"], "Out this week");
+    assert_eq!(view["kind"], "system");
+    assert_eq!(view["pinned"], false, "opt-in: never pinned for the user");
+}

@@ -4,7 +4,8 @@
  *
  *   admin turns both settings on → generates the ingest token → the pusher
  *   POSTs a snapshot with that token and no session → `/upcoming` shows
- *   the pull-list issue with Mylar's status → the dialog reports it.
+ *   the pull-list issue with Mylar's status → the dialog reports it → the
+ *   sidebar counts it → the admin page lists what Mylar is doing.
  *
  * The smoke stack has no Metron credentials, so the release calendar is
  * empty and the page is fed by the snapshot alone: a pull-list-only row,
@@ -58,7 +59,17 @@ function snapshot(today: string) {
       },
     ],
     watchlist: [[CV_SERIES_ID, "Active", true]],
-    wanted: [],
+    wanted: [
+      {
+        cv_series_id: CV_SERIES_ID,
+        cv_issue_id: CV_ISSUE_ID,
+        series: SERIES,
+        issue: "7",
+        store_date: today,
+        status: "Wanted",
+        added_at: new Date().toISOString(),
+      },
+    ],
     history: [],
     queue: { counts: {}, items: [] },
     jobs: [],
@@ -125,6 +136,10 @@ test.describe("Upcoming releases", () => {
       await expect(
         page.getByRole("link", { name: "Upcoming", exact: true }).first(),
       ).toBeVisible();
+      // …and carries this week's count for the reader's series.
+      await expect(
+        page.locator('[aria-label$="out this week"]').first(),
+      ).toBeVisible();
       await expectNoAxeViolations(page, "upcoming, covers");
 
       // 4. The dialog reports, and offers nothing but Close.
@@ -159,6 +174,17 @@ test.describe("Upcoming releases", () => {
       await page.setViewportSize({ width: 375, height: 812 });
       await expect(page.locator("[data-phone-controls]")).toBeVisible();
       await expectNoAxeViolations(page, "upcoming, list, phone");
+
+      // 7. The admin's view of the same snapshot: what Mylar is doing,
+      //    with nothing to press.
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await page.goto("/admin/upcoming");
+      const activity = page
+        .locator("[data-slot=card]")
+        .filter({ hasText: "What Mylar is doing" });
+      await expect(activity.getByText(`${SERIES} #7`)).toBeVisible();
+      await expect(activity.getByRole("button")).toHaveCount(0);
+      await expectNoAxeViolations(page, "admin upcoming, Mylar activity");
     } finally {
       // Put the shared stack back: no token, no stored snapshot, both off.
       const revoked = await page.request.delete(
@@ -169,7 +195,7 @@ test.describe("Upcoming releases", () => {
       await setFlags(page, false);
     }
 
-    // 7. Off again: the page says so and the list is gone.
+    // 8. Off again: the page says so and the list is gone.
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/upcoming");
     await expect(

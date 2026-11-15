@@ -5,8 +5,9 @@
 //! | `GET` | `/upcoming` | weeks of reconciled releases, cursor = week |
 //! | `GET` | `/upcoming/summary` | counts for the nav badge, each source's "as of", publishers |
 //! | `GET` | `/series/{slug}/next-release` | the next releases of one series |
+//! | `GET` | `/me/upcoming-this-week` | the "Out this week" home rail |
 //!
-//! All three take `CurrentUser` and are read-only. They answer from
+//! All four take `CurrentUser` and are read-only. They answer from
 //! Postgres alone: no request here reaches Metron or Mylar.
 //!
 //! **Access.** A release is public information; what is the viewer's own
@@ -48,6 +49,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(list))
         .routes(routes!(summary))
         .routes(routes!(series_next_release))
+        .routes(routes!(this_week))
 }
 
 const DEFAULT_WEEKS: u64 = 3;
@@ -180,6 +182,14 @@ pub struct UpcomingSummaryView {
 pub struct SeriesNextReleaseView {
     /// Soonest first; empty when nothing is announced.
     pub entries: Vec<UpcomingEntryView>,
+}
+
+/// The "Out this week" rail.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct UpcomingThisWeekView {
+    /// This week's releases in the caller's series, by release date.
+    /// Bounded by the week, so the list is whole: no cursor.
+    pub items: Vec<UpcomingEntryView>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -465,6 +475,36 @@ pub async fn series_next_release(
     match view::next_for_series(&app, &user, s.id, today, NEXT_RELEASES).await {
         Ok(loaded) => Json(SeriesNextReleaseView {
             entries: loaded.entries.into_iter().map(entry_view).collect(),
+        })
+        .into_response(),
+        Err(e) => internal(&e),
+    }
+}
+
+#[utoipa::path(
+    operation_id = "me_upcoming_this_week", get,
+    path = "/me/upcoming-this-week",
+    params(TodayQuery),
+    responses((status = 200, body = UpcomingThisWeekView))
+)]
+#[handler]
+pub async fn this_week(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<TodayQuery>,
+) -> Response {
+    if !app.cfg().upcoming_enabled {
+        return Json(UpcomingThisWeekView { items: Vec::new() }).into_response();
+    }
+    let monday = week_start(resolve_today(q.today));
+    match view::load(&app, &user, monday, monday + Duration::days(6)).await {
+        Ok(loaded) => Json(UpcomingThisWeekView {
+            items: loaded
+                .entries
+                .into_iter()
+                .filter(Entry::is_mine)
+                .map(entry_view)
+                .collect(),
         })
         .into_response(),
         Err(e) => internal(&e),
