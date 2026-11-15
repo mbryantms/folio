@@ -26,7 +26,8 @@ import { ADMIN_STATE } from "./tests/e2e/support/admin";
 /** Specs that start signed in as the shared admin (see above). The a11y
  *  route sweep is one of them; its public half drops the session with an
  *  empty `storageState` of its own. */
-const ADMIN_SPECS = /(reader-flow|relationship-review|a11y|upcoming)\.spec\.ts/;
+const ADMIN_SPECS =
+  /(reader-flow|relationship-review|a11y|upcoming|view-card-link)\.spec\.ts/;
 
 export default defineConfig({
   testDir: "./tests/e2e",
