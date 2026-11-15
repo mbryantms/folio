@@ -5,14 +5,15 @@
 //!
 //! - [`calendar`] — the release calendar. A scheduled job lists Metron's
 //!   issues by store-date window into the `release_calendar_*` tables.
-//! - A Mylar snapshot pushed *to* Folio by a script on the Mylar host
-//!   (a later change adds it). Folio never calls Mylar: there is no
-//!   Mylar address or key setting, by design.
+//! - [`mylar`] — a snapshot pushed *to* Folio by a script on the Mylar
+//!   host. Folio never calls Mylar: there is no Mylar address or key
+//!   setting, by design.
 //!
 //! Architecture, the view-only invariant and the operator steps:
 //! `docs/dev/upcoming-releases.md`.
 
 pub mod calendar;
+pub mod mylar;
 
 use chrono::{Datelike, Duration, NaiveDate};
 

@@ -1086,6 +1086,10 @@ export type UpcomingStatusView = Schemas["UpcomingStatusView"];
 export type UpcomingCalendarStatusView = Schemas["UpcomingCalendarStatusView"];
 export type UpcomingWeekCountView = Schemas["UpcomingWeekCountView"];
 export type UpcomingSyncResp = Schemas["UpcomingSyncResp"];
+export type MylarStatusView = Schemas["MylarStatusView"];
+export type MylarTokenView = Schemas["MylarTokenView"];
+export type MylarSnapshotStatusView = Schemas["MylarSnapshotStatusView"];
+export type MylarTokenResp = Schemas["MylarTokenResp"];
 export type BulkAcceptRelationshipSuggestionsReq =
   Schemas["BulkAcceptRelationshipSuggestionsReq"];
 export type BulkRejectRelationshipSuggestionsReq =

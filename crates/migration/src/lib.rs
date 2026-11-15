@@ -160,6 +160,7 @@ mod m20271115_000001_view_group_nesting;
 mod m20271116_000001_confirm_sweep_keyset_idx;
 mod m20271117_000001_cbl_refresh_outcome;
 mod m20271118_000001_release_calendar;
+mod m20271119_000001_mylar_snapshot;
 
 /// The series-rating migration's frozen ladder and statement, exposed so
 /// the server's tests can check they agree with the runtime derivation.
@@ -335,6 +336,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20271116_000001_confirm_sweep_keyset_idx::Migration),
             Box::new(m20271117_000001_cbl_refresh_outcome::Migration),
             Box::new(m20271118_000001_release_calendar::Migration),
+            Box::new(m20271119_000001_mylar_snapshot::Migration),
         ]
     }
 }

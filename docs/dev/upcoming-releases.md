@@ -5,8 +5,8 @@ the feature and Folio writes back to neither.
 
 | Source | What it gives | How it arrives | Status |
 | --- | --- | --- | --- |
-| **Metron** (the release calendar) | Every publisher's issues by store date, about six weeks ahead | A scheduled Folio job lists Metron's API | this page |
-| **Mylar** (the tracking window) | The current week's pull list with each issue's status, the watchlist, the download queue | A script on the Mylar host pushes a snapshot **to** Folio | later change |
+| **Metron** (the release calendar) | Every publisher's issues by store date, about six weeks ahead | A scheduled Folio job lists Metron's API | built |
+| **Mylar** (the tracking window) | The current week's pull list with each issue's status, the watchlist, the download queue | A script on the Mylar host pushes a snapshot **to** Folio | ingest built; shown to readers in a later change |
 
 Plan: `~/.claude/plans/upcoming-releases-1.0.md`.
 
@@ -135,7 +135,7 @@ and no bootstrap row.
 | --- | --- | --- |
 | `upcoming.enabled` | `false` | Master switch for the jobs (and, later, the Upcoming page) |
 | `upcoming.weeks_ahead` | `8` (1–12) | The window's far edge |
-| `integrations.mylar.enabled` | `false` | Accept pushed Mylar snapshots (ingest lands in a later change) |
+| `integrations.mylar.enabled` | `false` | Accept pushed Mylar snapshots (needs `upcoming.enabled` too) |
 | `integrations.mylar.stale_after_minutes` | `180` (30–10080) | When a snapshot is shown as stale |
 
 The calendar also needs Metron enabled with credentials
@@ -144,20 +144,100 @@ admin card says so. Turning a switch off deletes nothing.
 
 ## Admin surface
 
-`/admin/upcoming`: the two calendar settings, and a status card (rows,
+`/admin/upcoming`: the two calendar settings, a status card (rows,
 per-week counts, last full sync, a paused or failed pass, series waiting
-for details) with **Sync now**.
+for details) with **Sync now**, and the Mylar card (the switch, the
+stale threshold, the ingest token, and the last snapshot's time and
+counts).
 
 | Endpoint | |
 | --- | --- |
 | `GET /api/admin/upcoming/status` | read-only; in the audit-check allowlist |
 | `POST /api/admin/upcoming/sync` | 202; audited as `admin.upcoming.sync`; 409 while the calendar cannot run |
 
+## The Mylar snapshot
+
+Operator guide: [`docs/install/mylar.md`](../install/mylar.md). The
+script, its unit files and its tests live in
+[`integrations/mylar/`](../../integrations/mylar/), versioned with the
+endpoint they post to.
+
+### Why push, and why a script
+
+Measured on a real install (2026-11-14): Mylar's API key is
+all-or-nothing, the install ran with Mylar's login off behind a host
+firewall, and the API exposes less than the database (no download queue,
+no job schedule). A pull from Folio would have needed a firewall opening
+that hands the Folio host Mylar's whole login-less UI. So the direction
+is reversed: a script on the Mylar host reads `mylar.db` with `mode=ro`
+and POSTs to Folio. It never calls Mylar's HTTP API and never reads
+`config.ini`.
+
+Mylar only knows the **current** week (its pull list is loaded week by
+week; it holds no future-dated issue). The watchlist is what reaches
+further: any calendar entry whose ComicVine volume id is on it is
+"tracked", whichever week it is in.
+
+### Snapshot format (schema version 1)
+
+`upcoming::mylar::MylarSnapshot`. Blocks: `meta`, `pull_list`,
+`watchlist` (rows of `[cv volume id, status, still publishing]`),
+`wanted`, `history`, `queue {counts, items}`, `jobs`. Unknown fields are
+ignored, so a script may add to a version; a different `schema_version`
+is refused with 422 naming the version the server accepts. The caps
+(`MAX_PULL` 2,000, `MAX_WATCH` 50,000, …) are the same constants in the
+script and the server. A real snapshot (4,319 watched series) is about
+176 KB; the route keeps the 2 MiB group body limit.
+
+### `POST /integrations/mylar/snapshot`
+
+In the `bare` group (an external client calls it), alone in
+`api/mylar_ingest.rs`, with its own per-IP bucket (`MYLAR_INGEST`) and a
+30 s timeout (the bare group has none).
+
+- **Auth before body**: `MylarIngestAuth` is a parts extractor ahead of
+  `Validated<MylarSnapshot>`. Integration off (`upcoming.enabled` and
+  `integrations.mylar.enabled` must both be on) → 403; a Bearer that is
+  not the token → 401 with `WWW-Authenticate: Bearer`. Neither parses the
+  body. A POST with no Bearer at all is stopped earlier by the CSRF
+  middleware (403 `auth.csrf`); the route is deliberately not in
+  `CSRF_EXEMPT_PATHS`.
+- **Token**: `fmi_` + 52 base32 characters (256 random bits), stored as a
+  SHA-256 digest in `integration_tokens` (`name = 'mylar'`), compared in
+  constant time. It is not a user and opens nothing else. Created or
+  replaced by `POST /api/admin/integrations/mylar/token` (the plaintext
+  is returned once), revoked by `DELETE …/token` (`?purge=true` also
+  deletes the stored snapshot). Both are audited
+  (`admin.integration.mylar.token.{create,revoke}`).
+- **No failed-auth lockout**: behind a reverse proxy every caller shares
+  one address, so a lockout would let anyone block the pusher.
+- **No audit row per push**: `audit_log` needs a user actor. A push is
+  recorded on `mylar_snapshot.received_at` and
+  `integration_tokens.last_used_at` / `last_used_ip`.
+
+### Storage (migration `m20271119_000001_mylar_snapshot`)
+
+`upcoming::mylar::store` replaces the previous snapshot in one
+transaction: `mylar_watch`, `mylar_pull` (surrogate key: a second
+printing repeats series + issue), `mylar_wanted`, and the single
+`mylar_snapshot` header row, which also carries `queue`, `jobs` and
+`history` as JSON for the admin panel. A push whose content hash equals
+the stored one is a **heartbeat**: only `received_at` and `generated_at`
+move.
+
+### Freshness
+
+`upcoming::mylar::freshness`, judged by Folio's `received_at`, never the
+sender's clock: `fresh` up to `integrations.mylar.stale_after_minutes`,
+then `stale` (admins are warned), then `expired` after 7 days (no longer
+shown to readers).
+
 ## Metrics
 
 `folio_release_calendar_issues` and
 `folio_release_calendar_last_sync_timestamp_seconds`, both set when a
-pass finishes ([metrics.md](metrics.md)).
+pass finishes; `folio_mylar_snapshot_received_timestamp_seconds`, set
+when a snapshot is accepted ([metrics.md](metrics.md)).
 
 ## Tests
 
@@ -165,4 +245,10 @@ pass finishes ([metrics.md](metrics.md)).
 silent; listing, paging and dedupe; budget pause and resume; removal,
 moved releases and pruning; failure backoff; quota pause; enrich and the
 re-check; the sweep's queueing; the admin endpoints' auth and audit.
+`crates/server/tests/mylar_ingest.rs`: off is 403 even with the token; a
+wrong token is refused before the body is read; store, replace and
+heartbeat; bad and oversized bodies; the token endpoints; freshness.
+`integrations/mylar/test_folio_mylar_push.py` (CI job "Mylar push
+script — tests"): the snapshot's content, that nothing sensitive leaves
+the host, change detection and the heartbeat, failures.
 `web/tests/admin/upcoming-admin.test.tsx` covers the admin page.

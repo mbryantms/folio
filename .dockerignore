@@ -17,6 +17,8 @@
 .vscode/
 docs/
 fixtures/
+# Scripts for other hosts (the Mylar snapshot push); no image needs them.
+integrations/
 *.md
 !README.md
 **/.env
