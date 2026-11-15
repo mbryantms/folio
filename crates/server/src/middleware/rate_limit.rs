@@ -331,6 +331,15 @@ pub const WS_TICKET: Bucket = Bucket {
     burst: 60,
 };
 
+/// `POST /integrations/mylar/snapshot` — 6/min/IP + burst 6. The push
+/// script sends at most one snapshot every 15 minutes; this only bounds
+/// what a caller guessing at the token can make the server do.
+pub const MYLAR_INGEST: Bucket = Bucket {
+    name: "mylar_ingest",
+    period: Duration::from_secs(10),
+    burst: 6,
+};
+
 /// `POST /csp-report` — 100/min/IP + burst 200.
 pub const CSP_REPORT: Bucket = Bucket {
     name: "csp_report",

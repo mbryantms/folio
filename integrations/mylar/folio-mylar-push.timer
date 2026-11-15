@@ -1,0 +1,14 @@
+[Unit]
+Description=Push a read-only Mylar snapshot to Folio every 15 minutes
+
+[Timer]
+# Mylar refreshes its pull list every 4 hours and searches every 6, but an
+# issue's status changes whenever a download finishes. A 15-minute poll
+# bounds staleness for the cost of a few read-only queries; the script
+# only sends when something changed, plus one heartbeat an hour.
+OnCalendar=*:0/15
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target

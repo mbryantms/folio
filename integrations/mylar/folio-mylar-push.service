@@ -1,0 +1,36 @@
+[Unit]
+Description=Push a read-only Mylar snapshot to Folio
+Documentation=https://github.com/mbryantms/folio/blob/main/integrations/mylar/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# FOLIO_URL and FOLIO_TOKEN (and optionally MYLAR_DB). Mode 600, owned by
+# root: systemd reads it before dropping privileges.
+EnvironmentFile=/etc/folio-mylar-push.env
+ExecStart=/usr/bin/python3 /usr/local/lib/folio-mylar-push/folio-mylar-push.py
+TimeoutStartSec=120
+
+# The script only reads mylar.db and makes one outbound HTTPS request.
+# These settings make that a property of the unit, not just of the code:
+# a throwaway user, a read-only filesystem, and Mylar's data directory
+# mounted read-only whatever its file modes are.
+DynamicUser=yes
+StateDirectory=folio-mylar-push
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+ReadOnlyPaths=/opt/mylar3-data
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+SystemCallFilter=@system-service
+SystemCallArchitectures=native

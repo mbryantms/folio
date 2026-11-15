@@ -180,6 +180,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/integrations/mylar/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["admin_mylar_token_create"];
+        delete: operations["admin_mylar_token_revoke"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/libraries/age-ratings": {
         parameters: {
             query?: never;
@@ -6258,6 +6274,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/integrations/mylar/snapshot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["mylar_snapshot_ingest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/issues/{id}": {
         parameters: {
             query?: never;
@@ -10537,6 +10569,11 @@ export interface components {
              */
             skipped: number;
         };
+        /**
+         * @description How far a snapshot can be trusted, by when Folio received it.
+         * @enum {string}
+         */
+        Freshness: "fresh" | "stale" | "expired";
         FunnelBucket: {
             /** @description One of `"0-25"`, `"25-50"`, `"50-75"`, `"75-99"`, `"100"`. */
             bucket: string;
@@ -10701,6 +10738,18 @@ export interface components {
          * @enum {string}
          */
         HintStatus: "computed" | "not_computed";
+        /** @description A recent snatch or post-process event. */
+        HistoryRow: {
+            /** Format: date-time */
+            at?: string | null;
+            /** Format: int64 */
+            cv_issue_id?: number | null;
+            /** Format: int64 */
+            cv_series_id?: number | null;
+            issue?: string | null;
+            series: string;
+            status: string;
+        };
         IdentifierCoverage: {
             /** Format: int64 */
             issues_with_id: number;
@@ -11267,6 +11316,15 @@ export interface components {
          * @enum {string}
          */
         JobCardState: "waiting" | "scheduled" | "running" | "done";
+        /** @description One of Mylar's scheduled jobs. */
+        JobRow: {
+            name: string;
+            /** Format: date-time */
+            next_run?: string | null;
+            /** Format: date-time */
+            prev_run?: string | null;
+            status?: string | null;
+        };
         /** @description The entity a job works on, resolved for display. */
         JobTarget: {
             /** @description Thumbnail URL: the issue's cover, or the series cover. */
@@ -12403,6 +12461,75 @@ export interface components {
          */
         Motion: "system" | "reduced";
         /**
+         * @description The body of `POST /integrations/mylar/snapshot`. Unknown fields are
+         *     ignored, so a newer script can add to a version without breaking an
+         *     older server.
+         */
+        MylarSnapshot: {
+            history?: components["schemas"]["HistoryRow"][];
+            jobs?: components["schemas"]["JobRow"][];
+            meta: components["schemas"]["SnapshotMeta"];
+            pull_list?: components["schemas"]["PullRow"][];
+            queue?: components["schemas"]["QueueBlock"];
+            wanted?: components["schemas"]["WantedRow"][];
+            /** @description Rows of `[ComicVine volume id, status, still publishing]`. */
+            watchlist?: Record<string, never>[];
+        };
+        /** @description The stored Mylar snapshot's header. */
+        MylarSnapshotStatusView: {
+            annuals_included: boolean;
+            freshness: components["schemas"]["Freshness"];
+            /**
+             * Format: date-time
+             * @description When the script read Mylar's database.
+             */
+            generated_at: string;
+            /** Format: int32 */
+            pull_count: number;
+            /** @description Mylar's download queue, entries per status. */
+            queue_counts: {
+                [key: string]: number;
+            };
+            /**
+             * Format: date-time
+             * @description When Folio received it; `freshness` is judged by this.
+             */
+            received_at: string;
+            /** Format: int32 */
+            wanted_count: number;
+            /** Format: int32 */
+            watch_count: number;
+        };
+        MylarStatusView: {
+            /**
+             * @description `integrations.mylar.enabled`. Snapshots are accepted only while
+             *     this and `upcoming.enabled` are both on.
+             */
+            enabled: boolean;
+            snapshot?: components["schemas"]["MylarSnapshotStatusView"] | null;
+            /**
+             * Format: int32
+             * @description `integrations.mylar.stale_after_minutes`.
+             */
+            stale_after_minutes: number;
+            token?: components["schemas"]["MylarTokenView"] | null;
+        };
+        MylarTokenResp: {
+            /** @description The token, shown this once. Folio keeps only a digest. */
+            token: string;
+        };
+        /** @description The ingest token, without its value (only a digest is stored). */
+        MylarTokenView: {
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @description When a snapshot was last accepted with this token.
+             */
+            last_used_at?: string | null;
+            last_used_ip?: string | null;
+        };
+        /**
          * @description "New in series you're reading" page: issues added in the last
          *     `NEW_IN_SERIES_WINDOW_DAYS` days to a series the caller was already
          *     reading (added after they started it), that the caller has not
@@ -13456,11 +13583,36 @@ export interface components {
              */
             registration_open: boolean;
         };
+        /** @description One line of Mylar's weekly pull list. */
+        PullRow: {
+            /** Format: int64 */
+            cv_issue_id?: number | null;
+            /**
+             * Format: int64
+             * @description ComicVine volume id; null when Mylar's pull service found none.
+             */
+            cv_series_id?: number | null;
+            issue: string;
+            publisher?: string | null;
+            series: string;
+            /** Format: int32 */
+            series_year?: number | null;
+            /** Format: date */
+            ship_date: string;
+            status: string;
+        };
         /** @description Replacement body for `PUT`. Omitted fields default to "no override". */
         PutPageOverridesReq: {
             shift_pairing?: boolean;
             single_pages?: number[];
             spread_pages?: number[];
+        };
+        QueueBlock: {
+            /** @description Entries per status, over the whole queue (not only `items`). */
+            counts?: {
+                [key: string]: number;
+            };
+            items?: components["schemas"]["QueueItem"][];
         };
         QueueClearReq: {
             target: components["schemas"]["QueueClearTarget"];
@@ -13596,6 +13748,18 @@ export interface components {
              * @description Sum across all queues — convenient for the topbar pill.
              */
             total: number;
+        };
+        /**
+         * @description One entry of Mylar's direct-download queue. No link and no file name:
+         *     the script never reads them.
+         */
+        QueueItem: {
+            size?: string | null;
+            status: string;
+            title: string;
+            /** Format: date-time */
+            updated_at?: string | null;
+            year?: string | null;
         };
         /**
          * @description One queue's lanes. Each list is capped at the request's `limit`; the
@@ -15845,6 +16009,20 @@ export interface components {
             /** Format: int64 */
             total?: number | null;
         };
+        SnapshotMeta: {
+            /** @description The operator said Mylar's annual integration is on. */
+            annuals_included?: boolean;
+            /**
+             * Format: date-time
+             * @description When the script read `mylar.db`. Informational: staleness is
+             *     judged by when Folio received the snapshot.
+             */
+            generated_at: string;
+            /** Format: int32 */
+            mylar_db_version?: number | null;
+            /** Format: int32 */
+            schema_version: number;
+        };
         /**
          * @description Sort axes a saved view can choose. Distinct from [`Field`] because not
          *     every filterable field is a sensible sort axis (e.g., multi-valued
@@ -16377,6 +16555,7 @@ export interface components {
              *     this and `enabled`.
              */
             metron_ready: boolean;
+            mylar: components["schemas"]["MylarStatusView"];
             /**
              * Format: int32
              * @description `upcoming.weeks_ahead`.
@@ -17064,6 +17243,20 @@ export interface components {
          * @enum {string}
          */
         ViewMode: "single" | "double" | "webtoon";
+        /** @description An issue Mylar wants, has snatched, or failed to get. */
+        WantedRow: {
+            /** Format: date-time */
+            added_at?: string | null;
+            /** Format: int64 */
+            cv_issue_id?: number | null;
+            /** Format: int64 */
+            cv_series_id?: number | null;
+            issue: string;
+            series: string;
+            status: string;
+            /** Format: date */
+            store_date?: string | null;
+        };
         /**
          * @description How a library is being watched.
          * @enum {string}
@@ -17566,6 +17759,61 @@ export interface operations {
             };
             /** @description invalid filter value, including a scan_id or library_id that is not a UUID */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_mylar_token_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description token created; any earlier token stops working */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MylarTokenResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_mylar_token_revoke: {
+        parameters: {
+            query?: {
+                /** @description Also delete the stored snapshot. */
+                purge?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description token revoked (and the stored snapshot deleted when asked) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -30715,6 +30963,63 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Health"];
                 };
+            };
+        };
+    };
+    mylar_snapshot_ingest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MylarSnapshot"];
+            };
+        };
+        responses: {
+            /** @description snapshot stored (or an unchanged snapshot acknowledged) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing or wrong ingest token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Mylar snapshots are turned off */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description body over the limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description unsupported schema version or a value out of range */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description too many pushes */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

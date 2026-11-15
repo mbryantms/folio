@@ -95,6 +95,7 @@ failed — check the server log for `folio::audit_log_retention` errors.
 |---|---|---|
 | `folio_release_calendar_issues` | gauge | — |
 | `folio_release_calendar_last_sync_timestamp_seconds` | gauge | — |
+| `folio_mylar_snapshot_received_timestamp_seconds` | gauge | — |
 
 Both are set when a Metron list pass finishes
 ([upcoming-releases.md](upcoming-releases.md)): the rows the calendar
@@ -104,6 +105,13 @@ restart. Alert idea, with the setting on:
 `time() - folio_release_calendar_last_sync_timestamp_seconds > 2 * 86400`
 means two daily passes were missed — check **Admin → Upcoming releases**
 for the recorded error.
+
+`folio_mylar_snapshot_received_timestamp_seconds` is the Unix time Folio
+last accepted a pushed Mylar snapshot ([install/mylar.md](../install/mylar.md)).
+The script sends at least one an hour, so
+`time() - folio_mylar_snapshot_received_timestamp_seconds > 3 * 3600`
+means the timer on the Mylar host has stopped or its token was revoked.
+It reads 0 until the first push after a restart.
 
 ### Subsystem counters (pre-existing)
 `folio_scan_duration_seconds`, `folio_scan_files_total`, `folio_scan_health_issues_open`,

@@ -128,6 +128,10 @@ pub fn build_openapi_router_with(timeouts: RouteTimeouts) -> OpenApiRouter<AppSt
         // canonical slug URL. Has a `#[utoipa::path]`, so merged unwrapped to
         // land in the spec.
         .merge(api::issue_permalink::routes())
+        // Machine-to-machine: a script on the operator's Mylar host pushes
+        // a snapshot here with a single-purpose token. Carries its own
+        // rate limit and timeout (the bare group has no timeout).
+        .merge(api::mylar_ingest::routes())
         // The reader-client surface: the only routes where an app password
         // authenticates (`AppPasswordSurface`). The marker is layered onto
         // each router *before* the merge, so it covers that router's

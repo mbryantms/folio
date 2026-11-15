@@ -8,6 +8,8 @@
  *   through the shared `PATCH /admin/settings` (both are live).
  * - **Release calendar** — what the Metron list pass last did, how many
  *   issues each week holds, and "Sync now".
+ * - **Mylar** (`MylarCard`) — the switch, the ingest token and the last
+ *   snapshot a Mylar host pushed.
  *
  * This page is view-only towards any outside system: "Sync now" asks
  * Metron for release dates, nothing else.
@@ -34,6 +36,8 @@ import type {
 } from "@/lib/api/types";
 import { formatRelativeDate } from "@/lib/format";
 import { monthShort } from "@/lib/log/overview";
+
+import { MylarCard } from "./MylarCard";
 import { statusToneText } from "@/lib/ui/status-tone";
 
 /** Bounds of `upcoming.weeks_ahead` (server: `upcoming::MAX_WEEKS_AHEAD`). */
@@ -81,6 +85,7 @@ export function UpcomingAdmin() {
         weeksAhead={weeksAhead}
       />
       <CalendarStatusCard status={status.data} />
+      <MylarCard mylar={status.data.mylar} upcomingEnabled={enabled} />
     </div>
   );
 }

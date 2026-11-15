@@ -56,6 +56,7 @@ pub mod markers;
 pub mod markers_export;
 pub mod meta;
 pub mod metadata_search;
+pub mod mylar_ingest;
 pub mod next_up;
 pub mod opds;
 pub mod opds_progression;
