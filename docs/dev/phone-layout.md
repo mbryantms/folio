@@ -322,6 +322,13 @@ independent).
   kind pills scroll horizontally. From `sm` up: search · sort · series on the
   left, Select · ▦ · `⋯` on the right. From `sm` up the header keeps the title and
   description and the toolbar is a `StickyToolbarRow` beneath it.
+- **Upcoming** (`UpcomingView`): like Bookmarks, the title rides in the
+  sticky bar's leading slot (`pageTop`) beside filters (chips + publisher
+  in a sheet) and View options (Covers | List, cover size). The My series
+  | All releases toggle sits in flow under the bar and scrolls away. From
+  `sm` up the page header is in flow and the toggle, chips, publisher,
+  layout and cover size share a `StickyToolbarRow`. Week headings never
+  pin.
 - **Search**, **Browse**, **entity / creator indexes**: description
   hidden, tab strip scrolls, indexes use the scrubber. Search keeps
   its own search box, so its only phone control is the four-squares

@@ -10010,11 +10010,6 @@ export interface components {
                 [key: string]: string;
             };
         };
-        /**
-         * @description Where an entry came from.
-         * @enum {string}
-         */
-        EntrySource: "metron" | "pull_list" | "both";
         EventIssue: {
             colorist?: string | null;
             cover_artist?: string | null;
@@ -10638,11 +10633,6 @@ export interface components {
              */
             skipped: number;
         };
-        /**
-         * @description How far a snapshot can be trusted, by when Folio received it.
-         * @enum {string}
-         */
-        Freshness: "fresh" | "stale" | "expired";
         FunnelBucket: {
             /** @description One of `"0-25"`, `"25-50"`, `"50-75"`, `"75-99"`, `"100"`. */
             bucket: string;
@@ -12530,6 +12520,11 @@ export interface components {
          */
         Motion: "system" | "reduced";
         /**
+         * @description How far a snapshot can be trusted, by when Folio received it.
+         * @enum {string}
+         */
+        MylarFreshness: "fresh" | "stale" | "expired";
+        /**
          * @description The body of `POST /integrations/mylar/snapshot`. Unknown fields are
          *     ignored, so a newer script can add to a version without breaking an
          *     older server.
@@ -12547,7 +12542,7 @@ export interface components {
         /** @description The stored Mylar snapshot's header. */
         MylarSnapshotStatusView: {
             annuals_included: boolean;
-            freshness: components["schemas"]["Freshness"];
+            freshness: components["schemas"]["MylarFreshness"];
             /**
              * Format: date-time
              * @description When the script read Mylar's database.
@@ -12569,11 +12564,6 @@ export interface components {
             /** Format: int32 */
             watch_count: number;
         };
-        /**
-         * @description What Mylar reported for an issue.
-         * @enum {string}
-         */
-        MylarStatus: "wanted" | "snatched" | "downloaded" | "failed";
         MylarStatusView: {
             /**
              * @description `integrations.mylar.enabled`. Snapshots are accepted only while
@@ -16145,11 +16135,6 @@ export interface components {
          * @enum {string}
          */
         SpecialsCompletion: "inherit" | "include" | "exclude";
-        /**
-         * @description The single thing a card says about a release, by precedence.
-         * @enum {string}
-         */
-        Stage: "in_library" | "downloaded" | "snatched" | "wanted" | "tracked" | "announced";
         StarterListListView: {
             items: components["schemas"]["StarterListView"][];
         };
@@ -16629,6 +16614,11 @@ export interface components {
              */
             window_start: string;
         };
+        /**
+         * @description Where an entry came from.
+         * @enum {string}
+         */
+        UpcomingEntrySource: "metron" | "pull_list" | "both";
         /** @description One upcoming (or just released) issue. */
         UpcomingEntryView: {
             /** Format: date */
@@ -16642,7 +16632,7 @@ export interface components {
             library_series?: components["schemas"]["UpcomingSeriesLinkView"] | null;
             /** @description The release's page on Metron. */
             metron_url?: string | null;
-            mylar_status?: components["schemas"]["MylarStatus"] | null;
+            mylar_status?: components["schemas"]["UpcomingMylarStatus"] | null;
             number: string;
             /** @description Folio already has this issue. */
             owned: boolean;
@@ -16653,8 +16643,8 @@ export interface components {
              */
             release_date: string;
             series_name: string;
-            source: components["schemas"]["EntrySource"];
-            stage: components["schemas"]["Stage"];
+            source: components["schemas"]["UpcomingEntrySource"];
+            stage: components["schemas"]["UpcomingStage"];
             /**
              * @description The series is on Mylar's watchlist. Always `false` for a caller
              *     who may not see Mylar data.
@@ -16665,9 +16655,14 @@ export interface components {
             /** Format: int32 */
             year_began?: number | null;
         };
+        /**
+         * @description What Mylar reported for an issue.
+         * @enum {string}
+         */
+        UpcomingMylarStatus: "wanted" | "snatched" | "downloaded" | "failed";
         /** @description Mylar's snapshot, for a caller allowed to see it. */
         UpcomingMylarView: {
-            freshness: components["schemas"]["Freshness"];
+            freshness: components["schemas"]["MylarFreshness"];
             /** Format: date-time */
             received_at: string;
         };
@@ -16676,6 +16671,11 @@ export interface components {
             name: string;
             slug: string;
         };
+        /**
+         * @description The single thing a card says about a release, by precedence.
+         * @enum {string}
+         */
+        UpcomingStage: "in_library" | "downloaded" | "snatched" | "wanted" | "tracked" | "announced";
         UpcomingStatusView: {
             calendar: components["schemas"]["UpcomingCalendarStatusView"];
             /** @description `upcoming.enabled`. */

@@ -1090,6 +1090,14 @@ export type MylarStatusView = Schemas["MylarStatusView"];
 export type MylarTokenView = Schemas["MylarTokenView"];
 export type MylarSnapshotStatusView = Schemas["MylarSnapshotStatusView"];
 export type MylarTokenResp = Schemas["MylarTokenResp"];
+// …and the reader-facing view.
+export type UpcomingEntryView = Schemas["UpcomingEntryView"];
+export type UpcomingWeekView = Schemas["UpcomingWeekView"];
+export type UpcomingWeeksPage = Schemas["CursorPage_UpcomingWeekView"];
+export type UpcomingSummaryView = Schemas["UpcomingSummaryView"];
+export type UpcomingStage = Schemas["UpcomingStage"];
+export type UpcomingScope = "mine" | "all";
+export type SeriesNextReleaseView = Schemas["SeriesNextReleaseView"];
 export type BulkAcceptRelationshipSuggestionsReq =
   Schemas["BulkAcceptRelationshipSuggestionsReq"];
 export type BulkRejectRelationshipSuggestionsReq =

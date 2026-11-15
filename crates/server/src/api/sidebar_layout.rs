@@ -136,7 +136,27 @@ pub const BUILTIN_REGISTRY: &[BuiltinDef] = &[
         icon: "ListPlus",
         href: "/views/want-to-read",
     },
+    // Upcoming releases (upcoming-releases 1.0). Emitted only while
+    // `upcoming.enabled` is on ([`builtin_available`]), so a server that
+    // never turned the feature on shows no entry leading to an empty page.
+    BuiltinDef {
+        key: UPCOMING_BUILTIN_KEY,
+        label: "Upcoming",
+        icon: "Calendar",
+        href: "/upcoming",
+    },
 ];
+
+/// The one built-in that depends on a server setting.
+pub const UPCOMING_BUILTIN_KEY: &str = "upcoming";
+
+/// Whether a built-in is offered on this server right now. A saved
+/// override row for an unavailable built-in is not emitted; it stays in
+/// the table until the user next saves a layout, so a choice to hide the
+/// entry returns with the feature.
+fn builtin_available(app: &AppState, key: &str) -> bool {
+    key != UPCOMING_BUILTIN_KEY || app.cfg().upcoming_enabled
+}
 
 /// "All Libraries" is a synthetic `kind = 'library'` entry so the client
 /// groups it visually with the per-library rows instead of in the Browse
@@ -361,7 +381,10 @@ pub(crate) async fn compute_layout(
     //    inserted by the user use kind='header' with client-generated
     //    UUIDs as ref_id and never collide with these defaults.
     defaults.push(default_header("default:browse", "Browse"));
-    for b in BUILTIN_REGISTRY.iter() {
+    for b in BUILTIN_REGISTRY
+        .iter()
+        .filter(|b| builtin_available(app, b.key))
+    {
         let label = if b.key == "home" {
             home_label.clone().unwrap_or_else(|| b.label.to_string())
         } else {
@@ -476,7 +499,17 @@ pub(crate) async fn compute_layout(
     //    default has been consumed; what's left in `override_by_key`
     //    is the user's purely-additive rows (custom headers, spacers,
     //    or overrides for resources that have since disappeared).
+    //
+    //    A built-in the saved layout has no row for (one added after the
+    //    layout was saved) goes directly after the built-in that precedes
+    //    it in the registry: it takes that neighbour's position, and the
+    //    stable sort below keeps registry order on the tie. Its default
+    //    index would drift by one for every other built-in the saved
+    //    layout predates, which put "Upcoming" under the Libraries header
+    //    of a layout saved before "Reading lists" existed.
     let max_default_position = defaults.len() as i32;
+    let has_saved_layout = !override_by_key.is_empty();
+    let mut previous_builtin: Option<i32> = None;
     for (idx, entry) in defaults.iter_mut().enumerate() {
         entry.position = idx as i32;
         if let Some(o) = override_by_key.remove(&(entry.kind, entry.ref_id.clone())) {
@@ -487,6 +520,14 @@ pub(crate) async fn compute_layout(
             {
                 entry.label = label;
             }
+        } else if has_saved_layout
+            && entry.kind == KIND_BUILTIN
+            && let Some(position) = previous_builtin
+        {
+            entry.position = position;
+        }
+        if entry.kind == KIND_BUILTIN {
+            previous_builtin = Some(entry.position);
         }
     }
 

@@ -631,13 +631,16 @@ async fn register_release_calendar_sync(scheduler: &JobScheduler, state: &AppSta
     }
 }
 
-/// Release-calendar enrich sweep, every five minutes: a few series
-/// details per tick, then a list pass is queued if one is due or was
-/// stopped part-way. Quota-gated and capped like the metadata resume
-/// sweep; a no-op while `upcoming.enabled` is off.
+/// Release-calendar enrich sweep, once a minute: a few series details
+/// per tick, then a list pass is queued if one is due or was stopped
+/// part-way. Quota-gated and capped like the metadata resume sweep (the
+/// cap is half a minute's Metron budget, so a first fill of a few hundred
+/// series takes under an hour and interactive matching keeps the rest);
+/// a tick with nothing to fetch is two small reads. A no-op while
+/// `upcoming.enabled` is off.
 async fn register_release_calendar_sweep(scheduler: &JobScheduler, state: &AppState) {
     let state = state.clone();
-    let job_result = Job::new_async("30 */5 * * * *", move |_uuid, _l| {
+    let job_result = Job::new_async("30 * * * * *", move |_uuid, _l| {
         let state = state.clone();
         Box::pin(async move {
             crate::jobs::release_calendar::sweep(&state).await;
@@ -648,7 +651,7 @@ async fn register_release_calendar_sweep(scheduler: &JobScheduler, state: &AppSt
             if let Err(e) = scheduler.add(job).await {
                 tracing::error!(error = %e, "scheduler: add release_calendar_sweep failed");
             } else {
-                tracing::info!("release_calendar_sweep registered (every 5 minutes)");
+                tracing::info!("release_calendar_sweep registered (every minute)");
             }
         }
         Err(e) => tracing::error!(error = %e, "scheduler: build release_calendar_sweep failed"),

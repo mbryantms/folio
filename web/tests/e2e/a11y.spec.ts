@@ -231,6 +231,9 @@ const ROUTES: Route[] = [
   { path: "/downloads", label: "downloads" },
   { path: "/collections", label: "collections" },
   { path: "/lists", label: "reading lists" },
+  // Upcoming releases. Off on the smoke stack, so this is the "turned
+  // off" state; `upcoming.spec.ts` sweeps the page with releases on it.
+  { path: "/upcoming", label: "upcoming releases" },
   { path: "/log", label: "reading log" },
   { path: "/log/activity", label: "reading log, activity" },
   { path: "/log/stats", label: "reading log, stats" },
