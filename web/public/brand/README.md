@@ -35,7 +35,8 @@ marks.
 ## The title-bar lockup
 
 The shells' title bars (`MainShell`, `AdminShell`, `StatusScreen`) show
-one lockup, `web/components/shell/Wordmark.tsx`: the book glyph beside
+one lockup, `web/components/shell/Wordmark.tsx` (the drawing itself is in
+`WordmarkLockup.tsx`): the book glyph beside
 the name. Both halves are inline SVG, so the lockup needs no font and
 looks the same on every device.
 

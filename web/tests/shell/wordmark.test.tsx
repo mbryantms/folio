@@ -21,6 +21,7 @@ vi.mock("next/link", () => ({
 }));
 
 import { Wordmark } from "@/components/shell/Wordmark";
+import { WordmarkAnchor } from "@/components/shell/WordmarkLockup";
 
 const brand = (file: string) =>
   readFileSync(resolve(__dirname, "../../public/brand", file), "utf8");
@@ -81,12 +82,23 @@ describe("Wordmark", () => {
     expect(html).toContain("folio-tap");
   });
 
-  it("`hard` renders a plain anchor, not next/link", () => {
+  it("the status screen's anchor is the same lockup without next/link", () => {
     expect(html).toContain("data-next-link");
-    const hard = renderToStaticMarkup(<Wordmark href="/" hard />);
+    const hard = renderToStaticMarkup(<WordmarkAnchor href="/" />);
     expect(hard).not.toContain("data-next-link");
-    expect(hard).toContain('href="/"');
     expect(hard).toContain('aria-label="Folio"');
+    expect(hard).toBe(
+      html
+        .replace(' data-next-link=""', "")
+        .replace('href="/home"', 'href="/"'),
+    );
+    // The reader's first-load bundle includes the status screen (error
+    // boundaries); the lockup file must stay free of router imports.
+    const source = readFileSync(
+      resolve(__dirname, "../../components/shell/WordmarkLockup.tsx"),
+      "utf8",
+    );
+    expect(source).not.toMatch(/from "next\//);
   });
 });
 
@@ -98,7 +110,7 @@ describe("the shells", () => {
       "components/StatusScreen.tsx",
     ]) {
       const source = readFileSync(resolve(__dirname, "../..", file), "utf8");
-      expect(source, file).toContain("<Wordmark");
+      expect(source, file).toMatch(/<Wordmark(Anchor)? /);
       expect(source, file).not.toMatch(/>\s*Folio\s*<\/(a|Link)>/);
     }
   });

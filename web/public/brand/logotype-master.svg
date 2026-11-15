@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 270 100" width="270" height="100">
   <!-- The name "Folio" as outlines: geometric letters on a 100-unit cap
        height with 16-unit strokes. The dot of the "i" carries the accent.
-       Mirrored inline by web/components/shell/Wordmark.tsx, where the
+       Mirrored inline by web/components/shell/WordmarkLockup.tsx, where the
        letters take the text colour and the dot takes the theme's primary.
        Drawn here in the brand dark so the file reads on a light canvas. -->
   <title>Folio</title>

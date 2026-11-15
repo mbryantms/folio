@@ -2,7 +2,7 @@ import * as React from "react";
 import { AlertCircle } from "lucide-react";
 
 import { CoverSilhouettes } from "@/components/folio/cover-silhouettes";
-import { Wordmark } from "@/components/shell/Wordmark";
+import { WordmarkAnchor } from "@/components/shell/WordmarkLockup";
 
 /**
  * Shared building blocks for every error / not-found surface, so they
@@ -87,7 +87,7 @@ export function StatusScreen(props: React.ComponentProps<typeof StatusCard>) {
           `<a href>` (not next/link) so it works even from `global-error`
           where the router may be unavailable. */}
       <header className="border-border flex h-14 shrink-0 items-center border-b px-[max(1rem,var(--safe-left))] pt-(--safe-top) md:px-6">
-        <Wordmark href="/" hard />
+        <WordmarkAnchor href="/" />
       </header>
       <main className="grid flex-1 place-items-center px-4">
         <StatusCard {...props} />
