@@ -2,6 +2,7 @@ import * as React from "react";
 import { AlertCircle } from "lucide-react";
 
 import { CoverSilhouettes } from "@/components/folio/cover-silhouettes";
+import { WordmarkAnchor } from "@/components/shell/WordmarkLockup";
 
 /**
  * Shared building blocks for every error / not-found surface, so they
@@ -82,16 +83,11 @@ export function StatusErrorIcon() {
 export function StatusScreen(props: React.ComponentProps<typeof StatusCard>) {
   return (
     <div className="bg-background text-foreground flex min-h-screen flex-col">
-      {/* Minimal brand header — wordmark matches `MainShell`. A hard
+      {/* Minimal brand header: the same lockup as `MainShell`, as a hard
           `<a href>` (not next/link) so it works even from `global-error`
           where the router may be unavailable. */}
       <header className="border-border flex h-14 shrink-0 items-center border-b px-[max(1rem,var(--safe-left))] pt-(--safe-top) md:px-6">
-        <a
-          href="/"
-          className="hover:text-foreground/80 font-semibold tracking-tight transition-colors"
-        >
-          Folio
-        </a>
+        <WordmarkAnchor href="/" />
       </header>
       <main className="grid flex-1 place-items-center px-4">
         <StatusCard {...props} />
