@@ -25058,7 +25058,7 @@
               "null"
             ],
             "format": "int64",
-            "description": "Series the provider credits the creator on. (Its issue count is\n`provider_counts`, as for every kind.)",
+            "description": "Series the provider credits the creator on. (An issue count would\nbe `provider_counts`, as for every kind, but ComicVine reports none\nfor a person.)",
             "minimum": 0
           },
           "story_arc_credits": {

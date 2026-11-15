@@ -10573,8 +10573,9 @@ export interface components {
             real_name?: string | null;
             /**
              * Format: int64
-             * @description Series the provider credits the creator on. (Its issue count is
-             *     `provider_counts`, as for every kind.)
+             * @description Series the provider credits the creator on. (An issue count would
+             *     be `provider_counts`, as for every kind, but ComicVine reports none
+             *     for a person.)
              */
             series_credits?: number | null;
             /**
