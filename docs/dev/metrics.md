@@ -90,6 +90,21 @@ Alert idea: `increase(folio_audit_log_trimmed_total[2d]) == 0` while the
 setting is on and the table is older than the window means the export
 failed — check the server log for `folio::audit_log_retention` errors.
 
+### Release calendar — [`upcoming::calendar`](../../crates/server/src/upcoming/calendar.rs)
+| Metric | Type | Labels |
+|---|---|---|
+| `folio_release_calendar_issues` | gauge | — |
+| `folio_release_calendar_last_sync_timestamp_seconds` | gauge | — |
+
+Both are set when a Metron list pass finishes
+([upcoming-releases.md](upcoming-releases.md)): the rows the calendar
+holds, and the Unix time of that pass. Neither moves while
+`upcoming.enabled` is off, and both read 0 until the first pass after a
+restart. Alert idea, with the setting on:
+`time() - folio_release_calendar_last_sync_timestamp_seconds > 2 * 86400`
+means two daily passes were missed — check **Admin → Upcoming releases**
+for the recorded error.
+
 ### Subsystem counters (pre-existing)
 `folio_scan_duration_seconds`, `folio_scan_files_total`, `folio_scan_health_issues_open`,
 `folio_zip_lru_{hits,misses,evictions}_total`, `folio_zip_lru_open_fds`,

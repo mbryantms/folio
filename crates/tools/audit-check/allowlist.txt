@@ -107,6 +107,9 @@ api/libraries.rs::scan                    # POST /libraries/{slug}/scan — kick
 api/libraries.rs::validate_deeply         # POST /libraries/{slug}/validate-deeply — kicks off a deep-validate (reads archives only); like `scan`, its scan_run (kind deep_validate) is the audit ledger
 api/libraries.rs::scan_preview            # GET /libraries/{slug}/scan-preview — dry-run scan; no DB writes
 
+# ── admin_upcoming.rs (upcoming-releases 1.0) ───────────────
+api/admin_upcoming.rs::status  # GET /admin/upcoming/status — read-only release-calendar state and counts
+
 # ── library_events.rs (observability-split M10) ──────────────
 api/library_events.rs::list_library_events  # GET /admin/library-events — durable manifest read
 

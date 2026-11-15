@@ -11,6 +11,7 @@ export type IconName =
   | "Activity"
   | "BarChart3"
   | "BookOpen"
+  | "CalendarDays"
   | "Cog"
   | "Copy"
   | "Download"
@@ -124,6 +125,12 @@ export function adminNav(localePrefix: string): NavSection[] {
           href: p("/relationships"),
           label: "Relationships",
           icon: "Network",
+        },
+        // upcoming-releases 1.0 — the release calendar's switches + state.
+        {
+          href: p("/upcoming"),
+          label: "Upcoming releases",
+          icon: "CalendarDays",
         },
         // Onboarding PR C — the first-run tour's starter reading lists.
         {

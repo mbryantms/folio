@@ -12,6 +12,7 @@ pub mod admin_queue;
 pub mod admin_settings;
 pub mod admin_stats;
 pub mod admin_thumbs;
+pub mod admin_upcoming;
 pub mod admin_users;
 pub mod app_passwords;
 pub mod appearances;

@@ -472,6 +472,8 @@ export const queryKeys = {
   /** Runtime-editable settings (M1 of runtime-config-admin). Registry
    *  + resolved values; mutated via PATCH /admin/settings. */
   adminSettings: ["admin", "settings"] as const,
+  /** `GET /admin/upcoming/status` — the release calendar's state. */
+  adminUpcomingStatus: ["admin", "upcoming", "status"] as const,
   /** Last-result probe for the outbound email pipeline (M2). */
   adminEmailStatus: ["admin", "email", "status"] as const,
   /** Resolved sidebar layout (built-ins + libraries + saved views in

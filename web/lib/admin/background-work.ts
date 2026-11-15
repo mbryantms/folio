@@ -32,6 +32,7 @@ export const QUEUE_LABELS: Record<string, string> = {
   provider_coverage: "Provider coverage",
   entity_enrich: "Entity profiles",
   sidecar_reemit: "Sidecar re-emit",
+  release_calendar: "Release calendar",
 };
 
 export function queueLabel(queue: string): string {
@@ -58,6 +59,7 @@ const PILL_NOUNS: Record<string, string> = {
   provider_coverage: "provider coverage",
   entity_enrich: "entity profiles",
   sidecar_reemit: "sidecar re-emit",
+  release_calendar: "release calendar",
 };
 
 /** `16,204` → `16.2k`; small numbers stay exact. */
@@ -129,6 +131,7 @@ export function phaseLabel(phase: string | null | undefined): string {
 
 /** Where an "other work" queue's detail lives. */
 export function queueHref(queue: string): string {
+  if (queue === "release_calendar") return "/admin/upcoming";
   return queue.startsWith("metadata_") ||
     queue === "provider_coverage" ||
     queue === "entity_enrich"
@@ -199,6 +202,8 @@ export function taskLabel(kind: string): string {
       return "Deep validation";
     case "cbl_rematch":
       return "Reading-list rematch";
+    case "release_calendar_enrich":
+      return "Release calendar: series details";
     default:
       return kind;
   }

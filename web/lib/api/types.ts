@@ -1080,6 +1080,12 @@ export type AcceptRelationshipSuggestionResp =
   Schemas["AcceptRelationshipSuggestionResp"];
 export type RunRelationshipSuggestionsResp =
   Schemas["RunRelationshipSuggestionsResp"];
+
+// Upcoming releases (upcoming-releases 1.0) — the admin surface.
+export type UpcomingStatusView = Schemas["UpcomingStatusView"];
+export type UpcomingCalendarStatusView = Schemas["UpcomingCalendarStatusView"];
+export type UpcomingWeekCountView = Schemas["UpcomingWeekCountView"];
+export type UpcomingSyncResp = Schemas["UpcomingSyncResp"];
 export type BulkAcceptRelationshipSuggestionsReq =
   Schemas["BulkAcceptRelationshipSuggestionsReq"];
 export type BulkRejectRelationshipSuggestionsReq =

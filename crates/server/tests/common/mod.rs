@@ -1139,6 +1139,12 @@ impl TestApp {
             // audit 2026-11 E1: off by default (keep forever); the
             // retention tests flip it via `replace_cfg`.
             audit_log_retention_days: 0,
+            // upcoming-releases 1.0: off by default; tests flip the
+            // switches via `replace_cfg`.
+            upcoming_enabled: false,
+            upcoming_weeks_ahead: 8,
+            integrations_mylar_enabled: false,
+            integrations_mylar_stale_after_minutes: 180,
         };
         cfg.resolve_auth().expect("test config auth mode resolves");
 

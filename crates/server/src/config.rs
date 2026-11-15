@@ -514,6 +514,40 @@ pub struct Config {
     /// (90). DB key `audit_log.retention_days`; live (read on every sweep).
     #[serde(default)]
     pub audit_log_retention_days: u32,
+
+    /// Release calendar master switch (upcoming-releases 1.0): the Metron
+    /// list pass and enrich sweep ([`crate::jobs::release_calendar`]), the
+    /// Upcoming page and its alert surfaces. Default `false`. DB key
+    /// `upcoming.enabled`; live.
+    #[serde(default)]
+    pub upcoming_enabled: bool,
+
+    /// Weeks past the current one the list pass asks Metron for. Default
+    /// [`crate::upcoming::DEFAULT_WEEKS_AHEAD`] (8), range 1 to
+    /// [`crate::upcoming::MAX_WEEKS_AHEAD`] (12). DB key
+    /// `upcoming.weeks_ahead`; live.
+    #[serde(default = "default_upcoming_weeks_ahead")]
+    pub upcoming_weeks_ahead: u32,
+
+    /// Accept snapshots pushed from a Mylar host. Folio never calls
+    /// Mylar; there is deliberately no Mylar address or key here. Default
+    /// `false`. DB key `integrations.mylar.enabled`; live.
+    #[serde(default)]
+    pub integrations_mylar_enabled: bool,
+
+    /// Minutes after which a Mylar snapshot is shown as stale. Default
+    /// [`crate::upcoming::DEFAULT_MYLAR_STALE_MINUTES`] (180), range
+    /// 30–10080. DB key `integrations.mylar.stale_after_minutes`; live.
+    #[serde(default = "default_mylar_stale_after_minutes")]
+    pub integrations_mylar_stale_after_minutes: u32,
+}
+
+fn default_upcoming_weeks_ahead() -> u32 {
+    crate::upcoming::DEFAULT_WEEKS_AHEAD
+}
+
+fn default_mylar_stale_after_minutes() -> u32 {
+    crate::upcoming::DEFAULT_MYLAR_STALE_MINUTES
 }
 
 fn default_hard_purge_multiplier() -> u32 {
@@ -608,6 +642,16 @@ impl std::fmt::Debug for Config {
             .field("zip_lru_capacity", &self.zip_lru_capacity)
             .field("thumbs_budget_mb", &self.thumbs_budget_mb)
             .field("audit_log_retention_days", &self.audit_log_retention_days)
+            .field("upcoming_enabled", &self.upcoming_enabled)
+            .field("upcoming_weeks_ahead", &self.upcoming_weeks_ahead)
+            .field(
+                "integrations_mylar_enabled",
+                &self.integrations_mylar_enabled,
+            )
+            .field(
+                "integrations_mylar_stale_after_minutes",
+                &self.integrations_mylar_stale_after_minutes,
+            )
             .field("scan_worker_count", &self.scan_worker_count)
             .field("scan_folder_concurrency", &self.scan_folder_concurrency)
             .field("db_max_connections", &self.db_max_connections)
@@ -1190,6 +1234,18 @@ impl Config {
                 crate::jobs::audit_log_retention::MAX_RETENTION_DAYS,
             )?;
         }
+        check_range(
+            "upcoming_weeks_ahead",
+            self.upcoming_weeks_ahead,
+            1,
+            crate::upcoming::MAX_WEEKS_AHEAD,
+        )?;
+        check_range(
+            "integrations_mylar_stale_after_minutes",
+            self.integrations_mylar_stale_after_minutes,
+            30,
+            7 * 24 * 60,
+        )?;
         Ok(())
     }
 
@@ -1802,6 +1858,27 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             Some(n) => cfg.audit_log_retention_days = u32::try_from(n).unwrap_or(u32::MAX),
             None => bad_type(&row.key, "uint", &row.value),
         },
+        // ───── Upcoming releases (upcoming-releases 1.0) ─────
+        // DB-only, live. Uints are left unclamped so `Config::validate`
+        // rejects an out-of-range PATCH (dry-run 422).
+        "upcoming.enabled" => match row.value.as_bool() {
+            Some(b) => cfg.upcoming_enabled = b,
+            None => bad_type(&row.key, "bool", &row.value),
+        },
+        "upcoming.weeks_ahead" => match row.value.as_u64() {
+            Some(n) => cfg.upcoming_weeks_ahead = u32::try_from(n).unwrap_or(u32::MAX),
+            None => bad_type(&row.key, "uint", &row.value),
+        },
+        "integrations.mylar.enabled" => match row.value.as_bool() {
+            Some(b) => cfg.integrations_mylar_enabled = b,
+            None => bad_type(&row.key, "bool", &row.value),
+        },
+        "integrations.mylar.stale_after_minutes" => match row.value.as_u64() {
+            Some(n) => {
+                cfg.integrations_mylar_stale_after_minutes = u32::try_from(n).unwrap_or(u32::MAX);
+            }
+            None => bad_type(&row.key, "uint", &row.value),
+        },
         "metadata.auto_apply_threshold" => match row.value.as_u64() {
             Some(n) => cfg.metadata_auto_apply_threshold = n.min(100) as u32,
             None => bad_type(&row.key, "uint", &row.value),
@@ -2188,6 +2265,10 @@ mod tests {
             metadata_issue_refresh_per_provider_cap: default_issue_refresh_cap(),
             library_hard_purge_multiplier: default_hard_purge_multiplier(),
             audit_log_retention_days: 0,
+            upcoming_enabled: false,
+            upcoming_weeks_ahead: default_upcoming_weeks_ahead(),
+            integrations_mylar_enabled: false,
+            integrations_mylar_stale_after_minutes: default_mylar_stale_after_minutes(),
         }
     }
 

@@ -90,6 +90,7 @@ pub mod post_scan;
 pub mod provider_coverage;
 pub mod prune_auth_sessions;
 pub mod relationship_suggest;
+pub mod release_calendar;
 pub mod rewrite_sidecars;
 pub mod scan;
 pub mod scan_lease;
@@ -120,6 +121,7 @@ pub struct JobRuntime {
     pub provider_coverage_storage: RedisStorage<provider_coverage::ProviderCoverageJob>,
     pub entity_enrich_storage: RedisStorage<entity_enrich::EntityEnrichJob>,
     pub sidecar_reemit_storage: RedisStorage<sidecar_reemit::SidecarReemitJob>,
+    pub release_calendar_storage: RedisStorage<release_calendar::ReleaseCalendarSyncJob>,
     pub redis: ConnectionManager,
 }
 
@@ -150,6 +152,8 @@ impl JobRuntime {
             storage::<provider_coverage::ProviderCoverageJob>(conn.clone());
         let entity_enrich_storage = storage::<entity_enrich::EntityEnrichJob>(conn.clone());
         let sidecar_reemit_storage = storage::<sidecar_reemit::SidecarReemitJob>(conn.clone());
+        let release_calendar_storage =
+            storage::<release_calendar::ReleaseCalendarSyncJob>(conn.clone());
         let rt = Self {
             db,
             scan_storage,
@@ -169,6 +173,7 @@ impl JobRuntime {
             provider_coverage_storage,
             entity_enrich_storage,
             sidecar_reemit_storage,
+            release_calendar_storage,
             redis: conn,
         };
         rt.purge_legacy_queue_state().await?;
@@ -732,6 +737,16 @@ impl JobRuntime {
             self.sidecar_reemit_storage,
             1,
             sidecar_reemit::handle
+        );
+        // Release-calendar list passes — concurrency=1. A pass spends the
+        // Metron budget and saves its place per week; two at once would
+        // race for both.
+        let monitor = register!(
+            monitor,
+            "release_calendar",
+            self.release_calendar_storage,
+            1,
+            release_calendar::handle
         );
 
         // Process shutdown, or a failed worker (`worker_failed` is a child
@@ -1323,6 +1338,10 @@ impl JobRuntime {
             ),
             ("entity_enrich", self.entity_enrich_storage.get_config()),
             ("sidecar_reemit", self.sidecar_reemit_storage.get_config()),
+            (
+                "release_calendar",
+                self.release_calendar_storage.get_config(),
+            ),
         ]
     }
 
@@ -1515,7 +1534,7 @@ impl JobRuntime {
 }
 
 /// Number of apalis queues [`JobRuntime`] owns.
-pub const QUEUE_COUNT: usize = 17;
+pub const QUEUE_COUNT: usize = 18;
 
 /// One queue's outstanding jobs — see [`JobRuntime::queue_counts`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

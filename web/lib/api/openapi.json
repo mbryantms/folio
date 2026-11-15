@@ -2929,6 +2929,48 @@
         }
       }
     },
+    "/api/admin/upcoming/status": {
+      "get": {
+        "operationId": "admin_upcoming_status",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpcomingStatusView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
+    "/api/admin/upcoming/sync": {
+      "post": {
+        "operationId": "admin_upcoming_sync",
+        "responses": {
+          "202": {
+            "description": "list pass queued, or one already was",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpcomingSyncResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "409": {
+            "description": "upcoming releases are off, or Metron is not ready"
+          }
+        }
+      }
+    },
     "/api/admin/users": {
       "get": {
         "operationId": "admin_users_list",
@@ -31267,6 +31309,7 @@
           "provider_coverage",
           "entity_enrich",
           "sidecar_reemit",
+          "release_calendar",
           "total",
           "in_flight",
           "queues"
@@ -31343,6 +31386,11 @@
             "type": "integer",
             "format": "int64",
             "description": "Pending relationship-suggestion runs (one per library; WP-7.2)."
+          },
+          "release_calendar": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Release-calendar list passes (at most one queued)."
           },
           "rewrite_issue_sidecars": {
             "type": "integer",
@@ -37682,6 +37730,151 @@
               "null"
             ],
             "format": "uuid"
+          }
+        }
+      },
+      "UpcomingCalendarStatusView": {
+        "type": "object",
+        "description": "The release calendar as the list pass left it.",
+        "required": [
+          "window_start",
+          "window_end",
+          "issues",
+          "series",
+          "series_pending_detail",
+          "series_without_comicvine",
+          "weeks"
+        ],
+        "properties": {
+          "issues": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_error_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When a pass last listed every week of its window."
+          },
+          "next_attempt_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "After a failure, no pass starts before this time."
+          },
+          "resumes_at_week": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "A pass stopped part-way and will resume at this Monday."
+          },
+          "series": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "series_pending_detail": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Series whose publisher and ComicVine id have not been fetched yet."
+          },
+          "series_without_comicvine": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Series Metron has not linked to ComicVine."
+          },
+          "weeks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UpcomingWeekCountView"
+            },
+            "description": "Per-week issue counts, oldest first."
+          },
+          "window_end": {
+            "type": "string",
+            "format": "date"
+          },
+          "window_start": {
+            "type": "string",
+            "format": "date",
+            "description": "First and last store date the current settings cover."
+          }
+        }
+      },
+      "UpcomingStatusView": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "metron_ready",
+          "weeks_ahead",
+          "calendar"
+        ],
+        "properties": {
+          "calendar": {
+            "$ref": "#/components/schemas/UpcomingCalendarStatusView"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "`upcoming.enabled`."
+          },
+          "metron_ready": {
+            "type": "boolean",
+            "description": "Metron is enabled and has credentials. The calendar needs both\nthis and `enabled`."
+          },
+          "weeks_ahead": {
+            "type": "integer",
+            "format": "int32",
+            "description": "`upcoming.weeks_ahead`.",
+            "minimum": 0
+          }
+        }
+      },
+      "UpcomingSyncResp": {
+        "type": "object",
+        "required": [
+          "queued"
+        ],
+        "properties": {
+          "queued": {
+            "type": "boolean",
+            "description": "`false` when a pass was already queued."
+          }
+        }
+      },
+      "UpcomingWeekCountView": {
+        "type": "object",
+        "description": "Issues the calendar holds for one Monday–Sunday week.",
+        "required": [
+          "week_start",
+          "issues"
+        ],
+        "properties": {
+          "issues": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "week_start": {
+            "type": "string",
+            "format": "date",
+            "description": "The Monday, `YYYY-MM-DD`."
           }
         }
       },
