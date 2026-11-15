@@ -101,12 +101,18 @@ hand-built `<span>`, palette classes such as `bg-amber-500/90`, and
 | `UpcomingCard` | top-right | Stage | `success` "In library", "Downloaded"; `info` "Downloading", "Tracked"; `warning` "Wanted"; `error` "Failed" | `stageBadge()` |
 | `UpcomingCard` | bottom-left | Release day | `neutral` | "Wed 25" |
 | Reading log card | top-right | What happened | `success` "Finished", "Series finished"; `info` "Reading session"; `neutral` "Bookmark"; each with its icon | Sentence case |
-| Bookmark tile | top-left | Kind | `neutral` with the kind's icon | "Bookmark", "Note", "Highlight" |
+| Bookmark tile | bottom-left | Kind | `neutral` with the kind's icon | "Bookmark", "Note", "Favorite", "Highlight" |
+| Bookmark tile | top-right | Favourite | `neutral`, `Star`, icon only | No text; named "Favorite" |
 | Cover page picker | bottom-left | Page number | `neutral` | "12" |
 
-The first five rows are on the standard. The last five still draw their
-own pills and move in WP-9.5, which also adds the guard test that fails
-when a card file positions a hand-built pill on a cover.
+The cover page picker marks the current cover with `ReadCheck` (label
+"Current cover"), the one round mark.
+
+`web/tests/ui/cover-chip-usage.test.ts` guards this. In every file that
+draws on a cover it fails on a hand-built pill (a positioned element
+with `backdrop-blur`, or its own rounded, padded, sized-text box), a
+`<Badge>` positioned on the cover, a palette colour, and a `CoverChip`
+restyled at the call site. A new card file is added to its list.
 
 An ambiguous list entry waits on the reader's choice, so it warns. A
 missing one is not in the library, which is context, not a fault: it
@@ -143,8 +149,13 @@ the finished check (`ReadCheck`, label "All N issues read"), then the
 publication-status badge, then the admin-only `meta` chip. The check
 keeps the same corner and mark as on issue cards.
 
-If a future card adds a fourth top-right indicator (favorite, age
-rating, etc.), it joins the cascade with a documented priority — never
+Two more cards use the corner for their own state signal: the reading
+log card says what happened ("Finished", "Reading session"), and a
+bookmark tile shows a star when the marker is a favourite (it was
+bottom-right, the corner reserved for play / open).
+
+If a future card adds a fourth top-right indicator (age rating, etc.),
+it joins the cascade with a documented priority — never
 sit alongside another top-right element.
 
 ## Bottom-left semantics
@@ -163,9 +174,12 @@ Three card-type-specific occupants, but each card only uses one:
   "Collection badge" preference (`useCoverCollectionDot`, toggle in the
   `CoverSizeOptions` popover) is enabled. Readers who want pristine
   covers can hide it.
-- **`UpcomingCard`** — the release day ("Wed 25") as a small text chip.
+- **`UpcomingCard`** — the release day ("Wed 25") as a neutral chip.
   Always present: the day is the one thing that distinguishes cards
   inside a week.
+- **Bookmark tile** (`MarkersList`) — the marker's kind ("Highlight",
+  "Note") with its icon. It used to sit top-left, under the menu and
+  the selection checkbox.
 - **`IssueCard`, `ProgressIssueCard`, `OnDeckCard`** — empty today.
   Available for future indicators (downloaded badge, queue marker,
   age rating, …).
@@ -194,8 +208,8 @@ A release is not in the library, so the card has no reader to open, no
 menu and nothing to select. It follows the slots anyway:
 
 - **Top-right**: the stage badge (`UpcomingStageBadge`, `onCover`
-  variant: an opaque backing with the tone on the text, because a tinted
-  surface is unreadable over cover art). One state per card, by the
+  variant: a `CoverChip` in the stage's tone, because a tinted surface
+  is unreadable over cover art; a failed download is the solid chip). One state per card, by the
   server's precedence: in library → downloaded → downloading → wanted
   (or failed) → tracked. A release nobody tracks ("announced") shows no
   badge, so in "All releases" the badges mark the reader's own series.

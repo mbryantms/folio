@@ -1,5 +1,6 @@
 "use client";
 
+import { CoverChip } from "@/components/library/CoverChip";
 import { CoverFrame } from "@/components/library/CoverFrame";
 import { UpcomingCover } from "@/components/upcoming/UpcomingCover";
 import { UpcomingStageBadge } from "@/components/upcoming/UpcomingStageBadge";
@@ -47,12 +48,12 @@ export function UpcomingCard({
           <UpcomingStageBadge
             entry={entry}
             onCover
-            className="absolute top-2 right-2"
+            className="absolute top-2 right-2 max-w-[calc(100%-1rem)]"
           />
         )}
-        <span className="bg-background/85 text-foreground absolute bottom-2 left-2 rounded px-1.5 py-0.5 text-[11px] leading-4 font-medium backdrop-blur">
+        <CoverChip className="absolute bottom-2 left-2 tabular-nums">
           {releaseDayShort(entry.release_date)}
-        </span>
+        </CoverChip>
       </CoverFrame>
       <div className="min-w-0 px-1">
         <div className="text-muted-foreground truncate text-xs font-medium">
