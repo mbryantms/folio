@@ -17,15 +17,48 @@ It has three parts, and a card gets all of them by using it:
 |---|---|---|
 | Tilt and sheen | `CoverFrame` (via `CoverTilt`) | The cover leans toward a mouse or pen pointer and a highlight follows it, when the account's "Cover tilt and sheen" effect is on and motion is not reduced. A plain box otherwise. Touch never tilts. |
 | The cover box | `<Cover>` (library art) or `<UpcomingCover>` (a provider image), drawn inside the frame | The 2:3 placeholder with the rounded border, class `.cover-box`: the element the hover glow lands on. |
-| The cover's colour | `useCoverTone`, called by those two | The placeholder takes the cover's average colour while the image loads, and the enclosing `[data-card]` gets `--cover-tint` for its hover wash and glow. The colours come from the server when it sent them (an upcoming release's `cover_tone`), else from this device's cache of covers it has decoded. |
+| The cover's colour | The server's `cover_tone` on the card's payload; `useCoverTone` (called by those two) as the fallback | The placeholder takes the cover's average colour while the image loads, and the enclosing `[data-card]` gets `--cover-tint` for its hover wash and glow. See "The cover's colour" below. |
 
 So a card needs `data-card` on its outer element, a `<CoverFrame>`, and a
-`<Cover>` (or `<UpcomingCover>`) inside it. In development the frame logs
+`<Cover>` (or `<UpcomingCover>`) inside it; and, for the colour on first
+paint, `style={coverTintStyle(x.cover_tone)}` on that outer element and
+`tone={x.cover_tone}` on the `<Cover>`. In development the frame logs
 a warning when nothing inside it draws a `.cover-box`.
 
 Two leans: `card` (the default, 7°) and `hero` (3.5°) for the large
 header cover on the series and issue pages, which glows in its colour
 but does not wash a card surface.
+
+### The cover's colour
+
+Two colours per cover: the average (the placeholder while the image
+loads) and the most vibrant (the hover wash and glow, as `--cover-tint`).
+
+The server computes both (`metadata::cover_tone`) and sends them as
+`cover_tone`, twelve hex digits, on `IssueSummaryView`, `SeriesView`,
+`IssueDetailView` and `UpcomingEntryView`:
+
+- **Library covers**: the cover thumbnail job reads them from the image
+  it encodes, so they follow a chosen cover page, and stores
+  `issues.cover_tone`. Covers made before that get it from the
+  `cover_tone` backfill (Admin → Metadata → Cover colours), which reads
+  the thumbnail already on disk. A series card takes its cover issue's
+  pair from the cover query it already runs.
+- **Upcoming releases**: the calendar sweep reads each Metron cover once
+  ([upcoming-releases.md](upcoming-releases.md), "Cover colours").
+
+A card puts the pair into its markup with two helpers from
+`web/lib/ui/cover-tone-style.ts` (not a client module, so server pages
+can call them): `coverTintStyle()` on the `[data-card]` element and the
+`tone` prop of `<Cover>`, which sets the box's background. Both are in
+the server-rendered HTML, so a device that has never loaded the cover
+shows its colour on first paint.
+
+Without a pair (a cover not yet backfilled), `useCoverTone` falls back
+to this device's cache: the browser samples a cover once it has decoded
+it and remembers up to 2,500 pairs in localStorage
+(`web/lib/ui/cover-tone.ts`). That only works after the first load, and
+never for a cross-origin image.
 
 **These stay still** and do not use the frame: hover previews, the
 fanned cover stacks on collection cards, and row thumbnails (list rows,
@@ -227,9 +260,10 @@ It never carries an action on Mylar: Folio has none
 When adding a new cover-card variant, walk this list before writing
 the JSX:
 
-- [ ] Cover: `data-card` on the card's outer element, the cover and its
-  overlays inside `<CoverFrame>`, the art drawn by `<Cover>` (or
-  `<UpcomingCover>`). Never a plain `<div className="relative">`. Add
+- [ ] Cover: `data-card` on the card's outer element with
+  `style={coverTintStyle(x.cover_tone)}`, the cover and its overlays
+  inside `<CoverFrame>`, the art drawn by `<Cover tone={x.cover_tone}>`
+  (or `<UpcomingCover>`). Never a plain `<div className="relative">`. Add
   the card to this document's opening list and to `CARDS` in
   `web/tests/dom/cover-frame.test.tsx`.
 - [ ] Top-left: does the card need a kebab? If yes, use

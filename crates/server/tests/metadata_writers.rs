@@ -188,6 +188,7 @@ async fn seed_minimal_issue(app: &TestApp) -> (sea_orm::DatabaseConnection, Stri
         last_sidecar_rewrite_at: Set(None),
         metron_info_raw: Set(None),
         cover_page_index: Set(0),
+        cover_tone: Set(None),
         metadata_review_accepted_at: Set(None),
         metadata_review_accepted_by: Set(None),
     }

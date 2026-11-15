@@ -1,6 +1,9 @@
 "use client";
 
 import { paletteFromImage, type CoverPalette } from "@/lib/ui/cover-palette";
+import { decodeTone, type Tone } from "@/lib/ui/cover-tone-style";
+
+export { decodeTone, type Tone };
 
 /**
  * Remembered cover colours (folio-flair-1.0: "blur-up cover placeholders"
@@ -14,7 +17,6 @@ import { paletteFromImage, type CoverPalette } from "@/lib/ui/cover-palette";
  * colour on hover. Storage is a convenience: if it is unavailable the
  * colours only last for the tab.
  */
-export type Tone = { average: string; vibrant: string };
 
 const KEY = "folio:cover-tones:v1";
 /** Most-recent covers kept; ~30 bytes each. */
@@ -60,18 +62,9 @@ export function toneKey(src: string): string {
 const hex = ([r, g, b]: [number, number, number]) =>
   ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
 
-const toRgb = (h: string) => {
-  const n = parseInt(h, 16);
-  return `${(n >> 16) & 255} ${(n >> 8) & 255} ${n & 255}`;
-};
-
 /** Pure: encode / decode one entry. Exported for tests. */
 export function encodeTone(p: CoverPalette): string {
   return `${hex(p.average)}${hex(p.vibrant)}`;
-}
-export function decodeTone(v: string | undefined): Tone | null {
-  if (!v || !/^[0-9a-f]{12}$/.test(v)) return null;
-  return { average: toRgb(v.slice(0, 6)), vibrant: toRgb(v.slice(6)) };
 }
 
 /** The remembered colours for a cover, as `"r g b"` triplets. */

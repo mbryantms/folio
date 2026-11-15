@@ -13,6 +13,7 @@
 //! cover agree to within the resampling filter.
 
 use image::{DynamicImage, imageops::FilterType};
+use sea_orm::{ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, sea_query::Expr};
 
 /// The sample the colours are read from. A cover is 2:3.
 const SAMPLE_W: u32 = 24;
@@ -112,6 +113,30 @@ pub fn tone_from_image(img: &DynamicImage) -> Option<CoverTone> {
         .resize_exact(SAMPLE_W, SAMPLE_H, FilterType::Triangle)
         .to_rgba8();
     tone_from_rgba(sample.as_raw())
+}
+
+/// Write an issue's cover colours (`issues.cover_tone`). `tone` is a
+/// [`CoverTone::encode`] value.
+pub async fn store_issue_tone<C: ConnectionTrait>(
+    db: &C,
+    issue_id: &str,
+    tone: &str,
+) -> Result<(), DbErr> {
+    entity::issue::Entity::update_many()
+        .col_expr(entity::issue::Column::CoverTone, Expr::value(tone))
+        .filter(entity::issue::Column::Id.eq(issue_id))
+        .exec(db)
+        .await?;
+    Ok(())
+}
+
+/// The colours of a cover thumbnail on disk: read, decode, pick. Blocking
+/// I/O and CPU work; call from `spawn_blocking`. `None` when the file
+/// cannot be read or decoded.
+pub fn tone_from_file(path: &std::path::Path) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    let img = crate::util::image_decode::decode_limited(&bytes).ok()?;
+    tone_from_image(&img).map(|t| t.encode())
 }
 
 #[cfg(test)]

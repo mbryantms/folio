@@ -4,6 +4,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 
 import { useCoverPriority } from "@/components/library/cover-priority";
 import { RetryingImg } from "@/components/RetryingImg";
+import { coverPlaceholderStyle } from "@/lib/ui/cover-tone-style";
 import { useCoverTone } from "@/lib/ui/use-cover-tone";
 import { COVER_CARD_SIZES } from "@/lib/library/cover-size";
 import { coverThumbSrcSet } from "@/lib/urls";
@@ -23,7 +24,8 @@ import { coverThumbSrcSet } from "@/lib/urls";
  * cover's own average colour when we have seen it before (`cover-tone`),
  * and the image resolves from a soft blur as it fades in. Once decoded,
  * its colours are remembered and the card gets a `--cover-tint` for its
- * hover wash.
+ * hover wash. When the server sent the cover's colours (`tone`), they are
+ * used from the first paint instead and the cache is only the fallback.
  *
  * Falls back to a placeholder tile (publisher / state) when `src` is null —
  * keeps the layout stable for issues with no cover (encrypted, malformed,
@@ -54,11 +56,16 @@ export function Cover({
   alt,
   fallback,
   className,
+  tone,
 }: {
   src: string | null | undefined;
   alt: string;
   fallback?: string | null;
   className?: string;
+  /** The cover's colour pair from the server (`cover_tone`). With it the
+   *  placeholder colour is in the server-rendered markup; without it the
+   *  colours come from this device's cache, after hydration. */
+  tone?: string | null;
 }) {
   // Above-the-fold rails flag their subtree (see `CoverPriorityProvider`).
   // A prioritized cover eager-loads at high fetch priority and skips the
@@ -67,7 +74,7 @@ export function Cover({
   const [loaded, setLoaded] = useState(priority);
   const ref = useRef<HTMLImageElement>(null);
   // The remembered colour as the placeholder, and the card's tint.
-  const { boxRef, remember } = useCoverTone(src);
+  const { boxRef, remember } = useCoverTone(src, tone);
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -97,7 +104,11 @@ export function Cover({
       // The box owns the aspect-ratio + placeholder + caller classes
       // (sizing, hover brightness); the img fills it and fades in, so the
       // dark placeholder stays visible underneath until the cover decodes.
-      <div ref={boxRef} className={`${COVER_BOX} ${className ?? ""}`}>
+      <div
+        ref={boxRef}
+        className={`${COVER_BOX} ${className ?? ""}`}
+        style={coverPlaceholderStyle(tone)}
+      >
         {/* A failed load re-requests twice after a back-off (a 429 from
             the thumbnail bucket), then shows as failed. */}
         <RetryingImg

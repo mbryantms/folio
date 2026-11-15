@@ -1,7 +1,8 @@
 //! `BackfillJob` — operator-initiated catch-up sweeps, run as background
 //! apalis jobs instead of blocking the admin request (audit B17).
 //!
-//! Two kinds, both idempotent + resumable:
+//! The kinds, all idempotent + resumable (see [`BackfillKind`] for the
+//! later ones):
 //!   - `CoverPhash` — compute perceptual hashes for archive-extracted covers
 //!     scanned before pHash matching existed.
 //!   - `VariantCover` — re-download provider variant covers whose on-disk
@@ -42,6 +43,10 @@ pub enum BackfillKind {
     /// tables (one set-based UPDATE per series) — the catch-up for issues
     /// scanned before the scanner derived the columns from the junctions.
     CsvCache,
+    /// Read the cover colours (`issues.cover_tone`) of issues whose cover
+    /// thumbnail was made before the thumbnail job computed them, from the
+    /// thumbnail already on disk (roadmap WP-9.7). No archive access.
+    CoverTone,
 }
 
 impl BackfillKind {
@@ -51,6 +56,7 @@ impl BackfillKind {
             BackfillKind::CoverPhash => "cover_phash",
             BackfillKind::NameSuffixes => "name_suffixes",
             BackfillKind::CsvCache => "csv_cache",
+            BackfillKind::CoverTone => "cover_tone",
             BackfillKind::VariantCover => "variant_cover",
             BackfillKind::CoverVariant => "cover_variant",
         }
@@ -75,6 +81,7 @@ pub async fn handle(job: BackfillJob, state: Data<AppState>) -> Result<(), BoxDy
         BackfillKind::CoverVariant => drain_cover_variants(&state).await,
         BackfillKind::NameSuffixes => drain_name_suffixes(&state).await,
         BackfillKind::CsvCache => drain_csv_cache(&state).await,
+        BackfillKind::CoverTone => drain_cover_tones(&state).await,
     };
     tracing::info!(
         kind = job.kind.as_str(),
@@ -289,6 +296,78 @@ async fn drain_csv_cache(state: &AppState) -> (u64, u64) {
     }
     (rewritten, failed)
 }
+
+/// Returns `(covers read, issues skipped)`. An issue is skipped when it
+/// has no cover thumbnail on disk yet (the thumbnail job writes the
+/// colours when it makes one) or the file cannot be decoded.
+///
+/// Walks the issues by id rather than re-selecting `cover_tone IS NULL`
+/// from the top, so the issues it has to skip cannot hold the head of the
+/// list and stop the drain short of the rest.
+pub async fn drain_cover_tones(state: &AppState) -> (u64, u64) {
+    use crate::library::thumbnails;
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
+    let data_dir = state.cfg().data_path.clone();
+    let mut read = 0u64;
+    let mut skipped = 0u64;
+    let mut after: Option<String> = None;
+    for _ in 0..MAX_DRAIN_ITERS {
+        let mut q = entity::issue::Entity::find()
+            .filter(entity::issue::Column::CoverTone.is_null())
+            .filter(entity::issue::Column::State.eq(entity::issue::IssueState::Active))
+            .filter(entity::issue::Column::RemovedAt.is_null())
+            .select_only()
+            .column(entity::issue::Column::Id)
+            .order_by_asc(entity::issue::Column::Id)
+            .limit(COVER_TONE_BATCH);
+        if let Some(a) = &after {
+            q = q.filter(entity::issue::Column::Id.gt(a.clone()));
+        }
+        let ids: Vec<String> = match q.into_tuple().all(&state.db).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(error = %e, "cover-colour backfill: issue page failed");
+                break;
+            }
+        };
+        let Some(last) = ids.last().cloned() else {
+            break;
+        };
+        // Decode the whole page off the async runtime; the small `@sm`
+        // variant when there is one (same picture, a quarter the pixels).
+        let dir = data_dir.clone();
+        let tones = tokio::task::spawn_blocking(move || {
+            ids.into_iter()
+                .map(|id| {
+                    let tone = thumbnails::find_existing_cover_small(&dir, &id)
+                        .or_else(|| thumbnails::find_existing_cover(&dir, &id))
+                        .and_then(|p| crate::metadata::cover_tone::tone_from_file(&p));
+                    (id, tone)
+                })
+                .collect::<Vec<_>>()
+        })
+        .await
+        .unwrap_or_default();
+        for (id, tone) in tones {
+            let Some(tone) = tone else {
+                skipped += 1;
+                continue;
+            };
+            match crate::metadata::cover_tone::store_issue_tone(&state.db, &id, &tone).await {
+                Ok(()) => read += 1,
+                Err(e) => {
+                    skipped += 1;
+                    tracing::warn!(issue_id = %id, error = %e, "cover-colour backfill: update failed");
+                }
+            }
+        }
+        after = Some(last);
+    }
+    (read, skipped)
+}
+
+/// Issues per page of the cover-colour drain.
+const COVER_TONE_BATCH: u64 = 200;
 
 /// Enqueue a backfill drain. Returns `false` only if the push itself fails.
 pub async fn enqueue(app: &AppState, kind: BackfillKind) -> bool {

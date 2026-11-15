@@ -449,6 +449,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/metadata/cover-tone-backfill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["metadata_cover_tone_backfill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/metadata/cover-variant-backfill": {
         parameters: {
             query?: never;
@@ -6961,7 +6977,7 @@ export interface components {
             enqueued: boolean;
             /**
              * @description `cover_phash` | `variant_cover` | `cover_variant` | `name_suffixes` |
-             *     `csv_cache`.
+             *     `csv_cache` | `cover_tone`.
              */
             kind: string;
         };
@@ -11000,6 +11016,11 @@ export interface components {
              *     editor can highlight the current cover. `archive-rewrite-1.0`.
              */
             cover_page_index?: number;
+            /**
+             * @description The cover's colours (see `IssueSummaryView.cover_tone`), for the
+             *     page's header cover. Absent until the cover has been read.
+             */
+            cover_tone?: string | null;
             created_at: string;
             /**
              * @description Creator-name → slug map covering every credit name listed in
@@ -11304,6 +11325,13 @@ export interface components {
          */
         IssueState: "active" | "encrypted" | "malformed";
         IssueSummaryView: {
+            /**
+             * @description The cover's colours, so a card can show its placeholder colour and
+             *     hover tint before the image has loaded: twelve hex digits, the
+             *     average colour then the most vibrant. Absent until the cover
+             *     thumbnail job (or the `cover_tone` backfill) has read the cover.
+             */
+            cover_tone?: string | null;
             cover_url?: string | null;
             created_at: string;
             id: string;
@@ -15710,6 +15738,11 @@ export interface components {
              */
             comicvine_id?: number | null;
             cover_artists?: string[];
+            /**
+             * @description That cover's colours (see `IssueSummaryView.cover_tone`). Absent
+             *     until the cover has been read.
+             */
+            cover_tone?: string | null;
             /** @description URL of the first issue's cover thumbnail. Null when no active issue exists. */
             cover_url?: string | null;
             /** @description RFC3339 timestamps from the series row. */
@@ -18625,6 +18658,33 @@ export interface operations {
             };
             /** @description batch not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_cover_tone_backfill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description backfill job enqueued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackfillEnqueuedResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

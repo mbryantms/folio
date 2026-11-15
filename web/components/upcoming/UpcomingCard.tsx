@@ -5,6 +5,7 @@ import { CoverFrame } from "@/components/library/CoverFrame";
 import { UpcomingCover } from "@/components/upcoming/UpcomingCover";
 import { UpcomingStageBadge } from "@/components/upcoming/UpcomingStageBadge";
 import type { UpcomingEntryView } from "@/lib/api/types";
+import { coverTintStyle } from "@/lib/ui/cover-tone-style";
 import { releaseDayShort } from "@/lib/upcoming/stage";
 
 /**
@@ -34,6 +35,7 @@ export function UpcomingCard({
     <button
       type="button"
       data-card=""
+      style={coverTintStyle(entry.cover_tone)}
       data-upcoming-key={entry.key}
       aria-haspopup="dialog"
       onClick={() => onOpen(entry)}

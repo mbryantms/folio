@@ -907,6 +907,10 @@ pub struct SeriesView {
     pub specials_completion: crate::api::series_completion_prefs::SpecialsCompletion,
     /// URL of the first issue's cover thumbnail. Null when no active issue exists.
     pub cover_url: Option<String>,
+    /// That cover's colours (see `IssueSummaryView.cover_tone`). Absent
+    /// until the cover has been read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover_tone: Option<String>,
     /// Set when the scanner soft-deleted this series (its folder vanished
     /// from disk). Never present on list responses — removed series are
     /// filtered out of every listing — and `GET /series/{slug}` returns
@@ -1082,6 +1086,7 @@ impl From<series::Model> for SeriesView {
             specials_count_toward_completion: false,
             specials_completion: Default::default(),
             cover_url: None,
+            cover_tone: None,
             removed_at: m.removed_at.map(|t| t.to_rfc3339()),
             created_at: m.created_at.to_rfc3339(),
             updated_at: m.updated_at.to_rfc3339(),
@@ -1136,6 +1141,12 @@ pub struct IssueSummaryView {
     pub page_count: Option<i32>,
     pub state: entity::issue::IssueState,
     pub cover_url: Option<String>,
+    /// The cover's colours, so a card can show its placeholder colour and
+    /// hover tint before the image has loaded: twelve hex digits, the
+    /// average colour then the most vibrant. Absent until the cover
+    /// thumbnail job (or the `cover_tone` backfill) has read the cover.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover_tone: Option<String>,
     /// Spec §6.5 classification: `"Special"`, `"Annual"`, `"OneShot"`,
     /// `"TPB"`, or `None` for ordinary numbered issues. Drives the
     /// reader's Specials & Extras section on the series detail page.
@@ -1229,6 +1240,10 @@ pub struct IssueDetailView {
     pub format: Option<String>,
     pub black_and_white: Option<bool>,
     pub page_count: Option<i32>,
+    /// The cover's colours (see `IssueSummaryView.cover_tone`), for the
+    /// page's header cover. Absent until the cover has been read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover_tone: Option<String>,
     pub story_arc: Option<String>,
     pub story_arc_number: Option<String>,
     pub web_url: Option<String>,
@@ -1427,6 +1442,7 @@ impl IssueDetailView {
             format: m.format,
             black_and_white: m.black_and_white,
             page_count: m.page_count,
+            cover_tone: crate::api::issue_card::card_cover_tone(m.cover_tone),
             story_arc: m.story_arc,
             story_arc_number: m.story_arc_number,
             web_url: m.web_url,
@@ -2728,7 +2744,7 @@ pub(crate) async fn hydrate_series(
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
     let counts = fetch_issue_counts(&app.db, &series_ids, acl).await;
 
-    let covers = series_cover_issue_ids(&app.db, &series_ids, acl).await;
+    let covers = series_covers(&app.db, &series_ids, acl).await;
 
     // Batch-fetch external IDs once for the whole page so the
     // per-row enrichment doesn't N+1.
@@ -2778,9 +2794,10 @@ pub(crate) async fn hydrate_series(
             }
             v.specials_count_toward_completion = completion.counts_specials(series_id);
             v.specials_completion = completion.mode(series_id);
-            v.cover_url = covers
-                .get(&series_id)
-                .map(|id| format!("/issues/{id}/pages/0/thumb"));
+            if let Some(cover) = covers.get(&series_id) {
+                v.cover_url = Some(format!("/issues/{}/pages/0/thumb", cover.issue_id));
+                v.cover_tone.clone_from(&cover.tone);
+            }
             if let Some((cv, metron)) = by_series.get(&series_id.to_string()) {
                 v.comicvine_id = *cv;
                 v.metron_id = *metron;
@@ -3051,9 +3068,32 @@ pub(crate) async fn series_cover_issue_ids(
     series_ids: &[Uuid],
     acl: &access::VisibleLibraries,
 ) -> HashMap<Uuid, String> {
+    series_covers(db, series_ids, acl)
+        .await
+        .into_iter()
+        .map(|(sid, cover)| (sid, cover.issue_id))
+        .collect()
+}
+
+/// A series' cover: the issue whose thumbnail stands for it, and that
+/// cover's colours when they have been read (`issues.cover_tone`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SeriesCover {
+    pub issue_id: String,
+    pub tone: Option<String>,
+}
+
+/// [`series_cover_issue_ids`] with each cover's colours, from the same
+/// one query: it already reads every candidate issue of the page's
+/// series, so the colour is one more column, not one more statement.
+pub(crate) async fn series_covers(
+    db: &sea_orm::DatabaseConnection,
+    series_ids: &[Uuid],
+    acl: &access::VisibleLibraries,
+) -> HashMap<Uuid, SeriesCover> {
     let mut covers: HashMap<Uuid, String> = HashMap::new();
     if series_ids.is_empty() {
-        return covers;
+        return HashMap::new();
     }
     // Prefer issue #1 as the series cover even when a preceding
     // entry (e.g. #1/2, #0, "Free Comic Book Day" specials with
@@ -3083,6 +3123,7 @@ pub(crate) async fn series_cover_issue_ids(
         .select_only()
         .column(issue::Column::SeriesId)
         .column(issue::Column::Id)
+        .column(issue::Column::CoverTone)
         .order_by_asc(issue::Column::SeriesId)
         .order_by_asc(Expr::cust("special_type IS NOT NULL"))
         .order_by_asc(Expr::cust("CASE WHEN sort_number >= 1 THEN 0 ELSE 1 END"))
@@ -3096,9 +3137,15 @@ pub(crate) async fn series_cover_issue_ids(
     // Every active issue the caller may see — a pick outside this set is
     // ignored for a capped caller (the heuristic cover stands instead).
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Every candidate's colours: the final cover may be the heuristic's
+    // first row or an explicit pick further down the same result.
+    let mut tones: HashMap<String, String> = HashMap::new();
     for row in cover_rows {
         if capped {
             seen.insert(row.id.clone());
+        }
+        if let Some(tone) = crate::api::issue_card::card_cover_tone(row.cover_tone) {
+            tones.insert(row.id.clone(), tone);
         }
         covers.entry(row.series_id).or_insert(row.id);
     }
@@ -3109,12 +3156,19 @@ pub(crate) async fn series_cover_issue_ids(
         }
     }
     covers
+        .into_iter()
+        .map(|(sid, issue_id)| {
+            let tone = tones.remove(&issue_id);
+            (sid, SeriesCover { issue_id, tone })
+        })
+        .collect()
 }
 
 #[derive(Debug, FromQueryResult)]
 struct SeriesCoverRow {
     series_id: Uuid,
     id: String,
+    cover_tone: Option<String>,
 }
 
 pub(crate) fn apply_string_cursor<E, C, IdC, V>(
@@ -3887,10 +3941,9 @@ pub async fn get_one(
     // An explicit series cover pick (post-audit T4.2) beats the heuristic.
     // One shared helper with the cards, so a pick the caller can't see is
     // never the hero cover.
-    let cover_issue_id: Option<String> =
-        series_cover_issue_ids(&app.db, std::slice::from_ref(&row.id), &acl)
-            .await
-            .remove(&row.id);
+    let cover: Option<SeriesCover> = series_covers(&app.db, std::slice::from_ref(&row.id), &acl)
+        .await
+        .remove(&row.id);
     // Pull the per-issue stats columns + the still-CSV-shaped fields
     // (characters / teams / locations) we don't yet normalize. Capped at 500
     // to bound the work for absurdly long series. Genres / tags / credits
@@ -3978,7 +4031,10 @@ pub async fn get_one(
     .await;
     v.specials_count_toward_completion = completion.counts_specials(series_id_for_lookups);
     v.specials_completion = completion.mode(series_id_for_lookups);
-    v.cover_url = cover_issue_id.map(|id| format!("/issues/{id}/pages/0/thumb"));
+    if let Some(cover) = cover {
+        v.cover_url = Some(format!("/issues/{}/pages/0/thumb", cover.issue_id));
+        v.cover_tone = cover.tone;
+    }
     v.writers = metadata_facets.credits_for("writer");
     v.pencillers = metadata_facets.credits_for("penciller");
     v.inkers = metadata_facets.credits_for("inker");

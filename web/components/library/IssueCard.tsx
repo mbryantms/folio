@@ -13,6 +13,7 @@ import { Cover } from "@/components/Cover";
 import { CoverFrame } from "@/components/library/CoverFrame";
 import { PageScrub } from "@/components/library/PageScrub";
 import { issueCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
+import { coverTintStyle } from "@/lib/ui/cover-tone-style";
 import {
   CoverMenuButton,
   type CoverMenuAction,
@@ -225,6 +226,7 @@ function IssueCardImpl({
         <CoverMorph name={morph.name} landing={morph.landing}>
           <Cover
             src={issue.cover_url}
+            tone={issue.cover_tone}
             alt={heading}
             fallback={numberLabel}
             className="w-full transition group-hover:brightness-110"
@@ -293,7 +295,12 @@ function IssueCardImpl({
   return (
     <>
       {cardOuterProps ? (
-        <button className={cardClassName} data-card="" {...cardOuterProps}>
+        <button
+          className={cardClassName}
+          data-card=""
+          style={coverTintStyle(issue.cover_tone)}
+          {...cardOuterProps}
+        >
           {innerCard}
         </button>
       ) : (
@@ -301,6 +308,7 @@ function IssueCardImpl({
           href={issueUrl(issue)}
           className={cardClassName}
           data-card=""
+          style={coverTintStyle(issue.cover_tone)}
           onClick={morph.onClick}
         >
           {innerCard}

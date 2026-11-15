@@ -58,6 +58,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(run_cover_variant_backfill))
         .routes(routes!(run_name_suffix_backfill))
         .routes(routes!(run_csv_cache_backfill))
+        .routes(routes!(run_cover_tone_backfill))
         .routes(routes!(list_auto_synced))
         .routes(routes!(cancel_batch))
 }
@@ -1172,7 +1173,7 @@ fn resolve_apply_label(
 pub struct BackfillEnqueuedResp {
     pub enqueued: bool,
     /// `cover_phash` | `variant_cover` | `cover_variant` | `name_suffixes` |
-    /// `csv_cache`.
+    /// `csv_cache` | `cover_tone`.
     pub kind: String,
 }
 
@@ -1343,6 +1344,33 @@ pub async fn run_csv_cache_backfill(
         &ctx,
         BackfillKind::CsvCache,
         "admin.metadata.csv_cache_backfill",
+    )
+    .await
+}
+
+// ───────── /admin/metadata/cover-tone-backfill ─────────
+
+#[utoipa::path(
+    operation_id = "metadata_cover_tone_backfill",
+    post,
+    path = "/admin/metadata/cover-tone-backfill",
+    responses(
+        (status = 202, body = BackfillEnqueuedResp, description = "backfill job enqueued"),
+        (status = 403, description = "admin only"),
+    )
+)]
+#[handler]
+pub async fn run_cover_tone_backfill(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+) -> Response {
+    enqueue_backfill(
+        &app,
+        actor.id,
+        &ctx,
+        BackfillKind::CoverTone,
+        "admin.metadata.cover_tone_backfill",
     )
     .await
 }

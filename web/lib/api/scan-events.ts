@@ -538,13 +538,21 @@ export function formatBackfillMessage(
                 plural: "issues",
                 skipped: "series failed",
               }
-            : {
-                title: "Variant-cover",
-                verb: "Re-downloaded",
-                noun: "variant cover",
-                plural: "variant covers",
-                skipped: "could not be fetched",
-              };
+            : evt.kind === "cover_tone"
+              ? {
+                  title: "Cover-colour",
+                  verb: "Read",
+                  noun: "cover's colours",
+                  plural: "covers' colours",
+                  skipped: "have no cover thumbnail yet",
+                }
+              : {
+                  title: "Variant-cover",
+                  verb: "Re-downloaded",
+                  noun: "variant cover",
+                  plural: "variant covers",
+                  skipped: "could not be fetched",
+                };
   if (evt.processed === 0 && evt.skipped === 0) {
     return `${copy.title} backfill complete — nothing to do.`;
   }

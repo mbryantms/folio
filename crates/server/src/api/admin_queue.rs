@@ -1289,6 +1289,7 @@ pub(crate) fn job_label(queue: &str, payload: Option<&serde_json::Value>) -> Str
             Some("cover_variant") => "Cover variant backfill",
             Some("name_suffixes") => "Name suffix backfill",
             Some("csv_cache") => "Search cache backfill",
+            Some("cover_tone") => "Cover colour backfill",
             _ => "Backfill",
         },
         "hash_backfill" => "Content hash backfill",

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { BookMinus, LibraryBig, TriangleAlert } from "lucide-react";
 import { CoverSkeleton } from "@/components/CoverSkeleton";
 import { seriesCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
+import { coverTintStyle } from "@/lib/ui/cover-tone-style";
 import { useRouter } from "next/navigation";
 import { memo, useState } from "react";
 
@@ -234,6 +235,7 @@ function SeriesCardImpl({
         <CoverMorph name={morph.name} landing={morph.landing}>
           <Cover
             src={series.cover_url}
+            tone={series.cover_tone}
             alt={series.name}
             fallback={series.publisher ?? series.name}
             className="w-full transition group-hover:brightness-110"
@@ -320,7 +322,12 @@ function SeriesCardImpl({
   return (
     <>
       {cardOuterProps ? (
-        <button className={cardClassName} data-card="" {...cardOuterProps}>
+        <button
+          className={cardClassName}
+          data-card=""
+          style={coverTintStyle(series.cover_tone)}
+          {...cardOuterProps}
+        >
           {innerCard}
         </button>
       ) : (
@@ -333,6 +340,7 @@ function SeriesCardImpl({
               href={link}
               className={cardClassName}
               data-card=""
+              style={coverTintStyle(series.cover_tone)}
               onClick={morph.onClick}
             >
               {innerCard}
