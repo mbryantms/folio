@@ -649,6 +649,11 @@ async fn unconstrained_id_columns_are_accounted_for() {
         "cbl_entries.metron_series_id",
         "series_provider_range.provider_series_id",
         "series_external_relationship.provider_series_id",
+        // The release calendar holds Metron's rows, keyed by Metron's own
+        // ids (and the ComicVine volume id Metron names); no local row.
+        "release_calendar_issue.metron_issue_id",
+        "release_calendar_series.metron_series_id",
+        "release_calendar_series.cv_series_id",
     ];
     let app = TestApp::spawn().await;
     let db = &app.state().db;
