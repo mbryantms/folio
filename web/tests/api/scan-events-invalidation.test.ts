@@ -332,6 +332,10 @@ describe("toast copy", () => {
     expect(done("cover_variant", 0)).toBe(
       "Cover-size backfill complete — nothing to do.",
     );
+    expect(done("creator_ids", 127, 4185)).toBe(
+      "Linked 127 creators · 4185 still have no provider record",
+    );
+    expect(done("creator_ids", 1)).toBe("Linked 1 creator");
   });
 });
 

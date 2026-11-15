@@ -878,6 +878,14 @@ pub async fn rollup_series_metadata<C: ConnectionTrait + sea_orm::TransactionTra
         "link_credit_person_ids",
         link_credit_person_ids(db, series_id)
     );
+    // WP-9.8: the provider ids the files carry for their creators
+    // (MetronInfo `<Creator id>`), now that every credited name has its
+    // `person` row. One statement that returns nothing once they are linked.
+    step!("link_creator_ids", async {
+        crate::metadata::creator_ids::link_series_creator_ids_from_files(db, series_id)
+            .await
+            .map(|_| ())
+    });
 
     step!(
         "series_credits",

@@ -144,7 +144,7 @@ validated; a stable order keeps rewrites diff-clean).
 | `isbn` / `upc` ids (and a pre-schema `gtin`, classified by shape) | `<GTIN><ISBN/><UPC/></GTIN>` | |
 | `age_rating` | `<AgeRating>` | `ageRatingType` only (`metron_age_rating`): a Metron value passes through, ComicInfo's vocabulary maps as Metron-Tagger maps it (`Mature 17+` → `Mature`, `MA15+` → `Teen Plus`, `Everyone 10+` → `Everyone`, `X18+` → `Explicit`, …); anything else is omitted (the schema default is `Unknown`). |
 | `web_url` (or the provider's `source_url`), `additional_links` | `<URLs><URL primary="true"/><URL/>` | |
-| credits | `<Credits>` | Unchanged since WP-8.1 (below). |
+| credits; each creator's provider id (`external_ids`, `entity_type = person`) | `<Credits>`, `<Creator id>` | The shape is unchanged since WP-8.1; the `id` attribute is roadmap WP-9.8 (both below). |
 | `provider.fetched_at`, else `last_metadata_sync_at` | `<LastModified>` | Omitted for a DB-only compose of a never-synced issue, so the parity fixed point holds. |
 | `issue.metron_info_raw` top-level unknowns | passthrough after `<LastModified>` | `<MangaVolume>`, vendor `<X-…>`; a pre-schema typed name (`<Title>`, `<Year>`) in `raw` is never re-emitted. |
 
@@ -273,6 +273,62 @@ back to `CoverArtist`), so archives Folio already rewrote still ingest
 unchanged, and the next rewrite upgrades them. `sidecar_parity.rs`
 asserts the credit grammar structurally and validates the whole document
 against the v1.2 XSD with `xmllint` (see "MetronInfo schema" above).
+
+**Creator ids (roadmap WP-9.8).** A provider credit carries the
+provider's id for the creator, and the DB-direct apply links it
+(`writers::upsert_person` with the credit's identifiers). On a writeback
+library the apply writes no `person` row, so the id has to travel through
+the file: the composer writes it as `<Creator id="…">`. The schema's
+`resourceType` gives the attribute no source of its own, so, like
+`<Series id>`, it is **the primary source's id** and nothing else:
+
+```xml
+<IDS>
+  <ID source="Comic Vine" primary="true">326873</ID>
+</IDS>
+…
+<Credit>
+  <Creator id="55821">Fiona Staples</Creator>
+  <Roles><Role>Penciller</Role></Roles>
+</Credit>
+```
+
+- **Compose** (`sidecar_compose::compose_credit_ids`). The id the
+  credited `person` row already holds for the primary source (so every
+  DB-only compose keeps it: manual edit, drift flush, re-emit, series-scope
+  and fill-missing applies); for a creator with no link yet, the
+  provider credit's identifier of that source, when the credits are the
+  provider's. `load_issue_junctions`
+  reads those ids in its credits statement (`IssueJunctions::creator_ids`).
+  A creator linked only on another provider gets no attribute, and a
+  document with no primary id carries none.
+- **Parse** (`parsers::metroninfo`). `MetronInfo::credit_ids` maps the
+  creator's name to the id, in both credit shapes. It is part of the
+  parsed struct the scanner stores in `issues.metron_info_raw`.
+- **Ingest** (`metadata::creator_ids::link_series_creator_ids_from_files`,
+  the `link_creator_ids` step of `rollup_series_metadata`, after the
+  `person` rows are minted). It reads `credit_ids` and
+  `primary_id_source` from the series' active issues and calls
+  `writers::set_external_id` (`entity_type = person`, `set_by =
+  metroninfo`) for a Metron / ComicVine / GCD id no creator holds yet. The
+  name is matched the way the scanner files a credit (`split_csv`: a
+  comma'd `Jr.` re-attached, a tagger id dropped). Once the ids are linked
+  the step is one statement that returns nothing; an id that cannot be
+  linked costs one more lookup per rollup. A file another tool
+  tagged (Metron-Tagger) links the same way; a file with no primary `<ID>`
+  links nothing.
+
+Both this step and the catch-up backfill (`creator_ids::resolve_from_cache`,
+the admin "Creator links" card; see the operator guide) only **add** a
+link. `person` is unique by normalized name, so two real creators with one
+name share a row: the first id to arrive stays, and a file never replaces
+an id a creator already holds for that source.
+
+Limits, accepted in WP-9.8: an apply whose credits came from a provider
+other than the document's primary source (a composite apply) carries no
+creator ids for those credits; and a creator whose only role has no
+ComicInfo column (`Designer`, Metron's bare `Artist`) gets no
+`issue_credits` row from the scanner, hence no `person` to link.
 
 **`<Page DoublePage>` (WP-8.1).** `DoublePage="false"` is omitted (the
 ComicInfo default): ComicTagger 1.5.5's page editor ticked "double page"
@@ -1168,6 +1224,7 @@ branch from `apply_issue` / `apply_series` once the
 | [`server/archive_rewrite/mutex.rs`](../../crates/server/src/archive_rewrite/mutex.rs)    | Per-issue rewrite mutex (Redis SET NX EX).                          |
 | [`server/jobs/rewrite_sidecars.rs`](../../crates/server/src/jobs/rewrite_sidecars.rs)  | apalis worker: open → rebuild → atomic swap → cache invalidate → audit → rescan. |
 | [`server/metadata/apply.rs`](../../crates/server/src/metadata/apply.rs) — `apply_issue_via_sidecar` + `apply_series_via_sidecar` | XML-first apply dispatch; gated on the per-library flag.            |
+| [`server/metadata/creator_ids.rs`](../../crates/server/src/metadata/creator_ids.rs) | WP-9.8: link the `<Creator id>` values the files carry to `person` rows (series rollup step); the cache-only catch-up for creators credited earlier. |
 | [`server/metadata/drift.rs`](../../crates/server/src/metadata/drift.rs) | M6 drift query: count issues where `pin.set_at > last_rewrite_at`.  |
 | [`server/metadata/writeback_progress.rs`](../../crates/server/src/metadata/writeback_progress.rs) | M7 rollout gauge: count libraries with writeback disabled.          |
 | [`fixtures/comictagger/make-fixture.py`](../../fixtures/comictagger/make-fixture.py) | Regenerates the ComicTagger parity fixture (`build`) and runs the reverse check with ComicTagger's parser (`verify`). |

@@ -59,6 +59,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(run_name_suffix_backfill))
         .routes(routes!(run_csv_cache_backfill))
         .routes(routes!(run_cover_tone_backfill))
+        .routes(routes!(run_creator_id_backfill))
         .routes(routes!(list_auto_synced))
         .routes(routes!(cancel_batch))
 }
@@ -1173,7 +1174,7 @@ fn resolve_apply_label(
 pub struct BackfillEnqueuedResp {
     pub enqueued: bool,
     /// `cover_phash` | `variant_cover` | `cover_variant` | `name_suffixes` |
-    /// `csv_cache` | `cover_tone`.
+    /// `csv_cache` | `cover_tone` | `creator_ids`.
     pub kind: String,
 }
 
@@ -1371,6 +1372,33 @@ pub async fn run_cover_tone_backfill(
         &ctx,
         BackfillKind::CoverTone,
         "admin.metadata.cover_tone_backfill",
+    )
+    .await
+}
+
+// ───────── /admin/metadata/creator-id-backfill ─────────
+
+#[utoipa::path(
+    operation_id = "metadata_creator_id_backfill",
+    post,
+    path = "/admin/metadata/creator-id-backfill",
+    responses(
+        (status = 202, body = BackfillEnqueuedResp, description = "backfill job enqueued"),
+        (status = 403, description = "admin only"),
+    )
+)]
+#[handler]
+pub async fn run_creator_id_backfill(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+) -> Response {
+    enqueue_backfill(
+        &app,
+        actor.id,
+        &ctx,
+        BackfillKind::CreatorIds,
+        "admin.metadata.creator_id_backfill",
     )
     .await
 }

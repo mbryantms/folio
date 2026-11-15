@@ -36,6 +36,7 @@ api/admin_metadata.rs::run_cover_variant_backfill  # POST /admin/metadata/cover-
 api/admin_metadata.rs::run_name_suffix_backfill    # POST /admin/metadata/name-suffix-backfill — delegates to enqueue_backfill which writes audit_log
 api/admin_metadata.rs::run_csv_cache_backfill      # POST /admin/metadata/csv-cache-backfill — delegates to enqueue_backfill which writes audit_log
 api/admin_metadata.rs::run_cover_tone_backfill     # POST /admin/metadata/cover-tone-backfill — delegates to enqueue_backfill which writes audit_log
+api/admin_metadata.rs::run_creator_id_backfill     # POST /admin/metadata/creator-id-backfill — delegates to enqueue_backfill which writes audit_log
 
 # ── admin_metadata_coverage.rs ──────────────────────────────
 api/admin_metadata_coverage.rs::coverage  # GET /admin/metadata/coverage — read-only snapshot

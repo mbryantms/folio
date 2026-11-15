@@ -682,6 +682,8 @@ pub fn compose_metroninfo(ctx: &ComposeContext) -> MetronInfo {
         .as_deref()
         .and_then(|k| ctx.series_external_ids.get(k))
         .cloned();
+    // `<Creator id>` likewise: the primary source's id for each creator.
+    let credit_ids = compose_credit_ids(ctx, &credits, primary_id_source.as_deref());
     // `<Series><Format>`: the first label that maps onto the schema's
     // `formatType` — the provider's series type, the series row's, the
     // provider's format label, the issue's own `<Format>`.
@@ -854,6 +856,7 @@ pub fn compose_metroninfo(ctx: &ComposeContext) -> MetronInfo {
         ),
         ids,
         credits,
+        credit_ids,
         // ───── v1.2 schema fields (audit 2026-11 WP A4) ─────
         primary_id_source,
         series_id,
@@ -1433,6 +1436,63 @@ fn split_csv_opt(csv: Option<&str>) -> Vec<String> {
     csv.map(split_csv).unwrap_or_default()
 }
 
+/// MetronInfo's `<Creator id>` for the composed credits (roadmap WP-9.8):
+/// the id the **primary** source holds for each credited creator, keyed
+/// by the creator's name as composed. The schema's attribute has no source
+/// of its own, so an id from any other provider is never written, and a
+/// document with no primary id carries none.
+///
+/// Two places know such an id. The `person` row behind a credit the issue
+/// already has, which keeps the id in the file across a DB-only compose (a
+/// manual edit, a series-scope or fill-missing apply). And, for a creator
+/// with no such link yet, the provider's own credit when the credits are
+/// the provider's: this is how a provider apply on a writeback library
+/// links its creators, the scanner reading the id back from the file.
+fn compose_credit_ids(
+    ctx: &ComposeContext,
+    credits: &BTreeMap<String, Vec<String>>,
+    primary: Option<&str>,
+) -> BTreeMap<String, String> {
+    let Some(primary) = primary else {
+        return BTreeMap::new();
+    };
+    let mut out: BTreeMap<String, String> = BTreeMap::new();
+    // The id the creator's row already holds comes first, so the file
+    // never names an id the database will not take (the scanner keeps a
+    // link a creator already has).
+    for name in credits.values().flatten() {
+        if let Some(id) = ctx
+            .issue_junctions
+            .creator_ids
+            .get(&creator_key(name))
+            .and_then(|by_source| by_source.get(primary))
+        {
+            out.entry(name.clone()).or_insert_with(|| id.clone());
+        }
+    }
+    // Same branch as the credits themselves in `compose_metroninfo`.
+    let from_provider = !(ctx.is_issue_pinned("credits") || ctx.provider.credits.is_empty());
+    if from_provider {
+        for c in &ctx.provider.credits {
+            let id = c
+                .identifiers
+                .iter()
+                .find(|i| i.source.as_str() == primary)
+                .map(|i| i.id.trim())
+                .filter(|id| !id.is_empty());
+            if let Some(id) = id {
+                out.entry(c.name.clone()).or_insert_with(|| id.to_owned());
+            }
+        }
+    }
+    out
+}
+
+/// Key of [`IssueJunctions::creator_ids`]: the name as `person` normalizes it.
+fn creator_key(name: &str) -> String {
+    name.trim().to_lowercase()
+}
+
 fn push_role_csv(map: &mut BTreeMap<String, Vec<String>>, role: &str, csv: Option<&str>) {
     let names = split_csv_opt(csv);
     if !names.is_empty() {
@@ -1619,6 +1679,11 @@ pub struct JunctionRef {
 pub struct IssueJunctions {
     /// Ordered by role, then the stored ordinal, then name.
     pub credits: Vec<JunctionCredit>,
+    /// The provider ids the credited creators' `person` rows hold
+    /// (`external_ids`, `entity_type = 'person'`): normalized creator name
+    /// (see [`creator_key`]) → source → id. Feeds MetronInfo's
+    /// `<Creator id>` (roadmap WP-9.8).
+    pub creator_ids: BTreeMap<String, BTreeMap<String, String>>,
     pub characters: Vec<JunctionRef>,
     pub teams: Vec<JunctionRef>,
     pub locations: Vec<JunctionRef>,
@@ -1726,6 +1791,8 @@ pub async fn load_issue_junctions(
         role: String,
         person: String,
         slug: Option<String>,
+        /// `{source: id}` of the linked person, or NULL.
+        external_ids: Option<serde_json::Value>,
     }
     #[derive(Debug, FromQueryResult)]
     struct RefRow {
@@ -1761,24 +1828,38 @@ pub async fn load_issue_junctions(
     // LEFT JOIN + COALESCE, as the read-cache rebuild does: a row whose
     // entity id the series rollup hasn't linked yet still contributes its
     // own stored name.
+    // The creator's provider ids ride the same statement (a keyed lookup
+    // per credit row), so the issue page's read costs nothing more.
     let credits = async {
-        Ok::<_, sea_orm::DbErr>(
-            CreditRow::find_by_statement(stmt(
-                "SELECT ic.role AS role, COALESCE(p.name, ic.person) AS person, p.slug AS slug \
-                   FROM issue_credits ic LEFT JOIN person p ON p.id = ic.person_id \
-                  WHERE ic.issue_id = $1 \
-                  ORDER BY ic.role, ic.ordinal, COALESCE(p.name, ic.person)",
-            ))
-            .all(db)
-            .await?
-            .into_iter()
-            .map(|r| JunctionCredit {
+        let rows = CreditRow::find_by_statement(stmt(
+            "SELECT ic.role AS role, COALESCE(p.name, ic.person) AS person, p.slug AS slug, \
+                    (SELECT jsonb_object_agg(e.source, e.external_id) FROM external_ids e \
+                      WHERE e.entity_type = 'person' AND e.entity_id = p.id::text) \
+                      AS external_ids \
+               FROM issue_credits ic LEFT JOIN person p ON p.id = ic.person_id \
+              WHERE ic.issue_id = $1 \
+              ORDER BY ic.role, ic.ordinal, COALESCE(p.name, ic.person)",
+        ))
+        .all(db)
+        .await?;
+        let mut creator_ids: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+        let mut credits = Vec::with_capacity(rows.len());
+        for r in rows {
+            if let Some(serde_json::Value::Object(ids)) = &r.external_ids {
+                let by_source = creator_ids.entry(creator_key(&r.person)).or_default();
+                for (source, id) in ids {
+                    if let Some(id) = id.as_str() {
+                        by_source.insert(source.clone(), id.to_owned());
+                    }
+                }
+            }
+            credits.push(JunctionCredit {
                 role: r.role,
                 person: r.person,
                 slug: r.slug,
-            })
-            .collect::<Vec<_>>(),
-        )
+            });
+        }
+        Ok::<_, sea_orm::DbErr>((credits, creator_ids))
     };
     #[derive(Debug, FromQueryResult)]
     struct ArcRow {
@@ -1814,7 +1895,7 @@ pub async fn load_issue_junctions(
     };
     // Ten independent reads; the series fan-out runs this per issue.
     let (
-        credits,
+        (credits, creator_ids),
         characters,
         teams,
         locations,
@@ -1877,6 +1958,7 @@ pub async fn load_issue_junctions(
         .collect();
     Ok(IssueJunctions {
         credits,
+        creator_ids,
         characters,
         teams,
         locations,
@@ -2703,6 +2785,146 @@ mod tests {
         assert!(!mi.ids.contains_key("comicvine_series"));
         assert!(!mi.ids.contains_key("gcd_series"));
         assert!(!mi.ids.contains_key("metron_series"));
+    }
+
+    /// WP-9.8: a provider credit's id reaches MetronInfo's `<Creator id>`
+    /// only when it is the **primary** source's (the attribute has no
+    /// source of its own); a credit without one falls back to the id the
+    /// credited `person` row holds for that source.
+    #[test]
+    fn compose_metroninfo_writes_the_primary_sources_creator_ids() {
+        let series = make_series("Saga");
+        let issue = make_issue("Untitled");
+        let mut provider = make_provider();
+        // The apply came from ComicVine, so ComicVine is the primary source.
+        provider.credits[0].identifiers = vec![
+            Identifier::new(Source::Metron, "77"),
+            Identifier::new(Source::ComicVine, " 40382 "),
+        ];
+        // Fiona Staples: her `person` row already holds a ComicVine id,
+        // which stands over the one this provider credit names.
+        provider.credits[1].identifiers = vec![
+            Identifier::new(Source::Metron, "88"),
+            Identifier::new(Source::ComicVine, "999"),
+        ];
+        provider.credits.push(CreditCandidate {
+            name: "Fonografiks".into(),
+            role: "Letterer".into(),
+            ordinal: Some(0),
+            identifiers: vec![],
+        });
+        let mut iids = empty_ids();
+        iids.insert("comicvine".into(), "12345".into());
+        iids.insert("metron".into(), "999".into());
+        let junctions = IssueJunctions {
+            creator_ids: BTreeMap::from([
+                (
+                    "fiona staples".to_string(),
+                    BTreeMap::from([("comicvine".to_string(), "55821".to_string())]),
+                ),
+                // Not credited by this apply: never written.
+                (
+                    "somebody else".to_string(),
+                    BTreeMap::from([("comicvine".to_string(), "1".to_string())]),
+                ),
+            ]),
+            ..Default::default()
+        };
+        let ctx = ComposeContext {
+            provider: &provider,
+            issue: &issue,
+            series: &series,
+            issue_external_ids: &iids,
+            series_external_ids: &empty_ids(),
+            issue_user_pins: &empty_pins(),
+            series_user_pins: &empty_pins(),
+            issue_junctions: &junctions,
+            fill_missing: false,
+        };
+        let mi = compose_metroninfo(&ctx);
+        assert_eq!(mi.primary_id_source.as_deref(), Some("comicvine"));
+        assert_eq!(
+            mi.credit_ids,
+            BTreeMap::from([
+                ("Brian K. Vaughan".to_string(), "40382".to_string()),
+                ("Fiona Staples".to_string(), "55821".to_string()),
+            ])
+        );
+        let xml = parsers::metroninfo::serialize(&mi);
+        assert!(
+            xml.contains("<Creator id=\"40382\">Brian K. Vaughan</Creator>"),
+            "{xml}"
+        );
+        assert!(xml.contains("<Creator>Fonografiks</Creator>"), "{xml}");
+
+        // No issue id from any provider: no primary source, so an id would
+        // say nothing about whose it is.
+        let ctx = ComposeContext {
+            issue_external_ids: &empty_ids(),
+            ..ctx
+        };
+        let mi = compose_metroninfo(&ctx);
+        assert_eq!(mi.primary_id_source, None);
+        assert!(mi.credit_ids.is_empty());
+    }
+
+    /// WP-9.8: a DB-only compose (manual edit, drift flush, series-scope
+    /// apply) keeps the ids in the file: they come from the credited
+    /// `person` rows, for whichever source is the document's primary.
+    #[test]
+    fn compose_metroninfo_db_only_keeps_creator_ids_from_the_person_rows() {
+        let series = make_series("Saga");
+        let issue = make_issue("Untitled");
+        let provider = GenericMetadata::default();
+        let mut iids = empty_ids();
+        iids.insert("metron".into(), "999".into());
+        iids.insert("comicvine".into(), "12345".into());
+        let junctions = IssueJunctions {
+            credits: vec![
+                JunctionCredit {
+                    role: "writer".into(),
+                    person: "Brian K. Vaughan".into(),
+                    slug: None,
+                },
+                JunctionCredit {
+                    role: "penciller".into(),
+                    person: "Fiona Staples".into(),
+                    slug: None,
+                },
+            ],
+            creator_ids: BTreeMap::from([
+                (
+                    "brian k. vaughan".to_string(),
+                    BTreeMap::from([
+                        ("metron".to_string(), "77".to_string()),
+                        ("comicvine".to_string(), "40382".to_string()),
+                    ]),
+                ),
+                (
+                    "fiona staples".to_string(),
+                    BTreeMap::from([("comicvine".to_string(), "55821".to_string())]),
+                ),
+            ]),
+            ..Default::default()
+        };
+        let ctx = ComposeContext {
+            provider: &provider,
+            issue: &issue,
+            series: &series,
+            issue_external_ids: &iids,
+            series_external_ids: &empty_ids(),
+            issue_user_pins: &empty_pins(),
+            series_user_pins: &empty_pins(),
+            issue_junctions: &junctions,
+            fill_missing: false,
+        };
+        let mi = compose_metroninfo(&ctx);
+        // Metron is the first of the three present, so it is the primary.
+        assert_eq!(mi.primary_id_source.as_deref(), Some("metron"));
+        assert_eq!(
+            mi.credit_ids,
+            BTreeMap::from([("Brian K. Vaughan".to_string(), "77".to_string())])
+        );
     }
 
     #[test]

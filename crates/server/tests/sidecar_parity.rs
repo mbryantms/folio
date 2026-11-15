@@ -1016,12 +1016,28 @@ async fn rich_metroninfo_validates_against_the_v1_2_schema() {
     // Junctions: credits, cast, arcs with a position, genres, tags,
     // universes, reprints.
     let batch = CsvRebuildBatch::new();
-    let writer = writers::upsert_person(db, "Brian K. Vaughan", &[], set_by)
-        .await
-        .unwrap();
-    let artist = writers::upsert_person(db, "Fiona Staples", &[], set_by)
-        .await
-        .unwrap();
+    // WP-9.8: the writer is linked on both providers, the artist on
+    // ComicVine only. Metron is this document's primary source, so only a
+    // Metron id may ride `<Creator id>`.
+    let writer = writers::upsert_person(
+        db,
+        "Brian K. Vaughan",
+        &[
+            Identifier::new(Source::Metron, "1234"),
+            Identifier::new(Source::ComicVine, "40382"),
+        ],
+        set_by,
+    )
+    .await
+    .unwrap();
+    let artist = writers::upsert_person(
+        db,
+        "Fiona Staples",
+        &[Identifier::new(Source::ComicVine, "55821")],
+        set_by,
+    )
+    .await
+    .unwrap();
     writers::set_issue_credits(
         db,
         &issue_id,
@@ -1141,6 +1157,14 @@ async fn rich_metroninfo_validates_against_the_v1_2_schema() {
         "{mi_xml}"
     );
     assert!(
+        mi_xml.contains("<Creator id=\"1234\">Brian K. Vaughan</Creator>"),
+        "the primary source's creator id\n{mi_xml}"
+    );
+    assert!(
+        !mi_xml.contains("40382") && !mi_xml.contains("55821"),
+        "a ComicVine creator id is not the primary source's\n{mi_xml}"
+    );
+    assert!(
         !mi_xml.contains("B00ABCDEF0"),
         "asin has no schema slot\n{mi_xml}"
     );
@@ -1161,6 +1185,10 @@ async fn rich_metroninfo_validates_against_the_v1_2_schema() {
     assert_eq!(mi.series_id.as_deref(), Some("65478"));
     assert_eq!(mi.arc_numbers.get("Volume One"), Some(&1));
     assert_eq!(mi.universes, ["Saga Universe"]);
+    assert_eq!(
+        mi.credit_ids,
+        BTreeMap::from([("Brian K. Vaughan".to_string(), "1234".to_string())])
+    );
     assert_eq!(mi.reprints, ["Saga: Compendium One"]);
     assert_eq!(
         mi.ids.get("upc").map(String::as_str),
@@ -1556,4 +1584,248 @@ async fn first_ingest_of_a_folio_written_barcode_records_one_row() {
         BTreeMap::from([("upc".to_string(), "0709-8530-0470-00111".to_string())]),
         "one barcode, one row"
     );
+}
+
+// ───────── creator ids (roadmap WP-9.8) ─────────
+
+/// The provider links of the creator named `name`, as `source → (id, set_by)`.
+async fn creator_links(app: &TestApp, name: &str) -> BTreeMap<String, (String, String)> {
+    let db = &app.state().db;
+    let Some(p) = entity::person::Entity::find()
+        .filter(entity::person::Column::NormalizedName.eq(name.to_lowercase()))
+        .one(db)
+        .await
+        .unwrap()
+    else {
+        return BTreeMap::new();
+    };
+    external_id::Entity::find()
+        .filter(external_id::Column::EntityType.eq("person"))
+        .filter(external_id::Column::EntityId.eq(p.id.to_string()))
+        .all(db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.source, (r.external_id, r.set_by)))
+        .collect()
+}
+
+async fn link_creator(app: &TestApp, name: &str, source: Source, id: &str, set_by: SetBy) {
+    let db = &app.state().db;
+    let p = entity::person::Entity::find()
+        .filter(entity::person::Column::NormalizedName.eq(name.to_lowercase()))
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap_or_else(|| panic!("creator {name}"));
+    writers::set_external_id(
+        db,
+        "person",
+        &p.id.to_string(),
+        &Identifier::new(source, id),
+        set_by,
+    )
+    .await
+    .unwrap();
+}
+
+/// A creator's provider id travels through the archive: the composer
+/// writes the primary source's id as MetronInfo's `<Creator id>`, the file
+/// stays schema-valid, and a scan of that file links the creators again in
+/// a database that has never seen them linked. A second rewrite is
+/// byte-identical, a rescan changes nothing, and a link a creator already
+/// holds is never replaced by the file's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn creator_ids_round_trip_through_a_rescan() {
+    let app = TestApp::spawn().await;
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("Saga (2012)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("Saga 001 (2012).cbz");
+    tagged_cbz(
+        &path,
+        "creator-ids",
+        Some(
+            "<?xml version=\"1.0\"?>\n<ComicInfo>\n  <Series>Saga</Series>\n  \
+             <Number>1</Number>\n  <Writer>Brian K. Vaughan</Writer>\n  \
+             <Penciller>Fiona Staples, Mike Deodato, Jr.</Penciller>\n  \
+             <Letterer>Fonografiks</Letterer>\n</ComicInfo>\n",
+        ),
+    );
+    let db = &app.state().db;
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .insert(db)
+        .await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.expect("scan");
+    let row = issue::Entity::find()
+        .filter(issue::Column::LibraryId.eq(lib_id))
+        .one(db)
+        .await
+        .unwrap()
+        .expect("ingested");
+
+    // The issue is matched on ComicVine (its primary source from here on)
+    // and three of its four creators are linked there; one also on Metron.
+    let cv = SetBy::Provider(Source::ComicVine);
+    writers::set_external_id(
+        db,
+        "issue",
+        &row.id,
+        &Identifier::new(Source::ComicVine, "326873"),
+        cv,
+    )
+    .await
+    .unwrap();
+    link_creator(&app, "Brian K. Vaughan", Source::ComicVine, "40382", cv).await;
+    link_creator(
+        &app,
+        "Brian K. Vaughan",
+        Source::Metron,
+        "77",
+        SetBy::Provider(Source::Metron),
+    )
+    .await;
+    link_creator(&app, "Fiona Staples", Source::ComicVine, "55821", cv).await;
+    // The scanner filed the comma'd suffix as "Mike Deodato Jr.".
+    link_creator(&app, "Mike Deodato Jr.", Source::ComicVine, "1234", cv).await;
+
+    let (_ci, mi_xml) = rewrite_from_db(&app, &row.id, &path).await;
+    assert_valid_metroninfo(&mi_xml);
+    assert_eq!(assert_metron_credit_shape(&mi_xml), 4, "{mi_xml}");
+    for creator in [
+        "<Creator id=\"40382\">Brian K. Vaughan</Creator>",
+        "<Creator id=\"55821\">Fiona Staples</Creator>",
+        "<Creator id=\"1234\">Mike Deodato Jr.</Creator>",
+        "<Creator>Fonografiks</Creator>",
+    ] {
+        assert!(mi_xml.contains(creator), "missing {creator}\n{mi_xml}");
+    }
+    assert!(
+        !mi_xml.contains("\"77\""),
+        "Metron's id is not the primary source's\n{mi_xml}"
+    );
+
+    // A database that never had the links: the rescan of the rewritten
+    // archive makes them from the file alone, at the file tier.
+    external_id::Entity::delete_many()
+        .filter(external_id::Column::EntityType.eq("person"))
+        .exec(db)
+        .await
+        .unwrap();
+    scanner::scan_library(&state, lib_id).await.expect("rescan");
+    let file_link = |id: &str| {
+        BTreeMap::from([(
+            "comicvine".to_string(),
+            (id.to_string(), "metroninfo".to_string()),
+        )])
+    };
+    assert_eq!(
+        creator_links(&app, "Brian K. Vaughan").await,
+        file_link("40382"),
+        "the ComicVine id came back; the Metron one was never in the file"
+    );
+    assert_eq!(
+        creator_links(&app, "Fiona Staples").await,
+        file_link("55821")
+    );
+    assert_eq!(
+        creator_links(&app, "Mike Deodato Jr.").await,
+        file_link("1234")
+    );
+    assert!(creator_links(&app, "Fonografiks").await.is_empty());
+
+    // The rewrite is a fixed point of the rescanned database.
+    let (_ci, again) = rewrite_from_db(&app, &row.id, &path).await;
+    assert_eq!(again, mi_xml, "MetronInfo rewrite drifted");
+
+    // A link the creator already holds is not the file's to replace: a
+    // different id set since (a profile fetch, an admin) survives a rollup
+    // of the same file.
+    link_creator(&app, "Fiona Staples", Source::ComicVine, "99999", cv).await;
+    metadata_rollup::rollup_series_metadata(db, row.series_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        creator_links(&app, "Fiona Staples").await,
+        BTreeMap::from([(
+            "comicvine".to_string(),
+            ("99999".to_string(), "comicvine".to_string())
+        )])
+    );
+}
+
+/// A file some other tool tagged: `<Creator id>` is read against the
+/// file's own primary `<ID>`. Without a primary source the ids say nothing
+/// about whose they are, and nothing is linked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn creator_ids_in_a_foreign_metroninfo_follow_its_primary_source() {
+    let app = TestApp::spawn().await;
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("Saga (2012)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let write = |name: &str, tag: &str, ids: &str, creators: &str| {
+        let f = std::fs::File::create(folder.join(name)).unwrap();
+        let mut zw = zip::ZipWriter::new(f);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zw.start_file("page-001.png", opts).unwrap();
+        let mut page = b"\x89PNG\r\n\x1a\n".to_vec();
+        page.extend_from_slice(tag.as_bytes());
+        zw.write_all(&page).unwrap();
+        zw.start_file("MetronInfo.xml", opts).unwrap();
+        zw.write_all(
+            format!(
+                "<?xml version=\"1.0\"?>\n<MetronInfo>\n{ids}  <Series><Name>Saga</Name></Series>\n  \
+                 <Number>{tag}</Number>\n  <Credits>\n{creators}  </Credits>\n</MetronInfo>\n"
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        zw.finish().unwrap();
+    };
+    let credit = |id: &str, name: &str, role: &str| {
+        format!(
+            "    <Credit>\n      <Creator id=\"{id}\">{name}</Creator>\n      \
+             <Roles><Role>{role}</Role></Roles>\n    </Credit>\n"
+        )
+    };
+    // #1: Metron-Tagger's shape, Metron primary.
+    write(
+        "Saga 001 (2012).cbz",
+        "1",
+        "  <IDS>\n    <ID source=\"Metron\" primary=\"true\">290431</ID>\n    \
+         <ID source=\"Comic Vine\">326873</ID>\n  </IDS>\n",
+        &[
+            credit("77", "Brian K. Vaughan", "Writer"),
+            credit("88", "Fiona Staples", "Penciller"),
+            // A role ComicInfo has no column for: no credit row, no creator.
+            credit("99", "Drew Gill", "Designer"),
+        ]
+        .concat(),
+    );
+    // #2: ids but no primary source.
+    write(
+        "Saga 002 (2012).cbz",
+        "2",
+        "  <IDS>\n    <ID source=\"Comic Vine\">326874</ID>\n  </IDS>\n",
+        &credit("555", "Fonografiks", "Letterer"),
+    );
+    let db = &app.state().db;
+    let lib_id = LibrarySeed::new(dir.path()).insert(db).await;
+    scanner::scan_library(&app.state(), lib_id)
+        .await
+        .expect("scan");
+
+    let metron = |id: &str| {
+        BTreeMap::from([(
+            "metron".to_string(),
+            (id.to_string(), "metroninfo".to_string()),
+        )])
+    };
+    assert_eq!(creator_links(&app, "Brian K. Vaughan").await, metron("77"));
+    assert_eq!(creator_links(&app, "Fiona Staples").await, metron("88"));
+    assert!(creator_links(&app, "Drew Gill").await.is_empty());
+    assert!(creator_links(&app, "Fonografiks").await.is_empty());
 }

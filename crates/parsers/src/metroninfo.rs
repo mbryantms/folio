@@ -99,6 +99,14 @@ pub struct MetronInfo {
     pub ids: BTreeMap<String, String>,
     /// Creators grouped by role. Multiple credits with the same role are joined with `, `.
     pub credits: BTreeMap<String, Vec<String>>,
+    /// `<Creator id>` by creator name: the id the **primary** source
+    /// ([`Self::primary_id_source`]) holds for that creator (the schema's
+    /// `resourceType` carries one bare `id`, with no source of its own).
+    /// Read for every credited creator that has one; written back onto the
+    /// `<Creator>` of the same name. An id without a primary source says
+    /// nothing about whose id it is, so a reader should ignore it then.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub credit_ids: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub raw: BTreeMap<String, String>,
 
@@ -244,6 +252,12 @@ pub fn parse(bytes: &[u8]) -> Result<MetronInfo, ParseError> {
                             }
                         }
                     }
+                    // `<Creator id="…">`, in either credit shape.
+                    "Creator" => {
+                        st.credit.pending_id = attr("id")
+                            .map(|v| v.trim().to_owned())
+                            .filter(|v| !v.is_empty());
+                    }
                     "ID" => {
                         st.id_source = attr("source");
                         st.id_primary = attr("primary").is_some_and(|v| is_xml_true(&v));
@@ -287,7 +301,9 @@ pub fn parse(bytes: &[u8]) -> Result<MetronInfo, ParseError> {
                 }
                 path.pop();
                 match name.as_str() {
-                    "Credit" => std::mem::take(&mut st.credit).flush_into(&mut info.credits),
+                    "Credit" => std::mem::take(&mut st.credit)
+                        .flush_into(&mut info.credits, &mut info.credit_ids),
+                    "Creator" => st.credit.pending_id = None,
                     "ID" => {
                         st.id_source = None;
                         st.id_primary = false;
@@ -394,7 +410,8 @@ struct ArcState {
 ///     shape: one `<Credit>` per creator
 ///     (`<Creator>name</Creator><Roles><Role>…</Role></Roles>`), creators
 ///     in first-seen order over the role-sorted map, role values mapped
-///     onto the schema enumeration by [`metron_role_value`].
+///     onto the schema enumeration by [`metron_role_value`]. A creator
+///     named in [`MetronInfo::credit_ids`] gets `<Creator id="…">`.
 ///   - Unknown top-level leafs in [`MetronInfo::raw`] are passed through
 ///     after `<LastModified>`. Entries matching a typed element name
 ///     (either shape) are not re-emitted — the typed value wins, and a
@@ -701,7 +718,19 @@ fn write_credits(out: &mut String, info: &MetronInfo) {
     out.push_str("  <Credits>\n");
     for (creator, roles) in by_creator {
         out.push_str("    <Credit>\n");
-        out.push_str("      <Creator>");
+        out.push_str("      <Creator");
+        // The primary source's id for this creator (`resourceType`'s `id`).
+        if let Some(id) = info
+            .credit_ids
+            .get(creator)
+            .map(|id| id.trim())
+            .filter(|id| !id.is_empty())
+        {
+            out.push_str(" id=\"");
+            escape_xml_attr(out, id);
+            out.push('"');
+        }
+        out.push('>');
         escape_xml_text(out, creator);
         out.push_str("</Creator>\n");
         out.push_str("      <Roles>\n");
@@ -945,16 +974,33 @@ fn escape_xml_attr(out: &mut String, s: &str) {
 struct CreditState {
     creators: Vec<String>,
     roles: Vec<String>,
+    /// The `id` attribute of the `<Creator>` being read, until its name
+    /// arrives.
+    pending_id: Option<String>,
+    /// `(creator name, id)` for the creators that carried one.
+    ids: Vec<(String, String)>,
 }
 
 impl CreditState {
-    fn flush_into(self, credits: &mut BTreeMap<String, Vec<String>>) {
+    fn flush_into(
+        self,
+        credits: &mut BTreeMap<String, Vec<String>>,
+        credit_ids: &mut BTreeMap<String, String>,
+    ) {
         for role in &self.roles {
             for creator in &self.creators {
                 let names = credits.entry(role.clone()).or_default();
                 if !names.contains(creator) {
                     names.push(creator.clone());
                 }
+            }
+        }
+        // A creator with no role is not a credit (nothing above kept it),
+        // so its id has nothing to attach to. The first id seen for a name
+        // stands: two ids for one name in one file is a tagging mistake.
+        if !self.roles.is_empty() {
+            for (name, id) in self.ids {
+                credit_ids.entry(name).or_insert(id);
             }
         }
     }
@@ -1236,6 +1282,9 @@ fn assign(info: &mut MetronInfo, path: &[String], name: &str, val: &str, st: &mu
         // <Roles><Role>Writer</Role></Roles>`. Legacy Folio:
         // `<Credit role="Writer"><Creator><Name>…</Name>`.
         (Some("Credit"), "Creator") | (Some("Creator"), "Name") => {
+            if let Some(id) = st.credit.pending_id.take() {
+                st.credit.ids.push((val.to_string(), id));
+            }
             st.credit.creators.push(val.to_string());
         }
         (Some("Roles"), "Role") => st.credit.roles.push(role_key_from_metron(val)),
@@ -2170,6 +2219,89 @@ mod tests {
         let back = parse(xml.as_bytes()).unwrap();
         assert_eq!(back.writer().as_deref(), Some("Ann, Bob"));
         assert_eq!(back.cover_artist().as_deref(), Some("Ann"));
+    }
+
+    /// WP-9.8: `<Creator id>` is read in both credit shapes, keyed by the
+    /// creator's name; a `<Role id>` and a creator with no role are not
+    /// creator ids.
+    #[test]
+    fn parses_creator_ids_in_both_credit_shapes() {
+        let xml = r#"<?xml version="1.0"?>
+<MetronInfo>
+  <IDS><ID source="Metron" primary="true">290431</ID></IDS>
+  <Credits>
+    <Credit>
+      <Creator id="32165">Geoff Johns</Creator>
+      <Roles><Role id="1">Writer</Role></Roles>
+    </Credit>
+    <Credit>
+      <Creator id=" 77 ">Jim Lee</Creator>
+      <Roles><Role>Penciller</Role><Role>Cover</Role></Roles>
+    </Credit>
+    <Credit>
+      <Creator>David Finch</Creator>
+      <Roles><Role>Cover</Role></Roles>
+    </Credit>
+    <Credit role="Inker">
+      <Creator id="909"><Name>Scott Williams</Name></Creator>
+    </Credit>
+    <Credit>
+      <Creator id="5">No Role</Creator>
+    </Credit>
+    <Credit>
+      <Creator id="">Blank Id</Creator>
+      <Roles><Role>Editor</Role></Roles>
+    </Credit>
+    <Credit>
+      <Creator id="999">Geoff Johns</Creator>
+      <Roles><Role>Editor</Role></Roles>
+    </Credit>
+  </Credits>
+</MetronInfo>"#;
+        let info = parse(xml.as_bytes()).expect("parse");
+        assert_eq!(info.primary_id_source.as_deref(), Some("metron"));
+        assert_eq!(
+            info.credit_ids,
+            BTreeMap::from([
+                // The first id seen for a name stands.
+                ("Geoff Johns".to_string(), "32165".to_string()),
+                ("Jim Lee".to_string(), "77".to_string()),
+                ("Scott Williams".to_string(), "909".to_string()),
+            ])
+        );
+        assert_eq!(info.inker().as_deref(), Some("Scott Williams"));
+    }
+
+    /// WP-9.8: the serializer writes the id on the creator's one
+    /// `<Creator>`, escaped, and the parser reads the same map back.
+    #[test]
+    fn serialize_round_trips_creator_ids() {
+        let mut info = MetronInfo::default();
+        info.ids.insert("comicvine".into(), "1055025".into());
+        info.primary_id_source = Some("comicvine".into());
+        info.credits
+            .insert("Writer".into(), vec!["Ann".into(), "Bob".into()]);
+        info.credits
+            .insert("CoverArtist".into(), vec!["Ann".into()]);
+        info.credit_ids.insert("Ann".into(), "40\"382".into());
+        // An id for a name that is not credited is not written.
+        info.credit_ids.insert("Nobody".into(), "1".into());
+        info.credit_ids.insert("Bob".into(), "  ".into());
+        let xml = serialize(&info);
+        assert!(
+            xml.contains("      <Creator id=\"40&quot;382\">Ann</Creator>\n"),
+            "{xml}"
+        );
+        assert!(xml.contains("      <Creator>Bob</Creator>\n"), "{xml}");
+        assert_eq!(xml.matches(" id=\"").count(), 1, "{xml}");
+        let back = parse(xml.as_bytes()).unwrap();
+        assert_eq!(
+            back.credit_ids,
+            BTreeMap::from([("Ann".to_string(), "40\"382".to_string())])
+        );
+        assert_eq!(back.primary_id_source.as_deref(), Some("comicvine"));
+        // Serializing what was read is stable.
+        assert_eq!(serialize(&back), xml);
     }
 
     #[test]

@@ -108,6 +108,7 @@ export function DashboardTab() {
       <CoverVariantBackfillCard />
       <CoverToneBackfillCard />
       <NameSuffixBackfillCard />
+      <CreatorIdBackfillCard />
       <CsvCacheBackfillCard />
     </div>
   );
@@ -316,6 +317,18 @@ function NameSuffixBackfillCard() {
       endpoint="/admin/metadata/name-suffix-backfill"
       icon={<Users className="mr-2 size-4" />}
       label="Repair names"
+    />
+  );
+}
+
+function CreatorIdBackfillCard() {
+  return (
+    <BackfillCard
+      title="Creator links"
+      description="Link creators to their ComicVine and Metron records, using the provider details of matched issues that are already in the metadata cache. Applying metadata now links an issue's creators by itself; this covers creators credited before that. It makes no provider request and never replaces a link a creator already has, so creators whose issues are not in the cache stay unlinked. Runs in the background; safe to re-run."
+      endpoint="/admin/metadata/creator-id-backfill"
+      icon={<Users className="mr-2 size-4" />}
+      label="Link creators"
     />
   );
 }
