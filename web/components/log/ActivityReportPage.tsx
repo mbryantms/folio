@@ -19,7 +19,7 @@ import {
 import { ActivityRangeSelector } from "@/components/activity/ActivityRangeSelector";
 import { Cover } from "@/components/Cover";
 import { CoverMorph } from "@/components/library/CoverMorph";
-import { CoverTilt } from "@/components/library/CoverTilt";
+import { CoverFrame } from "@/components/library/CoverFrame";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Select,
@@ -345,7 +345,7 @@ function EventCard({ event }: { event: ReadingLogEventView }) {
 
   const card = (
     <Card className="group/card hover:border-primary/40 flex h-full flex-col overflow-hidden transition-colors">
-      <CoverTilt className="event-card-cover relative w-full">
+      <CoverFrame className="event-card-cover w-full">
         <CoverMorph
           name={href ? morph.name : undefined}
           landing={href ? morph.landing : undefined}
@@ -366,7 +366,7 @@ function EventCard({ event }: { event: ReadingLogEventView }) {
           <Icon aria-hidden="true" className="size-3.5" />
           {KIND_LABEL[event.kind as ReadingLogEventKind]}
         </span>
-      </CoverTilt>
+      </CoverFrame>
       <CardContent className="flex flex-1 flex-col gap-1.5 p-3.5">
         <div className="line-clamp-2 text-base leading-tight font-semibold">
           {seriesName}

@@ -1,5 +1,6 @@
 "use client";
 
+import { CoverFrame } from "@/components/library/CoverFrame";
 import { UpcomingCover } from "@/components/upcoming/UpcomingCover";
 import { UpcomingStageBadge } from "@/components/upcoming/UpcomingStageBadge";
 import type { UpcomingEntryView } from "@/lib/api/types";
@@ -17,6 +18,9 @@ import { releaseDayShort } from "@/lib/upcoming/stage";
  *  - top-left, bottom-right: empty. There is nothing to select, no menu
  *    and nothing to open in the reader, and no action on Mylar.
  *  - no dimming: the covers are the point.
+ *
+ * The cover sits in the shared `CoverFrame`, so it tilts and shines like
+ * every other card.
  */
 export function UpcomingCard({
   entry,
@@ -34,7 +38,7 @@ export function UpcomingCard({
       onClick={() => onOpen(entry)}
       className="group hover:bg-accent/40 focus-visible:ring-ring flex w-full flex-col gap-2 rounded-md p-1 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none"
     >
-      <div className="relative">
+      <CoverFrame>
         <UpcomingCover
           entry={entry}
           className="transition group-hover:brightness-110"
@@ -49,7 +53,7 @@ export function UpcomingCard({
         <span className="bg-background/85 text-foreground absolute bottom-2 left-2 rounded px-1.5 py-0.5 text-[11px] leading-4 font-medium backdrop-blur">
           {releaseDayShort(entry.release_date)}
         </span>
-      </div>
+      </CoverFrame>
       <div className="min-w-0 px-1">
         <div className="text-muted-foreground truncate text-xs font-medium">
           #{entry.number}

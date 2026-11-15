@@ -28,7 +28,7 @@ import { issueUrl, readerUrl, seriesUrl } from "@/lib/urls";
 import { IssueActivityTab } from "@/components/activity/IssueActivityTab";
 import { Cover } from "@/components/Cover";
 import { MorphLink } from "@/components/library/MorphLink";
-import { CoverTilt } from "@/components/library/CoverTilt";
+import { CoverFrame } from "@/components/library/CoverFrame";
 import { ChipList } from "@/components/library/ChipList";
 import {
   DetailSection,
@@ -304,25 +304,27 @@ export default async function IssuePage({
             data-cover-hero={issueCoverName(issue.series_slug, issue.slug)}
             className="mx-auto w-4/5 max-w-full sm:w-56 lg:mx-0 lg:w-72"
           >
-            <ViewTransition
-              name={issueCoverName(issue.series_slug, issue.slug)}
-              share="morph"
-              default="none"
-            >
-              <Cover
-                src={
-                  issue.state === "active"
-                    ? `/issues/${issue.id}/pages/0/thumb`
-                    : null
-                }
-                alt={heading}
-                fallback={
-                  issue.state === "active"
-                    ? "Cover"
-                    : issueStateLabel(issue.state)
-                }
-              />
-            </ViewTransition>
+            <CoverFrame lean="hero">
+              <ViewTransition
+                name={issueCoverName(issue.series_slug, issue.slug)}
+                share="morph"
+                default="none"
+              >
+                <Cover
+                  src={
+                    issue.state === "active"
+                      ? `/issues/${issue.id}/pages/0/thumb`
+                      : null
+                  }
+                  alt={heading}
+                  fallback={
+                    issue.state === "active"
+                      ? "Cover"
+                      : issueStateLabel(issue.state)
+                  }
+                />
+              </ViewTransition>
+            </CoverFrame>
           </div>
           {/* Read CTA + a small gear for actions, always side by side —
               the Read button is the focus, so actions stay a compact icon
@@ -1265,7 +1267,7 @@ function MoreInSeriesIssueCard({ issue }: { issue: IssueSummaryView }) {
       className="group block min-w-0 space-y-1.5 rounded-md focus-visible:outline-none"
     >
       {/* Same tilt + sheen as the library cards (when that effect is on). */}
-      <CoverTilt className="relative">
+      <CoverFrame>
         <Cover
           src={issue.cover_url}
           alt={issueLabel(issue)}
@@ -1274,7 +1276,7 @@ function MoreInSeriesIssueCard({ issue }: { issue: IssueSummaryView }) {
           }
           className="group-focus-visible:ring-ring transition duration-200 group-hover:brightness-110 group-focus-visible:ring-2"
         />
-      </CoverTilt>
+      </CoverFrame>
       <div className="min-w-0">
         <p className="text-foreground truncate text-xs font-medium">
           {issue.number ? `#${issue.number}` : "—"}

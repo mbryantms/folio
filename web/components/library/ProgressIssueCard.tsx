@@ -8,7 +8,7 @@ import { ProgressFill } from "@/components/library/ProgressFill";
 import { Cover } from "@/components/Cover";
 import { CoverMorph } from "@/components/library/CoverMorph";
 import { issueCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
-import { CoverTilt } from "@/components/library/CoverTilt";
+import { CoverFrame } from "@/components/library/CoverFrame";
 import {
   CoverMenuButton,
   type CoverMenuAction,
@@ -152,7 +152,7 @@ export function ProgressIssueCard({
         {resumesOnTap ? (
           <span className="sr-only">Continue reading </span>
         ) : null}
-        <CoverTilt className="relative" {...longPress.wrapperProps}>
+        <CoverFrame {...longPress.wrapperProps}>
           <CoverMorph name={morph.name} landing={morph.landing}>
             <Cover
               src={issue.cover_url}
@@ -179,7 +179,7 @@ export function ProgressIssueCard({
             label={`Continue reading ${headerTitle}`}
             onActivate={morph.mark}
           />
-        </CoverTilt>
+        </CoverFrame>
         <div className="min-w-0 px-1">
           <div
             className="text-muted-foreground truncate text-xs"

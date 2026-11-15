@@ -1259,7 +1259,10 @@ body {
   [data-card][style*="--cover-tint"] [data-tint-target]:hover {
     background-color: color-mix(in oklab, var(--cover-tint) 16%, transparent);
   }
-  [data-card][style*="--cover-tint"]:hover .cover-box {
+  /* A page's header cover (`data-cover-hero`) is not a card, so it takes
+   * the glow without the wash. */
+  [data-card][style*="--cover-tint"]:hover .cover-box,
+  [data-cover-hero][style*="--cover-tint"]:hover .cover-box {
     box-shadow:
       0 0 0 1px color-mix(in oklab, var(--cover-tint) 45%, transparent),
       0 12px 28px -10px color-mix(in oklab, var(--cover-tint) 70%, transparent);

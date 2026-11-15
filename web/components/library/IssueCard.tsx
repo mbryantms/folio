@@ -8,7 +8,7 @@ import { CoverSkeleton } from "@/components/CoverSkeleton";
 import { ProgressFill } from "@/components/library/ProgressFill";
 import { ReadCheck } from "@/components/library/ReadCheck";
 import { Cover } from "@/components/Cover";
-import { CoverTilt } from "@/components/library/CoverTilt";
+import { CoverFrame } from "@/components/library/CoverFrame";
 import { PageScrub } from "@/components/library/PageScrub";
 import { issueCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
 import {
@@ -212,7 +212,7 @@ function IssueCardImpl({
   );
   const innerCard = (
     <>
-      <CoverTilt className="relative" {...coverWrapperProps}>
+      <CoverFrame {...coverWrapperProps}>
         {selectMode && (
           <SelectionCheckbox
             isSelected={selectMode.isSelected}
@@ -274,7 +274,7 @@ function IssueCardImpl({
             />
           </>
         )}
-      </CoverTilt>
+      </CoverFrame>
       <div className="min-w-0 px-1">
         <div className="text-muted-foreground text-xs font-medium">
           {numberLabel}

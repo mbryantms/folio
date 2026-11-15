@@ -48,7 +48,7 @@ import { toast } from "sonner";
 import { CoverSkeleton } from "@/components/CoverSkeleton";
 import { Cover } from "@/components/Cover";
 import { CoverMorph } from "@/components/library/CoverMorph";
-import { CoverTilt } from "@/components/library/CoverTilt";
+import { CoverFrame } from "@/components/library/CoverFrame";
 import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
 import {
   RelationshipFormDialog,
@@ -1024,7 +1024,7 @@ function RelatedCard({
       style={{ width: `${width}px` }}
       data-testid="related-card"
     >
-      <CoverTilt className="relative">
+      <CoverFrame>
         <CoverMorph name={morph.name} landing={morph.landing}>
           <Cover
             src={series.cover_url}
@@ -1036,7 +1036,7 @@ function RelatedCard({
             )}
           />
         </CoverMorph>
-      </CoverTilt>
+      </CoverFrame>
       <div className="space-y-0.5 px-0.5">
         {caption && (
           <p

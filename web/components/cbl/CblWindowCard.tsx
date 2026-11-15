@@ -14,6 +14,7 @@ import {
 import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { useCoverMenuCollectionActions } from "@/components/collections/useCoverMenuCollectionActions";
 import { QuickReadOverlay } from "@/components/QuickReadOverlay";
+import { CoverFrame } from "@/components/library/CoverFrame";
 import { CoverMorph } from "@/components/library/CoverMorph";
 import { Badge } from "@/components/ui/badge";
 import { useUpsertIssueProgress } from "@/lib/api/mutations";
@@ -131,10 +132,10 @@ export function CblWindowCard({
           className,
         )}
       >
-        <div
+        <CoverFrame
           className={cn(
-            "relative rounded-md transition-all",
-            // Current-entry ring sits on the cover wrapper (not the whole
+            "rounded-md transition-all",
+            // Current-entry ring sits on the cover frame (not the whole
             // card) so the surrounding padding/title stay neutral.
             isCurrent &&
               "ring-primary ring-offset-background ring-2 ring-offset-2",
@@ -188,7 +189,7 @@ export function CblWindowCard({
               />
             </>
           )}
-        </div>
+        </CoverFrame>
         <div className="min-w-0 px-1">
           <div className="text-muted-foreground text-xs font-medium">
             {numberLabel}

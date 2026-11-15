@@ -6,6 +6,36 @@ absolute-positioned children. To keep the reading experience consistent
 across rails, grids, detail pages, and search, each corner has a fixed
 purpose.
 
+## The cover frame
+
+Every card draws its cover inside `<CoverFrame>`
+(`web/components/library/CoverFrame.tsx`). The frame is the positioned
+box the slots below hang on, and it is what makes covers behave alike.
+It has three parts, and a card gets all of them by using it:
+
+| Part | Where it comes from | What it does |
+|---|---|---|
+| Tilt and sheen | `CoverFrame` (via `CoverTilt`) | The cover leans toward a mouse or pen pointer and a highlight follows it, when the account's "Cover tilt and sheen" effect is on and motion is not reduced. A plain box otherwise. Touch never tilts. |
+| The cover box | `<Cover>` (library art) or `<UpcomingCover>` (a provider image), drawn inside the frame | The 2:3 placeholder with the rounded border, class `.cover-box`: the element the hover glow lands on. |
+| The cover's colour | `useCoverTone`, called by those two | The placeholder takes the cover's average colour while the image loads, and the enclosing `[data-card]` gets `--cover-tint` for its hover wash and glow. |
+
+So a card needs `data-card` on its outer element, a `<CoverFrame>`, and a
+`<Cover>` (or `<UpcomingCover>`) inside it. In development the frame logs
+a warning when nothing inside it draws a `.cover-box`.
+
+Two leans: `card` (the default, 7°) and `hero` (3.5°) for the large
+header cover on the series and issue pages, which glows in its colour
+but does not wash a card surface.
+
+**These stay still** and do not use the frame: hover previews, the
+fanned cover stacks on collection cards, and row thumbnails (list rows,
+search results, the release dialog).
+
+`web/tests/dom/cover-frame.test.tsx` renders every card named in this
+document's opening list with the effect on, off and under reduced
+motion. It also reads that list, so a card added here without a case
+there fails the test.
+
 ## Slot contracts
 
 | Slot | Purpose | Default occupant |
@@ -118,6 +148,11 @@ It never carries an action on Mylar: Folio has none
 When adding a new cover-card variant, walk this list before writing
 the JSX:
 
+- [ ] Cover: `data-card` on the card's outer element, the cover and its
+  overlays inside `<CoverFrame>`, the art drawn by `<Cover>` (or
+  `<UpcomingCover>`). Never a plain `<div className="relative">`. Add
+  the card to this document's opening list and to `CARDS` in
+  `web/tests/dom/cover-frame.test.tsx`.
 - [ ] Top-left: does the card need a kebab? If yes, use
   `<CoverMenuButton>`. If select-mode is supported, layer
   `<SelectionCheckbox>` above it (see existing cards for the

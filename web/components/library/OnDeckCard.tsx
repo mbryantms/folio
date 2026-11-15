@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { CoverSkeleton } from "@/components/CoverSkeleton";
 import { Cover } from "@/components/Cover";
 import { issueCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
-import { CoverTilt } from "@/components/library/CoverTilt";
+import { CoverFrame } from "@/components/library/CoverFrame";
 import {
   CoverMenuButton,
   type CoverMenuAction,
@@ -141,7 +141,7 @@ export function OnDeckCard({
           className,
         )}
       >
-        <CoverTilt className="relative" {...longPress.wrapperProps}>
+        <CoverFrame {...longPress.wrapperProps}>
           <CoverMorph name={morph.name} landing={morph.landing}>
             <Cover
               src={issue.cover_url}
@@ -159,7 +159,7 @@ export function OnDeckCard({
             readerHref={readerUrl(issue, { cbl: cblParam })}
             label={`Read ${heading}`}
           />
-        </CoverTilt>
+        </CoverFrame>
         <div className="min-w-0 px-1">
           <div className="text-muted-foreground truncate text-xs" title={meta}>
             {meta}

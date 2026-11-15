@@ -8,7 +8,7 @@ import { useRouter } from "next/navigation";
 import { memo, useState } from "react";
 
 import { Cover } from "@/components/Cover";
-import { CoverTilt } from "@/components/library/CoverTilt";
+import { CoverFrame } from "@/components/library/CoverFrame";
 import { SpineStack } from "@/components/library/SpineStack";
 import { PageScrub, issueIdFromCoverUrl } from "@/components/library/PageScrub";
 import {
@@ -221,7 +221,7 @@ function SeriesCardImpl({
   );
   const innerCard = (
     <>
-      <CoverTilt className="relative isolate" {...coverWrapperProps}>
+      <CoverFrame className="isolate" {...coverWrapperProps}>
         <SpineStack count={issueCount} />
         {selectMode && (
           <SelectionCheckbox
@@ -301,7 +301,7 @@ function SeriesCardImpl({
             />
           </>
         )}
-      </CoverTilt>
+      </CoverFrame>
       <div className="min-w-0 px-1">
         <div
           className={cn("truncate font-medium", c.title)}

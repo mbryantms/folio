@@ -20,6 +20,11 @@ const state = vi.hoisted(() => ({
   railCalls: [] as { today: string; enabled: boolean | undefined }[],
 }));
 
+// The card's cover frame reads the account's effect switch (`useMe`).
+vi.mock("@/lib/visual-effects", () => ({
+  useVisualEffect: () => false,
+  useReducedMotion: () => true,
+}));
 vi.mock("@/lib/api/queries", () => ({
   useUpcomingThisWeek: (today: string, opts?: { enabled?: boolean }) => {
     state.railCalls.push({ today, enabled: opts?.enabled });
