@@ -8,7 +8,10 @@
  * tests can render without a QueryClient.
  */
 
-import { Check, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
+
+import { CoverChip } from "@/components/library/CoverChip";
+import { ReadCheck } from "@/components/library/ReadCheck";
 
 import {
   Dialog,
@@ -94,13 +97,14 @@ export function CoverPagePickerDialog({
                       decoding="async"
                       className="aspect-[2/3] w-full object-cover"
                     />
-                    <span className="bg-background/85 absolute bottom-1 left-1 rounded px-1.5 py-0.5 text-xs tabular-nums backdrop-blur">
+                    <CoverChip className="absolute bottom-1 left-1 tabular-nums">
                       {n + 1}
-                    </span>
+                    </CoverChip>
                     {current ? (
-                      <span className="bg-primary text-primary-foreground absolute top-1 right-1 inline-flex size-6 items-center justify-center rounded-full">
-                        <Check className="size-3.5" aria-hidden="true" />
-                      </span>
+                      <ReadCheck
+                        label="Current cover"
+                        className="absolute top-1 right-1"
+                      />
                     ) : null}
                   </button>
                 </li>

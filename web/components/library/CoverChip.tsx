@@ -27,7 +27,8 @@ export type CoverChipTone =
  * position: `statusTone()`'s tinted surface, a `<Badge>` with a
  * translucent background and hand-built spans are what this replaces.
  *
- * The round "read" mark is `ReadCheck`, not a chip.
+ * Without children it is an icon alone (give it `role="img"` and an
+ * `aria-label`). The round "read" mark is `ReadCheck`, not a chip.
  */
 export function CoverChip({
   tone = "neutral",
@@ -52,7 +53,9 @@ export function CoverChip({
       ) : tone !== "neutral" ? (
         <span aria-hidden="true" className="cover-chip__dot" />
       ) : null}
-      <span className="cover-chip__label">{children}</span>
+      {children == null ? null : (
+        <span className="cover-chip__label">{children}</span>
+      )}
     </span>
   );
 }

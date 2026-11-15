@@ -30,7 +30,9 @@ import {
   PhoneControlsBar,
   PhoneMenuAction,
 } from "@/components/library/PhoneControlsBar";
+import { CoverChip } from "@/components/library/CoverChip";
 import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
+import { Badge } from "@/components/ui/badge";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { StickyToolbarRow } from "@/components/library/StickyToolbarRow";
 import { useCardSize } from "@/components/library/use-card-size";
@@ -1273,15 +1275,10 @@ function PageNoteRow({
       )}
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-          <span
-            className={cn(
-              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase",
-              kindMeta.badge,
-            )}
-          >
-            <KindIcon className="size-3" aria-hidden="true" />
+          <Badge variant="secondary">
+            <KindIcon aria-hidden="true" />
             {kindMeta.shortLabel}
-          </span>
+          </Badge>
           <span
             className="text-muted-foreground truncate text-xs"
             title={issueLabel}
@@ -1291,7 +1288,7 @@ function PageNoteRow({
           {marker.is_favorite ? (
             <Star
               aria-label="Favorite"
-              className="size-3.5 fill-current text-rose-400"
+              className="text-rating size-3.5 fill-current"
             />
           ) : null}
           {marker.tags.slice(0, 4).map((t) => (
@@ -1674,34 +1671,33 @@ function MarkerCard({
        *  with no letterboxing. */}
       <MarkerThumbnail marker={marker} height={thumbHeight} />
       {selectMode?.isActive ? (
-        // In select mode the checkbox takes the top-left slot the kind
-        // badge usually owns; the whole card is the toggle (parent
-        // button), so this is a decorative span.
+        // The whole card is the toggle (parent button), so this is a
+        // decorative span.
         <SelectionCheckbox
           isSelected={selectMode.isSelected}
           selectMode
           onToggle={selectMode.onToggle}
           label={`${kindMeta.shortLabel} · page ${marker.page_index + 1}`}
         />
-      ) : (
-        <span
-          className={cn(
-            "absolute top-2 left-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase",
-            kindMeta.badge,
-          )}
-        >
-          <KindIcon className="size-3" aria-hidden="true" />
-          {kindMeta.shortLabel}
-        </span>
-      )}
+      ) : null}
+      {/* Corners (docs/dev/card-corner-conventions.md): the kind is this
+       *  tile's context badge, bottom-left, so the top-left stays the
+       *  menu's and the selection checkbox's. A favourite is a state, so
+       *  it goes top-right; bottom-right stays free. */}
+      <CoverChip
+        icon={KindIcon}
+        className="absolute bottom-2 left-2 max-w-[calc(100%-1rem)]"
+      >
+        {kindMeta.shortLabel}
+      </CoverChip>
       {marker.is_favorite ? (
-        <span
+        <CoverChip
+          icon={Star}
+          role="img"
           aria-label="Favorite"
           title="Favorite"
-          className="absolute right-2 bottom-2 inline-flex size-5 items-center justify-center rounded-full bg-rose-500/90 text-rose-50 shadow-sm ring-1 ring-black/20"
-        >
-          <Star className="size-3 fill-current" aria-hidden="true" />
-        </span>
+          className="absolute top-2 right-2"
+        />
       ) : null}
       {/* No per-card menu / long-press while selecting — the card click
           toggles selection instead. */}
@@ -1894,27 +1890,22 @@ const KIND_META: Record<
   {
     icon: typeof BookmarkIcon;
     shortLabel: string;
-    badge: string;
   }
 > = {
   bookmark: {
     icon: BookmarkIcon,
     shortLabel: "Bookmark",
-    badge: "bg-amber-500/90 text-amber-50",
   },
   note: {
     icon: StickyNote,
     shortLabel: "Note",
-    badge: "bg-sky-500/90 text-sky-50",
   },
   favorite: {
     icon: Star,
     shortLabel: "Favorite",
-    badge: "bg-amber-500/90 text-amber-50",
   },
   highlight: {
     icon: Highlighter,
     shortLabel: "Highlight",
-    badge: "bg-yellow-500/90 text-yellow-950",
   },
 };

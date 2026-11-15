@@ -19,6 +19,7 @@ import {
 import { ActivityRangeSelector } from "@/components/activity/ActivityRangeSelector";
 import { Cover } from "@/components/Cover";
 import { CoverMorph } from "@/components/library/CoverMorph";
+import { CoverChip, type CoverChipTone } from "@/components/library/CoverChip";
 import { CoverFrame } from "@/components/library/CoverFrame";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -38,8 +39,6 @@ import {
   seriesCoverName,
   useCoverMorph,
 } from "@/lib/ui/cover-morph";
-import { statusTone } from "@/lib/ui/status-tone";
-import { cn } from "@/lib/utils";
 import type {
   ReadingLogEventKind,
   ReadingLogEventView,
@@ -61,11 +60,13 @@ const KIND_ICON: Record<ReadingLogEventKind, typeof Check> = {
   session_completed: Timer,
   marker_created: MessageSquare,
 };
-const KIND_TINT: Record<ReadingLogEventKind, string> = {
-  issue_finished: statusTone("success"),
-  series_finished: "bg-primary/15 text-primary",
-  session_completed: statusTone("info"),
-  marker_created: statusTone("warning"),
+/** The event chip's tone on the cover (the cover chip standard). A
+ *  bookmark is not a status, so it stays neutral with its icon. */
+const KIND_TONE: Record<ReadingLogEventKind, CoverChipTone> = {
+  issue_finished: "success",
+  series_finished: "success",
+  session_completed: "info",
+  marker_created: "neutral",
 };
 
 function rangeToFrom(range: ReadingStatsRange): string | undefined {
@@ -357,15 +358,15 @@ function EventCard({ event }: { event: ReadingLogEventView }) {
             className="w-full transition group-hover/card:brightness-110"
           />
         </CoverMorph>
-        <span
-          className={cn(
-            "absolute top-2 left-2 inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium tracking-wide uppercase backdrop-blur",
-            KIND_TINT[event.kind as ReadingLogEventKind],
-          )}
+        {/* What happened is this card's state signal: top-right
+            (docs/dev/card-corner-conventions.md). */}
+        <CoverChip
+          tone={KIND_TONE[event.kind as ReadingLogEventKind]}
+          icon={Icon}
+          className="absolute top-2 right-2 max-w-[calc(100%-1rem)]"
         >
-          <Icon aria-hidden="true" className="size-3.5" />
           {KIND_LABEL[event.kind as ReadingLogEventKind]}
-        </span>
+        </CoverChip>
       </CoverFrame>
       <CardContent className="flex flex-1 flex-col gap-1.5 p-3.5">
         <div className="line-clamp-2 text-base leading-tight font-semibold">
