@@ -1669,11 +1669,12 @@ mod tests {
     }
 }
 
-// ───────── entity records (character / team / story arc) ─────────
+// ───────── entity records (character / team / story arc / creator) ─────────
 //
 // Metron is the identity source for the landing pages: its record names
 // the ComicVine and GCD ids, so a Metron match resolves the ComicVine
-// record with no search step. Metron has no location endpoint.
+// record with no search step. Metron has no location endpoint, and no
+// issue list for a creator.
 
 /// The kinds Metron serves entity records for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1681,6 +1682,8 @@ pub enum MetronEntityKind {
     Character,
     Team,
     StoryArc,
+    /// `/api/creator/`, roadmap WP-9.9.
+    Creator,
 }
 
 impl MetronEntityKind {
@@ -1689,7 +1692,13 @@ impl MetronEntityKind {
             Self::Character => "character",
             Self::Team => "team",
             Self::StoryArc => "arc",
+            Self::Creator => "creator",
         }
+    }
+
+    /// Does `/api/<kind>/{id}/issue_list/` exist? Not for creators.
+    pub fn has_issue_list(self) -> bool {
+        !matches!(self, Self::Creator)
     }
 }
 
@@ -1714,6 +1723,9 @@ pub struct MetronEntityRecord {
     pub cv_id: Option<i64>,
     pub gcd_id: Option<i64>,
     pub resource_url: Option<String>,
+    /// Creators only: `YYYY-MM-DD`.
+    pub birth: Option<String>,
+    pub death: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1739,6 +1751,8 @@ struct MEntityDetail {
     cv_id: Option<i64>,
     gcd_id: Option<i64>,
     resource_url: Option<String>,
+    birth: Option<String>,
+    death: Option<String>,
 }
 
 fn m_names(list: &Option<Vec<MNamedRef>>) -> Vec<String> {
@@ -1808,6 +1822,8 @@ impl MetronClient {
             cv_id: d.cv_id,
             gcd_id: d.gcd_id,
             resource_url: d.resource_url,
+            birth: d.birth.filter(|s| !s.trim().is_empty()),
+            death: d.death.filter(|s| !s.trim().is_empty()),
         })
     }
 

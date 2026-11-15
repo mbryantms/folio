@@ -1461,7 +1461,7 @@ mod tests {
     }
 }
 
-// ───────── entity records (character / team / location / story arc) ─────────
+// ───────── entity records (character / team / location / story arc / creator) ─────────
 //
 // The landing pages' "wiki" block. One detail request per entity (or a
 // name search + detail when no ComicVine id is known), counted against
@@ -1475,6 +1475,8 @@ pub enum CvEntityKind {
     Team,
     Location,
     StoryArc,
+    /// A creator (`/person/4040-{id}`, `/people`), roadmap WP-9.9.
+    Person,
 }
 
 impl CvEntityKind {
@@ -1485,6 +1487,21 @@ impl CvEntityKind {
             Self::Team => ("team", "teams", "4060"),
             Self::Location => ("location", "locations", "4020"),
             Self::StoryArc => ("story_arc", "story_arcs", "4045"),
+            Self::Person => ("person", "people", "4040"),
+        }
+    }
+
+    fn detail_fields(self) -> &'static str {
+        match self {
+            Self::Person => PERSON_DETAIL_FIELDS,
+            _ => ENTITY_DETAIL_FIELDS,
+        }
+    }
+
+    fn search_fields(self) -> &'static str {
+        match self {
+            Self::Person => PERSON_SEARCH_FIELDS,
+            _ => ENTITY_SEARCH_FIELDS,
         }
     }
 }
@@ -1494,6 +1511,13 @@ const ENTITY_DETAIL_FIELDS: &str = "id,name,real_name,aliases,deck,description,g
     publisher,creators,teams,characters,powers,site_detail_url";
 const ENTITY_SEARCH_FIELDS: &str =
     "id,name,publisher,count_of_issue_appearances,count_of_isssue_appearances,deck";
+/// Everything ComicVine holds on a creator except the per-issue credit
+/// list, which runs to thousands of rows for a long career (megabytes).
+/// The issue count field is asked for but, on the live API, comes back
+/// null for a person; the series credits are the measure of a career.
+const PERSON_DETAIL_FIELDS: &str = "id,name,aliases,deck,description,gender,birth,death,    country,hometown,website,email,image,created_characters,volume_credits,    story_arc_credits,count_of_issue_appearances,count_of_isssue_appearances,site_detail_url";
+const PERSON_SEARCH_FIELDS: &str =
+    "id,name,count_of_issue_appearances,count_of_isssue_appearances,deck";
 
 /// One hit of an entity name search.
 #[derive(Clone, Debug)]
@@ -1528,6 +1552,27 @@ pub struct CvEntityRecord {
     pub members: Vec<String>,
     pub powers: Vec<String>,
     pub site_detail_url: Option<String>,
+    // ── creators only ──
+    /// `YYYY-MM-DD` when ComicVine holds a date.
+    pub death: Option<String>,
+    pub country: Option<String>,
+    pub hometown: Option<String>,
+    pub website: Option<String>,
+    pub email: Option<String>,
+    /// Characters the creator is credited with creating.
+    pub created_characters: Vec<String>,
+    /// The series (volumes) ComicVine credits the creator on.
+    pub volume_credits: Vec<CvVolumeCredit>,
+    /// How many story arcs ComicVine credits the creator on; `None` when
+    /// the record carries no such list (every other kind).
+    pub story_arc_credits: Option<u64>,
+}
+
+/// One entry of a creator's `volume_credits`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CvVolumeCredit {
+    pub id: Option<i64>,
+    pub name: String,
 }
 
 #[derive(Clone, Debug)]
@@ -1562,6 +1607,49 @@ struct CvEntityDetail {
     #[serde(default)]
     powers: Option<Vec<CvNamedRef>>,
     site_detail_url: Option<String>,
+    // Creators. `death` is an object (`{"date": "…", "timezone": …}`) on
+    // the live API and a plain string in older dumps; read either.
+    #[serde(default)]
+    death: Option<serde_json::Value>,
+    country: Option<String>,
+    hometown: Option<String>,
+    website: Option<String>,
+    email: Option<String>,
+    #[serde(default)]
+    created_characters: Option<Vec<CvNamedRef>>,
+    #[serde(default)]
+    volume_credits: Option<Vec<CvNamedRef>>,
+    #[serde(default)]
+    story_arc_credits: Option<Vec<CvNamedRef>>,
+}
+
+/// ComicVine writes a date as `1953-11-18 00:00:00`: keep the day. Free
+/// text (a character's "February 19, 1972") passes through.
+fn cv_date(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let b = raw.as_bytes();
+    let dated = b.len() >= 10
+        && b[..10].iter().enumerate().all(|(i, c)| match i {
+            4 | 7 => *c == b'-',
+            _ => c.is_ascii_digit(),
+        })
+        && b.get(10).is_none_or(|c| *c == b' ' || *c == b'T');
+    Some(if dated {
+        raw[..10].to_owned()
+    } else {
+        raw.to_owned()
+    })
+}
+
+fn cv_death(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::String(s) => cv_date(s),
+        serde_json::Value::Object(o) => o.get("date").and_then(|d| d.as_str()).and_then(cv_date),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1622,7 +1710,7 @@ fn cv_entity_record(d: CvEntityDetail) -> Option<CvEntityRecord> {
         deck: d.deck.filter(|s| !s.trim().is_empty()),
         description_html: d.description.filter(|s| !s.trim().is_empty()),
         gender,
-        birth: d.birth.filter(|s| !s.trim().is_empty()),
+        birth: d.birth.as_deref().and_then(cv_date),
         issue_appearances: d.count_of_issue_appearances,
         first_appearance: d.first_appeared_in_issue.map(|f| CvFirstAppearance {
             issue_id: f.id,
@@ -1636,7 +1724,30 @@ fn cv_entity_record(d: CvEntityDetail) -> Option<CvEntityRecord> {
         members: cv_names(&d.characters),
         powers: cv_names(&d.powers),
         site_detail_url: d.site_detail_url,
+        death: d.death.as_ref().and_then(cv_death),
+        country: text(d.country),
+        hometown: text(d.hometown),
+        website: text(d.website),
+        email: text(d.email),
+        created_characters: cv_names(&d.created_characters),
+        volume_credits: d
+            .volume_credits
+            .iter()
+            .flatten()
+            .filter_map(|v| {
+                let name = v.name.as_deref().map(str::trim).filter(|s| !s.is_empty())?;
+                Some(CvVolumeCredit {
+                    id: v.id,
+                    name: name.to_owned(),
+                })
+            })
+            .collect(),
+        story_arc_credits: d.story_arc_credits.as_ref().map(|l| l.len() as u64),
     })
+}
+
+fn text(v: Option<String>) -> Option<String> {
+    v.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty())
 }
 
 impl ComicVineClient {
@@ -1650,7 +1761,7 @@ impl ComicVineClient {
         let envelope: CvEnvelope<CvEntityDetail> = self
             .request(
                 &format!("/{detail}/{prefix}-{external_id}"),
-                &[("field_list", ENTITY_DETAIL_FIELDS.to_owned())],
+                &[("field_list", kind.detail_fields().to_owned())],
             )
             .await?;
         envelope
@@ -1673,7 +1784,7 @@ impl ComicVineClient {
                 &[
                     ("filter", filter),
                     ("limit", "20".to_owned()),
-                    ("field_list", ENTITY_SEARCH_FIELDS.to_owned()),
+                    ("field_list", kind.search_fields().to_owned()),
                 ],
             )
             .await?;

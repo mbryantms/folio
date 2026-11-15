@@ -94,8 +94,9 @@ pub enum ComicVineResource {
     Volume,
     /// `/issue/4000-{id}` — issue detail.
     Issue,
-    /// `/character/4005-{id}`, `/characters`, `/team/4060-{id}`, … —
-    /// entity records for the landing pages, pooled as one resource.
+    /// `/character/4005-{id}`, `/characters`, `/team/4060-{id}`,
+    /// `/person/4040-{id}`, `/people`, … — entity records for the landing
+    /// pages, pooled as one resource.
     Entities,
 }
 
@@ -123,11 +124,11 @@ impl ComicVineResource {
             "issues" => Self::Issues,
             "volume" => Self::Volume,
             "issue" => Self::Issue,
-            // Character / team / location / story-arc records (entity
-            // landing pages). Pooled so a page view never competes with
-            // the matcher's volume / issue budgets.
+            // Character / team / location / story-arc / creator records
+            // (entity landing pages). Pooled so a page view never competes
+            // with the matcher's volume / issue budgets.
             "character" | "characters" | "team" | "teams" | "location" | "locations"
-            | "story_arc" | "story_arcs" => Self::Entities,
+            | "story_arc" | "story_arcs" | "person" | "people" => Self::Entities,
             _ => Self::Search,
         }
     }

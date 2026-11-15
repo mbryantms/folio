@@ -9,12 +9,17 @@
 //! ACL: library-scoped exactly like `/people` search — the SQL
 //! filters credits by visible library so a hidden library's series
 //! never leaks.
+//!
+//! Roadmap WP-9.9: the page also carries the creator's provider profile
+//! (`metadata::entity_profile`, `ProfileKind::Person`), fetched lazily like
+//! a character's: an admin's first view queues it, a reader is served
+//! what is cached, and `POST /creators/{slug}/profile/refresh` forces one.
 
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Path as AxPath, Query, State},
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use sea_orm::{ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, Statement, Value};
 use serde::{Deserialize, Serialize};
@@ -23,10 +28,15 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
 
+use super::entity_pages::{
+    self as ep, EnrichmentStatus, EntityLinkView, EntityProfileView, READER_PROFILE_ERROR,
+};
 use super::error;
 use super::series::{SeriesView, StartsWithBucket, hydrate_series, parse_starts_with};
-use crate::auth::CurrentUser;
+use crate::auth::{CurrentUser, RequireAdmin};
 use crate::library::access;
+use crate::metadata::entity_profile::{self, ProfileKind};
+use crate::middleware::RequestContext;
 use crate::state::AppState;
 use entity::{person, series};
 use server_macros::handler;
@@ -39,6 +49,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list))
         .routes(routes!(get_one))
+        .routes(routes!(refresh_profile))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -67,6 +78,23 @@ pub struct CreatorDetailView {
     /// `roles`; each rail is sorted by series name. Never empty: a
     /// creator with no credit visible to the caller is a 404.
     pub rails: Vec<CreatorRoleRail>,
+    /// Provider data on the `person` row (roadmap WP-9.9): a portrait, a
+    /// one-paragraph description and other names the creator is known by.
+    pub image_url: Option<String>,
+    pub description: Option<String>,
+    pub aliases: Vec<String>,
+    /// Provider-filled profile (the wiki block), once fetched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<EntityProfileView>,
+    /// Provider records the creator is linked to.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<EntityLinkView>,
+    /// Where the profile fetch stands.
+    pub enrichment: EnrichmentStatus,
+    /// Last fetch failure. Admins get the provider's error text; any other
+    /// caller gets [`READER_PROFILE_ERROR`] whenever a failure is recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enrichment_error: Option<String>,
 }
 
 /// Canonical role order. Roles outside this list fall through to
@@ -636,6 +664,28 @@ pub async fn get_one(
     let roles: Vec<String> = rails.iter().map(|r| r.role.clone()).collect();
     let credit_count: i64 = all_series_ids.len() as i64;
 
+    // Only an admin's view may queue a provider fetch (it spends the
+    // admin's provider budget); a reader is served whatever is cached, and
+    // a fixed sentence in place of the provider's own error text.
+    let may_fetch = user.role == entity::user::UserRole::Admin;
+    let (profile, enrichment, enrichment_error) =
+        ep::profile_state_of(&app, ProfileKind::Person, row.id, may_fetch).await;
+    let enrichment_error = if may_fetch {
+        enrichment_error
+    } else {
+        enrichment_error.map(|_| READER_PROFILE_ERROR.to_owned())
+    };
+    let links = ep::links_of(&app, ProfileKind::Person, row.id).await;
+    let aliases = row
+        .aliases
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+
     Json(CreatorDetailView {
         id: row.id.to_string(),
         slug: row.slug,
@@ -643,6 +693,77 @@ pub async fn get_one(
         roles,
         credit_count,
         rails,
+        image_url: row.image_url,
+        description: row.description,
+        aliases,
+        profile,
+        links,
+        enrichment,
+        enrichment_error,
     })
     .into_response()
+}
+
+/// `POST /creators/{slug}/profile/refresh` — queue a fresh provider fetch
+/// of the creator's profile. Admin only (it spends provider budget).
+#[utoipa::path(
+    operation_id = "creators_refresh_profile",    post,
+    path = "/creators/{slug}/profile/refresh",
+    params(("slug" = String, Path,)),
+    responses(
+        (status = 202, description = "queued"),
+        (status = 403, description = "admin only"),
+        (status = 404,),
+        (status = 503, description = "no provider configured"),
+    )
+)]
+#[handler]
+pub async fn refresh_profile(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    AxPath(slug): AxPath<String>,
+) -> Response {
+    if !entity_profile::providers_configured(&app.cfg()) {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "metadata.no_provider",
+            "no metadata provider is configured",
+        );
+    }
+    let row = match person::Entity::find()
+        .filter(person::Column::Slug.eq(&slug))
+        .one(&app.db)
+        .await
+    {
+        Ok(Some(r)) => r,
+        Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "creator not found"),
+        Err(e) => {
+            tracing::error!(error = %e, "creators: lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    if let Err(e) =
+        crate::jobs::entity_enrich::enqueue(&app, ProfileKind::Person, row.id, true).await
+    {
+        tracing::error!(person_id = %row.id, error = %e, "creator profile: refresh enqueue failed");
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "metadata.enqueue_failed",
+            "couldn't queue the profile fetch",
+        );
+    }
+    crate::record_admin_action!(
+        db = &app.db,
+        ctx = ctx,
+        actor = actor.id,
+        action = "admin.entity.refresh_profile",
+        target = (ProfileKind::Person.entity_type(), row.id.to_string()),
+        payload = serde_json::json!({ "slug": slug, "kind": "creators" }),
+    );
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({ "queued": true })),
+    )
+        .into_response()
 }

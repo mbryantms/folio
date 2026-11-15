@@ -1298,6 +1298,8 @@ pub(crate) fn job_label(queue: &str, payload: Option<&serde_json::Value>) -> Str
         "provider_coverage" => "Provider coverage analysis",
         "entity_enrich" => {
             return match field("kind") {
+                // `person` is the table; the app calls them creators.
+                Some("person") => "Profile fetch (creator)".to_owned(),
                 Some(k) => format!("Profile fetch ({})", k.replace('_', " ")),
                 None => "Profile fetch".to_owned(),
             };

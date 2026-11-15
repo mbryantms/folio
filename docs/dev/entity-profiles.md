@@ -46,6 +46,56 @@ profiles are fetched as admins view pages.
 | `external_ids` | metron, comicvine, gcd ids | `writers::set_external_id`, `set_by = provider` |
 | `entity_profile` | `summary` (Metron's description, else the deck), `sections`, `facts`, `provider_counts`, `sources`, `fetched_at`, `error` | one row per `(entity_type, entity_id)` |
 
+## Creators
+
+A creator (`person` row, `ProfileKind::Person`, roadmap WP-9.9) gets the
+same profile from the same job, bucket and lazy model: an admin's first
+`GET /creators/{slug}` queues `entity_enrich`, a reader is served the
+cache, and `POST /creators/{slug}/profile/refresh` (admin, audited as
+`admin.entity.refresh_profile` with `target_type = person`) forces a
+fetch. `CreatorDetailView` carries `image_url`, `description`, `aliases`,
+`profile`, `links`, `enrichment` and `enrichment_error`, shaped like
+`EntityDetailView`'s. The creator page does not draw them yet; that is
+WP-9.10.
+
+- **Metron** `GET /api/creator/?name=` then `/api/creator/{id}/`: name,
+  birth, death, description, image, aliases, `cv_id`, `gcd_id`. There is
+  no issue list for a creator, so no count request.
+- **ComicVine** `GET /person/4040-{id}` (search: `/people/?filter=name:`),
+  in the pooled `entities` bucket: deck, wiki description, image, aliases,
+  gender, birth, death, country, hometown, website, email, created
+  characters, series credits and story-arc credits. The per-issue credit
+  list is not requested: it runs to megabytes for a long career. The
+  record's issue count is requested but ComicVine returns it empty for a
+  person (seen on dev, 2026-11-15), so `provider_counts` stays empty and
+  the series credits are the measure of a career.
+
+`Facts` gains `born`, `died`, `country`, `hometown`, `website`, `email`,
+`characters_created`, `series_credits` and `story_arc_credits`. The owner chose to store
+and show everything ComicVine holds, email and hometown included.
+
+**Which record.** `person` is unique by normalized name, and two real
+creators can share one. So:
+
+1. A provider id the creator already holds is fetched as it is. An apply
+   links it (roadmap WP-9.8; see
+   [metadata-sidecar-writeback.md](metadata-sidecar-writeback.md)), and so
+   does the Creator links backfill.
+2. With no id, the name is searched, exact matches only (case and spacing
+   aside). One match is taken.
+3. Several same-named records are opened, at most three per provider
+   (`MAX_PERSON_CANDIDATES`), and the ComicVine record whose series credits
+   overlap the creator's local series most is chosen (`pick_person`: by
+   ComicVine volume id, else by series name; a tie goes to the record
+   with more series credits). When none of them shares a series with the
+   creator, none is linked and the fetch records why: a guess would stay
+   as the creator's record. Metron's creator record lists no credits, so same-named Metron
+   creators are resolved through the ComicVine record each one names; with
+   no ComicVine answer and several Metron creators, none is linked.
+
+A fetch therefore costs one detail request per provider for a linked
+creator, and a search plus one to three details for an unlinked one.
+
 `sections` is ComicVine's wiki description split at `<h2>` / `<h3>` into
 plain-text paragraphs (`sections_from_html`; tables, figures, scripts
 dropped). `facts` is the fact sheet (`Facts`: real name, gender,
@@ -86,5 +136,10 @@ itself is visible.
   (wiremock both providers), `profile_is_queued_on_first_view_and_refreshed_by_admin`,
   `reader_view_queues_no_profile_fetch`,
   `insights_report_library_stats_under_the_acl`.
-- `crates/server/src/metadata/entity_profile.rs` — section parser unit tests.
+- `crates/server/tests/entity_pages.rs`, creators —
+  `creator_profile_merges_metron_and_comicvine`,
+  `creator_profile_is_queued_by_an_admin_view_only_and_refresh_is_audited`,
+  `same_named_creators_are_resolved_by_local_series_overlap`.
+- `crates/server/src/metadata/entity_profile.rs` — section parser unit
+  tests, `same_named_creators_are_told_apart_by_local_series`.
 - `web/tests/library/entity-profile.test.tsx`.

@@ -1293,6 +1293,17 @@ async fn profile_state(
     let Some(pk) = profile_kind(kind) else {
         return (None, EnrichmentStatus::Unavailable, None);
     };
+    profile_state_of(app, pk, entity_id, may_fetch).await
+}
+
+/// [`profile_state`] by profile kind: shared with the creator page, whose
+/// `person` rows are not a landing-page [`EntityKind`].
+pub(crate) async fn profile_state_of(
+    app: &AppState,
+    pk: ProfileKind,
+    entity_id: Uuid,
+    may_fetch: bool,
+) -> (Option<EntityProfileView>, EnrichmentStatus, Option<String>) {
     if !entity_profile::providers_configured(&app.cfg()) {
         return (None, EnrichmentStatus::Unavailable, None);
     }
@@ -1367,10 +1378,19 @@ fn profile_view(row: &entity::entity_profile::Model) -> Option<EntityProfileView
 }
 
 async fn entity_links(app: &AppState, kind: EntityKind, entity_id: Uuid) -> Vec<EntityLinkView> {
-    use std::str::FromStr;
     let Some(pk) = profile_kind(kind) else {
         return Vec::new();
     };
+    links_of(app, pk, entity_id).await
+}
+
+/// The provider records an entity row is linked to, by profile kind.
+pub(crate) async fn links_of(
+    app: &AppState,
+    pk: ProfileKind,
+    entity_id: Uuid,
+) -> Vec<EntityLinkView> {
+    use std::str::FromStr;
     let rows = entity::external_id::Entity::find()
         .filter(entity::external_id::Column::EntityType.eq(pk.entity_type()))
         .filter(entity::external_id::Column::EntityId.eq(entity_id.to_string()))
