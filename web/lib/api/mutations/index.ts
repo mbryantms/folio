@@ -3343,6 +3343,23 @@ export function useRefreshEntityProfile(kind: EntityKindPath, slug: string) {
   );
 }
 
+/** Admin Refresh of a creator's provider profile (WP-9.10). */
+export function useRefreshCreatorProfile(slug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<{ queued: boolean }, void>(
+    () => ({
+      path: apiPath`/creators/${slug}/profile/refresh`,
+      method: "POST",
+    }),
+    {
+      successMessage: "Fetching the latest profile from your providers…",
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.creatorDetail(slug) });
+      },
+    },
+  );
+}
+
 export function useAcceptSeriesIssues(seriesSlug: string) {
   const qc = useQueryClient();
   return useApiMutation<AcceptIssuesResp, AcceptIssuesReq>(

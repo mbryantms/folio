@@ -6,6 +6,11 @@ import { useState } from "react";
 
 import { Cover } from "@/components/Cover";
 import {
+  CreatorAvatar,
+  monogram,
+  nameHue,
+} from "@/components/library/CreatorAvatar";
+import {
   HoverCard,
   HoverCardContent,
   HoverCardTrigger,
@@ -37,21 +42,9 @@ export function previewTargetFor(href: string): PreviewTarget | null {
   };
 }
 
-/** Two-letter monogram: first letters of the first and last words. */
-export function monogram(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return "?";
-  const first = words[0]?.[0] ?? "";
-  const last = words.length > 1 ? (words[words.length - 1]?.[0] ?? "") : "";
-  return (first + last).toUpperCase();
-}
-
-/** Stable hue for a name, so a person keeps their colour everywhere. */
-export function nameHue(name: string): number {
-  let h = 2166136261;
-  for (const c of name) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
-  return (h >>> 0) % 360;
-}
+// The monogram helpers moved to `CreatorAvatar` with the portrait; they
+// stay exported from here for their existing importers.
+export { monogram, nameHue };
 
 const ROLE_LABEL: Record<string, string> = {
   writer: "Writer",
@@ -120,13 +113,13 @@ function PreviewBody({
         }
         return {
           name: d.name,
-          image: null as string | null,
+          image: d.image_url ?? null,
           subtitle: d.roles.map((r) => ROLE_LABEL[r] ?? r).join(", "),
           stats: [
             { value: d.credit_count, label: "credits" },
             { value: series.length, label: "series here" },
           ],
-          blurb: null as string | null,
+          blurb: d.description ?? null,
           series: series.slice(0, 3),
         };
       }
@@ -173,28 +166,14 @@ function PreviewBody({
     );
   }
   const p = q.data;
-  const hue = nameHue(p.name);
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-3">
-        {p.image ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={p.image}
-            alt=""
-            className="size-12 shrink-0 rounded-full object-cover"
-          />
-        ) : (
-          <span
-            aria-hidden
-            className="grid size-12 shrink-0 place-items-center rounded-full text-sm font-semibold text-white"
-            style={{
-              background: `linear-gradient(135deg, oklch(0.62 0.15 ${hue}), oklch(0.48 0.14 ${(hue + 40) % 360}))`,
-            }}
-          >
-            {monogram(p.name)}
-          </span>
-        )}
+        <CreatorAvatar
+          name={p.name}
+          src={p.image}
+          className="size-12 text-sm"
+        />
         <div className="min-w-0">
           <Link
             href={href}

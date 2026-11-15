@@ -29,7 +29,8 @@ use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::entity_pages::{
-    self as ep, EnrichmentStatus, EntityLinkView, EntityProfileView, READER_PROFILE_ERROR,
+    self as ep, CountedName, CreatorCount, DecadeCount, EnrichmentStatus, EntityInsightsView,
+    EntityLinkView, EntityProfileView, READER_PROFILE_ERROR, SeriesCount,
 };
 use super::error;
 use super::series::{SeriesView, StartsWithBucket, hydrate_series, parse_starts_with};
@@ -50,6 +51,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(list))
         .routes(routes!(get_one))
         .routes(routes!(refresh_profile))
+        .routes(routes!(insights))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -247,6 +249,9 @@ pub struct CreatorListItem {
     pub slug: Option<String>,
     pub roles: Vec<String>,
     pub credit_count: i64,
+    /// Provider portrait, once the creator's profile was fetched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -267,6 +272,7 @@ struct ListRow {
     slug: Option<String>,
     roles: Vec<String>,
     credit_count: i64,
+    image_url: Option<String>,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -418,7 +424,7 @@ pub async fn list(
            SELECT n.person FROM names n{visible} \
             WHERE n.person IS NOT NULL{bucket_sql} \
             LIMIT ${fetch}) \
-         SELECT pg.person, a.roles, a.credit_count, p.slug \
+         SELECT pg.person, a.roles, a.credit_count, p.slug, p.image_url \
            FROM page pg \
            CROSS JOIN LATERAL ({agg}) a \
            LEFT JOIN person p ON p.normalized_name = btrim(lower(pg.person)) \
@@ -481,6 +487,7 @@ pub async fn list(
                 slug: r.slug,
                 roles: r.roles,
                 credit_count: r.credit_count,
+                image_url: r.image_url,
             })
             .collect(),
         next_cursor,
@@ -766,4 +773,238 @@ pub async fn refresh_profile(
         Json(serde_json::json!({ "queued": true })),
     )
         .into_response()
+}
+
+/// How many statements [`insights`] runs after the access lookup and the
+/// `person` lookup, whatever the creator's size. The query-count guard in
+/// `tests/creators.rs` pins the total.
+pub const INSIGHTS_STATEMENTS: usize = 6;
+
+/// `GET /creators/{slug}/insights` — the "In your library" block of a
+/// creator page (roadmap WP-9.10): totals, the caller's read count, the
+/// publisher split, issues by decade, top series, the characters the
+/// creator's issues feature most and the creators credited beside them
+/// most often.
+///
+/// Counted over the issues the creator is credited on **that the caller
+/// can see**: the same library and age-rating filters as the page's
+/// rails. A creator with no such issue is a 404, like an unknown slug.
+/// The answer has the shape of the other entity pages' insights; the
+/// lists a creator has no use for (`teams`, `locations`, `arcs`,
+/// `earliest`) are empty.
+#[utoipa::path(
+    operation_id = "creators_insights",    get,
+    path = "/creators/{slug}/insights",
+    params(("slug" = String, Path,)),
+    responses(
+        (status = 200, body = EntityInsightsView),
+        (status = 404,),
+    )
+)]
+#[handler]
+pub async fn insights(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    AxPath(slug): AxPath<String>,
+) -> Response {
+    let not_found = || error(StatusCode::NOT_FOUND, "not_found", "creator not found");
+    let internal = |e: sea_orm::DbErr, what: &str| {
+        tracing::error!(error = %e, what, "creators: insights failed");
+        error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+    };
+    let row = match person::Entity::find()
+        .filter(person::Column::Slug.eq(&slug))
+        .one(&app.db)
+        .await
+    {
+        Ok(Some(r)) => r,
+        Ok(None) => return not_found(),
+        Err(e) => return internal(e, "lookup"),
+    };
+    let visible = access::for_user(&app, &user).await;
+    let mut params: Vec<Value> = vec![Value::from(row.id)];
+    let library_filter = if visible.unrestricted {
+        String::new()
+    } else {
+        if visible.allowed.is_empty() {
+            return not_found();
+        }
+        let placeholders: Vec<String> = visible
+            .allowed
+            .iter()
+            .map(|id| {
+                params.push(Value::from(*id));
+                format!("${}", params.len())
+            })
+            .collect();
+        format!(" AND s.library_id IN ({})", placeholders.join(","))
+    };
+    // WP-2.7: the issue's own rating and its series' must both pass.
+    let issue_cap = visible.issue_cap_sql_joined("i", "s", &mut params);
+    let series_cap = if visible.hides_any() {
+        visible.raw_cap_clause("s.library_id", "s.age_rating", &mut params)
+    } else {
+        String::new()
+    };
+    // The creator's visible `(issue, series)` pairs. By `person_id` (the
+    // series rollup links every credit), so each statement is an index
+    // scan of the creator's own credits.
+    let cte = format!(
+        "WITH hits AS ( \
+           SELECT DISTINCT i.id AS issue_id, s.id AS series_id \
+             FROM issue_credits ic \
+             JOIN issues i ON i.id = ic.issue_id \
+             JOIN series s ON s.id = i.series_id \
+            WHERE ic.person_id = $1 \
+              AND s.removed_at IS NULL AND i.removed_at IS NULL \
+              AND i.state = 'active'{library_filter}{issue_cap}{series_cap})"
+    );
+    let backend = app.db.get_database_backend();
+    let query = |sql: String, extra: Vec<Value>| {
+        let mut p = params.clone();
+        p.extend(extra);
+        Statement::from_sql_and_values(backend, sql, p)
+    };
+    let n = params.len();
+
+    #[derive(FromQueryResult)]
+    struct Totals {
+        issues: i64,
+        series: i64,
+        first_year: Option<i32>,
+        last_year: Option<i32>,
+        read: i64,
+    }
+    let totals = match Totals::find_by_statement(query(
+        format!(
+            "{cte} SELECT count(*)::bigint AS issues, \
+                    (SELECT count(DISTINCT series_id) FROM hits)::bigint AS series, \
+                    min(i.year)::int4 AS first_year, max(i.year)::int4 AS last_year, \
+                    (SELECT count(DISTINCT p.issue_id) FROM progress_records p \
+                      WHERE p.user_id = ${u} AND p.finished \
+                        AND p.issue_id IN (SELECT issue_id FROM hits))::bigint AS read \
+               FROM issues i WHERE i.id IN (SELECT issue_id FROM hits)",
+            u = n + 1
+        ),
+        vec![user.id.into()],
+    ))
+    .one(&app.db)
+    .await
+    {
+        Ok(Some(t)) if t.issues > 0 => t,
+        Ok(_) => return not_found(),
+        Err(e) => return internal(e, "totals"),
+    };
+
+    let publishers = match CountedName::find_by_statement(query(
+        format!(
+            "{cte} SELECT COALESCE(s.publisher, 'Unknown') AS name, NULL::text AS slug, \
+                    count(DISTINCT h.issue_id)::bigint AS count \
+               FROM hits h JOIN series s ON s.id = h.series_id \
+              GROUP BY 1 ORDER BY count DESC, name LIMIT 5"
+        ),
+        vec![],
+    ))
+    .all(&app.db)
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => return internal(e, "publishers"),
+    };
+
+    let decades = match DecadeCount::find_by_statement(query(
+        format!(
+            "{cte} SELECT ((i.year / 10) * 10)::int4 AS decade, count(*)::bigint AS count \
+               FROM issues i WHERE i.id IN (SELECT issue_id FROM hits) AND i.year IS NOT NULL \
+              GROUP BY 1 ORDER BY 1"
+        ),
+        vec![],
+    ))
+    .all(&app.db)
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => return internal(e, "decades"),
+    };
+
+    let top_series = match SeriesCount::find_by_statement(query(
+        format!(
+            "{cte} SELECT s.name AS name, s.slug AS slug, s.year AS year, \
+                    count(DISTINCT h.issue_id)::bigint AS count, \
+                    min(i.year)::int4 AS first_year, max(i.year)::int4 AS last_year \
+               FROM hits h JOIN series s ON s.id = h.series_id JOIN issues i ON i.id = h.issue_id \
+              GROUP BY s.id, s.name, s.slug, s.year \
+              ORDER BY count DESC, s.name LIMIT 12"
+        ),
+        vec![],
+    ))
+    .all(&app.db)
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => return internal(e, "top series"),
+    };
+
+    // The junction's FK when set, else the entity row the scanner's name
+    // resolves to (as the other entity pages' co-appearance lists).
+    let characters = match CountedName::find_by_statement(query(
+        format!(
+            "{cte} SELECT COALESCE(e.name, j.character) AS name, e.slug AS slug, \
+                    count(DISTINCT j.issue_id)::bigint AS count \
+               FROM issue_characters j JOIN hits h ON h.issue_id = j.issue_id \
+               LEFT JOIN character e ON e.id = COALESCE(j.character_id, \
+                    (SELECT c.id FROM character c \
+                      WHERE c.normalized_name = btrim(lower(j.character)))) \
+              WHERE btrim(j.character) <> '' \
+              GROUP BY 1, 2 ORDER BY count DESC, name LIMIT 14"
+        ),
+        vec![],
+    ))
+    .all(&app.db)
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => return internal(e, "characters"),
+    };
+
+    // Everyone else credited on those issues, in any role.
+    let creators = match CreatorCount::find_by_statement(query(
+        format!(
+            "{cte} SELECT COALESCE(p.name, c.person) AS name, p.slug AS slug, \
+                    string_agg(DISTINCT c.role, ', ' ORDER BY c.role) AS roles, \
+                    count(DISTINCT c.issue_id)::bigint AS count \
+               FROM issue_credits c JOIN hits h ON h.issue_id = c.issue_id \
+               LEFT JOIN person p ON p.id = COALESCE(c.person_id, \
+                    (SELECT q.id FROM person q \
+                      WHERE q.normalized_name = btrim(lower(c.person)))) \
+              WHERE btrim(c.person) <> '' \
+                AND COALESCE(p.id, '00000000-0000-0000-0000-000000000000'::uuid) <> $1::uuid \
+              GROUP BY 1, 2 ORDER BY count DESC, name LIMIT 12"
+        ),
+        vec![],
+    ))
+    .all(&app.db)
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => return internal(e, "collaborators"),
+    };
+
+    Json(EntityInsightsView {
+        issues: totals.issues,
+        series: totals.series,
+        first_year: totals.first_year,
+        last_year: totals.last_year,
+        read: totals.read,
+        publishers,
+        decades,
+        top_series,
+        characters,
+        teams: Vec::new(),
+        locations: Vec::new(),
+        arcs: Vec::new(),
+        creators,
+        earliest: Vec::new(),
+    })
+    .into_response()
 }

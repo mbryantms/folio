@@ -129,6 +129,7 @@ import type {
   IssueSearchView,
   IssueSort,
   PeopleListView,
+  CreatorDetailView,
   CreatorListView,
   EntityDetailView,
   EntityInsightsView,
@@ -1920,6 +1921,32 @@ export function useEntityInsights(kind: EntityKindPath, slug: string) {
     queryFn: () =>
       jsonFetch<EntityInsightsView>(apiPath`/${kind}/${slug}/insights`),
     staleTime: 5 * 60_000,
+  });
+}
+
+/** Creator page payload, seeded from the server render and refetched
+ *  every 4 s while the provider profile is being fetched (WP-9.10). */
+export function useCreatorDetail(slug: string, initialData: CreatorDetailView) {
+  return useQuery({
+    queryKey: queryKeys.creatorDetail(slug),
+    queryFn: () => jsonFetch<CreatorDetailView>(apiPath`/creators/${slug}`),
+    initialData,
+    staleTime: 30_000,
+    refetchInterval: (q) =>
+      q.state.data?.enrichment === "pending" ? 4_000 : false,
+  });
+}
+
+/** "In your library" statistics of a creator. A 404 means the caller can
+ *  see none of the creator's issue credits; it is not retried. */
+export function useCreatorInsights(slug: string) {
+  return useQuery({
+    queryKey: queryKeys.creatorInsights(slug),
+    queryFn: () =>
+      jsonFetch<EntityInsightsView>(apiPath`/creators/${slug}/insights`),
+    staleTime: 5 * 60_000,
+    retry: (count, err) =>
+      !(err instanceof HttpError && err.status === 404) && count < 2,
   });
 }
 
