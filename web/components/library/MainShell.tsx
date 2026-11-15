@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { Suspense } from "react";
 
 import { AddToHomeScreenBanner } from "@/components/AddToHomeScreenBanner";
@@ -17,6 +16,7 @@ import {
 } from "@/components/folio/sidebar";
 import { RouteFade } from "@/components/shell/RouteFade";
 import { SkipToContent } from "@/components/shell/SkipToContent";
+import { Wordmark } from "@/components/shell/Wordmark";
 import { CHROME_BAND_CLASS } from "@/lib/ui/chrome-band";
 import { cn } from "@/lib/utils";
 
@@ -72,19 +72,14 @@ export function MainShell({
           "sticky top-0 z-30 hidden h-(--topbar-h) items-center gap-3 border-b pt-(--safe-top) pr-[max(1.5rem,var(--safe-right))] pl-[max(1.5rem,var(--safe-left))] [view-transition-name:shell-topbar] md:flex",
         )}
       >
-        {/* Desktop collapse toggle; on phones the bottom bar's "More" tab
-            opens the nav sheet instead. */}
-        <SidebarTrigger className="hidden md:inline-flex" />
-        <Link href={homeHref} className="font-semibold tracking-tight">
-          Folio
-        </Link>
+        <BrandBlock homeHref={homeHref} />
         {/* Topbar search: a real `<input>` that types inline and opens a
             dropdown panel beneath. Categories + snippets + recents +
             commands render in the dropdown so the user never
             context-switches to a centered modal on desktop. Below md the
             whole header is gone and the bottom tab bar's Search tab
             reaches the search page instead. */}
-        <div className="ml-1 flex-1 sm:max-w-md" data-tour="search">
+        <div className="flex-1 sm:max-w-md" data-tour="search">
           <TopbarSearchInline />
         </div>
         {user.role === "admin" ? (
@@ -123,6 +118,36 @@ export function MainShell({
         <OnboardingTour />
       </Suspense>
     </AppSidebarProvider>
+  );
+}
+
+/**
+ * The sidebar toggle and the Folio lockup, sized to the sidebar column
+ * while the sidebar is open, so the search field beside it starts at the
+ * content column's left edge. The sum: the sidebar's width, plus the
+ * content column's `md:px-8`, less the header's own left padding (1.5rem)
+ * and the gap before the search field (`gap-3`). With the sidebar
+ * collapsed the block takes its natural width. It is a minimum width, so
+ * it can follow the sidebar's own 200ms slide (a width of `auto` cannot
+ * be animated).
+ */
+function BrandBlock({ homeHref }: { homeHref: string }) {
+  const { state } = useSidebar();
+  return (
+    <div
+      data-brand-block=""
+      className={cn(
+        "flex shrink-0 items-center gap-3 transition-[min-width] duration-200 ease-linear motion-reduce:transition-none",
+        state === "expanded"
+          ? "min-w-[calc(var(--sidebar-width)+2rem-1.5rem-0.75rem)]"
+          : "min-w-0",
+      )}
+    >
+      {/* Desktop collapse toggle; on phones the bottom bar's "More" tab
+          opens the nav sheet instead. */}
+      <SidebarTrigger className="hidden md:inline-flex" />
+      <Wordmark href={homeHref} />
+    </div>
   );
 }
 

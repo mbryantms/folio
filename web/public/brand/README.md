@@ -5,11 +5,12 @@ exist so PWA install prompts, Home Screen icons, shortcut menus, favicons,
 and iOS splash screens render a real, consistent mark instead of browser
 placeholders while the production brand is pending.
 
-| File                     | Used for                                                     |
-| ------------------------ | ------------------------------------------------------------ |
-| `icon-master.svg`        | App icon master: every manifest/Apple/favicon/splash raster. |
-| `shortcut-library.svg`   | Manifest shortcut icon for "Library".                        |
-| `shortcut-bookmarks.svg` | Manifest shortcut icon for "Bookmarks".                      |
+| File                     | Used for                                                                           |
+| ------------------------ | ---------------------------------------------------------------------------------- |
+| `icon-master.svg`        | App icon master: every manifest/Apple/favicon/splash raster, and the lockup glyph. |
+| `logotype-master.svg`    | The name "Folio" as outlines: the lettering of the title-bar lockup.               |
+| `shortcut-library.svg`   | Manifest shortcut icon for "Library".                                              |
+| `shortcut-bookmarks.svg` | Manifest shortcut icon for "Bookmarks".                                            |
 
 The interim mark is an open book whose pages are split into comic panels,
 in the dark theme's amber `--primary` (`#f6a823`, `hsl(38 92% 55%)`) on
@@ -31,5 +32,21 @@ marks.
 4. `pnpm --filter web test tests/pwa/assets.test.ts` checks every declared
    file exists at its declared size; then delete the "INTERIM" wording here.
 
-The planned `logotype-master.svg` (wordmark) is not referenced by the app
-yet and is not part of this interim set.
+## The title-bar lockup
+
+The shells' title bars (`MainShell`, `AdminShell`, `StatusScreen`) show
+one lockup, `web/components/shell/Wordmark.tsx`: the book glyph beside
+the name. Both halves are inline SVG, so the lockup needs no font and
+looks the same on every device.
+
+- **Glyph**: the five paths of `icon-master.svg` without the tile,
+  `viewBox="100 126 312 272"`, drawn 27 × 24 px in the theme's
+  `--primary`, so it follows the account's accent.
+- **Lettering**: `logotype-master.svg`, `viewBox="0 0 270 100"`, drawn
+  43.2 × 16 px (a 16 px cap height) in the text colour. Geometric
+  letters with 16-unit strokes; the dot of the "i" takes `--primary`.
+- **Gap**: 9 px between the two.
+
+The component copies both drawings; `web/tests/shell/wordmark.test.tsx`
+fails when it and the masters disagree. To change the lettering or the
+glyph, edit the master and the component together.

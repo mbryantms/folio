@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 270 100" width="270" height="100">
+  <!-- The name "Folio" as outlines: geometric letters on a 100-unit cap
+       height with 16-unit strokes. The dot of the "i" carries the accent.
+       Mirrored inline by web/components/shell/Wordmark.tsx, where the
+       letters take the text colour and the dot takes the theme's primary.
+       Drawn here in the brand dark so the file reads on a light canvas. -->
+  <title>Folio</title>
+  <g fill="#0c0e13">
+    <!-- F -->
+    <path d="M0 0h58v16H16v26h32v16H16v42H0z"/>
+    <!-- l -->
+    <path d="M142 0h16v100h-16z"/>
+    <!-- i (stem) -->
+    <path d="M174 32h16v68h-16z"/>
+  </g>
+  <!-- o, o -->
+  <g fill="none" stroke="#0c0e13" stroke-width="16">
+    <circle cx="96" cy="66" r="26"/>
+    <circle cx="236" cy="66" r="26"/>
+  </g>
+  <!-- i (dot) -->
+  <circle cx="182" cy="10" r="10" fill="#f6a823"/>
+</svg>

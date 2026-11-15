@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { PanelLeftIcon } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -23,6 +22,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { RouteFade } from "@/components/shell/RouteFade";
 import { SkipToContent } from "@/components/shell/SkipToContent";
+import { Wordmark } from "@/components/shell/Wordmark";
 import { CHROME_BAND_CLASS } from "@/lib/ui/chrome-band";
 import { useMediaQuery } from "@/lib/ui/use-media-query";
 import { SIDEBAR_COOKIE } from "@/lib/sidebar-state";
@@ -152,9 +152,7 @@ export function AdminShell({
             Menu
           </Button>
         ) : null}
-        <Link href={homeHref} className="font-semibold tracking-tight">
-          Folio
-        </Link>
+        <Wordmark href={homeHref} />
         <span className="text-muted-foreground ml-2 hidden text-xs font-medium tracking-widest uppercase sm:inline">
           {title}
         </span>
