@@ -6,7 +6,7 @@ the feature and Folio writes back to neither.
 | Source | What it gives | How it arrives | Status |
 | --- | --- | --- | --- |
 | **Metron** (the release calendar) | Every publisher's issues by store date, about six weeks ahead | A scheduled Folio job lists Metron's API | built |
-| **Mylar** (the tracking window) | The current week's pull list with each issue's status, the watchlist, the download queue | A script on the Mylar host pushes a snapshot **to** Folio | ingest built; shown to readers in a later change |
+| **Mylar** (the tracking window) | The current week's pull list with each issue's status, the watchlist, the download queue | A script on the Mylar host pushes a snapshot **to** Folio | built |
 
 Plan: `~/.claude/plans/upcoming-releases-1.0.md`.
 
@@ -232,6 +232,98 @@ sender's clock: `fresh` up to `integrations.mylar.stale_after_minutes`,
 then `stale` (admins are warned), then `expired` after 7 days (no longer
 shown to readers).
 
+## Reconciling the two
+
+`upcoming::reconcile` is pure: rows in, entries out. Nothing is
+materialised, so there is no second copy to drift. `upcoming::view`
+loads its inputs.
+
+**Pairing** a Mylar pull-list line with a Metron calendar row, one to
+one, in three passes:
+
+1. the same ComicVine volume id, the same number after
+   `canonical_issue_number`, and dates within 7 days (ties go to the
+   closest date);
+2. the same ComicVine volume id and the same Monday–Sunday week, with
+   exactly one unpaired row on each side (one provider lumps a relaunch
+   into the old numbering, the other restarts it at #1);
+3. when either side has no ComicVine id: equal `sanitize_title`, equal
+   number, dates within 7 days, **and** the same start year or the same
+   publisher.
+
+A pull line with no partner is still a release (`source: pull_list`):
+Metron lists fewer small-publisher books than a pull list. Dates are
+compared as dates; Mylar's Sunday-start week numbers are never used.
+
+**Facts** added to each release:
+
+| Fact | Rule |
+| --- | --- |
+| `library_series` | a local series carries the ComicVine volume id (Metron series id as fallback) in `external_ids` or `series_provider_range`, is not removed, and passes the viewer's ACL. Several claimants: the one with the most issues |
+| `owned` | that series has the issue, by Metron issue id, else by the ComicVine issue id Mylar reported, else by canonical number **plus** a cover month within two of the calendar's. Never number alone |
+| `tracked` | the ComicVine volume id is on Mylar's watchlist and not paused. This is what reaches past the one week Mylar has loaded |
+| `mylar_status` | the pull line's status, else Mylar's wanted table (by ComicVine issue id, else volume id + number). Only what Mylar reported |
+| `stage` | first that holds: `in_library` (owned), `downloaded`, `snatched`, `wanted` (also Mylar's "failed"), `tracked`, `announced` |
+
+### Who sees Mylar data
+
+Mylar's watchlist covers the operator's whole collection, and Folio
+answers a hidden series exactly as it answers a missing one
+(`tests/denied_and_missing_alike.rs`). A "tracked" or "downloaded" badge
+on a title would tell a restricted reader what is held in a library they
+cannot open. So `upcoming::view` loads nothing from the `mylar_*` tables
+unless all of these hold:
+
+- `access::sees_whole_library` is true for the viewer (an admin, or a
+  reader granted every library with no age-rating cap);
+- `integrations.mylar.enabled` is on;
+- the snapshot is not `expired`.
+
+Everyone else gets the calendar with `library_series` and `owned` for
+the series they can see, `tracked: false` and no `mylar_status`. A
+reader with an age-rating cap is additionally held to "my series": they
+are not shown every publisher's titles.
+
+**Reviewer heuristic — reject PRs that** read a `mylar_*` table outside
+`upcoming::view::assemble` (or the admin status handler), or that add a
+field derived from one to a response without going through
+`Facts::mylar_visible`.
+
+### Cost
+
+A fixed number of statements per request, whatever the number of
+releases: every lookup is one `IN (…)` over the ids on hand, and the
+watchlist is asked only about those ids. `tests/upcoming_query_count.rs`
+grows the data tenfold and requires the same count. Migration
+`m20271120_000001_provider_range_reverse_idx` adds
+`series_provider_range (source, provider_series_id)` for the reverse
+lookup.
+
+## Reader API
+
+All `CurrentUser`, read-only, answered from Postgres alone.
+
+| Endpoint | |
+| --- | --- |
+| `GET /api/upcoming` | `CursorPage` of weeks. The cursor is opaque (a week); `total` on the first page. Params: `limit` (weeks, 1–12, default 3), `today`, `scope=mine\|all`, `publisher`, `tracked`, `in_library`, `first_issues`. Every filter runs on the server. Starts at the Monday of the current week; weeks with nothing to show are skipped |
+| `GET /api/upcoming/summary` | `enabled`, "my series" counts for this week and next, when the calendar last synced, the Mylar snapshot's time and freshness (only for a viewer who may see it), the publishers in the window, `all_releases_available` |
+| `GET /api/series/{slug}/next-release` | up to two releases of that series dated today or later; 404 for a series the viewer cannot see |
+
+`today` is the caller's local date. The server only knows UTC, and "this
+week" turns over at the caller's midnight, so a date within one day of
+the server's is used as given and anything else is ignored.
+
+A cover URL is passed on only when it is on `static.metron.cloud`, the
+one image host the CSP allows for it.
+
+**By setting:**
+
+| `upcoming.enabled` | `integrations.mylar.enabled` | Reader endpoints |
+| --- | --- | --- |
+| off | either | empty, `enabled: false` |
+| on | off | Metron only; stored `mylar_*` rows are ignored |
+| on | on | reconciled, for viewers who may see Mylar data |
+
 ## Metrics
 
 `folio_release_calendar_issues` and
@@ -248,6 +340,15 @@ re-check; the sweep's queueing; the admin endpoints' auth and audit.
 `crates/server/tests/mylar_ingest.rs`: off is 403 even with the token; a
 wrong token is refused before the body is read; store, replace and
 heartbeat; bad and oversized bodies; the token endpoints; freshness.
+`upcoming::reconcile` unit tests: every pairing pass and its limits,
+the stage precedence, owned-by-number.
+`crates/server/tests/upcoming_api.rs`: paging, filters, reconciliation
+end to end, and the access rules (full grant, partial grant, age cap,
+Mylar off, expired snapshot, a hidden series is a 404).
+`crates/server/tests/upcoming_query_count.rs`: the fixed statement count.
+`crates/server/tests/upcoming_view_only.rs`: the only Mylar route is the
+snapshot POST, no setting holds a Mylar address or key, and the Mylar
+code makes no outbound request.
 `integrations/mylar/test_folio_mylar_push.py` (CI job "Mylar push
 script — tests"): the snapshot's content, that nothing sensitive leaves
 the host, change detection and the heartbeat, failures.

@@ -14,6 +14,8 @@
 
 pub mod calendar;
 pub mod mylar;
+pub mod reconcile;
+pub mod view;
 
 use chrono::{Datelike, Duration, NaiveDate};
 

@@ -13512,6 +13512,48 @@
         }
       }
     },
+    "/api/series/{slug}/next-release": {
+      "get": {
+        "operationId": "series_next_release",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "today",
+            "in": "query",
+            "description": "The caller's local date, `YYYY-MM-DD`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesNextReleaseView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "series not found or not visible"
+          }
+        }
+      }
+    },
     "/api/series/{slug}/progress": {
       "post": {
         "operationId": "progress_upsert_series",
@@ -14557,6 +14599,166 @@
             }
           },
           "404": {}
+        }
+      }
+    },
+    "/api/upcoming": {
+      "get": {
+        "operationId": "upcoming_list",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque continuation token from a previous page's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Weeks per page, 1–12 (default 3).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "today",
+            "in": "query",
+            "description": "The caller's local date, `YYYY-MM-DD`. Used to place \"this week\"\nwhen it is within a day of the server's own date.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "`mine` (default) or `all`.",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "description": "Which releases a list shows.",
+                  "enum": [
+                    "mine",
+                    "all"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          {
+            "name": "publisher",
+            "in": "query",
+            "description": "Only this publisher (exact name, case-insensitive).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "tracked",
+            "in": "query",
+            "description": "Only series on Mylar's watchlist.",
+            "required": false,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "in_library",
+            "in": "query",
+            "description": "Only series in a library the caller can see.",
+            "required": false,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "first_issues",
+            "in": "query",
+            "description": "Only #1 issues.",
+            "required": false,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_UpcomingWeekView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid cursor"
+          }
+        }
+      }
+    },
+    "/api/upcoming/summary": {
+      "get": {
+        "operationId": "upcoming_summary",
+        "parameters": [
+          {
+            "name": "today",
+            "in": "query",
+            "description": "The caller's local date, `YYYY-MM-DD`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpcomingSummaryView"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -21534,6 +21736,57 @@
           }
         }
       },
+      "CursorPage_UpcomingWeekView": {
+        "type": "object",
+        "description": "Cursor-paginated list response. `total` is populated only on the first\npage of paginated lists where the count is cheap; bounded lists omit it.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One Monday–Sunday week of releases.",
+              "required": [
+                "week_start",
+                "week_end",
+                "entries"
+              ],
+              "properties": {
+                "entries": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/UpcomingEntryView"
+                  }
+                },
+                "week_end": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "week_start": {
+                  "type": "string",
+                  "format": "date"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "DashboardResp": {
         "type": "object",
         "required": [
@@ -23161,6 +23414,15 @@
             }
           }
         }
+      },
+      "EntrySource": {
+        "type": "string",
+        "description": "Where an entry came from.",
+        "enum": [
+          "metron",
+          "pull_list",
+          "both"
+        ]
       },
       "EventIssue": {
         "type": "object",
@@ -29110,6 +29372,16 @@
             "format": "int32"
           }
         }
+      },
+      "MylarStatus": {
+        "type": "string",
+        "description": "What Mylar reported for an issue.",
+        "enum": [
+          "wanted",
+          "snatched",
+          "downloaded",
+          "failed"
+        ]
       },
       "MylarStatusView": {
         "type": "object",
@@ -35714,6 +35986,21 @@
           }
         }
       },
+      "SeriesNextReleaseView": {
+        "type": "object",
+        "required": [
+          "entries"
+        ],
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UpcomingEntryView"
+            },
+            "description": "Soonest first; empty when nothing is announced."
+          }
+        }
+      },
       "SeriesProgressSummary": {
         "type": "object",
         "description": "Per-user, server-computed read progress for the whole series. Sidesteps\nthe client-side cap on the issues page (which fetches 100 at a time).",
@@ -37244,6 +37531,18 @@
           "exclude"
         ]
       },
+      "Stage": {
+        "type": "string",
+        "description": "The single thing a card says about a release, by precedence.",
+        "enum": [
+          "in_library",
+          "downloaded",
+          "snatched",
+          "wanted",
+          "tracked",
+          "announced"
+        ]
+      },
       "StarterListListView": {
         "type": "object",
         "required": [
@@ -38299,6 +38598,152 @@
           }
         }
       },
+      "UpcomingEntryView": {
+        "type": "object",
+        "description": "One upcoming (or just released) issue.",
+        "required": [
+          "key",
+          "source",
+          "series_name",
+          "number",
+          "release_date",
+          "first_issue",
+          "owned",
+          "tracked",
+          "stage"
+        ],
+        "properties": {
+          "cover_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "cover_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cover on Metron's CDN, when Metron lists the release."
+          },
+          "first_issue": {
+            "type": "boolean",
+            "description": "A #1."
+          },
+          "key": {
+            "type": "string",
+            "description": "Stable within one calendar + snapshot state; for list keys only."
+          },
+          "library_series": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UpcomingSeriesLinkView",
+                "description": "Set when the series is in a library the caller can see."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "metron_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The release's page on Metron."
+          },
+          "mylar_status": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MylarStatus",
+                "description": "What Mylar reported for the issue. Always absent for a caller who\nmay not see Mylar data."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "number": {
+            "type": "string"
+          },
+          "owned": {
+            "type": "boolean",
+            "description": "Folio already has this issue."
+          },
+          "publisher": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "release_date": {
+            "type": "string",
+            "format": "date",
+            "description": "In-store date."
+          },
+          "series_name": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/EntrySource"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "tracked": {
+            "type": "boolean",
+            "description": "The series is on Mylar's watchlist. Always `false` for a caller\nwho may not see Mylar data."
+          },
+          "volume": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "year_began": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "UpcomingMylarView": {
+        "type": "object",
+        "description": "Mylar's snapshot, for a caller allowed to see it.",
+        "required": [
+          "received_at",
+          "freshness"
+        ],
+        "properties": {
+          "freshness": {
+            "$ref": "#/components/schemas/Freshness"
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "UpcomingSeriesLinkView": {
+        "type": "object",
+        "description": "The Folio series a release belongs to.",
+        "required": [
+          "slug",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
       "UpcomingStatusView": {
         "type": "object",
         "required": [
@@ -38331,6 +38776,63 @@
           }
         }
       },
+      "UpcomingSummaryView": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "this_week",
+          "next_week",
+          "publishers",
+          "all_releases_available"
+        ],
+        "properties": {
+          "all_releases_available": {
+            "type": "boolean",
+            "description": "`false` for a caller held to \"my series\" (an age-rating cap)."
+          },
+          "calendar_synced_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the calendar last finished a full Metron pass."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "`upcoming.enabled`. When `false` every other field is empty."
+          },
+          "mylar": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UpcomingMylarView",
+                "description": "Absent unless the caller may see Mylar data and a snapshot exists."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "next_week": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "publishers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Publishers with a release in the window, for the filter."
+          },
+          "this_week": {
+            "type": "integer",
+            "format": "int32",
+            "description": "\"My series\" releases this week and next.",
+            "minimum": 0
+          }
+        }
+      },
       "UpcomingSyncResp": {
         "type": "object",
         "required": [
@@ -38359,6 +38861,31 @@
             "type": "string",
             "format": "date",
             "description": "The Monday, `YYYY-MM-DD`."
+          }
+        }
+      },
+      "UpcomingWeekView": {
+        "type": "object",
+        "description": "One Monday–Sunday week of releases.",
+        "required": [
+          "week_start",
+          "week_end",
+          "entries"
+        ],
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UpcomingEntryView"
+            }
+          },
+          "week_end": {
+            "type": "string",
+            "format": "date"
+          },
+          "week_start": {
+            "type": "string",
+            "format": "date"
           }
         }
       },

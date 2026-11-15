@@ -98,6 +98,7 @@ pub mod sidecar_reemit;
 pub mod starter_lists;
 pub mod teams;
 pub mod thumbnails;
+pub mod upcoming;
 pub mod view_covers;
 pub mod view_groups;
 pub mod work_targets;

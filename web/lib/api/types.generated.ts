@@ -5848,6 +5848,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{slug}/next-release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["series_next_release"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{slug}/progress": {
         parameters: {
             query?: never;
@@ -6234,6 +6250,38 @@ export interface paths {
          *     alphabetical, cursor-paginated; `total` on the first page only.
          */
         get: operations["teams_series"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/upcoming": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["upcoming_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/upcoming/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["upcoming_summary"];
         put?: never;
         post?: never;
         delete?: never;
@@ -9292,6 +9340,22 @@ export interface components {
             /** Format: int64 */
             total?: number | null;
         };
+        /**
+         * @description Cursor-paginated list response. `total` is populated only on the first
+         *     page of paginated lists where the count is cheap; bounded lists omit it.
+         */
+        CursorPage_UpcomingWeekView: {
+            items: {
+                entries: components["schemas"]["UpcomingEntryView"][];
+                /** Format: date */
+                week_end: string;
+                /** Format: date */
+                week_start: string;
+            }[];
+            next_cursor?: string | null;
+            /** Format: int64 */
+            total?: number | null;
+        };
         DashboardResp: {
             /**
              * Format: int64
@@ -9946,6 +10010,11 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /**
+         * @description Where an entry came from.
+         * @enum {string}
+         */
+        EntrySource: "metron" | "pull_list" | "both";
         EventIssue: {
             colorist?: string | null;
             cover_artist?: string | null;
@@ -12500,6 +12569,11 @@ export interface components {
             /** Format: int32 */
             watch_count: number;
         };
+        /**
+         * @description What Mylar reported for an issue.
+         * @enum {string}
+         */
+        MylarStatus: "wanted" | "snatched" | "downloaded" | "failed";
         MylarStatusView: {
             /**
              * @description `integrations.mylar.enabled`. Snapshots are accepted only while
@@ -15332,6 +15406,10 @@ export interface components {
             /** @description The series' display name; searching for it finds the series. */
             name: string;
         };
+        SeriesNextReleaseView: {
+            /** @description Soonest first; empty when nothing is announced. */
+            entries: components["schemas"]["UpcomingEntryView"][];
+        };
         /**
          * @description Per-user, server-computed read progress for the whole series. Sidesteps
          *     the client-side cap on the issues page (which fetches 100 at a time).
@@ -16067,6 +16145,11 @@ export interface components {
          * @enum {string}
          */
         SpecialsCompletion: "inherit" | "include" | "exclude";
+        /**
+         * @description The single thing a card says about a release, by precedence.
+         * @enum {string}
+         */
+        Stage: "in_library" | "downloaded" | "snatched" | "wanted" | "tracked" | "announced";
         StarterListListView: {
             items: components["schemas"]["StarterListView"][];
         };
@@ -16546,6 +16629,53 @@ export interface components {
              */
             window_start: string;
         };
+        /** @description One upcoming (or just released) issue. */
+        UpcomingEntryView: {
+            /** Format: date */
+            cover_date?: string | null;
+            /** @description Cover on Metron's CDN, when Metron lists the release. */
+            cover_url?: string | null;
+            /** @description A #1. */
+            first_issue: boolean;
+            /** @description Stable within one calendar + snapshot state; for list keys only. */
+            key: string;
+            library_series?: components["schemas"]["UpcomingSeriesLinkView"] | null;
+            /** @description The release's page on Metron. */
+            metron_url?: string | null;
+            mylar_status?: components["schemas"]["MylarStatus"] | null;
+            number: string;
+            /** @description Folio already has this issue. */
+            owned: boolean;
+            publisher?: string | null;
+            /**
+             * Format: date
+             * @description In-store date.
+             */
+            release_date: string;
+            series_name: string;
+            source: components["schemas"]["EntrySource"];
+            stage: components["schemas"]["Stage"];
+            /**
+             * @description The series is on Mylar's watchlist. Always `false` for a caller
+             *     who may not see Mylar data.
+             */
+            tracked: boolean;
+            /** Format: int32 */
+            volume?: number | null;
+            /** Format: int32 */
+            year_began?: number | null;
+        };
+        /** @description Mylar's snapshot, for a caller allowed to see it. */
+        UpcomingMylarView: {
+            freshness: components["schemas"]["Freshness"];
+            /** Format: date-time */
+            received_at: string;
+        };
+        /** @description The Folio series a release belongs to. */
+        UpcomingSeriesLinkView: {
+            name: string;
+            slug: string;
+        };
         UpcomingStatusView: {
             calendar: components["schemas"]["UpcomingCalendarStatusView"];
             /** @description `upcoming.enabled`. */
@@ -16562,6 +16692,27 @@ export interface components {
              */
             weeks_ahead: number;
         };
+        UpcomingSummaryView: {
+            /** @description `false` for a caller held to "my series" (an age-rating cap). */
+            all_releases_available: boolean;
+            /**
+             * Format: date-time
+             * @description When the calendar last finished a full Metron pass.
+             */
+            calendar_synced_at?: string | null;
+            /** @description `upcoming.enabled`. When `false` every other field is empty. */
+            enabled: boolean;
+            mylar?: components["schemas"]["UpcomingMylarView"] | null;
+            /** Format: int32 */
+            next_week: number;
+            /** @description Publishers with a release in the window, for the filter. */
+            publishers: string[];
+            /**
+             * Format: int32
+             * @description "My series" releases this week and next.
+             */
+            this_week: number;
+        };
         UpcomingSyncResp: {
             /** @description `false` when a pass was already queued. */
             queued: boolean;
@@ -16574,6 +16725,14 @@ export interface components {
              * Format: date
              * @description The Monday, `YYYY-MM-DD`.
              */
+            week_start: string;
+        };
+        /** @description One Monday–Sunday week of releases. */
+        UpcomingWeekView: {
+            entries: components["schemas"]["UpcomingEntryView"][];
+            /** Format: date */
+            week_end: string;
+            /** Format: date */
             week_start: string;
         };
         UpdateCatalogSourceReq: {
@@ -29918,6 +30077,37 @@ export interface operations {
             };
         };
     };
+    series_next_release: {
+        parameters: {
+            query?: {
+                /** @description The caller's local date, `YYYY-MM-DD`. */
+                today?: string | null;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesNextReleaseView"];
+                };
+            };
+            /** @description series not found or not visible */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     progress_upsert_series: {
         parameters: {
             query?: never;
@@ -30899,6 +31089,74 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    upcoming_list: {
+        parameters: {
+            query?: {
+                /** @description Opaque continuation token from a previous page's `next_cursor`. */
+                cursor?: string | null;
+                /** @description Weeks per page, 1–12 (default 3). */
+                limit?: number | null;
+                /**
+                 * @description The caller's local date, `YYYY-MM-DD`. Used to place "this week"
+                 *     when it is within a day of the server's own date.
+                 */
+                today?: string | null;
+                /** @description `mine` (default) or `all`. */
+                scope?: ("mine" | "all") | null;
+                /** @description Only this publisher (exact name, case-insensitive). */
+                publisher?: string | null;
+                /** @description Only series on Mylar's watchlist. */
+                tracked?: boolean | null;
+                /** @description Only series in a library the caller can see. */
+                in_library?: boolean | null;
+                /** @description Only #1 issues. */
+                first_issues?: boolean | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage_UpcomingWeekView"];
+                };
+            };
+            /** @description invalid cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    upcoming_summary: {
+        parameters: {
+            query?: {
+                /** @description The caller's local date, `YYYY-MM-DD`. */
+                today?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpcomingSummaryView"];
+                };
             };
         };
     };
