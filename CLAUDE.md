@@ -686,6 +686,73 @@ Default admin (first registered user becomes admin):
     (`.into_partial_model::<IssueCardRow>()`), never the full model
     (WP-3.6; plans in `docs/dev/load-testing.md`).
 
+- **Upcoming releases are view-only** (upcoming-releases 1.0): `/upcoming`
+  shows Metron's release calendar reconciled with a snapshot of a Mylar
+  install. **Folio never calls Mylar.** The only link between the two is
+  `POST /integrations/mylar/snapshot` (`bare` group), pushed by
+  [`integrations/mylar/folio-mylar-push.py`](integrations/mylar/folio-mylar-push.py)
+  from the Mylar host with a single-purpose ingest token
+  (`integration_tokens`, digest only). Folio stores no Mylar address or
+  key, so an operator's firewall around Mylar never has to open.
+  - **Two sources, reconciled at read time.** `release_calendar_*`
+    (Metron, the daily `ReleaseCalendarSyncJob` plus the once-a-minute
+    enrich sweep) and `mylar_*` (the last snapshot, replace-all) are
+    joined per request by the pure
+    [`upcoming::reconcile`](crates/server/src/upcoming/reconcile.rs)
+    (`pair` → `decorate`, stage precedence in library → downloaded →
+    snatched → wanted → tracked → announced). Nothing is materialised, so
+    no second copy can drift.
+    [`upcoming::view::load`](crates/server/src/upcoming/view.rs) is the one
+    loader every reader endpoint goes through.
+  - **Who sees Mylar data.** Mylar's watchlist spans the whole collection,
+    and Folio answers a hidden series exactly as a missing one. So
+    `tracked`, the Mylar stages and pull-list-only rows reach only a
+    caller for whom `access::sees_whole_library` is true (an admin, or a
+    full grant with no age cap); everyone else gets the calendar with "in
+    library" for series they can see. The queue, wanted backlog and
+    history are admin-only (`GET /admin/integrations/mylar/activity`).
+  - **Metron budget.** The calendar jobs read the rate buckets before
+    every request (`calendar::budget_ok`) and pause while 8 or fewer per
+    minute, or 1,000 or fewer per day, remain. A pause is not a failure.
+  - **Off means absent.** With `upcoming.enabled` off the jobs idle, the
+    ingest answers 403, the reader endpoints answer empty, and the sidebar
+    built-in and the "Out this week" rail are not emitted
+    (`sidebar_layout::builtin_available`,
+    `saved_views::system_view_available`). Turning it off deletes nothing.
+
+  **Reviewer heuristic — reject PRs that:**
+  - Add a setting that holds a Mylar URL, host, port or API key; an HTTP
+    client in `upcoming::mylar` or `api::mylar_ingest`; or any route under
+    `/integrations/mylar` beyond the snapshot POST, the token's
+    create / revoke and the admin's read-only activity GET.
+    `crates/server/tests/upcoming_view_only.rs` pins all three.
+  - Add a control anywhere in the web app that acts on Mylar (search,
+    retry, add to the watchlist, mark wanted). Badges and text only.
+  - Show `tracked`, a Mylar stage, a pull-list-only row or watchlist-based
+    "my series" membership on a path that did not go through
+    `view::load`, or put Mylar's queue or wanted list on a non-admin
+    endpoint.
+  - Filter, sort or truncate upcoming rows in the browser. Every filter is
+    a query param of `GET /upcoming`; weeks page by an opaque cursor.
+  - Judge a snapshot's age by anything but `mylar_snapshot.received_at`
+    (the sender's clock is not trusted), or let a stale snapshot's
+    statuses show without the "as of" time.
+  - Add a Metron request to a calendar job without the budget check in
+    front of it, or make the list-pass handler return `Err` after a failed
+    pass (the backoff on `release_calendar_state` is the retry; `Err`
+    would have apalis re-run it straight into the same budget).
+  - Add a per-row query to `view::load`. The four reader endpoints cost a
+    fixed number of statements
+    (`crates/server/tests/upcoming_query_count.rs`).
+  - Send a path, download link, indexer name or credential from the push
+    script, or read Mylar's HTTP API from it (it opens `mylar.db`
+    read-only and nothing else; `test_folio_mylar_push.py` checks the
+    payload).
+
+  See [`docs/dev/upcoming-releases.md`](docs/dev/upcoming-releases.md) for
+  the architecture and [`docs/install/mylar.md`](docs/install/mylar.md) for
+  the operator's setup.
+
 ## Editing rules
 
 - Server tests must hit a real DB via `TestApp::spawn()`; never mock sea-orm.
@@ -782,6 +849,7 @@ Default admin (first registered user becomes admin):
 - Architecture decisions per phase: [docs/dev/phase-status.md](docs/dev/phase-status.md)
 - Library scanner deep dive: [docs/dev/library-scanner.md](docs/dev/library-scanner.md)
 - Load baseline (`just perf-explain` EXPLAIN plans at 50k issues, weekly gate + `expected_seqscans.txt`, `oha` recipes, `IssueCardRow` projection audit): [docs/dev/load-testing.md](docs/dev/load-testing.md)
+- Upcoming releases (Metron release calendar + budget gate, view-only Mylar snapshot ingest, read-time reconciliation, who sees Mylar data, the page and its alert surfaces): [docs/dev/upcoming-releases.md](docs/dev/upcoming-releases.md); the Mylar push script's setup: [docs/install/mylar.md](docs/install/mylar.md)
 - Similar series (signals, IDF weights + caps, neighbour cache + invalidation hooks, per-request ACL / hidden filtering): [docs/dev/similar-series.md](docs/dev/similar-series.md)
 - Saved views (filter DSL, per-entity field registry, `filter_series` vs `filter_issues` compiler roots): [docs/dev/saved-views.md](docs/dev/saved-views.md)
 - Reader keyboard map: [docs/dev/reader-shortcuts.md](docs/dev/reader-shortcuts.md)

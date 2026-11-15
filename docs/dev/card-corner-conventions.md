@@ -1,7 +1,7 @@
 # Cover-card corner conventions
 
 The cover cards across Folio (`IssueCard`, `SeriesCard`, `CblIssueCard`,
-`CblWindowCard`, `ProgressIssueCard`, `OnDeckCard`) share a small set of
+`CblWindowCard`, `ProgressIssueCard`, `OnDeckCard`, `UpcomingCard`) share a small set of
 absolute-positioned children. To keep the reading experience consistent
 across rails, grids, detail pages, and search, each corner has a fixed
 purpose.
@@ -68,6 +68,9 @@ Three card-type-specific occupants, but each card only uses one:
   "Collection badge" preference (`useCoverCollectionDot`, toggle in the
   `CoverSizeOptions` popover) is enabled. Readers who want pristine
   covers can hide it.
+- **`UpcomingCard`** — the release day ("Wed 25") as a small text chip.
+  Always present: the day is the one thing that distinguishes cards
+  inside a week.
 - **`IssueCard`, `ProgressIssueCard`, `OnDeckCard`** — empty today.
   Available for future indicators (downloaded badge, queue marker,
   age rating, …).
@@ -89,6 +92,26 @@ The play button itself is a fixed 32×32 footprint and a hover-reveal
 treatment via `group-hover:opacity-100`. Its visibility is gated by
 `showActions` (only when `issue.state === "active"` or the equivalent
 series state).
+
+## `UpcomingCard` (upcoming releases)
+
+A release is not in the library, so the card has no reader to open, no
+menu and nothing to select. It follows the slots anyway:
+
+- **Top-right**: the stage badge (`UpcomingStageBadge`, `onCover`
+  variant: an opaque backing with the tone on the text, because a tinted
+  surface is unreadable over cover art). One state per card, by the
+  server's precedence: in library → downloaded → downloading → wanted
+  (or failed) → tracked. A release nobody tracks ("announced") shows no
+  badge, so in "All releases" the badges mark the reader's own series.
+- **Bottom-left**: the release-day chip.
+- **Top-left, bottom-right, bottom-full**: empty. Bottom-right stays
+  reserved for play / open even here; do not put the stage there.
+- **No dimming**: this is a browse-first card.
+
+The whole card is one button that opens the read-only release dialog.
+It never carries an action on Mylar: Folio has none
+([upcoming-releases.md](upcoming-releases.md)).
 
 ## Future-card checklist
 
