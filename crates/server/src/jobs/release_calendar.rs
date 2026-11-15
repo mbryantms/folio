@@ -166,28 +166,41 @@ pub async fn sweep(state: &AppState) {
             return;
         }
     };
-    // A list pass is in flight or stopped part-way: leave the budget to
-    // it and only make sure it is queued.
-    if row.pass_next_week.is_none() {
-        match claim(state, SWEEP_LOCK_KEY, SWEEP_LOCK_TTL_SECS).await {
-            Ok(true) => {}
-            // Another tick (or another replica) is still working.
-            Ok(false) => return,
-            Err(e) => {
-                tracing::warn!(error = %e, "release calendar: sweep lock failed");
-                return;
+    // A list pass in flight or stopped part-way keeps the Metron budget:
+    // the enrich tick stands aside and the sweep only makes sure the pass
+    // is queued. Cover colours are image requests, not API requests, so
+    // they are read either way.
+    let pass_idle = row.pass_next_week.is_none();
+    match claim(state, SWEEP_LOCK_KEY, SWEEP_LOCK_TTL_SECS).await {
+        Ok(true) => {
+            if pass_idle {
+                match calendar::enrich(state).await {
+                    Ok(out) if out.fetched > 0 || out.paused => tracing::info!(
+                        fetched = out.fetched,
+                        paused = out.paused,
+                        "release calendar: enrich tick"
+                    ),
+                    Ok(_) => {}
+                    Err(e) => tracing::error!(error = %e, "release calendar: enrich tick failed"),
+                }
             }
+            match calendar::read_cover_tones(state).await {
+                Ok(0) => {}
+                Ok(read) => tracing::info!(read, "release calendar: cover colours read"),
+                Err(e) => {
+                    tracing::error!(error = %e, "release calendar: cover colour tick failed");
+                }
+            }
+            release(state, SWEEP_LOCK_KEY).await;
         }
-        match calendar::enrich(state).await {
-            Ok(out) if out.fetched > 0 || out.paused => tracing::info!(
-                fetched = out.fetched,
-                paused = out.paused,
-                "release calendar: enrich tick"
-            ),
-            Ok(_) => {}
-            Err(e) => tracing::error!(error = %e, "release calendar: enrich tick failed"),
+        // Another tick (or another replica) is still working.
+        Ok(false) if pass_idle => return,
+        Ok(false) => {}
+        Err(e) if pass_idle => {
+            tracing::warn!(error = %e, "release calendar: sweep lock failed");
+            return;
         }
-        release(state, SWEEP_LOCK_KEY).await;
+        Err(e) => tracing::warn!(error = %e, "release calendar: sweep lock failed"),
     }
     if calendar::pass_due(&row, chrono::Utc::now().fixed_offset()) {
         enqueue(state, "sweep").await;

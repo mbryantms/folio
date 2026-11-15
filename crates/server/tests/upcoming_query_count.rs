@@ -207,6 +207,7 @@ async fn seed_release(app: &TestApp, lib: Uuid, n: i64) -> (Value, Value, String
         metron_modified: Set(None),
         first_seen_at: Set(now),
         last_seen_at: Set(now),
+        ..Default::default()
     }
     .insert(db)
     .await

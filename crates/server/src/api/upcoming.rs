@@ -41,7 +41,7 @@ use crate::metadata::identifier::{Source, canonical_url};
 use crate::state::AppState;
 use crate::upcoming::mylar::Freshness;
 use crate::upcoming::reconcile::{Entry, EntrySource, MylarStatus, Stage};
-use crate::upcoming::{calendar, view, week_start};
+use crate::upcoming::{COVER_HOST_PREFIX, calendar, view, week_start};
 use server_macros::handler;
 
 pub fn routes() -> OpenApiRouter<AppState> {
@@ -56,8 +56,6 @@ const DEFAULT_WEEKS: u64 = 3;
 const MAX_WEEKS: u64 = 12;
 /// Releases `/series/{slug}/next-release` returns at most.
 const NEXT_RELEASES: usize = 2;
-/// The only host a calendar cover is served from (and the CSP allows).
-const COVER_HOST_PREFIX: &str = "https://static.metron.cloud/";
 
 /// Which releases a list shows.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, utoipa::ToSchema)]
@@ -125,6 +123,12 @@ pub struct UpcomingEntryView {
     pub cover_date: Option<NaiveDate>,
     /// Cover on Metron's CDN, when Metron lists the release.
     pub cover_url: Option<String>,
+    /// The cover's colours, read once by the server because the image
+    /// host does not let a browser sample them: twelve hex digits, the
+    /// average colour then the most vibrant. Absent until the cover has
+    /// been read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover_tone: Option<String>,
     /// The release's page on Metron.
     pub metron_url: Option<String>,
     /// A #1.
@@ -223,6 +227,11 @@ fn entry_view(e: Entry) -> UpcomingEntryView {
     UpcomingEntryView {
         key: p.key(),
         source: p.source,
+        cover_tone: p.cover_tone.filter(|_| {
+            p.image_url
+                .as_deref()
+                .is_some_and(|u| u.starts_with(COVER_HOST_PREFIX))
+        }),
         cover_url: p.image_url.filter(|u| u.starts_with(COVER_HOST_PREFIX)),
         metron_url: p
             .metron_issue_id

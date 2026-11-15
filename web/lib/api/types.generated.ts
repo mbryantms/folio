@@ -16698,6 +16698,13 @@ export interface components {
         UpcomingEntryView: {
             /** Format: date */
             cover_date?: string | null;
+            /**
+             * @description The cover's colours, read once by the server because the image
+             *     host does not let a browser sample them: twelve hex digits, the
+             *     average colour then the most vibrant. Absent until the cover has
+             *     been read.
+             */
+            cover_tone?: string | null;
             /** @description Cover on Metron's CDN, when Metron lists the release. */
             cover_url?: string | null;
             /** @description A #1. */

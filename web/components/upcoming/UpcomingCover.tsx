@@ -24,7 +24,9 @@ export function UpcomingCover({
   entry: UpcomingEntryView;
   className?: string;
 }) {
-  const { boxRef } = useCoverTone(entry.cover_url);
+  // The server read the colours: Metron's image host does not let a
+  // browser sample the picture.
+  const { boxRef } = useCoverTone(entry.cover_url, entry.cover_tone);
   return (
     <div ref={boxRef} className={cn(COVER_BOX, "relative text-sm", className)}>
       <span

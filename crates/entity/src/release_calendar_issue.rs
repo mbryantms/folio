@@ -20,6 +20,18 @@ pub struct Model {
     pub image_url: Option<String>,
     #[sea_orm(nullable)]
     pub cover_hash: Option<String>,
+    /// The cover's average and most vibrant colours, twelve hex digits
+    /// (`metadata::cover_tone`, migration `m20271122`). Read from the
+    /// image by the calendar sweep.
+    #[sea_orm(nullable)]
+    pub cover_tone: Option<String>,
+    /// The `image_url` `cover_tone` was read from; the colours count
+    /// only while it still equals `image_url`.
+    #[sea_orm(nullable)]
+    pub cover_tone_url: Option<String>,
+    /// Last attempt to read the cover's colours.
+    #[sea_orm(nullable)]
+    pub cover_tone_checked_at: Option<DateTimeWithTimeZone>,
     /// Metron's own `modified` stamp for the issue.
     #[sea_orm(nullable)]
     pub metron_modified: Option<DateTimeWithTimeZone>,

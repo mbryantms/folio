@@ -2,7 +2,12 @@
 
 import { useCallback, useLayoutEffect, useRef } from "react";
 
-import { applyTint, getTone, rememberTone } from "@/lib/ui/cover-tone";
+import {
+  applyTint,
+  decodeTone,
+  getTone,
+  rememberTone,
+} from "@/lib/ui/cover-tone";
 
 /**
  * The cover's colour, for the component that draws a `.cover-box`
@@ -10,12 +15,20 @@ import { applyTint, getTone, rememberTone } from "@/lib/ui/cover-tone";
  * frame (`components/library/CoverFrame.tsx`).
  *
  * Put `boxRef` on the box. Before first paint the box takes the cover's
- * remembered average colour as its placeholder and the enclosing card
- * gets `--cover-tint` (both set on the DOM: no extra render and no SSR
+ * average colour as its placeholder and the enclosing card gets
+ * `--cover-tint` (both set on the DOM: no extra render and no SSR
  * mismatch). Call `remember(img)` once the image has decoded so the
  * colours are there next time.
+ *
+ * `known` is the colour pair the server sent with the cover (twelve hex
+ * digits, `metadata::cover_tone`). It wins over this device's cache, and
+ * it is the only source for a cross-origin cover the browser may not
+ * sample, such as an upcoming release's.
  */
-export function useCoverTone(src: string | null | undefined): {
+export function useCoverTone(
+  src: string | null | undefined,
+  known?: string | null,
+): {
   boxRef: React.RefObject<HTMLDivElement | null>;
   remember: (img: HTMLImageElement | null) => void;
 } {
@@ -23,13 +36,13 @@ export function useCoverTone(src: string | null | undefined): {
 
   useLayoutEffect(() => {
     if (!src) return;
-    const tone = getTone(src);
+    const tone = decodeTone(known ?? undefined) ?? getTone(src);
     if (!tone) return;
     if (boxRef.current) {
       boxRef.current.style.backgroundColor = `rgb(${tone.average})`;
     }
     applyTint(boxRef.current, tone);
-  }, [src]);
+  }, [src, known]);
 
   const remember = useCallback(
     (img: HTMLImageElement | null) => {

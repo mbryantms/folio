@@ -55,6 +55,9 @@ pub struct CalendarRow {
     pub store_date: NaiveDate,
     pub cover_date: Option<NaiveDate>,
     pub image_url: Option<String>,
+    /// The cover's colours (`metadata::cover_tone`), when they were read
+    /// from the current `image_url`.
+    pub cover_tone: Option<String>,
 }
 
 /// One line of Mylar's pull list.
@@ -141,6 +144,7 @@ pub struct Paired {
     pub date: NaiveDate,
     pub cover_date: Option<NaiveDate>,
     pub image_url: Option<String>,
+    pub cover_tone: Option<String>,
     pub metron_issue_id: Option<i64>,
     pub metron_series_id: Option<i64>,
     pub cv_series_id: Option<i64>,
@@ -188,6 +192,7 @@ fn merge(row: &CalendarRow, line: &PullLine) -> Paired {
         date: row.store_date,
         cover_date: row.cover_date,
         image_url: row.image_url.clone(),
+        cover_tone: row.cover_tone.clone(),
         metron_issue_id: Some(row.metron_issue_id),
         metron_series_id: Some(row.metron_series_id),
         cv_series_id: row.cv_series_id.or(line.cv_series_id),
@@ -208,6 +213,7 @@ fn from_calendar(row: &CalendarRow) -> Paired {
         date: row.store_date,
         cover_date: row.cover_date,
         image_url: row.image_url.clone(),
+        cover_tone: row.cover_tone.clone(),
         metron_issue_id: Some(row.metron_issue_id),
         metron_series_id: Some(row.metron_series_id),
         cv_series_id: row.cv_series_id,
@@ -228,6 +234,7 @@ fn from_pull(line: &PullLine) -> Paired {
         date: line.ship_date,
         cover_date: None,
         image_url: None,
+        cover_tone: None,
         metron_issue_id: None,
         metron_series_id: None,
         cv_series_id: line.cv_series_id,
@@ -535,6 +542,7 @@ mod tests {
             store_date: d(date),
             cover_date: None,
             image_url: None,
+            cover_tone: None,
         }
     }
 

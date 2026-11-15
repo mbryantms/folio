@@ -19,6 +19,10 @@ pub mod view;
 
 use chrono::{Datelike, Duration, NaiveDate};
 
+/// The only host a calendar cover is served from (and the CSP allows).
+/// The API sends no other cover URL, and the colour read fetches no other.
+pub const COVER_HOST_PREFIX: &str = "https://static.metron.cloud/";
+
 /// Default for `upcoming.weeks_ahead`. Metron is complete about six
 /// weeks out and partial for two more (measured 2026-11-14).
 pub const DEFAULT_WEEKS_AHEAD: u32 = 8;
