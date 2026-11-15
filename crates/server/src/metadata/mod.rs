@@ -33,6 +33,7 @@ pub mod cover_block;
 pub mod cover_hash_cache;
 pub mod cover_tone;
 pub mod coverage;
+pub mod creator_ids;
 pub mod diff;
 pub mod direct_lookup;
 pub mod drift;

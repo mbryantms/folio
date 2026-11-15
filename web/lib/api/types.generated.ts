@@ -497,6 +497,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/metadata/creator-id-backfill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["metadata_creator_id_backfill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/metadata/csv-cache-backfill": {
         parameters: {
             query?: never;
@@ -6977,7 +6993,7 @@ export interface components {
             enqueued: boolean;
             /**
              * @description `cover_phash` | `variant_cover` | `cover_variant` | `name_suffixes` |
-             *     `csv_cache` | `cover_tone`.
+             *     `csv_cache` | `cover_tone` | `creator_ids`.
              */
             kind: string;
         };
@@ -18737,6 +18753,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MetadataCoverageResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_creator_id_backfill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description backfill job enqueued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackfillEnqueuedResp"];
                 };
             };
             /** @description admin only */

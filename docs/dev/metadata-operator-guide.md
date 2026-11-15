@@ -452,6 +452,31 @@ component in their score breakdown.
 
 Audit-logged as `admin.metadata.phash_backfill`.
 
+### Creator links backfill
+
+Applying metadata links an issue's creators to their provider records
+(`external_ids`, `entity_type = person`): directly on a DB-direct
+library, and through MetronInfo's `<Creator id>` on a writeback library
+(roadmap WP-9.8; see
+[metadata-sidecar-writeback.md](metadata-sidecar-writeback.md)). Creators
+credited before that have a name and no link.
+
+**Admin → Metadata → Dashboard → Creator links** (`POST
+/api/admin/metadata/creator-id-backfill`, audit-logged as
+`admin.metadata.creator_id_backfill`) is the catch-up. For each creator
+with no ComicVine or Metron id it reads the provider details of the
+issues that provider matched, as they sit in `metadata_cache` (any age),
+and takes the id of the credit with the creator's name; where cached
+issues disagree, the id most of them name. It makes **no provider
+request**, never replaces a link a creator already has, and skips an id
+that already belongs to another creator.
+
+The finishing toast reads "Linked N creators · M still have no provider
+record". M is every credited creator none of whose issues is in the
+cache. Those are resolved when their profile is fetched, or by a later
+run once more issue details are cached (each metadata search or apply
+caches the issues it reads). Safe to re-run.
+
 ### Watching what's happening
 
 - **`/admin/metadata` → Dashboard tab** — series total / matched /

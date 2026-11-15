@@ -22,15 +22,19 @@ use axum::http::{Method, Request, StatusCode, header};
 use chrono::Utc;
 use common::TestApp;
 use common::seed::LibrarySeed;
-use entity::{field_provenance, issue, library, metadata_run, metadata_run_candidate};
+use entity::{
+    audit_log, external_id, field_provenance, issue, library, metadata_run, metadata_run_candidate,
+    person,
+};
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde::de::DeserializeOwned;
 use serde_json::json;
 use server::library::scanner;
 use server::metadata::cache::{self, CacheEntity};
+use server::metadata::creator_ids::{self, ResolveOutcome};
 use server::metadata::identifier::{Identifier, Source};
-use server::metadata::provider::GenericMetadata;
-use server::metadata::writers::{self, SetBy};
+use server::metadata::provider::{CreditCandidate, GenericMetadata};
+use server::metadata::writers::{self, CsvRebuildBatch, SetBy};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use tower::ServiceExt;
@@ -1035,4 +1039,286 @@ async fn locked_field_survives_writeback_apply_and_rescan_until_unlocked() {
         Some("Just Desserts, Part 4")
     );
     assert_eq!(provenance(&f, "title").await.as_deref(), Some("comicvine"));
+}
+
+// ───────── creator provider ids (roadmap WP-9.8) ─────────
+
+fn credit(name: &str, role: &str, source: Source, id: Option<&str>) -> CreditCandidate {
+    CreditCandidate {
+        name: name.into(),
+        role: role.into(),
+        ordinal: None,
+        identifiers: id
+            .map(|id| Identifier::with_canonical_url(source, id, "person"))
+            .into_iter()
+            .collect(),
+    }
+}
+
+async fn creator(f: &Fixture, name: &str) -> Option<person::Model> {
+    person::Entity::find()
+        .filter(person::Column::NormalizedName.eq(name.to_lowercase()))
+        .one(&f.app.state().db)
+        .await
+        .unwrap()
+}
+
+/// The creator's provider links as `(source, external id, set_by)`, sorted.
+async fn creator_links(f: &Fixture, name: &str) -> Vec<(String, String, String)> {
+    let Some(p) = creator(f, name).await else {
+        return Vec::new();
+    };
+    let mut rows: Vec<_> = external_id::Entity::find()
+        .filter(external_id::Column::EntityType.eq("person"))
+        .filter(external_id::Column::EntityId.eq(p.id.to_string()))
+        .all(&f.app.state().db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.source, r.external_id, r.set_by))
+        .collect();
+    rows.sort();
+    rows
+}
+
+fn link(source: &str, id: &str, set_by: &str) -> (String, String, String) {
+    (source.into(), id.into(), set_by.into())
+}
+
+/// A provider apply on a writeback library leaves its creators linked. The
+/// apply writes no `person` row itself: the provider's id for each credit
+/// goes into the archive as MetronInfo's `<Creator id>` (the primary
+/// source's id), and the scoped rescan links it once the series rollup has
+/// minted the creators. Before WP-9.8 the composer wrote names only, so a
+/// writeback install had its issues matched and its creators unlinked.
+#[tokio::test]
+async fn provider_apply_links_its_creators_in_a_writeback_library() {
+    let f = fixture(true).await;
+    let mut cv = cv_detail(NEW_SUMMARY);
+    cv.credits = vec![
+        credit("John Layman", "Writer", Source::ComicVine, Some("41840")),
+        credit(
+            "Rob Guillory",
+            "Penciller",
+            Source::ComicVine,
+            Some("59321"),
+        ),
+        credit(
+            "Rob Guillory",
+            "CoverArtist",
+            Source::ComicVine,
+            Some("59321"),
+        ),
+        // ComicVine gave no id for this one.
+        credit("Taylor Wells", "Colorist", Source::ComicVine, None),
+    ];
+    let run_id = seed_run_with(&f, cv, metron_detail("unused")).await;
+
+    apply_single(&f, run_id, 0, &["credits"]).await;
+    run_pipeline(&f).await;
+
+    let mi = archive_entry(&f.archive, "MetronInfo.xml");
+    assert!(
+        mi.contains("<ID source=\"Comic Vine\" primary=\"true\">cv14</ID>"),
+        "{mi}"
+    );
+    assert!(
+        mi.contains("<Creator id=\"41840\">John Layman</Creator>"),
+        "{mi}"
+    );
+    assert!(
+        mi.contains("<Creator id=\"59321\">Rob Guillory</Creator>"),
+        "{mi}"
+    );
+    assert!(mi.contains("<Creator>Taylor Wells</Creator>"), "{mi}");
+    assert_eq!(mi.matches("<Credit>").count(), 3, "one per creator\n{mi}");
+
+    // The rescan read the ids back from the file.
+    assert_eq!(
+        creator_links(&f, "John Layman").await,
+        [link("comicvine", "41840", "metroninfo")]
+    );
+    assert_eq!(
+        creator_links(&f, "Rob Guillory").await,
+        [link("comicvine", "59321", "metroninfo")]
+    );
+    assert!(creator(&f, "Taylor Wells").await.is_some());
+    assert!(creator_links(&f, "Taylor Wells").await.is_empty());
+
+    // A later apply from the other provider makes Metron the document's
+    // primary source. Its creator ids are Metron's, so the file now names
+    // those, and the ComicVine links already made stay in the database.
+    let mut metron = metron_detail("unused");
+    metron.credits = vec![
+        credit("John Layman", "Writer", Source::Metron, Some("301")),
+        credit("Rob Guillory", "Penciller", Source::Metron, Some("302")),
+    ];
+    let run2 = seed_run_with(&f, cv_detail(NEW_SUMMARY), metron).await;
+    apply_single(&f, run2, 1, &["credits"]).await;
+    run_pipeline(&f).await;
+    let mi = archive_entry(&f.archive, "MetronInfo.xml");
+    assert!(
+        mi.contains("<ID source=\"Metron\" primary=\"true\">m14</ID>"),
+        "{mi}"
+    );
+    assert!(
+        mi.contains("<Creator id=\"301\">John Layman</Creator>"),
+        "{mi}"
+    );
+    assert_eq!(
+        creator_links(&f, "John Layman").await,
+        [
+            link("comicvine", "41840", "metroninfo"),
+            link("metron", "301", "metroninfo"),
+        ]
+    );
+    assert_eq!(
+        creator_links(&f, "Rob Guillory").await,
+        [
+            link("comicvine", "59321", "metroninfo"),
+            link("metron", "302", "metroninfo"),
+        ]
+    );
+}
+
+/// The catch-up for creators credited before the id travelled with an
+/// apply (`POST /admin/metadata/creator-id-backfill`): each creator takes
+/// the id of the same-named credit in the cached provider detail of an
+/// issue they are credited on. It reads the cache whatever its age, makes
+/// no provider request, never replaces a link a creator already has, and
+/// leaves an id that belongs to another creator where it is.
+#[tokio::test]
+async fn creator_id_backfill_links_from_cached_issue_details() {
+    let f = fixture(false).await;
+    let state = f.app.state();
+    let db = &state.db;
+
+    // Credits as a scan of a tagged file leaves them: names, no ids.
+    let file = SetBy::ComicInfo;
+    let mut specs = Vec::new();
+    for (name, role) in [
+        ("John Layman", "Writer"),
+        ("Rob Guillory", "Penciller"),
+        ("Taylor Wells", "Colorist"),
+    ] {
+        let id = writers::upsert_person(db, name, &[], file).await.unwrap();
+        specs.push((id, role.to_string(), 0));
+    }
+    let batch = CsvRebuildBatch::new();
+    writers::set_issue_credits(db, &f.issue_id, specs, file, None, &batch)
+        .await
+        .unwrap();
+    batch.flush(db).await.unwrap();
+
+    // The issue is matched on both providers; their details are cached.
+    for (source, id) in [(Source::ComicVine, "cv14"), (Source::Metron, "m14")] {
+        writers::set_external_id(
+            db,
+            "issue",
+            &f.issue_id,
+            &Identifier::new(source, id),
+            SetBy::Provider(source),
+        )
+        .await
+        .unwrap();
+    }
+    let mut cv = cv_detail("unused");
+    cv.credits = vec![
+        credit("John Layman", "Writer", Source::ComicVine, Some("41840")),
+        credit(" john layman ", "Editor", Source::ComicVine, Some("41840")),
+        credit(
+            "Rob Guillory",
+            "Penciller",
+            Source::ComicVine,
+            Some("59321"),
+        ),
+        // Credited here, on no cached record: stays unlinked.
+        credit("Someone Else", "Inker", Source::ComicVine, Some("1")),
+    ];
+    let mut metron = metron_detail("unused");
+    metron.credits = vec![
+        credit("John Layman", "Writer", Source::Metron, Some("301")),
+        credit("Rob Guillory", "Penciller", Source::Metron, Some("302")),
+    ];
+    seed_run_with(&f, cv, metron).await;
+    // Long past its TTL and written under an older cache schema version.
+    use sea_orm::ConnectionTrait;
+    db.execute_unprepared(
+        "UPDATE metadata_cache SET fetched_at = now() - interval '400 days', schema_version = 0",
+    )
+    .await
+    .unwrap();
+
+    // Rob Guillory already has a ComicVine link someone set by hand, and
+    // Metron's id for John Layman already belongs to another row.
+    let rob = creator(&f, "Rob Guillory").await.unwrap();
+    writers::set_external_id(
+        db,
+        "person",
+        &rob.id.to_string(),
+        &Identifier::new(Source::ComicVine, "777"),
+        SetBy::User,
+    )
+    .await
+    .unwrap();
+    writers::upsert_person(
+        db,
+        "J. Layman",
+        &[Identifier::new(Source::Metron, "301")],
+        SetBy::Provider(Source::Metron),
+    )
+    .await
+    .unwrap();
+
+    // The admin endpoint queues the job and writes its audit row.
+    let status = post(&f, "/api/admin/metadata/creator-id-backfill", json!({})).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let audited = audit_log::Entity::find()
+        .filter(audit_log::Column::Action.eq("admin.metadata.creator_id_backfill"))
+        .all(db)
+        .await
+        .unwrap();
+    assert_eq!(audited.len(), 1);
+    let jobs = drain::<server::jobs::backfill::BackfillJob>(
+        &f.app,
+        state.jobs.backfill_storage.get_config().job_data_hash(),
+    )
+    .await;
+    assert_eq!(jobs.len(), 1);
+    for job in jobs {
+        server::jobs::backfill::handle(job, apalis::prelude::Data::new(f.app.state()))
+            .await
+            .unwrap();
+    }
+
+    assert_eq!(
+        creator_links(&f, "John Layman").await,
+        [link("comicvine", "41840", "comicvine")],
+        "ComicVine linked; Metron's 301 belongs to another creator"
+    );
+    assert_eq!(
+        creator_links(&f, "Rob Guillory").await,
+        [
+            link("comicvine", "777", "user"),
+            link("metron", "302", "metron")
+        ],
+        "the hand-set link stands; the missing source is filled"
+    );
+    assert!(creator_links(&f, "Taylor Wells").await.is_empty());
+    assert_eq!(
+        creator_links(&f, "J. Layman").await,
+        [link("metron", "301", "metron")]
+    );
+
+    // A second pass has nothing left to link.
+    let again = creator_ids::resolve_from_cache(db).await.unwrap();
+    assert_eq!(
+        again,
+        ResolveOutcome {
+            linked: 0,
+            conflicts: 1,
+            // Taylor Wells: credited, and on no cached record.
+            unlinked: 1,
+        }
+    );
 }

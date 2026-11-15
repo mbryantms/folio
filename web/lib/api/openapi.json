@@ -1208,6 +1208,26 @@
         }
       }
     },
+    "/api/admin/metadata/creator-id-backfill": {
+      "post": {
+        "operationId": "metadata_creator_id_backfill",
+        "responses": {
+          "202": {
+            "description": "backfill job enqueued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackfillEnqueuedResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
     "/api/admin/metadata/csv-cache-backfill": {
       "post": {
         "operationId": "metadata_csv_cache_backfill",
@@ -16279,7 +16299,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "`cover_phash` | `variant_cover` | `cover_variant` | `name_suffixes` |\n`csv_cache` | `cover_tone`."
+            "description": "`cover_phash` | `variant_cover` | `cover_variant` | `name_suffixes` |\n`csv_cache` | `cover_tone` | `creator_ids`."
           }
         }
       },

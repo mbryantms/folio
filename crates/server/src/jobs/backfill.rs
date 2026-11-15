@@ -47,6 +47,11 @@ pub enum BackfillKind {
     /// thumbnail was made before the thumbnail job computed them, from the
     /// thumbnail already on disk (roadmap WP-9.7). No archive access.
     CoverTone,
+    /// Link creators (`person` rows) to their provider records from the
+    /// provider issue details already in `metadata_cache` (roadmap
+    /// WP-9.8), for creators credited before an apply carried the id
+    /// through. No provider request.
+    CreatorIds,
 }
 
 impl BackfillKind {
@@ -57,6 +62,7 @@ impl BackfillKind {
             BackfillKind::NameSuffixes => "name_suffixes",
             BackfillKind::CsvCache => "csv_cache",
             BackfillKind::CoverTone => "cover_tone",
+            BackfillKind::CreatorIds => "creator_ids",
             BackfillKind::VariantCover => "variant_cover",
             BackfillKind::CoverVariant => "cover_variant",
         }
@@ -82,6 +88,7 @@ pub async fn handle(job: BackfillJob, state: Data<AppState>) -> Result<(), BoxDy
         BackfillKind::NameSuffixes => drain_name_suffixes(&state).await,
         BackfillKind::CsvCache => drain_csv_cache(&state).await,
         BackfillKind::CoverTone => drain_cover_tones(&state).await,
+        BackfillKind::CreatorIds => drain_creator_ids(&state).await,
     };
     tracing::info!(
         kind = job.kind.as_str(),
@@ -364,6 +371,28 @@ pub async fn drain_cover_tones(state: &AppState) -> (u64, u64) {
         after = Some(last);
     }
     (read, skipped)
+}
+
+/// Returns `(creators linked, credited creators still without a Metron
+/// or ComicVine id)`. One pass: the resolver reads every cached issue
+/// detail in a single statement and never calls a provider, so there is
+/// nothing to drain in rounds.
+async fn drain_creator_ids(state: &AppState) -> (u64, u64) {
+    match crate::metadata::creator_ids::resolve_from_cache(&state.db).await {
+        Ok(o) => {
+            tracing::info!(
+                linked = o.linked,
+                conflicts = o.conflicts,
+                unlinked = o.unlinked,
+                "creator-id backfill: resolved from the provider cache"
+            );
+            (o.linked, o.unlinked)
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "creator-id backfill: failed");
+            (0, 0)
+        }
+    }
 }
 
 /// Issues per page of the cover-colour drain.
