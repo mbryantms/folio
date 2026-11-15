@@ -5,7 +5,12 @@ import * as React from "react";
 
 import { IssueCard } from "@/components/library/IssueCard";
 import { EntityInsightsSkeleton } from "@/components/skeletons/LoadingShapes";
-import { useEntityInsights, type EntityKindPath } from "@/lib/api/queries";
+import {
+  HttpError,
+  useCreatorInsights,
+  useEntityInsights,
+  type EntityKindPath,
+} from "@/lib/api/queries";
 import type { EntityInsightsView } from "@/lib/api/types";
 import { entityUrl } from "@/lib/entities";
 import { COVER_ITEM_STYLE } from "@/lib/library/cover-size";
@@ -50,6 +55,40 @@ export function EntityInsights({
   }
   const data = query.data;
   if (!data) return <InsightsSkeleton />;
+  return <InsightsBody kind={kind} data={data} />;
+}
+
+/** The same block for a creator page (roadmap WP-9.10): the issues the
+ *  creator is credited on that the caller can see. A creator with only
+ *  series-level credits has no issue to count (the endpoint answers 404),
+ *  and the block is simply absent. */
+export function CreatorInsights({ slug }: { slug: string }) {
+  const query = useCreatorInsights(slug);
+  if (query.isError) {
+    if (query.error instanceof HttpError && query.error.status === 404) {
+      return null;
+    }
+    return (
+      <RailError
+        message="Couldn't load library statistics."
+        onRetry={() => void query.refetch()}
+      />
+    );
+  }
+  const data = query.data;
+  if (!data) return <InsightsSkeleton />;
+  return <InsightsBody kind="creators" data={data} />;
+}
+
+/** The statistics themselves, shared by every page kind. Exported for the
+ *  tests, which render it from a fixed payload. */
+export function InsightsBody({
+  kind,
+  data,
+}: {
+  kind: EntityKindPath | "creators";
+  data: EntityInsightsView;
+}) {
   const span =
     data.first_year != null && data.last_year != null
       ? data.first_year === data.last_year
@@ -123,7 +162,11 @@ export function EntityInsights({
         {data.characters.length > 0 ? (
           <div className="bg-card border-border space-y-3 rounded-lg border p-4">
             <h3 className="text-sm font-semibold">
-              {kind === "characters" ? "Appears with" : "Characters"}
+              {kind === "characters"
+                ? "Appears with"
+                : kind === "creators"
+                  ? "Characters in their issues"
+                  : "Characters"}
             </h3>
             <div className="flex flex-wrap gap-1.5">
               {data.characters.map((c) => (
@@ -186,7 +229,11 @@ export function EntityInsights({
         ) : null}
         {data.creators.length > 0 ? (
           <CountList
-            title="Most frequent creators"
+            title={
+              kind === "creators"
+                ? "Frequent collaborators"
+                : "Most frequent creators"
+            }
             rows={data.creators.map((c) => ({
               key: `${c.name}-${c.slug ?? ""}`,
               name: c.name,

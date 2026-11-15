@@ -728,6 +728,11 @@ const MAX_QUERIES_BULK_ADD: u64 = 5; // observed 3 (was 104)
 // `user_series_completion_prefs` query per page, constant in the link count.
 const MAX_QUERIES_RELATIONSHIPS: u64 = 16; // observed 16 (15 before the completion-prefs lookup)
 const RELATIONSHIPS_WALL: Duration = Duration::from_secs(5);
+// WP-9.10: the creator page's "In your library" block. Auth and the
+// library ACL, the `person` lookup, then `creators::INSIGHTS_STATEMENTS`
+// (6) aggregate statements over the creator's visible issues, the same
+// number for a creator credited on 2 issues or on all 100.
+const MAX_QUERIES_CREATOR_INSIGHTS: u64 = 12;
 // WP-2.1: the export is 10 section reads + 1 pinned-view hydrate + 3
 // identity batches (issues / series / libraries) + the user row + auth.
 // A per-row hydrate over the 100-entry collection would add ~100.
@@ -1019,6 +1024,9 @@ async fn realistic_dataset_endpoints_respond_correctly() {
     // ── /series/{slug}/relationships with ~500 links + chain (WP-8.3).
     relationships_guard(&app, &user, &counter).await;
 
+    // ── /creators/{slug}/insights (roadmap WP-9.10).
+    creator_insights_guard(&app, &user, &counter, &series_with_issues).await;
+
     // ── /me/export — one query per section plus IN-batched identity
     // hydration (issues → series → libraries). The 100-member collection
     // from the bulk-add above plus the seeded progress rows all resolve
@@ -1164,6 +1172,62 @@ async fn relationships_guard(app: &TestApp, user: &Authed, counter: &AtomicU64) 
         MAX_QUERIES_RELATIONSHIPS,
         "/api/series/{slug}/relationships (~500 links)",
     );
+}
+
+/// Two creators, one credited on every seeded issue and one on two: the
+/// insights endpoint costs the same number of statements for both.
+async fn creator_insights_guard(
+    app: &TestApp,
+    user: &Authed,
+    counter: &AtomicU64,
+    series_with_issues: &[(Uuid, Vec<String>)],
+) {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let all: Vec<String> = series_with_issues
+        .iter()
+        .flat_map(|(_, ids)| ids.iter().cloned())
+        .collect();
+    for (slug, name, issues) in [
+        ("prolific-pat", "Prolific Pat", all.clone()),
+        ("cameo-cam", "Cameo Cam", all[..2].to_vec()),
+    ] {
+        let id = Uuid::now_v7();
+        db.execute_raw(Statement::from_sql_and_values(
+            db.get_database_backend(),
+            "INSERT INTO person (id, slug, name, normalized_name) VALUES ($1, $2, $3, lower($3))",
+            [id.into(), slug.into(), name.into()],
+        ))
+        .await
+        .unwrap();
+        db.execute_raw(Statement::from_sql_and_values(
+            db.get_database_backend(),
+            "INSERT INTO issue_credits (issue_id, role, person, person_id) \
+             SELECT x, 'writer', $2, $3 FROM unnest($1::text[]) AS x",
+            [issues.into(), name.into(), id.into()],
+        ))
+        .await
+        .unwrap();
+    }
+    let mut counts = Vec::new();
+    for (slug, issues) in [("prolific-pat", all.len()), ("cameo-cam", 2)] {
+        let path = format!("/api/creators/{slug}/insights");
+        let snap = QueryCount::snapshot(counter);
+        let (status, body, elapsed) = get(app, user, &path).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {body}");
+        assert_eq!(body["issues"], issues, "{path}: {body}");
+        assert_quick(elapsed, &path);
+        let taken = snap.taken();
+        assert_query_count(taken, MAX_QUERIES_CREATOR_INSIGHTS, &path);
+        counts.push(taken);
+    }
+    assert_eq!(
+        counts[0], counts[1],
+        "the statement count must not depend on how much a creator is credited on"
+    );
+    // The big creator's collaborator list names the small one.
+    let (_, body, _) = get(app, user, "/api/creators/prolific-pat/insights").await;
+    assert_eq!(body["creators"][0]["name"], "Cameo Cam", "{body}");
+    assert_eq!(body["creators"][0]["count"], 2);
 }
 
 fn assert_query_count(observed: u64, max: u64, path: &str) {

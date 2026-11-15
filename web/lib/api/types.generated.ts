@@ -2159,6 +2159,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/creators/{slug}/insights": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /creators/{slug}/insights` — the "In your library" block of a
+         *     creator page (roadmap WP-9.10): totals, the caller's read count, the
+         *     publisher split, issues by decade, top series, the characters the
+         *     creator's issues feature most and the creators credited beside them
+         *     most often.
+         * @description Counted over the issues the creator is credited on **that the caller
+         *     can see**: the same library and age-rating filters as the page's
+         *     rails. A creator with no such issue is a 404, like an unknown slug.
+         *     The answer has the shape of the other entity pages' insights; the
+         *     lists a creator has no use for (`teams`, `locations`, `arcs`,
+         *     `earliest`) are empty.
+         */
+        get: operations["creators_insights"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/creators/{slug}/profile/refresh": {
         parameters: {
             query?: never;
@@ -9090,6 +9119,8 @@ export interface components {
         CreatorListItem: {
             /** Format: int64 */
             credit_count: number;
+            /** @description Provider portrait, once the creator's profile was fetched. */
+            image_url?: string | null;
             person: string;
             roles: string[];
             /**
@@ -9191,6 +9222,8 @@ export interface components {
             items: {
                 /** Format: int64 */
                 credit_count: number;
+                /** @description Provider portrait, once the creator's profile was fetched. */
+                image_url?: string | null;
                 person: string;
                 roles: string[];
                 /**
@@ -13447,6 +13480,8 @@ export interface components {
         PersonHit: {
             /** Format: int64 */
             credit_count: number;
+            /** @description Provider portrait, once the creator's profile was fetched. */
+            image_url?: string | null;
             person: string;
             roles: string[];
             /**
@@ -22059,6 +22094,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CreatorDetailView"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    creators_insights: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntityInsightsView"];
                 };
             };
             404: {

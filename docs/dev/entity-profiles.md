@@ -1,7 +1,8 @@
 # Entity profiles and library insights
 
 The landing pages for characters, teams, locations and story arcs
-(`/characters/{slug}` etc.) have two blocks above the issue and series
+(`/characters/{slug}` etc.), and the creator page (`/creators/{slug}`,
+above its role rails), have two blocks above the issue and series
 grids: a **provider-filled profile** (the "wiki" block) and **In your
 library** statistics. Publishers keep the short fields only.
 
@@ -55,8 +56,7 @@ cache, and `POST /creators/{slug}/profile/refresh` (admin, audited as
 `admin.entity.refresh_profile` with `target_type = person`) forces a
 fetch. `CreatorDetailView` carries `image_url`, `description`, `aliases`,
 `profile`, `links`, `enrichment` and `enrichment_error`, shaped like
-`EntityDetailView`'s. The creator page does not draw them yet; that is
-WP-9.10.
+`EntityDetailView`'s.
 
 - **Metron** `GET /api/creator/?name=` then `/api/creator/{id}/`: name,
   birth, death, description, image, aliases, `cv_id`, `gcd_id`. There is
@@ -115,6 +115,20 @@ excluded), most frequent creators, and the first ten issues in the
 entity's reading order as issue cards. No provider is involved, so this
 block works for every entity today.
 
+**Creators** (roadmap WP-9.10): `GET /creators/{slug}/insights`
+(`creators::insights`) answers with the same `EntityInsightsView`, counted
+over the issues the creator is credited on that the caller can see
+(library access and the age-rating cap, on the issue and its series):
+totals, the caller's read count, publisher split, issues by decade, top
+series, the characters those issues feature most and the creators
+credited beside them most often. `teams`, `locations`, `arcs` and
+`earliest` are empty for a creator. It runs
+`creators::INSIGHTS_STATEMENTS` (6) statements whatever the creator's
+size, reading the credits by `issue_credits.person_id` (the series rollup
+links every credit). A creator with no visible issue credit is a 404, like
+an unknown slug; a creator known only from series-level credits therefore
+has a page and no statistics block.
+
 Visibility follows the rule in
 [`docs/architecture/auth-model.md`](../architecture/auth-model.md#entity-surfaces):
 for a caller with an age cap the entity must be linked from an issue that
@@ -129,6 +143,20 @@ itself is visible.
 - `web/components/library/EntityInsights.tsx` — the statistics block.
 - `useEntityDetail` polls while pending; `useRefreshEntityProfile` is
   the admin Refresh.
+- Creators: `web/components/library/CreatorProfile.tsx` puts
+  `EntityProfile` (kind `creators`: born, died, hometown, country, gender,
+  website, email, credit counts, a "Characters created" chip row),
+  and `CreatorInsights` above the role rails on the overview of the
+  creator page, and `EntitySections` (`CreatorBiography`) below them: a
+  creator's write-up is often one long unheaded text that opens whole. `useCreatorDetail` polls while pending;
+  `useRefreshCreatorProfile` is the admin Refresh. Website and email are
+  links only when `factHref` accepts them (`http(s)` URLs, plain
+  addresses).
+- `web/components/library/CreatorAvatar.tsx` — the round portrait with the
+  coloured monogram as its fallback (no image yet, or one that fails to
+  load). `CreatorListItem.image_url` and `PersonHit.image_url` feed it on
+  the `CreatorsIndex` cards; the `PersonPreview` hover card reads the
+  detail payload.
 
 ## Tests
 
@@ -143,3 +171,7 @@ itself is visible.
 - `crates/server/src/metadata/entity_profile.rs` — section parser unit
   tests, `same_named_creators_are_told_apart_by_local_series`.
 - `web/tests/library/entity-profile.test.tsx`.
+- Creators: `entity_pages.rs::creator_insights_count_only_visible_issues`
+  (a capped reader's numbers), `perf_regressions.rs` (`creator_insights_guard`:
+  the same statement count for a creator on 100 issues and on 2),
+  `web/tests/library/creator-profile.test.tsx`.

@@ -4,6 +4,10 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/admin/PageHeader";
+import {
+  CreatorBiography,
+  CreatorProfile,
+} from "@/components/library/CreatorProfile";
 import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
 import { COVER_GRID_STYLE, COVER_ITEM_STYLE } from "@/lib/library/cover-size";
 import { SeriesCard } from "@/components/library/SeriesCard";
@@ -96,9 +100,16 @@ export default async function CreatorPage({
       ) : activeRail ? (
         <SingleRoleGrid rail={activeRail} />
       ) : (
-        detail.rails.map((rail) => (
-          <RoleRail key={rail.role} rail={rail} creatorSlug={detail.slug} />
-        ))
+        <>
+          {/* WP-9.10: the provider profile and the library statistics,
+              as on a character page. The overview only: a per-role
+              drill-in is a grid of that role's series. */}
+          <CreatorProfile detail={detail} />
+          {detail.rails.map((rail) => (
+            <RoleRail key={rail.role} rail={rail} creatorSlug={detail.slug} />
+          ))}
+          <CreatorBiography detail={detail} />
+        </>
       )}
     </div>
   );

@@ -6,6 +6,7 @@ import * as React from "react";
 
 import { AtoZJumpRail } from "@/components/library/AtoZJumpRail";
 import { AtoZScrubber } from "@/components/library/AtoZScrubber";
+import { CreatorAvatar } from "@/components/library/CreatorAvatar";
 import { PageHeader } from "@/components/admin/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -263,27 +264,36 @@ function CreatorCard({ creator }: { creator: CreatorListItem }) {
     <Link
       href={href}
       title={`Open ${creator.person}'s creator page`}
-      className="border-border bg-card hover:bg-muted/40 flex h-full flex-col gap-2 rounded-lg border p-3 transition-colors"
+      className="border-border bg-card hover:bg-muted/40 flex h-full items-start gap-3 rounded-lg border p-3 transition-colors"
     >
-      <div className="flex items-start justify-between gap-2">
-        <span className="text-foreground leading-snug font-medium">
-          {creator.person}
-        </span>
-        <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
-          {creator.credit_count}
-        </span>
-      </div>
-      <div className="flex flex-wrap gap-1">
-        {shown.map((role) => (
-          <Badge key={role} variant="secondary" className="text-[11px]">
-            {formatRole(role)}
-          </Badge>
-        ))}
-        {overflow > 0 ? (
-          <Badge variant="outline" className="text-[11px]">
-            +{overflow}
-          </Badge>
-        ) : null}
+      {/* The provider portrait once a profile was fetched, else the
+          monogram (roadmap WP-9.10). */}
+      <CreatorAvatar
+        name={creator.person}
+        src={creator.image_url}
+        className="size-11 text-sm"
+      />
+      <div className="flex min-w-0 flex-1 flex-col gap-2">
+        <div className="flex items-start justify-between gap-2">
+          <span className="text-foreground leading-snug font-medium">
+            {creator.person}
+          </span>
+          <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
+            {creator.credit_count}
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {shown.map((role) => (
+            <Badge key={role} variant="secondary" className="text-[11px]">
+              {formatRole(role)}
+            </Badge>
+          ))}
+          {overflow > 0 ? (
+            <Badge variant="outline" className="text-[11px]">
+              +{overflow}
+            </Badge>
+          ) : null}
+        </div>
       </div>
     </Link>
   );
@@ -300,14 +310,17 @@ export function CreatorGridSkeleton() {
         <li key={i}>
           {/* Same rows as `CreatorCard`: name + credit count on a snug
               22px line, then a row of h-5 role badges. */}
-          <div className="border-border bg-card flex h-full flex-col gap-2 rounded-lg border p-3">
-            <div className="flex h-[1.375rem] items-center justify-between gap-2">
-              <Skeleton className="h-4 w-3/4" />
-              <Skeleton className="h-3 w-5 shrink-0" />
-            </div>
-            <div className="flex gap-1">
-              <Skeleton className="h-5 w-12" />
-              <Skeleton className={i % 3 ? "h-5 w-16" : "h-5 w-10"} />
+          <div className="border-border bg-card flex h-full items-start gap-3 rounded-lg border p-3">
+            <Skeleton className="size-11 shrink-0 rounded-full" />
+            <div className="flex min-w-0 flex-1 flex-col gap-2">
+              <div className="flex h-[1.375rem] items-center justify-between gap-2">
+                <Skeleton className="h-4 w-3/4" />
+                <Skeleton className="h-3 w-5 shrink-0" />
+              </div>
+              <div className="flex gap-1">
+                <Skeleton className="h-5 w-12" />
+                <Skeleton className={i % 3 ? "h-5 w-16" : "h-5 w-10"} />
+              </div>
             </div>
           </div>
         </li>

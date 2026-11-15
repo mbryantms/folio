@@ -2304,3 +2304,174 @@ async fn same_named_creators_are_resolved_by_local_series_overlap() {
             .all(|r| r.url.path() != "/person/4040-500")
     );
 }
+
+// ───────── creator insights (roadmap WP-9.10) ─────────
+
+async fn add_credit(db: &DatabaseConnection, issue_id: &str, role: &str, name: &str, id: Uuid) {
+    exec(
+        db,
+        "INSERT INTO issue_credits (issue_id, role, person, person_id) VALUES ($1, $2, $3, $4)",
+        vec![issue_id.into(), role.into(), name.into(), id.into()],
+    )
+    .await;
+}
+
+/// The creator page's statistics count only what the caller can see. The
+/// reader is capped at Teen in library A and has no access to library B,
+/// so the Mature issue and the hidden library's issue are in nobody's
+/// numbers but the admin's: totals, the publisher split, top series, the
+/// characters and the collaborators alike.
+#[tokio::test]
+async fn creator_insights_count_only_visible_issues() {
+    let app = TestApp::spawn().await;
+    let f = fixture(&app).await;
+    let db = &f.db;
+    // Ann Writer: three visible issues of series A, its Mature issue, and
+    // one issue of the hidden library's series B.
+    let ann = add_entity(db, "person", "ann-writer", "Ann Writer").await;
+    for issue in f.a_issues.iter().chain([&f.a_mature, &f.b_issues[0]]) {
+        add_credit(db, issue, "writer", "Ann Writer", ann).await;
+    }
+    add_credit(db, &f.a_issues[0], "cover_artist", "Ann Writer", ann).await;
+    // Collaborators: Bob on two visible issues, Mia only on the Mature one,
+    // Hal only in the hidden library.
+    let bob = add_entity(db, "person", "bob-artist", "Bob Artist").await;
+    add_credit(db, &f.a_issues[0], "penciller", "Bob Artist", bob).await;
+    add_credit(db, &f.a_issues[1], "penciller", "Bob Artist", bob).await;
+    add_credit(db, &f.a_issues[1], "inker", "Bob Artist", bob).await;
+    let mia = add_entity(db, "person", "mia-mature", "Mia Mature").await;
+    add_credit(db, &f.a_mature, "penciller", "Mia Mature", mia).await;
+    let hal = add_entity(db, "person", "hal-hidden", "Hal Hidden").await;
+    add_credit(db, &f.b_issues[0], "penciller", "Hal Hidden", hal).await;
+    // Characters: Batman on two visible issues and the Mature one, Ghost
+    // only in the hidden library.
+    let batman = add_entity(db, "character", "batman", "Batman").await;
+    for issue in [&f.a_issues[0], &f.a_issues[2], &f.a_mature] {
+        add_character(db, issue, "Batman", Some(batman)).await;
+    }
+    add_character(db, &f.b_issues[0], "Ghost", None).await;
+    exec(
+        db,
+        "UPDATE issues SET year = CASE WHEN id = $1 THEN 1989 ELSE 1994 END WHERE id = ANY($2)",
+        vec![
+            f.a_issues[0].clone().into(),
+            f.a_issues
+                .iter()
+                .chain([&f.a_mature, &f.b_issues[0]])
+                .cloned()
+                .collect::<Vec<_>>()
+                .into(),
+        ],
+    )
+    .await;
+    // The reader finished one visible issue.
+    exec(
+        db,
+        "INSERT INTO progress_records (user_id, issue_id, last_page, percent, finished, updated_at) \
+         VALUES ($1, $2, 0, 1.0, true, now())",
+        vec![f.user.user_id.into(), f.a_issues[1].clone().into()],
+    )
+    .await;
+
+    let names = |v: &serde_json::Value, key: &str| -> Vec<(String, i64)> {
+        v[key]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| {
+                (
+                    r["name"].as_str().unwrap().to_owned(),
+                    r["count"].as_i64().unwrap(),
+                )
+            })
+            .collect()
+    };
+
+    // Admin: everything.
+    let (s, all) = get_json(&app, "/api/creators/ann-writer/insights", &f.admin).await;
+    assert_eq!(s, StatusCode::OK, "{all}");
+    assert_eq!(all["issues"], 5, "{all}");
+    assert_eq!(all["series"], 2);
+    assert_eq!(all["read"], 0);
+    assert_eq!(
+        names(&all, "publishers"),
+        vec![("DC Comics".to_owned(), 4), ("Secret Press".to_owned(), 1)]
+    );
+    assert_eq!(
+        names(&all, "creators"),
+        vec![
+            ("Bob Artist".to_owned(), 2),
+            ("Hal Hidden".to_owned(), 1),
+            ("Mia Mature".to_owned(), 1),
+        ]
+    );
+    assert_eq!(
+        names(&all, "characters"),
+        vec![("Batman".to_owned(), 3), ("Ghost".to_owned(), 1)]
+    );
+
+    // The capped reader: three issues, one series, and nobody or nothing
+    // that appears only on an issue they cannot open.
+    let (s, mine) = get_json(&app, "/api/creators/ann-writer/insights", &f.user).await;
+    assert_eq!(s, StatusCode::OK, "{mine}");
+    assert_eq!(mine["issues"], 3, "{mine}");
+    assert_eq!(mine["series"], 1);
+    assert_eq!(mine["read"], 1);
+    assert_eq!(mine["first_year"], 1989);
+    assert_eq!(mine["last_year"], 1994);
+    assert_eq!(
+        names(&mine, "publishers"),
+        vec![("DC Comics".to_owned(), 3)]
+    );
+    assert_eq!(
+        mine["decades"],
+        serde_json::json!([{"decade": 1980, "count": 1}, {"decade": 1990, "count": 2}])
+    );
+    let top = mine["top_series"].as_array().unwrap();
+    assert_eq!(top.len(), 1, "{top:?}");
+    assert_eq!(top[0]["name"], "Detective Comics");
+    assert_eq!(top[0]["count"], 3);
+    assert_eq!(names(&mine, "creators"), vec![("Bob Artist".to_owned(), 2)]);
+    assert_eq!(mine["creators"][0]["roles"], "inker, penciller");
+    assert_eq!(mine["creators"][0]["slug"], "bob-artist");
+    assert_eq!(names(&mine, "characters"), vec![("Batman".to_owned(), 2)]);
+    for empty in ["teams", "locations", "arcs", "earliest"] {
+        assert_eq!(mine[empty], serde_json::json!([]), "{empty}");
+    }
+
+    // A creator the reader can see nothing of is a 404, like an unknown slug.
+    for slug in ["hal-hidden", "mia-mature", "nobody"] {
+        let (s, _) = get_json(&app, &format!("/api/creators/{slug}/insights"), &f.user).await;
+        assert_eq!(s, StatusCode::NOT_FOUND, "{slug}");
+    }
+    let (s, _) = get_json(&app, "/api/creators/hal-hidden/insights", &f.admin).await;
+    assert_eq!(s, StatusCode::OK);
+
+    // The list rows carry the portrait once a profile fetch stored one.
+    exec(
+        db,
+        "UPDATE person SET image_url = 'https://img.example/ann.jpg' WHERE id = $1",
+        vec![ann.into()],
+    )
+    .await;
+    let (_, list) = get_json(&app, "/api/creators?limit=10", &f.user).await;
+    let row = |name: &str| {
+        list["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["person"] == name)
+            .cloned()
+            .unwrap_or_else(|| panic!("{name} listed: {list}"))
+    };
+    assert_eq!(
+        row("Ann Writer")["image_url"],
+        "https://img.example/ann.jpg"
+    );
+    assert!(row("Bob Artist").get("image_url").is_none());
+    let (_, hits) = get_json(&app, "/api/people?q=Ann%20Writer", &f.user).await;
+    assert_eq!(
+        hits["items"][0]["image_url"], "https://img.example/ann.jpg",
+        "{hits}"
+    );
+}

@@ -4385,6 +4385,35 @@
         }
       }
     },
+    "/api/creators/{slug}/insights": {
+      "get": {
+        "summary": "`GET /creators/{slug}/insights` — the \"In your library\" block of a\ncreator page (roadmap WP-9.10): totals, the caller's read count, the\npublisher split, issues by decade, top series, the characters the\ncreator's issues feature most and the creators credited beside them\nmost often.",
+        "description": "Counted over the issues the creator is credited on **that the caller\ncan see**: the same library and age-rating filters as the page's\nrails. A creator with no such issue is a 404, like an unknown slug.\nThe answer has the shape of the other entity pages' insights; the\nlists a creator has no use for (`teams`, `locations`, `arcs`,\n`earliest`) are empty.",
+        "operationId": "creators_insights",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityInsightsView"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      }
+    },
     "/api/creators/{slug}/profile/refresh": {
       "post": {
         "summary": "`POST /creators/{slug}/profile/refresh` — queue a fresh provider fetch\nof the creator's profile. Admin only (it spends provider budget).",
@@ -20910,6 +20939,13 @@
             "type": "integer",
             "format": "int64"
           },
+          "image_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Provider portrait, once the creator's profile was fetched."
+          },
           "person": {
             "type": "string"
           },
@@ -21216,6 +21252,13 @@
                 "credit_count": {
                   "type": "integer",
                   "format": "int64"
+                },
+                "image_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Provider portrait, once the creator's profile was fetched."
                 },
                 "person": {
                   "type": "string"
@@ -31162,6 +31205,13 @@
           "credit_count": {
             "type": "integer",
             "format": "int64"
+          },
+          "image_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Provider portrait, once the creator's profile was fetched."
           },
           "person": {
             "type": "string"

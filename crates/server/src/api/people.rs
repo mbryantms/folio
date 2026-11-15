@@ -60,6 +60,9 @@ pub struct PersonHit {
     pub slug: Option<String>,
     pub roles: Vec<String>,
     pub credit_count: i64,
+    /// Provider portrait, once the creator's profile was fetched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -73,6 +76,7 @@ struct Row {
     slug: Option<String>,
     roles: Vec<String>,
     credit_count: i64,
+    image_url: Option<String>,
 }
 
 #[utoipa::path(
@@ -174,7 +178,7 @@ pub async fn list(
          cut AS ( \
            SELECT v.sim FROM vis v ORDER BY v.sim DESC LIMIT 1 OFFSET ${cut_offset_param} \
          ) \
-         SELECT v.person, a.roles, a.credit_count, p.slug \
+         SELECT v.person, a.roles, a.credit_count, p.slug, p.image_url \
            FROM vis v \
            CROSS JOIN LATERAL ({agg}) a \
            LEFT JOIN person p ON p.normalized_name = btrim(lower(v.person)) \
@@ -197,6 +201,7 @@ pub async fn list(
                     slug: r.slug,
                     roles: r.roles,
                     credit_count: r.credit_count,
+                    image_url: r.image_url,
                 })
                 .collect(),
         })

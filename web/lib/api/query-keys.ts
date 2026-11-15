@@ -213,6 +213,11 @@ export const queryKeys = {
    *  provider profile is pending. */
   entityDetail: (kind: EntityKindPath, slug: string) =>
     ["entities", kind, slug, "detail"] as const,
+  /** Creator page header (`/creators/{slug}`), polled while the provider
+   *  profile is pending. Roadmap WP-9.10. */
+  creatorDetail: (slug: string) => ["creators", slug, "detail"] as const,
+  /** A creator's "In your library" block (`/creators/{slug}/insights`). */
+  creatorInsights: (slug: string) => ["creators", slug, "insights"] as const,
   /** "In your library" block (`/<kind>/{slug}/insights`). */
   entityInsights: (kind: EntityKindPath, slug: string) =>
     ["entities", kind, slug, "insights"] as const,

@@ -14,6 +14,61 @@ import type {
   EntityProfileSection,
 } from "@/lib/api/types";
 
+/** The page kinds the profile block draws: the entity landing pages and
+ *  the creator page (roadmap WP-9.10). */
+export type ProfileKind = EntityKindPath | "creators";
+
+/** What the block reads off a page's header payload. `EntityDetailView`
+ *  and `CreatorDetailView` both carry it; `issue_count` (the "you own"
+ *  half of the coverage line) is optional because a creator's provider
+ *  record reports no issue count to compare with. */
+export type ProfileSubject = Pick<
+  EntityDetailView,
+  "image_url" | "description" | "aliases" | "enrichment"
+> & {
+  profile?: EntityDetailView["profile"];
+  links?: EntityDetailView["links"];
+  enrichment_error?: EntityDetailView["enrichment_error"];
+  issue_count?: number;
+};
+
+/** `1956-06-18` → "June 18, 1956"; anything else (a bare year, free text)
+ *  as the provider wrote it. UTC so the day never shifts by a time zone. */
+export function formatFactDate(value: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!m) return value;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+/** A fact's link target: only `http(s)` sites and plain addresses, so a
+ *  provider's text can never become a `javascript:` link. */
+export function factHref(
+  kind: "website" | "email",
+  value: string,
+): string | null {
+  const v = value.trim();
+  if (kind === "email") {
+    return /^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/.test(v)
+      ? `mailto:${v}`
+      : null;
+  }
+  try {
+    const url = new URL(v);
+    return url.protocol === "https:" || url.protocol === "http:"
+      ? url.href
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Provider labels for the "filled from" footer. */
 const SOURCE_LABEL: Record<string, string> = {
   metron: "Metron",
@@ -42,9 +97,45 @@ export function coverageLine(
 /** Facts worth a row in the grid, in display order; empty values drop. */
 export function factRows(
   facts: EntityProfileFacts,
-  kind: EntityKindPath,
-): Array<{ label: string; value: string }> {
-  const rows: Array<{ label: string; value: string }> = [];
+  kind: ProfileKind,
+): Array<{ label: string; value: string; href?: string }> {
+  const rows: Array<{ label: string; value: string; href?: string }> = [];
+  if (kind === "creators") {
+    // Everything the provider holds on the person (owner decision,
+    // 2026-11-15), in the order a biography reads.
+    if (facts.born)
+      rows.push({ label: "Born", value: formatFactDate(facts.born) });
+    if (facts.died)
+      rows.push({ label: "Died", value: formatFactDate(facts.died) });
+    if (facts.hometown) rows.push({ label: "Hometown", value: facts.hometown });
+    if (facts.country) rows.push({ label: "Country", value: facts.country });
+    if (facts.gender) rows.push({ label: "Gender", value: facts.gender });
+    if (facts.website)
+      rows.push({
+        label: "Website",
+        value: facts.website
+          .replace(/^https?:\/\/(www\.)?/, "")
+          .replace(/\/$/, ""),
+        href: factHref("website", facts.website) ?? undefined,
+      });
+    if (facts.email)
+      rows.push({
+        label: "Email",
+        value: facts.email,
+        href: factHref("email", facts.email) ?? undefined,
+      });
+    if (facts.series_credits)
+      rows.push({
+        label: "Series credited",
+        value: `${facts.series_credits.toLocaleString()} on record`,
+      });
+    if (facts.story_arc_credits)
+      rows.push({
+        label: "Story arcs credited",
+        value: `${facts.story_arc_credits.toLocaleString()} on record`,
+      });
+    return rows;
+  }
   if (facts.real_name)
     rows.push({ label: "Real name", value: facts.real_name });
   if (facts.creators?.length)
@@ -116,8 +207,8 @@ export function EntityProfile({
   onRefresh,
   refreshing,
 }: {
-  kind: EntityKindPath;
-  detail: EntityDetailView;
+  kind: ProfileKind;
+  detail: ProfileSubject;
   isAdmin: boolean;
   onRefresh?: () => void;
   refreshing?: boolean;
@@ -126,9 +217,10 @@ export function EntityProfile({
   const summary = profile?.summary ?? detail.description ?? null;
   const facts = profile?.facts;
   const rows = facts ? factRows(facts, kind) : [];
-  const coverage = profile
-    ? coverageLine(profile.provider_counts, detail.issue_count)
-    : null;
+  const coverage =
+    profile && detail.issue_count != null
+      ? coverageLine(profile.provider_counts, detail.issue_count)
+      : null;
   const hasBody =
     !!detail.image_url ||
     !!summary ||
@@ -162,12 +254,32 @@ export function EntityProfile({
                     <dt className="text-muted-foreground text-xs font-semibold tracking-wider uppercase">
                       {r.label}
                     </dt>
-                    <dd className="mt-0.5">{r.value}</dd>
+                    <dd className="mt-0.5 break-words">
+                      {r.href ? (
+                        <a
+                          href={r.href}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="underline-offset-2 hover:underline"
+                        >
+                          {r.value}
+                        </a>
+                      ) : (
+                        r.value
+                      )}
+                    </dd>
                   </div>
                 ))}
               </dl>
             ) : null}
             <ChipRow label="Also known as" items={detail.aliases} />
+            {kind === "creators" ? (
+              <ChipRow
+                label="Characters created"
+                items={facts?.characters_created}
+                cap={18}
+              />
+            ) : null}
             <ChipRow label="Powers" items={facts?.powers} />
             <ChipRow label="Teams" items={facts?.teams} cap={12} />
             <ChipRow label="Universes" items={facts?.universes} />
@@ -197,7 +309,7 @@ function ProfileFooter({
   refreshing,
   hasBody,
 }: {
-  detail: EntityDetailView;
+  detail: ProfileSubject;
   coverage: string | null;
   isAdmin: boolean;
   onRefresh?: () => void;
