@@ -69,6 +69,7 @@ export {
 export { restoreProgress, settleProgress, useIssueReadState } from "./progress";
 export * from "./page-overrides";
 export * from "./relationship-suggestions";
+export * from "./upcoming";
 export * from "./shared-lists";
 export * from "./issue-user-state";
 export * from "./preferences";
@@ -2679,6 +2680,8 @@ export function useUpdateSettings() {
         // metadata-providers M6: edits to `metadata.*` keys reshape
         // both the dashboard + providers lists immediately.
         qc.invalidateQueries({ queryKey: ["admin", "metadata"] });
+        // upcoming-releases: `upcoming.*` switches the calendar on or off.
+        qc.invalidateQueries({ queryKey: queryKeys.adminUpcomingStatus });
       },
     },
   );

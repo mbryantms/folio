@@ -1369,6 +1369,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/upcoming/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_upcoming_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/upcoming/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["admin_upcoming_sync"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/users": {
         parameters: {
             query?: never;
@@ -13542,6 +13574,11 @@ export interface components {
             relationship_suggest: number;
             /**
              * Format: int64
+             * @description Release-calendar list passes (at most one queued).
+             */
+            release_calendar: number;
+            /**
+             * Format: int64
              * @description Pending sidecar-XML rewrite jobs (writeback path; UX-16).
              */
             rewrite_issue_sidecars: number;
@@ -16286,6 +16323,79 @@ export interface components {
         UnpinReq: {
             /** Format: uuid */
             page_id?: string | null;
+        };
+        /** @description The release calendar as the list pass left it. */
+        UpcomingCalendarStatusView: {
+            /** Format: int64 */
+            issues: number;
+            last_error?: string | null;
+            /** Format: date-time */
+            last_error_at?: string | null;
+            /**
+             * Format: date-time
+             * @description When a pass last listed every week of its window.
+             */
+            last_finished_at?: string | null;
+            /**
+             * Format: date-time
+             * @description After a failure, no pass starts before this time.
+             */
+            next_attempt_at?: string | null;
+            /**
+             * Format: date
+             * @description A pass stopped part-way and will resume at this Monday.
+             */
+            resumes_at_week?: string | null;
+            /** Format: int64 */
+            series: number;
+            /**
+             * Format: int64
+             * @description Series whose publisher and ComicVine id have not been fetched yet.
+             */
+            series_pending_detail: number;
+            /**
+             * Format: int64
+             * @description Series Metron has not linked to ComicVine.
+             */
+            series_without_comicvine: number;
+            /** @description Per-week issue counts, oldest first. */
+            weeks: components["schemas"]["UpcomingWeekCountView"][];
+            /** Format: date */
+            window_end: string;
+            /**
+             * Format: date
+             * @description First and last store date the current settings cover.
+             */
+            window_start: string;
+        };
+        UpcomingStatusView: {
+            calendar: components["schemas"]["UpcomingCalendarStatusView"];
+            /** @description `upcoming.enabled`. */
+            enabled: boolean;
+            /**
+             * @description Metron is enabled and has credentials. The calendar needs both
+             *     this and `enabled`.
+             */
+            metron_ready: boolean;
+            /**
+             * Format: int32
+             * @description `upcoming.weeks_ahead`.
+             */
+            weeks_ahead: number;
+        };
+        UpcomingSyncResp: {
+            /** @description `false` when a pass was already queued. */
+            queued: boolean;
+        };
+        /** @description Issues the calendar holds for one Monday–Sunday week. */
+        UpcomingWeekCountView: {
+            /** Format: int64 */
+            issues: number;
+            /**
+             * Format: date
+             * @description The Monday, `YYYY-MM-DD`.
+             */
+            week_start: string;
         };
         UpdateCatalogSourceReq: {
             display_name?: string | null;
@@ -19999,6 +20109,66 @@ export interface operations {
             };
             /** @description admin only */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_upcoming_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpcomingStatusView"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_upcoming_sync: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description list pass queued, or one already was */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpcomingSyncResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description upcoming releases are off, or Metron is not ready */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

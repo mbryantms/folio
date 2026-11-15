@@ -40,6 +40,8 @@ pub async fn start(state: AppState) -> anyhow::Result<JobScheduler> {
     register_prune_auth_sessions(&scheduler, &state).await;
     register_metadata_weekly_refresh(&scheduler, &state).await;
     register_metadata_resume_sweep(&scheduler, &state).await;
+    register_release_calendar_sync(&scheduler, &state).await;
+    register_release_calendar_sweep(&scheduler, &state).await;
     register_writeback_migration_progress(&scheduler, &state).await;
     // Boot value of the app-password legacy gauge; the app-password code
     // refreshes it when a row is created, revoked or given its digest.
@@ -598,6 +600,58 @@ async fn register_metadata_resume_sweep(scheduler: &JobScheduler, state: &AppSta
             }
         }
         Err(e) => tracing::error!(error = %e, "scheduler: build metadata_resume_sweep failed"),
+    }
+}
+
+/// Daily release-calendar list pass (upcoming-releases 1.0), 05:15 UTC.
+/// Gated on `upcoming.enabled` at every fire, so the switch is live. The
+/// closure only queues the job; the pass itself runs on the
+/// `release_calendar` worker.
+async fn register_release_calendar_sync(scheduler: &JobScheduler, state: &AppState) {
+    let state = state.clone();
+    let job_result = Job::new_async("0 15 5 * * *", move |_uuid, _l| {
+        let state = state.clone();
+        Box::pin(async move {
+            if !crate::upcoming::calendar::ready(&state) {
+                tracing::debug!("release calendar: daily sync skipped (off or Metron not ready)");
+                return;
+            }
+            crate::jobs::release_calendar::enqueue(&state, "scheduled").await;
+        })
+    });
+    match job_result {
+        Ok(job) => {
+            if let Err(e) = scheduler.add(job).await {
+                tracing::error!(error = %e, "scheduler: add release_calendar_sync failed");
+            } else {
+                tracing::info!("release_calendar_sync registered (daily 05:15 UTC)");
+            }
+        }
+        Err(e) => tracing::error!(error = %e, "scheduler: build release_calendar_sync failed"),
+    }
+}
+
+/// Release-calendar enrich sweep, every five minutes: a few series
+/// details per tick, then a list pass is queued if one is due or was
+/// stopped part-way. Quota-gated and capped like the metadata resume
+/// sweep; a no-op while `upcoming.enabled` is off.
+async fn register_release_calendar_sweep(scheduler: &JobScheduler, state: &AppState) {
+    let state = state.clone();
+    let job_result = Job::new_async("30 */5 * * * *", move |_uuid, _l| {
+        let state = state.clone();
+        Box::pin(async move {
+            crate::jobs::release_calendar::sweep(&state).await;
+        })
+    });
+    match job_result {
+        Ok(job) => {
+            if let Err(e) = scheduler.add(job).await {
+                tracing::error!(error = %e, "scheduler: add release_calendar_sweep failed");
+            } else {
+                tracing::info!("release_calendar_sweep registered (every 5 minutes)");
+            }
+        }
+        Err(e) => tracing::error!(error = %e, "scheduler: build release_calendar_sweep failed"),
     }
 }
 

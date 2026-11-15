@@ -342,6 +342,7 @@ const ROUTES: Route[] = [
   { path: "/admin/scans", label: "admin, scans" },
   { path: "/admin/scans?history=runs", label: "admin, scans, every scan" },
   { path: "/admin/findings", label: "admin, library events" },
+  { path: "/admin/upcoming", label: "admin, upcoming releases" },
   { path: "/admin/users", label: "admin, users" },
   { path: (ids) => `/admin/users/${ids.userId}`, label: "admin, user detail" },
   {

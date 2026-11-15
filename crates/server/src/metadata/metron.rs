@@ -247,6 +247,46 @@ impl MetronClient {
         .await
     }
 
+    /// One page of `/api/issue/` filtered to a store-date window: what
+    /// Metron lists as going on sale between `after` and `before`. This
+    /// is the release calendar's only listing call
+    /// ([`crate::jobs::release_calendar`]); a week of releases normally
+    /// fits one page.
+    ///
+    /// Rows without an issue id, a series id, a number or a store date
+    /// are dropped: the calendar cannot place them. The caller pages
+    /// while [`CalendarIssuePage::has_next`] is set, checking its own
+    /// request budget between pages.
+    pub async fn list_issues_by_store_date(
+        &self,
+        after: NaiveDate,
+        before: NaiveDate,
+        page: u32,
+    ) -> ProviderResult<CalendarIssuePage> {
+        let params = vec![
+            (
+                "store_date_range_after",
+                after.format("%Y-%m-%d").to_string(),
+            ),
+            (
+                "store_date_range_before",
+                before.format("%Y-%m-%d").to_string(),
+            ),
+            ("page_size", "100".to_owned()),
+            ("page", page.max(1).to_string()),
+        ];
+        let envelope: Paged<MCalendarIssueItem> = self.request("/api/issue/", &params).await?;
+        let issues = envelope
+            .results
+            .into_iter()
+            .filter_map(calendar_issue_from_row)
+            .collect();
+        Ok(CalendarIssuePage {
+            issues,
+            has_next: envelope.next.is_some_and(|n| !n.trim().is_empty()),
+        })
+    }
+
     // Owned-argument shims so the `get_or_revalidate` closure can be
     // `Fn` without borrowing a `Validators` that outlives the call.
     async fn fetch_series_conditional_owned(
@@ -403,13 +443,79 @@ fn parse_body<T: serde::de::DeserializeOwned>(resp: &http::Response) -> Provider
         .map_err(|e| ProviderError::InvalidResponse(format!("typed parse: {e}")))
 }
 
+// ───────── Release calendar listing ─────────
+
+/// One issue Metron lists with a store date, as the release calendar
+/// stores it. The list endpoint carries no publisher and no ComicVine
+/// id; those come from the series detail.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CalendarIssue {
+    pub issue_id: i64,
+    pub series_id: i64,
+    pub series_name: String,
+    pub volume: Option<i32>,
+    pub year_began: Option<i32>,
+    pub number: String,
+    pub store_date: NaiveDate,
+    pub cover_date: Option<NaiveDate>,
+    pub image_url: Option<String>,
+    pub cover_hash: Option<String>,
+    pub modified: Option<DateTime<Utc>>,
+}
+
+/// One page of [`MetronClient::list_issues_by_store_date`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CalendarIssuePage {
+    pub issues: Vec<CalendarIssue>,
+    /// Metron reported a further page.
+    pub has_next: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct MCalendarIssueItem {
+    id: Option<i64>,
+    series: Option<MCalendarSeriesRef>,
+    number: Option<String>,
+    store_date: Option<String>,
+    cover_date: Option<String>,
+    image: Option<String>,
+    cover_hash: Option<String>,
+    modified: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MCalendarSeriesRef {
+    id: Option<i64>,
+    name: Option<String>,
+    volume: Option<i32>,
+    year_began: Option<i32>,
+}
+
+fn calendar_issue_from_row(row: MCalendarIssueItem) -> Option<CalendarIssue> {
+    let series = row.series?;
+    let number = row.number.filter(|n| !n.trim().is_empty())?;
+    let non_empty = |s: Option<String>| s.filter(|v| !v.trim().is_empty());
+    Some(CalendarIssue {
+        issue_id: row.id?,
+        series_id: series.id?,
+        series_name: non_empty(series.name)?.trim().to_owned(),
+        volume: series.volume,
+        year_began: series.year_began,
+        number: number.trim().to_owned(),
+        store_date: parse_date(&row.store_date)?,
+        cover_date: parse_date(&row.cover_date),
+        image_url: non_empty(row.image),
+        cover_hash: non_empty(row.cover_hash),
+        modified: parse_metron_timestamp(&row.modified),
+    })
+}
+
 // ───────── Metron envelope shapes ─────────
 
 #[derive(Debug, Deserialize)]
 struct Paged<T> {
     #[allow(dead_code)]
     count: Option<u64>,
-    #[allow(dead_code)]
     next: Option<String>,
     #[allow(dead_code)]
     previous: Option<String>,

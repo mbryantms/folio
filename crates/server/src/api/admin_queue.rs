@@ -58,6 +58,7 @@ const DEAD_QUEUES: &[&str] = &[
     "provider_coverage",
     "entity_enrich",
     "sidecar_reemit",
+    "release_calendar",
 ];
 
 /// One queue's outstanding jobs, split by where they are held.
@@ -104,6 +105,8 @@ pub struct QueueDepthView {
     pub entity_enrich: i64,
     /// Library-wide sidecar re-emit ticks (one chain per running run).
     pub sidecar_reemit: i64,
+    /// Release-calendar list passes (at most one queued).
+    pub release_calendar: i64,
     /// Sum across all queues — convenient for the topbar pill.
     pub total: i64,
     /// Of `total`, the jobs a worker has fetched (executing or prefetched).
@@ -624,6 +627,7 @@ fn dead_keys(app: &AppState, queue: &str) -> Option<DeadKeys> {
         "provider_coverage" => keys!(j.provider_coverage_storage),
         "entity_enrich" => keys!(j.entity_enrich_storage),
         "sidecar_reemit" => keys!(j.sidecar_reemit_storage),
+        "release_calendar" => keys!(j.release_calendar_storage),
         _ => None,
     }
 }
@@ -778,6 +782,7 @@ async fn retry_one(app: &AppState, queue: &str, task_id: &str) -> anyhow::Result
         "provider_coverage" => try_retry!(app.jobs.provider_coverage_storage),
         "entity_enrich" => try_retry!(app.jobs.entity_enrich_storage),
         "sidecar_reemit" => try_retry!(app.jobs.sidecar_reemit_storage),
+        "release_calendar" => try_retry!(app.jobs.release_calendar_storage),
         _ => return Ok(false),
     };
     if !pushed {
@@ -1296,6 +1301,7 @@ pub(crate) fn job_label(queue: &str, payload: Option<&serde_json::Value>) -> Str
             };
         }
         "sidecar_reemit" => "Sidecar re-emit",
+        "release_calendar" => "Release calendar sync",
         other => return other.replace('_', " "),
     };
     label.to_owned()
@@ -1500,6 +1506,7 @@ pub(crate) async fn queue_depth_counts(app: &AppState) -> anyhow::Result<QueueDe
         provider_coverage: of("provider_coverage"),
         entity_enrich: of("entity_enrich"),
         sidecar_reemit: of("sidecar_reemit"),
+        release_calendar: of("release_calendar"),
         total: counts
             .iter()
             .map(crate::jobs::QueueCount::outstanding)

@@ -34,6 +34,7 @@ pub mod similarity;
 pub mod slug;
 pub mod starter_lists;
 pub mod state;
+pub mod upcoming;
 pub mod upstream;
 pub mod util;
 pub mod views;

@@ -89,6 +89,7 @@ import type {
   AuthConfigView,
   EmailStatusView,
   SettingsView,
+  UpcomingStatusView,
   CatalogEntriesView,
   CatalogSourceListView,
   CblEntryListView,
@@ -1585,6 +1586,17 @@ export function useAdminSettings(opts?: { enabled?: boolean }) {
     queryKey: queryKeys.adminSettings,
     queryFn: () => jsonFetch<SettingsView>("/admin/settings"),
     enabled,
+    staleTime: 5_000,
+  });
+}
+
+/** Release-calendar state for `/admin/upcoming` (upcoming-releases 1.0).
+ *  Refetches every 15 s so a queued sync shows up without a reload. */
+export function useAdminUpcomingStatus() {
+  return useQuery({
+    queryKey: queryKeys.adminUpcomingStatus,
+    queryFn: () => jsonFetch<UpcomingStatusView>("/admin/upcoming/status"),
+    refetchInterval: 15_000,
     staleTime: 5_000,
   });
 }

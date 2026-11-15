@@ -467,6 +467,39 @@ pub const REGISTRY: &[SettingDef] = &[
         kind: SettingKind::Uint,
         is_secret: false,
     },
+    // ───── Upcoming releases (upcoming-releases 1.0) ─────
+    SettingDef {
+        // Master switch for the release calendar: the Metron list pass,
+        // the enrich sweep, the Upcoming page and its alert surfaces.
+        // Default false. Live (checked on every job fire and request).
+        key: "upcoming.enabled",
+        kind: SettingKind::Bool,
+        is_secret: false,
+    },
+    SettingDef {
+        // How many weeks past the current one the list pass asks Metron
+        // for. Default 8 (Metron is complete about six weeks out), range
+        // 1–12. Live (read at the start of each pass).
+        key: "upcoming.weeks_ahead",
+        kind: SettingKind::Uint,
+        is_secret: false,
+    },
+    SettingDef {
+        // Accept snapshots pushed from a Mylar host and show what Mylar
+        // is tracking. Folio never calls Mylar: there is no Mylar address
+        // or key setting, by design. Default false. Live.
+        key: "integrations.mylar.enabled",
+        kind: SettingKind::Bool,
+        is_secret: false,
+    },
+    SettingDef {
+        // A Mylar snapshot older than this many minutes is shown as
+        // stale. Default 180 (three missed hourly heartbeats), range
+        // 30–10080. Live.
+        key: "integrations.mylar.stale_after_minutes",
+        kind: SettingKind::Uint,
+        is_secret: false,
+    },
 ];
 
 pub fn registry() -> &'static [SettingDef] {

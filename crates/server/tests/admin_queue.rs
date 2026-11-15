@@ -562,7 +562,11 @@ async fn queue_depth_counts_jobs_held_by_a_worker_and_retry_delayed() {
     assert_eq!(body["total"], 6);
     assert_eq!(body["in_flight"], 3);
     let queues = body["queues"].as_array().expect("queues array");
-    assert_eq!(queues.len(), 17, "one entry per queue");
+    assert_eq!(
+        queues.len(),
+        server::jobs::QUEUE_COUNT,
+        "one entry per queue"
+    );
     let thumbs = queues
         .iter()
         .find(|q| q["queue"] == "post_scan_thumbs")
@@ -936,7 +940,10 @@ async fn queue_jobs_lists_lanes_with_cards_and_targets() {
     let resp = send_authed(&app, &admin, Method::GET, "/api/admin/queue/jobs", None).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
-    assert_eq!(body["queues"].as_array().unwrap().len(), 17);
+    assert_eq!(
+        body["queues"].as_array().unwrap().len(),
+        server::jobs::QUEUE_COUNT
+    );
 
     // Lane counts for the activity event agree with the listing.
     let counts = st.jobs.lane_counts(&["post_scan_thumbs"]).await.unwrap();
