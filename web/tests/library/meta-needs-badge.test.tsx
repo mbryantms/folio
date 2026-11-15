@@ -1,5 +1,5 @@
 /**
- * Smoke checks for `<MetaNeedsBadge>` — the cover "meta" chip that flags a
+ * Smoke checks for `<MetaNeedsBadge>` — the cover "Meta" chip that flags a
  * series whose metadata likely needs pulling. We don't render to a DOM
  * (vitest node-env), so we inspect the returned React element directly.
  * Enough to confirm:

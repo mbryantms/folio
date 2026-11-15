@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * Provider hints are for admins: a reader sees neither the series card's
- * "meta" chip (its fix is the admin-only match dialog) nor the entity
+ * "Meta" chip (its fix is the admin-only match dialog) nor the entity
  * page's "Add a metadata provider under Admin" prompt; an admin sees both.
  */
 import { render, screen } from "@testing-library/react";
@@ -61,7 +61,7 @@ describe("provider hints", () => {
   it("a reader sees no meta chip and no admin prompt", () => {
     me.role = "user";
     const { container } = renderBoth(false);
-    expect(screen.queryByText("meta")).toBeNull();
+    expect(screen.queryByText("Meta")).toBeNull();
     expect(screen.queryByLabelText(/Meta likely incomplete/)).toBeNull();
     expect(screen.queryByLabelText("Metadata likely incomplete")).toBeNull();
     expect(container.textContent).not.toContain("Add a metadata provider");
@@ -72,7 +72,7 @@ describe("provider hints", () => {
   it("an admin sees the meta chip and the provider prompt", () => {
     me.role = "admin";
     const { container } = renderBoth(true);
-    expect(screen.getAllByText("meta")).toHaveLength(2);
+    expect(screen.getAllByText("Meta")).toHaveLength(2);
     expect(
       screen.getByRole("button", {
         name: "Meta likely incomplete — find metadata",

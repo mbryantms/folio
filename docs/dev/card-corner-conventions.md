@@ -48,6 +48,71 @@ there fails the test.
 | **Cover-wide** | Status-tinted **dimming** | Opacity reduction when archived / unresolved / fully-finished-in-rail. |
 | **Ring** | **Current-position** marker | `CblWindowCard` when `isCurrent`. Other cards: unused. |
 
+## The pill
+
+The corners say where a signal goes. This section says what it looks
+like. Every text pill drawn on cover art is a `<CoverChip>`
+(`web/components/library/CoverChip.tsx`); the look is the `.cover-chip`
+rule in `web/styles/globals.css`. A call site positions a chip and
+caps its width. It does not restyle one.
+
+| Property | Standard |
+|---|---|
+| Shape | 20px tall, `rounded-md`, 6px side padding. |
+| Text | 12px, medium weight, one line; a label too long for its cover ends in an ellipsis and the full text goes in `title`. Numbers use `tabular-nums`. |
+| Case | Sentence case: "Ended", "Unreadable archive". Never all caps. A raw state token goes through `coverChipLabel()`. |
+| Backing | The page background at 94% opacity, with a hairline ring (14% of the foreground) and a 1px shadow. No `backdrop-filter`: the chip has to read without it. |
+| Status | Text colour **and** a mark. A status tone draws its icon, or a dot when it has none, so colour is never the only signal. |
+| Solid form | Errors only (`tone="error"`): something is broken or failed. |
+| Round mark | Only `ReadCheck`, the 24px "read" check. A second round badge is not a chip variant. `CollectionBadge` on `SeriesCard` is the existing 20px icon badge for collection ownership; it predates this section and stays as it is. |
+
+### Tones
+
+| Tone | Means | Drawn as |
+|---|---|---|
+| `neutral` (default) | Context, not status: a position, a day, a page number, a publication status. | Foreground text. A mark only if the call site passes an icon. |
+| `success` | It is done, or it is here. | Success-toned text with an icon or dot. |
+| `warning` | Needs the reader's attention or a decision. | Warning-toned text with an icon or dot. |
+| `info` | Something is under way or being tracked. | Info-toned text with an icon or dot. |
+| `error` | Broken or failed. | The solid chip: destructive fill, its foreground label, an icon. |
+
+The theme's status tokens are tuned for the page, and three of them miss
+4.5:1 on a chip in the light or amber theme. So a chip mixes each tone
+75% with the foreground, and the solid fill 80% with the foreground.
+`web/tests/ui/cover-chip-contrast.test.ts` reads those numbers and the
+theme tokens out of `globals.css` and checks every tone at 4.5:1 or
+better in dark, light and amber, on the backing over pure black and over
+pure white art.
+
+**Not for covers:** `statusTone()`'s tinted surface (10% of the tone
+under tone-coloured text), a `<Badge>` on a translucent background, a
+hand-built `<span>`, palette classes such as `bg-amber-500/90`, and
+`backdrop-blur` as the thing that makes text readable.
+
+### Every pill
+
+| Card | Corner | Pill | Tone | Wording |
+|---|---|---|---|---|
+| `IssueCard` | top-right | Unreadable state | `error`, `Lock` or `FileWarning` | "Password-protected", "Unreadable archive" (`issueStateLabel`); the reason in `title` |
+| `SeriesCard` | top-right stack | Publication status, unless `Active` | `neutral` | The status in sentence case: "Ended", "Continuing", "Cancelled", "Hiatus" |
+| `SeriesCard` | top-right stack | Metadata hint (admins) | `warning`, `TriangleAlert` | "Meta"; the name is "Meta likely incomplete — find metadata" |
+| `CblIssueCard`, `CblWindowCard` | bottom-left | List position | `neutral` | "#34" |
+| `CblIssueCard` | top-right | Match status, unless matched | `warning` + `CircleHelp` for "Ambiguous"; `neutral` + `CircleDashed` for "Missing" | The status in sentence case |
+| `UpcomingCard` | top-right | Stage | `success` "In library", "Downloaded"; `info` "Downloading", "Tracked"; `warning` "Wanted"; `error` "Failed" | `stageBadge()` |
+| `UpcomingCard` | bottom-left | Release day | `neutral` | "Wed 25" |
+| Reading log card | top-right | What happened | `success` "Finished", "Series finished"; `info` "Reading session"; `neutral` "Bookmark"; each with its icon | Sentence case |
+| Bookmark tile | top-left | Kind | `neutral` with the kind's icon | "Bookmark", "Note", "Highlight" |
+| Cover page picker | bottom-left | Page number | `neutral` | "12" |
+
+The first five rows are on the standard. The last five still draw their
+own pills and move in WP-9.5, which also adds the guard test that fails
+when a card file positions a hand-built pill on a cover.
+
+An ambiguous list entry waits on the reader's choice, so it warns. A
+missing one is not in the library, which is context, not a fault: it
+reads as neutral with its own icon, and the dimmed cover already says the
+entry is unresolved.
+
 ## Top-right priority cascade
 
 Only one indicator ever renders in `top-2 right-2`. Higher priorities win:
@@ -57,11 +122,11 @@ Only one indicator ever renders in `top-2 right-2`. Higher priorities win:
    entries on the CBL detail page).
 2. **State / status badge** — when the entry is in an unusual state
    (`issue.state !== "active"`, or `series.status !== "Active"`).
-3. **Finished check** — green circle with `Check`, when
+3. **Finished check** — the accent-coloured circle with `Check`, when
    `state === "active" && finished`.
 
 The check is the shared `ReadCheck` component (`IssueCard`,
-`CblIssueCard`, `SeriesCard`).
+`CblIssueCard`, `CblWindowCard`, `SeriesCard`).
 
 These three are mutually exclusive in every real case:
 
@@ -160,6 +225,9 @@ the JSX:
 - [ ] Top-right: pick at most one occupant per render state, following
   the priority cascade above. Add a comment block referencing this
   doc.
+- [ ] Pills: every text pill on the cover is a `<CoverChip>` with a tone
+  from "The pill", in sentence case, and has a row in that section's
+  table. The read mark is `<ReadCheck>`.
 - [ ] Bottom-left: use a card-type-specific badge if needed; otherwise
   leave empty. Don't reuse the slot for an unrelated semantic.
 - [ ] Bottom-right: drop in `<QuickReadOverlay>` /

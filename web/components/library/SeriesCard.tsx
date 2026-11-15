@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { BookMinus, LibraryBig } from "lucide-react";
+import { BookMinus, LibraryBig, TriangleAlert } from "lucide-react";
 import { CoverSkeleton } from "@/components/CoverSkeleton";
 import { seriesCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
 import { useRouter } from "next/navigation";
@@ -26,6 +26,7 @@ import {
 import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
 import { SeriesHoverPreview } from "@/components/library/CardHoverPreview";
 import { ProgressFill } from "@/components/library/ProgressFill";
+import { CoverChip, coverChipLabel } from "@/components/library/CoverChip";
 import { ReadCheck } from "@/components/library/ReadCheck";
 import { useCoverCollectionDot } from "@/components/library/use-cover-collection-dot";
 import {
@@ -33,7 +34,6 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/folio/hover-card";
-import { Badge } from "@/components/ui/badge";
 import { jsonFetch, useMe } from "@/lib/api/queries";
 import { useUpsertSeriesProgress } from "@/lib/api/mutations";
 import type { SeriesResumeView, SeriesView } from "@/lib/api/types";
@@ -256,15 +256,10 @@ function SeriesCardImpl({
          *  canonical top-left across all card types — and so the
          *  *interactive* meta chip stays clickable on desktop, where
          *  hovering the card reveals the kebab over the top-left corner. */}
-        <div className="absolute top-2 right-2 z-10 flex flex-col items-end gap-1">
+        <div className="absolute top-2 right-2 z-10 flex max-w-[calc(100%-1rem)] flex-col items-end gap-1">
           {read?.kind === "finished" && <ReadCheck label={read.label} />}
           {status && status !== "Active" && (
-            <Badge
-              variant="secondary"
-              className="bg-background/80 backdrop-blur"
-            >
-              {status}
-            </Badge>
+            <CoverChip>{coverChipLabel(status)}</CoverChip>
           )}
           <MetaNeedsBadge series={series} interactive={!inSelectMode} />
         </div>
@@ -463,24 +458,26 @@ export function MetaNeedsBadge({
   if (!isAdmin) return null;
   if (!dotPref.enabled) return null;
   if (series.metadata_completeness_tier !== "needs_metadata") return null;
-  const badgeClass = cn(
-    "inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-black/10 dark:ring-white/10",
-    statusToneSolid("warning"),
-  );
-
+  // A warning chip (text colour plus the icon), not a solid one: the
+  // solid form is for errors, and sparse metadata is a hint.
   if (!interactive) {
     const label = "Metadata likely incomplete";
     return (
-      <span title={label} aria-label={label} className={badgeClass}>
-        meta
-      </span>
+      <CoverChip
+        tone="warning"
+        icon={TriangleAlert}
+        title={label}
+        aria-label={label}
+      >
+        Meta
+      </CoverChip>
     );
   }
 
   // Leads with the chip's visible word: axe-core 4.14 enforces WCAG 2.5.3
-  // Label in Name (`label-content-name-mismatch`), and "meta" is not a
+  // Label in Name (`label-content-name-mismatch`), and "Meta" is not a
   // token of "metadata", so "Find metadata — …" failed against the
-  // visible "meta".
+  // visible "Meta".
   const label = "Meta likely incomplete — find metadata";
   const activate = () => router.push(`${seriesUrl(series)}?match=1`);
   return (
@@ -503,16 +500,18 @@ export function MetaNeedsBadge({
           activate();
         }
       }}
-      // The chip itself is ~19 px tall; the transparent wrapper gives the
-      // target the WCAG 2.2 minimum of 24 x 24 px (2.5.8, axe
-      // `target-size`, WP-8.5) without changing how the chip looks.
-      className="group/meta inline-flex min-h-6 min-w-6 cursor-pointer items-center justify-end rounded-md focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:outline-none"
+      // The chip is 20 px tall; the transparent wrapper gives the target
+      // the WCAG 2.2 minimum of 24 x 24 px (2.5.8, axe `target-size`,
+      // WP-8.5) without changing how the chip looks.
+      className="group/meta focus-visible:ring-ring inline-flex min-h-6 min-w-6 cursor-pointer items-center justify-end rounded-md focus-visible:ring-2 focus-visible:outline-none"
     >
-      <span
-        className={cn(badgeClass, "transition group-hover/meta:brightness-110")}
+      <CoverChip
+        tone="warning"
+        icon={TriangleAlert}
+        className="transition group-hover/meta:brightness-110"
       >
-        meta
-      </span>
+        Meta
+      </CoverChip>
     </span>
   );
 }

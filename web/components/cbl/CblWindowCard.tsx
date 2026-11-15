@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Check } from "lucide-react";
 
 import { ProgressFill } from "@/components/library/ProgressFill";
 import { Cover } from "@/components/Cover";
@@ -14,9 +13,10 @@ import {
 import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { useCoverMenuCollectionActions } from "@/components/collections/useCoverMenuCollectionActions";
 import { QuickReadOverlay } from "@/components/QuickReadOverlay";
+import { CoverChip } from "@/components/library/CoverChip";
 import { CoverFrame } from "@/components/library/CoverFrame";
 import { CoverMorph } from "@/components/library/CoverMorph";
-import { Badge } from "@/components/ui/badge";
+import { ReadCheck } from "@/components/library/ReadCheck";
 import { useUpsertIssueProgress } from "@/lib/api/mutations";
 import type { CblWindowEntry } from "@/lib/api/types";
 import { issueCardTitle, issueLabel } from "@/lib/format";
@@ -153,21 +153,10 @@ export function CblWindowCard({
               )}
             />
           </CoverMorph>
-          <Badge
-            variant="secondary"
-            className="bg-background/80 absolute bottom-2 left-2 backdrop-blur"
-          >
+          <CoverChip className="absolute bottom-2 left-2 tabular-nums">
             {positionLabel}
-          </Badge>
-          {entry.finished && (
-            <span
-              aria-label="Already read"
-              title="Already read"
-              className="bg-primary/90 text-primary-foreground absolute top-2 right-2 inline-flex h-7 w-7 items-center justify-center rounded-full shadow-md ring-2 ring-white/20 backdrop-blur"
-            >
-              <Check aria-hidden="true" className="size-4" />
-            </span>
-          )}
+          </CoverChip>
+          {entry.finished && <ReadCheck className="absolute top-2 right-2" />}
           {inProgress && (
             <div
               className="bg-background/70 absolute inset-x-0 bottom-0 h-1.5 overflow-hidden rounded-b-md"
