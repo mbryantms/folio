@@ -438,9 +438,10 @@ struct EnrichPick {
 }
 
 /// Fetch the series detail for up to [`ENRICH_PER_TICK`] series: never
-/// fetched first, then those still without a ComicVine id whose last
-/// fetch is older than [`RECHECK_MISSING_CV_DAYS`] and that still have a
-/// release today or later.
+/// fetched first, soonest release first (the weeks a reader looks at are
+/// complete long before the far end of the window), then those still
+/// without a ComicVine id whose last fetch is older than
+/// [`RECHECK_MISSING_CV_DAYS`] and that have a release this week or later.
 pub async fn enrich(state: &AppState) -> Result<EnrichOutcome, DbErr> {
     let Some(client) = metron(state) else {
         return Ok(EnrichOutcome::default());
@@ -451,16 +452,23 @@ pub async fn enrich(state: &AppState) -> Result<EnrichOutcome, DbErr> {
         DatabaseBackend::Postgres,
         "SELECT s.metron_series_id, (s.detail_fetched_at IS NOT NULL) AS recheck \
          FROM release_calendar_series s \
+         LEFT JOIN LATERAL ( \
+             SELECT MIN(i.store_date) AS next_date \
+             FROM release_calendar_issue i \
+             WHERE i.metron_series_id = s.metron_series_id \
+               AND i.store_date >= $2 \
+         ) n ON TRUE \
          WHERE s.detail_fetched_at IS NULL \
             OR (s.cv_series_id IS NULL AND s.detail_fetched_at < $1 \
-                AND EXISTS (SELECT 1 FROM release_calendar_issue i \
-                            WHERE i.metron_series_id = s.metron_series_id \
-                              AND i.store_date >= $2)) \
-         ORDER BY s.detail_fetched_at NULLS FIRST, s.metron_series_id \
+                AND n.next_date IS NOT NULL) \
+         ORDER BY (s.detail_fetched_at IS NOT NULL), n.next_date NULLS LAST, \
+                  s.detail_fetched_at, s.metron_series_id \
          LIMIT $3",
         [
             (now - Duration::days(RECHECK_MISSING_CV_DAYS)).into(),
-            now.date_naive().into(),
+            // From Monday: a release earlier this week is still on the
+            // page's first section.
+            super::week_start(now.date_naive()).into(),
             (ENRICH_PER_TICK as i64).into(),
         ],
     ))

@@ -8,7 +8,7 @@
 //!   every replica: there is no leader lease, see
 //!   `docs/install/scaling.md`), and a trigger that arrives mid-pass
 //!   adds nothing.
-//! - **Enrich sweep**: a cron closure every five minutes ([`sweep`]),
+//! - **Enrich sweep**: a cron closure once a minute ([`sweep`]),
 //!   guarded against overlapping itself. It stands aside while a list
 //!   pass is stopped part-way: both draw on the same per-minute Metron
 //!   budget, and the listing goes first.

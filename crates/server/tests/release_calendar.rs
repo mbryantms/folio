@@ -529,6 +529,40 @@ async fn enrich_fills_publisher_and_comicvine_id_and_asks_again_later() {
     assert_eq!(series(&app, 51).await.unwrap().cv_series_id, Some(9051));
 }
 
+/// A fresh calendar holds a few hundred series and a tick fetches ten:
+/// the ones releasing soonest go first, whatever their ids.
+#[tokio::test]
+async fn enrich_takes_the_soonest_releases_first() {
+    let mock = MockServer::start().await;
+    let app = spawn(&mock).await;
+    enable(&app);
+    let today = Utc::now().date_naive();
+    // Twelve series; the higher the id, the sooner the release.
+    for n in 0..12i64 {
+        seed_issue(&app, 100 + n, 60 + n, today + Duration::days(40 - 3 * n)).await;
+    }
+    Mock::given(method("GET"))
+        .and(wiremock::matchers::path_regex(r"^/api/series/\d+/$"))
+        .respond_with(series_detail(1, "Any", Some(1)))
+        .mount(&mock)
+        .await;
+
+    let tick = calendar::enrich(&app.state()).await.unwrap();
+    assert_eq!(u64::from(tick.fetched), calendar::ENRICH_PER_TICK);
+    for id in 62..=71 {
+        assert!(
+            series(&app, id).await.unwrap().detail_fetched_at.is_some(),
+            "series {id} releases among the ten soonest"
+        );
+    }
+    for id in [60, 61] {
+        assert!(
+            series(&app, id).await.unwrap().detail_fetched_at.is_none(),
+            "series {id} releases last and waits for the next tick"
+        );
+    }
+}
+
 #[tokio::test]
 async fn enrich_stops_at_the_budget_reserve() {
     let mock = MockServer::start().await;

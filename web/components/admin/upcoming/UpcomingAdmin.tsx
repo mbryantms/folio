@@ -280,7 +280,7 @@ function CalendarSummary({ cal }: { cal: UpcomingCalendarStatusView }) {
       {cal.series_pending_detail > 0 ? (
         <p className="text-muted-foreground text-xs">
           {cal.series_pending_detail.toLocaleString()} series still waiting for
-          publisher details (a few are fetched every five minutes).
+          publisher details (about ten a minute, soonest releases first).
         </p>
       ) : null}
       {cal.last_error ? (
