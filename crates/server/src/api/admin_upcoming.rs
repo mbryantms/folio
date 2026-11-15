@@ -6,6 +6,7 @@
 //! | `POST` | `/admin/upcoming/sync` | queue a list pass now |
 //! | `POST` | `/admin/integrations/mylar/token` | create (or replace) the Mylar ingest token; the plaintext is returned once |
 //! | `DELETE` | `/admin/integrations/mylar/token` | revoke it; `?purge=true` also deletes the stored snapshot |
+//! | `GET`  | `/admin/integrations/mylar/activity` | what the stored snapshot says Mylar is doing: wanted issues, download queue, recent history, job times |
 //!
 //! All admin-only (`RequireAdmin`). The switches themselves
 //! (`upcoming.enabled`, `integrations.mylar.enabled`, …) are ordinary
@@ -34,7 +35,7 @@ use crate::auth::RequireAdmin;
 use crate::middleware::RequestContext;
 use crate::record_admin_action;
 use crate::state::AppState;
-use crate::upcoming::mylar::{self, Freshness};
+use crate::upcoming::mylar::{self, Freshness, HistoryRow, JobRow, QueueBlock, WantedRow};
 use crate::upcoming::{self, calendar};
 use server_macros::handler;
 
@@ -43,6 +44,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(status))
         .routes(routes!(sync))
         .routes(routes!(create_mylar_token, revoke_mylar_token))
+        .routes(routes!(mylar_activity))
 }
 
 /// Issues the calendar holds for one Monday–Sunday week.
@@ -356,4 +358,67 @@ pub async fn revoke_mylar_token(
         payload = serde_json::json!({ "had_token": had_token, "purged": q.purge }),
     );
     StatusCode::NO_CONTENT.into_response()
+}
+
+/// What the stored snapshot says Mylar is doing. Admin-only: titles on
+/// Mylar's wanted list and in its queue span the whole collection.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MylarActivityView {
+    /// When Folio received the snapshot; absent when there is none (every
+    /// list is then empty).
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub received_at: Option<DateTime<FixedOffset>>,
+    /// Issues Mylar wants, has sent to a download client, or failed to
+    /// get. Soonest in-store date first, undated last.
+    pub wanted: Vec<WantedRow>,
+    /// Mylar's direct-download queue: counts per status over the whole
+    /// queue, and its newest entries that are not completed.
+    pub queue: QueueBlock,
+    /// What Mylar snatched or post-processed in the last two weeks,
+    /// newest first.
+    pub history: Vec<HistoryRow>,
+    /// Mylar's scheduled jobs with their last and next run.
+    pub jobs: Vec<JobRow>,
+}
+
+#[utoipa::path(
+    operation_id = "admin_mylar_activity", get,
+    path = "/admin/integrations/mylar/activity",
+    responses(
+        (status = 200, body = MylarActivityView),
+        (status = 403, description = "admin only"),
+    )
+)]
+#[handler]
+pub async fn mylar_activity(State(app): State<AppState>, _admin: RequireAdmin) -> Response {
+    let snapshot = match mylar::snapshot_row(&app.db).await {
+        Ok(s) => s,
+        Err(e) => return internal(&e),
+    };
+    let Some(snapshot) = snapshot else {
+        return Json(MylarActivityView {
+            received_at: None,
+            wanted: Vec::new(),
+            queue: QueueBlock::default(),
+            history: Vec::new(),
+            jobs: Vec::new(),
+        })
+        .into_response();
+    };
+    let wanted = match mylar::wanted_rows(&app.db).await {
+        Ok(w) => w,
+        Err(e) => return internal(&e),
+    };
+    // The three blocks were validated on ingest and stored as sent; a row
+    // that no longer parses (a later schema) reads as empty, not a 500.
+    let mut history: Vec<HistoryRow> = serde_json::from_value(snapshot.history).unwrap_or_default();
+    history.sort_by_key(|row| std::cmp::Reverse(row.at));
+    Json(MylarActivityView {
+        received_at: Some(snapshot.received_at),
+        wanted,
+        queue: serde_json::from_value(snapshot.queue).unwrap_or_default(),
+        history,
+        jobs: serde_json::from_value(snapshot.jobs).unwrap_or_default(),
+    })
+    .into_response()
 }

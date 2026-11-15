@@ -330,6 +330,7 @@ the pin picker.
 | …0013 | system | Similar series | — |
 | …0014 / …0015 / …0016 | system | Random picks (`/me/random-picks`) / On this day (`/me/on-this-day`) / Recently read (`/me/recent-history`) | — |
 | …0017 | system | New in series you're reading (`/me/new-in-series`, `m20271110_000001`) | — |
+| …0018 | system | Out this week (`/me/upcoming-this-week`, `m20271121_000001`). Listed only while `upcoming.enabled` is on; it has no detail page, its links lead to `/upcoming` ([upcoming-releases.md](upcoming-releases.md)) | — |
 | …0020 | filter_issues | Recently finished issues (was "Recently finished" in v0.60.0; renamed by `m20271020_000002`) | ✓ |
 | …0021 – …0027 | filter_issues | Finished this week, Rate what you read, Top rated issues, Annuals & specials, Short unread reads, Favorite issues, Annotated issues | — |
 | …0028 – …0034 | filter_series | Jump back in, Almost done, Complete runs to start, Ended but unfinished, Top rated series, Incomplete collections, Favorite series | — |

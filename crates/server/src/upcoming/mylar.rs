@@ -110,6 +110,7 @@ fn queue_counts(v: &BTreeMap<String, i64>, (): &()) -> garde::Result {
 #[derive(
     Debug, Clone, PartialEq, Eq, Serialize, Deserialize, garde::Validate, utoipa::ToSchema,
 )]
+#[schema(as = MylarSnapshotMeta)]
 pub struct SnapshotMeta {
     #[garde(custom(supported_version))]
     pub schema_version: u32,
@@ -131,6 +132,7 @@ pub struct SnapshotMeta {
 #[derive(
     Debug, Clone, PartialEq, Eq, Serialize, Deserialize, garde::Validate, utoipa::ToSchema,
 )]
+#[schema(as = MylarPullRow)]
 pub struct PullRow {
     #[garde(skip)]
     #[schema(value_type = String, format = Date)]
@@ -164,6 +166,7 @@ pub struct WatchEntry(pub i64, pub String, pub bool);
 #[derive(
     Debug, Clone, PartialEq, Eq, Serialize, Deserialize, garde::Validate, utoipa::ToSchema,
 )]
+#[schema(as = MylarWantedRow)]
 pub struct WantedRow {
     #[garde(custom(positive_id))]
     #[serde(default)]
@@ -191,6 +194,7 @@ pub struct WantedRow {
 #[derive(
     Debug, Clone, PartialEq, Eq, Serialize, Deserialize, garde::Validate, utoipa::ToSchema,
 )]
+#[schema(as = MylarHistoryRow)]
 pub struct HistoryRow {
     #[garde(custom(positive_id))]
     #[serde(default)]
@@ -216,6 +220,7 @@ pub struct HistoryRow {
 #[derive(
     Debug, Clone, PartialEq, Eq, Serialize, Deserialize, garde::Validate, utoipa::ToSchema,
 )]
+#[schema(as = MylarQueueItem)]
 pub struct QueueItem {
     #[garde(length(chars, min = 1, max = MAX_NAME))]
     pub title: String,
@@ -236,6 +241,7 @@ pub struct QueueItem {
 #[derive(
     Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, garde::Validate, utoipa::ToSchema,
 )]
+#[schema(as = MylarQueueBlock)]
 pub struct QueueBlock {
     /// Entries per status, over the whole queue (not only `items`).
     #[garde(custom(queue_counts))]
@@ -250,6 +256,7 @@ pub struct QueueBlock {
 #[derive(
     Debug, Clone, PartialEq, Eq, Serialize, Deserialize, garde::Validate, utoipa::ToSchema,
 )]
+#[schema(as = MylarJobRow)]
 pub struct JobRow {
     #[garde(length(chars, min = 1, max = 80))]
     pub name: String,
@@ -518,6 +525,34 @@ pub async fn store(
     txn.commit().await?;
     stamp_token_use(db, ip, received_at).await;
     Ok(Stored::Replaced)
+}
+
+/// The stored wanted list: soonest in-store date first, undated last,
+/// then by title. Bounded by [`MAX_WANTED`].
+pub async fn wanted_rows(db: &DatabaseConnection) -> Result<Vec<WantedRow>, DbErr> {
+    let mut rows: Vec<WantedRow> = mylar_wanted::Entity::find()
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|m| WantedRow {
+            cv_series_id: m.cv_series_id,
+            cv_issue_id: m.cv_issue_id,
+            series: m.series_name,
+            issue: m.issue_number,
+            store_date: m.store_date,
+            status: m.status,
+            added_at: m.added_at,
+        })
+        .collect();
+    rows.sort_by(|a, b| {
+        (a.store_date.is_none(), a.store_date, &a.series, &a.issue).cmp(&(
+            b.store_date.is_none(),
+            b.store_date,
+            &b.series,
+            &b.issue,
+        ))
+    });
+    Ok(rows)
 }
 
 pub async fn snapshot_row(db: &DatabaseConnection) -> Result<Option<mylar_snapshot::Model>, DbErr> {

@@ -32,6 +32,7 @@ use tower::ServiceExt;
 const INGEST: &str = "/integrations/mylar/snapshot";
 const TOKEN: &str = "/api/admin/integrations/mylar/token";
 const STATUS: &str = "/api/admin/upcoming/status";
+const ACTIVITY: &str = "/api/admin/integrations/mylar/activity";
 
 // ────────────────────── harness ──────────────────────
 
@@ -563,4 +564,50 @@ async fn status_reports_the_token_and_the_snapshots_freshness() {
         let (_, body) = as_user(&app, Method::GET, STATUS, &admin).await;
         assert_eq!(body["mylar"]["snapshot"]["freshness"], expected);
     }
+}
+
+// ────────────────────── the admin's view of the snapshot ──────────────────────
+
+#[tokio::test]
+async fn activity_reads_the_stored_snapshot_back_for_admins_only() {
+    let (app, admin, token) = ready().await;
+
+    // Nothing pushed yet: empty, not an error.
+    let (status, body) = as_user(&app, Method::GET, ACTIVITY, &admin).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["received_at"].is_null());
+    assert_eq!(body["wanted"], json!([]));
+    assert_eq!(body["queue"]["items"], json!([]));
+
+    let mut snap = snapshot();
+    snap["wanted"].as_array_mut().unwrap().push(json!({
+        "cv_series_id": 4050, "cv_issue_id": null, "series": "Saga", "issue": "70",
+        "store_date": null, "status": "Failed", "added_at": null
+    }));
+    snap["history"].as_array_mut().unwrap().push(json!({
+        "cv_series_id": 4050, "cv_issue_id": null, "series": "Saga",
+        "issue": "69", "status": "Snatched", "at": "2026-11-14T09:00:00+00:00"
+    }));
+    let (status, body) = push(&app, &token, &snap).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+
+    let (status, body) = as_user(&app, Method::GET, ACTIVITY, &admin).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["received_at"].is_string());
+    let wanted = body["wanted"].as_array().unwrap();
+    assert_eq!(wanted.len(), 2, "{body}");
+    assert_eq!(wanted[0]["series"], "Action Comics", "dated before undated");
+    assert_eq!(wanted[0]["store_date"], "2026-11-18");
+    assert_eq!(wanted[1]["status"], "Failed");
+    assert_eq!(body["queue"]["counts"]["Failed"], 546);
+    assert_eq!(body["queue"]["items"][0]["title"], "X-Factor #2");
+    let history = body["history"].as_array().unwrap();
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[0]["issue"], "69", "newest first: {body}");
+    assert_eq!(body["jobs"][0]["name"], "Weekly Pullist");
+
+    // Titles on the wanted list span the whole collection: admins only.
+    let reader = register(&app, "reader@example.com").await;
+    let (status, _) = as_user(&app, Method::GET, ACTIVITY, &reader).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
 }

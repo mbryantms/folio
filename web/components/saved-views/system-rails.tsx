@@ -18,6 +18,7 @@ import {
 import { SimilarSeriesCard } from "@/components/library/SimilarSeriesCard";
 import { InfiniteSentinel } from "@/components/folio/infinite-sentinel";
 import { RailError } from "@/components/saved-views/RailError";
+import { useUpcomingRail } from "@/components/upcoming/UpcomingRail";
 import type { OnDeckCard as OnDeckCardData } from "@/lib/api/types";
 import {
   useContinueReading,
@@ -444,6 +445,7 @@ export function useSystemRailIsEmpty(systemKey: string): boolean {
   const nis = useNewInSeriesInfinite({
     enabled: systemKey === "new_in_series",
   });
+  const up = useUpcomingRail({ enabled: systemKey === "upcoming_this_week" });
   // An errored query with nothing cached is NOT empty — the rail stays
   // mounted so its body can show the retry state (post-audit T2.4).
   if (systemKey === "continue_reading") {
@@ -479,6 +481,11 @@ export function useSystemRailIsEmpty(systemKey: string): boolean {
       !nis.isError &&
       (nis.data?.pages[0]?.items.length ?? 0) === 0
     );
+  }
+  if (systemKey === "upcoming_this_week") {
+    // `isPending`, not `isLoading`: a rail whose query has not run yet
+    // is not an empty one.
+    return !up.isPending && !up.isError && (up.data?.items.length ?? 0) === 0;
   }
   return false;
 }

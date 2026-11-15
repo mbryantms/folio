@@ -5,10 +5,20 @@
  * changed; the status card shows what the list pass left and its "Sync
  * now" is available only while the calendar can actually run.
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { MylarStatusView, UpcomingStatusView } from "@/lib/api/types";
+import type {
+  MylarActivityView,
+  MylarStatusView,
+  UpcomingStatusView,
+} from "@/lib/api/types";
 
 const mutateAsync = vi.fn(async () => ({}));
 const sync = vi.fn();
@@ -20,6 +30,7 @@ const revokeToken = vi.fn();
 const state = vi.hoisted(() => ({
   settings: [] as { key: string; value: unknown }[],
   status: null as unknown,
+  activity: null as unknown,
 }));
 
 vi.mock("@/lib/api/mutations", () => ({
@@ -34,6 +45,7 @@ vi.mock("@/lib/api/queries", () => ({
     data: { values: state.settings },
   }),
   useAdminUpcomingStatus: () => ({ isLoading: false, data: state.status }),
+  useAdminMylarActivity: () => ({ isLoading: false, data: state.activity }),
 }));
 
 import {
@@ -66,6 +78,60 @@ const SNAPSHOT = {
   wanted_count: 13,
   queue_counts: { Downloading: 12, Failed: 546, Queued: 1 },
   annuals_included: false,
+};
+
+const ACTIVITY: MylarActivityView = {
+  received_at: "2026-11-14T12:00:00Z",
+  wanted: [
+    {
+      cv_series_id: 91078,
+      cv_issue_id: 1198999,
+      series: "Action Comics",
+      issue: "1105",
+      store_date: "2026-11-18",
+      status: "Wanted",
+      added_at: "2026-11-12T05:00:00Z",
+    },
+    {
+      cv_series_id: 4050,
+      cv_issue_id: null,
+      series: "Saga",
+      issue: "70",
+      store_date: null,
+      status: "Failed",
+      added_at: null,
+    },
+  ],
+  queue: {
+    counts: { Failed: 546, Queued: 1 },
+    items: [
+      {
+        title: "X-Factor #2",
+        year: "2024",
+        size: "67 MB",
+        status: "Queued",
+        updated_at: "2026-11-06T14:31:00Z",
+      },
+    ],
+  },
+  history: [
+    {
+      cv_series_id: 91078,
+      cv_issue_id: 1198752,
+      series: "Action Comics",
+      issue: "1104",
+      status: "Post-Processed",
+      at: "2026-11-13T03:53:31Z",
+    },
+  ],
+  jobs: [
+    {
+      name: "Weekly Pullist",
+      status: "Waiting",
+      prev_run: "2026-11-14T02:02:19Z",
+      next_run: "2026-11-14T06:02:19Z",
+    },
+  ],
 };
 
 function status(over: Partial<UpcomingStatusView> = {}): UpcomingStatusView {
@@ -105,6 +171,7 @@ beforeEach(() => {
     { key: "upcoming.weeks_ahead", value: 8 },
   ];
   state.status = status();
+  state.activity = ACTIVITY;
 });
 
 describe("shortDay", () => {
@@ -323,5 +390,73 @@ describe("/admin/upcoming — Mylar card", () => {
     expect(mutateAsync).toHaveBeenCalledWith({
       "integrations.mylar.enabled": true,
     });
+  });
+});
+
+describe("/admin/upcoming — what Mylar is doing", () => {
+  const withSnapshot = () => {
+    state.status = status({
+      mylar: mylar({ enabled: true, token: TOKEN, snapshot: SNAPSHOT }),
+    });
+  };
+  const card = () =>
+    within(
+      screen
+        .getByText("What Mylar is doing")
+        .closest("[data-slot=card]") as HTMLElement,
+    );
+  const open = (name: RegExp) => {
+    const tab = card().getByRole("tab", { name });
+    // Radix Tabs activate on pointer-down, not click.
+    fireEvent.mouseDown(tab, { button: 0 });
+    fireEvent.click(tab);
+  };
+
+  it("is absent until a snapshot has arrived", () => {
+    render(<UpcomingAdmin />);
+    expect(screen.queryByText("What Mylar is doing")).toBeNull();
+  });
+
+  it("lists the wanted issues with Mylar's own status words", () => {
+    withSnapshot();
+    render(<UpcomingAdmin />);
+    const c = card();
+    expect(c.getByRole("tab", { name: /Wanted 2/ })).toBeTruthy();
+    expect(c.getByText("Action Comics #1105")).toBeTruthy();
+    expect(c.getByText("Wed 18 Nov 2026")).toBeTruthy();
+    expect(c.getByText("Saga #70")).toBeTruthy();
+    expect(c.getByText("Failed")).toBeTruthy();
+  });
+
+  it("shows the queue by status, recent history and Mylar's job times", () => {
+    withSnapshot();
+    render(<UpcomingAdmin />);
+    open(/Download queue 547/);
+    expect(card().getByText("Failed 546")).toBeTruthy();
+    expect(card().getByText("X-Factor #2")).toBeTruthy();
+    // The queue block is capped by the script; the counts are not.
+    expect(card().getByText(/most recently updated entries/)).toBeTruthy();
+
+    open(/Recent history 1/);
+    expect(card().getByText("Action Comics #1104")).toBeTruthy();
+    expect(card().getByText("Post-Processed")).toBeTruthy();
+
+    open(/Mylar jobs/);
+    expect(card().getByText("Weekly Pullist")).toBeTruthy();
+  });
+
+  it("is read-only: the card holds tabs and no button", () => {
+    withSnapshot();
+    render(<UpcomingAdmin />);
+    expect(card().queryAllByRole("button")).toHaveLength(0);
+    expect(card().queryAllByRole("link")).toHaveLength(0);
+    expect(card().getByText(/cannot change anything in Mylar/)).toBeTruthy();
+  });
+
+  it("says so when Mylar is waiting on nothing", () => {
+    withSnapshot();
+    state.activity = { ...ACTIVITY, wanted: [] };
+    render(<UpcomingAdmin />);
+    expect(card().getByText("Mylar is not waiting on any issue.")).toBeTruthy();
   });
 });

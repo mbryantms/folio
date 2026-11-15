@@ -180,6 +180,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/integrations/mylar/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_mylar_activity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/integrations/mylar/token": {
         parameters: {
             query?: never;
@@ -4665,6 +4681,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["starter_lists_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/upcoming-this-week": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["me_upcoming_this_week"];
         put?: never;
         post?: never;
         delete?: never;
@@ -10797,18 +10829,6 @@ export interface components {
          * @enum {string}
          */
         HintStatus: "computed" | "not_computed";
-        /** @description A recent snatch or post-process event. */
-        HistoryRow: {
-            /** Format: date-time */
-            at?: string | null;
-            /** Format: int64 */
-            cv_issue_id?: number | null;
-            /** Format: int64 */
-            cv_series_id?: number | null;
-            issue?: string | null;
-            series: string;
-            status: string;
-        };
         IdentifierCoverage: {
             /** Format: int64 */
             issues_with_id: number;
@@ -11375,15 +11395,6 @@ export interface components {
          * @enum {string}
          */
         JobCardState: "waiting" | "scheduled" | "running" | "done";
-        /** @description One of Mylar's scheduled jobs. */
-        JobRow: {
-            name: string;
-            /** Format: date-time */
-            next_run?: string | null;
-            /** Format: date-time */
-            prev_run?: string | null;
-            status?: string | null;
-        };
         /** @description The entity a job works on, resolved for display. */
         JobTarget: {
             /** @description Thumbnail URL: the issue's cover, or the series cover. */
@@ -12520,24 +12531,125 @@ export interface components {
          */
         Motion: "system" | "reduced";
         /**
+         * @description What the stored snapshot says Mylar is doing. Admin-only: titles on
+         *     Mylar's wanted list and in its queue span the whole collection.
+         */
+        MylarActivityView: {
+            /**
+             * @description What Mylar snatched or post-processed in the last two weeks,
+             *     newest first.
+             */
+            history: components["schemas"]["MylarHistoryRow"][];
+            /** @description Mylar's scheduled jobs with their last and next run. */
+            jobs: components["schemas"]["MylarJobRow"][];
+            /**
+             * @description Mylar's direct-download queue: counts per status over the whole
+             *     queue, and its newest entries that are not completed.
+             */
+            queue: components["schemas"]["MylarQueueBlock"];
+            /**
+             * Format: date-time
+             * @description When Folio received the snapshot; absent when there is none (every
+             *     list is then empty).
+             */
+            received_at?: string | null;
+            /**
+             * @description Issues Mylar wants, has sent to a download client, or failed to
+             *     get. Soonest in-store date first, undated last.
+             */
+            wanted: components["schemas"]["MylarWantedRow"][];
+        };
+        /**
          * @description How far a snapshot can be trusted, by when Folio received it.
          * @enum {string}
          */
         MylarFreshness: "fresh" | "stale" | "expired";
+        /** @description A recent snatch or post-process event. */
+        MylarHistoryRow: {
+            /** Format: date-time */
+            at?: string | null;
+            /** Format: int64 */
+            cv_issue_id?: number | null;
+            /** Format: int64 */
+            cv_series_id?: number | null;
+            issue?: string | null;
+            series: string;
+            status: string;
+        };
+        /** @description One of Mylar's scheduled jobs. */
+        MylarJobRow: {
+            name: string;
+            /** Format: date-time */
+            next_run?: string | null;
+            /** Format: date-time */
+            prev_run?: string | null;
+            status?: string | null;
+        };
+        /** @description One line of Mylar's weekly pull list. */
+        MylarPullRow: {
+            /** Format: int64 */
+            cv_issue_id?: number | null;
+            /**
+             * Format: int64
+             * @description ComicVine volume id; null when Mylar's pull service found none.
+             */
+            cv_series_id?: number | null;
+            issue: string;
+            publisher?: string | null;
+            series: string;
+            /** Format: int32 */
+            series_year?: number | null;
+            /** Format: date */
+            ship_date: string;
+            status: string;
+        };
+        MylarQueueBlock: {
+            /** @description Entries per status, over the whole queue (not only `items`). */
+            counts?: {
+                [key: string]: number;
+            };
+            items?: components["schemas"]["MylarQueueItem"][];
+        };
+        /**
+         * @description One entry of Mylar's direct-download queue. No link and no file name:
+         *     the script never reads them.
+         */
+        MylarQueueItem: {
+            size?: string | null;
+            status: string;
+            title: string;
+            /** Format: date-time */
+            updated_at?: string | null;
+            year?: string | null;
+        };
         /**
          * @description The body of `POST /integrations/mylar/snapshot`. Unknown fields are
          *     ignored, so a newer script can add to a version without breaking an
          *     older server.
          */
         MylarSnapshot: {
-            history?: components["schemas"]["HistoryRow"][];
-            jobs?: components["schemas"]["JobRow"][];
-            meta: components["schemas"]["SnapshotMeta"];
-            pull_list?: components["schemas"]["PullRow"][];
-            queue?: components["schemas"]["QueueBlock"];
-            wanted?: components["schemas"]["WantedRow"][];
+            history?: components["schemas"]["MylarHistoryRow"][];
+            jobs?: components["schemas"]["MylarJobRow"][];
+            meta: components["schemas"]["MylarSnapshotMeta"];
+            pull_list?: components["schemas"]["MylarPullRow"][];
+            queue?: components["schemas"]["MylarQueueBlock"];
+            wanted?: components["schemas"]["MylarWantedRow"][];
             /** @description Rows of `[ComicVine volume id, status, still publishing]`. */
             watchlist?: Record<string, never>[];
+        };
+        MylarSnapshotMeta: {
+            /** @description The operator said Mylar's annual integration is on. */
+            annuals_included?: boolean;
+            /**
+             * Format: date-time
+             * @description When the script read `mylar.db`. Informational: staleness is
+             *     judged by when Folio received the snapshot.
+             */
+            generated_at: string;
+            /** Format: int32 */
+            mylar_db_version?: number | null;
+            /** Format: int32 */
+            schema_version: number;
         };
         /** @description The stored Mylar snapshot's header. */
         MylarSnapshotStatusView: {
@@ -12592,6 +12704,20 @@ export interface components {
              */
             last_used_at?: string | null;
             last_used_ip?: string | null;
+        };
+        /** @description An issue Mylar wants, has snatched, or failed to get. */
+        MylarWantedRow: {
+            /** Format: date-time */
+            added_at?: string | null;
+            /** Format: int64 */
+            cv_issue_id?: number | null;
+            /** Format: int64 */
+            cv_series_id?: number | null;
+            issue: string;
+            series: string;
+            status: string;
+            /** Format: date */
+            store_date?: string | null;
         };
         /**
          * @description "New in series you're reading" page: issues added in the last
@@ -13647,36 +13773,11 @@ export interface components {
              */
             registration_open: boolean;
         };
-        /** @description One line of Mylar's weekly pull list. */
-        PullRow: {
-            /** Format: int64 */
-            cv_issue_id?: number | null;
-            /**
-             * Format: int64
-             * @description ComicVine volume id; null when Mylar's pull service found none.
-             */
-            cv_series_id?: number | null;
-            issue: string;
-            publisher?: string | null;
-            series: string;
-            /** Format: int32 */
-            series_year?: number | null;
-            /** Format: date */
-            ship_date: string;
-            status: string;
-        };
         /** @description Replacement body for `PUT`. Omitted fields default to "no override". */
         PutPageOverridesReq: {
             shift_pairing?: boolean;
             single_pages?: number[];
             spread_pages?: number[];
-        };
-        QueueBlock: {
-            /** @description Entries per status, over the whole queue (not only `items`). */
-            counts?: {
-                [key: string]: number;
-            };
-            items?: components["schemas"]["QueueItem"][];
         };
         QueueClearReq: {
             target: components["schemas"]["QueueClearTarget"];
@@ -13812,18 +13913,6 @@ export interface components {
              * @description Sum across all queues — convenient for the topbar pill.
              */
             total: number;
-        };
-        /**
-         * @description One entry of Mylar's direct-download queue. No link and no file name:
-         *     the script never reads them.
-         */
-        QueueItem: {
-            size?: string | null;
-            status: string;
-            title: string;
-            /** Format: date-time */
-            updated_at?: string | null;
-            year?: string | null;
         };
         /**
          * @description One queue's lanes. Each list is capped at the request's `limit`; the
@@ -16077,20 +16166,6 @@ export interface components {
             /** Format: int64 */
             total?: number | null;
         };
-        SnapshotMeta: {
-            /** @description The operator said Mylar's annual integration is on. */
-            annuals_included?: boolean;
-            /**
-             * Format: date-time
-             * @description When the script read `mylar.db`. Informational: staleness is
-             *     judged by when Folio received the snapshot.
-             */
-            generated_at: string;
-            /** Format: int32 */
-            mylar_db_version?: number | null;
-            /** Format: int32 */
-            schema_version: number;
-        };
         /**
          * @description Sort axes a saved view can choose. Distinct from [`Field`] because not
          *     every filterable field is a sensible sort axis (e.g., multi-valued
@@ -16716,6 +16791,14 @@ export interface components {
         UpcomingSyncResp: {
             /** @description `false` when a pass was already queued. */
             queued: boolean;
+        };
+        /** @description The "Out this week" rail. */
+        UpcomingThisWeekView: {
+            /**
+             * @description This week's releases in the caller's series, by release date.
+             *     Bounded by the week, so the list is whole: no cursor.
+             */
+            items: components["schemas"]["UpcomingEntryView"][];
         };
         /** @description Issues the calendar holds for one Monday–Sunday week. */
         UpcomingWeekCountView: {
@@ -17402,20 +17485,6 @@ export interface components {
          * @enum {string}
          */
         ViewMode: "single" | "double" | "webtoon";
-        /** @description An issue Mylar wants, has snatched, or failed to get. */
-        WantedRow: {
-            /** Format: date-time */
-            added_at?: string | null;
-            /** Format: int64 */
-            cv_issue_id?: number | null;
-            /** Format: int64 */
-            cv_series_id?: number | null;
-            issue: string;
-            series: string;
-            status: string;
-            /** Format: date */
-            store_date?: string | null;
-        };
         /**
          * @description How a library is being watched.
          * @enum {string}
@@ -17918,6 +17987,32 @@ export interface operations {
             };
             /** @description invalid filter value, including a scan_id or library_id that is not a UUID */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_mylar_activity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MylarActivityView"];
+                };
+            };
+            /** @description admin only */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -27139,6 +27234,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StarterListListView"];
+                };
+            };
+        };
+    };
+    me_upcoming_this_week: {
+        parameters: {
+            query?: {
+                /** @description The caller's local date, `YYYY-MM-DD`. */
+                today?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpcomingThisWeekView"];
                 };
             };
         };

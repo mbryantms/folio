@@ -45,6 +45,8 @@ export function useCreateMylarToken() {
     {
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.adminUpcomingStatus });
+        qc.invalidateQueries({ queryKey: queryKeys.adminMylarActivity });
+        qc.invalidateQueries({ queryKey: ["upcoming"] });
       },
     },
   );
@@ -66,6 +68,8 @@ export function useRevokeMylarToken() {
           : "Token revoked",
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.adminUpcomingStatus });
+        qc.invalidateQueries({ queryKey: queryKeys.adminMylarActivity });
+        qc.invalidateQueries({ queryKey: ["upcoming"] });
       },
     },
   );

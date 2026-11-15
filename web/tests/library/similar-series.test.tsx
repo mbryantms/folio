@@ -17,6 +17,7 @@ vi.mock("@/lib/api/queries", () => ({
   useRandomPicks: () => ({ isLoading: false, data: { items: [] } }),
   useOnThisDay: () => ({ isLoading: false, data: { items: [] } }),
   useNewInSeriesInfinite: () => ({ isLoading: false, data: undefined }),
+  useUpcomingThisWeek: () => ({ isPending: false, data: undefined }),
 }));
 vi.mock("@/lib/api/mutations", () => ({
   useDismissRailItem: () => ({ mutate: vi.fn() }),

@@ -28,16 +28,28 @@ fn the_only_mylar_route_is_the_snapshot_post() {
     assert_eq!(ingest[0].0, "/integrations/mylar/snapshot");
     assert_eq!(ingest[0].1, [&"post".to_owned()], "POST only");
 
-    // The admin side manages Folio's own token: create and revoke.
-    let admin: Vec<_> = mylar
+    // The admin side manages Folio's own token (create, revoke) and reads
+    // the stored snapshot back. Nothing else, and no other verb.
+    let mut admin: Vec<(&str, Vec<&str>)> = mylar
         .iter()
         .filter(|(path, _)| path.starts_with("/api/admin/"))
+        .map(|(path, methods)| {
+            let mut methods: Vec<&str> = methods.iter().map(|m| m.as_str()).collect();
+            methods.sort_unstable();
+            (path.as_str(), methods)
+        })
         .collect();
-    assert_eq!(admin.len(), 1, "{admin:?}");
-    assert_eq!(admin[0].0, "/api/admin/integrations/mylar/token");
-    let mut methods: Vec<&str> = admin[0].1.iter().map(|m| m.as_str()).collect();
-    methods.sort_unstable();
-    assert_eq!(methods, ["delete", "post"]);
+    admin.sort();
+    assert_eq!(
+        admin,
+        [
+            ("/api/admin/integrations/mylar/activity", vec!["get"]),
+            (
+                "/api/admin/integrations/mylar/token",
+                vec!["delete", "post"]
+            ),
+        ]
+    );
 }
 
 #[test]

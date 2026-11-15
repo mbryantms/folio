@@ -489,6 +489,25 @@
         }
       }
     },
+    "/api/admin/integrations/mylar/activity": {
+      "get": {
+        "operationId": "admin_mylar_activity",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MylarActivityView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
     "/api/admin/integrations/mylar/token": {
       "post": {
         "operationId": "admin_mylar_token_create",
@@ -10278,6 +10297,37 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/StarterListListView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me/upcoming-this-week": {
+      "get": {
+        "operationId": "me_upcoming_this_week",
+        "parameters": [
+          {
+            "name": "today",
+            "in": "query",
+            "description": "The caller's local date, `YYYY-MM-DD`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpcomingThisWeekView"
                 }
               }
             }
@@ -25572,49 +25622,6 @@
           "not_computed"
         ]
       },
-      "HistoryRow": {
-        "type": "object",
-        "description": "A recent snatch or post-process event.",
-        "required": [
-          "series",
-          "status"
-        ],
-        "properties": {
-          "at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "cv_issue_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
-          },
-          "cv_series_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
-          },
-          "issue": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "series": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string"
-          }
-        }
-      },
       "IdentifierCoverage": {
         "type": "object",
         "required": [
@@ -26926,38 +26933,6 @@
           "running",
           "done"
         ]
-      },
-      "JobRow": {
-        "type": "object",
-        "description": "One of Mylar's scheduled jobs.",
-        "required": [
-          "name"
-        ],
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "next_run": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "prev_run": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "status": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        }
       },
       "JobTarget": {
         "type": "object",
@@ -29254,6 +29229,51 @@
           "reduced"
         ]
       },
+      "MylarActivityView": {
+        "type": "object",
+        "description": "What the stored snapshot says Mylar is doing. Admin-only: titles on\nMylar's wanted list and in its queue span the whole collection.",
+        "required": [
+          "wanted",
+          "queue",
+          "history",
+          "jobs"
+        ],
+        "properties": {
+          "history": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MylarHistoryRow"
+            },
+            "description": "What Mylar snatched or post-processed in the last two weeks,\nnewest first."
+          },
+          "jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MylarJobRow"
+            },
+            "description": "Mylar's scheduled jobs with their last and next run."
+          },
+          "queue": {
+            "$ref": "#/components/schemas/MylarQueueBlock",
+            "description": "Mylar's direct-download queue: counts per status over the whole\nqueue, and its newest entries that are not completed."
+          },
+          "received_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When Folio received the snapshot; absent when there is none (every\nlist is then empty)."
+          },
+          "wanted": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MylarWantedRow"
+            },
+            "description": "Issues Mylar wants, has sent to a download client, or failed to\nget. Soonest in-store date first, undated last."
+          }
+        }
+      },
       "MylarFreshness": {
         "type": "string",
         "description": "How far a snapshot can be trusted, by when Folio received it.",
@@ -29262,6 +29282,191 @@
           "stale",
           "expired"
         ]
+      },
+      "MylarHistoryRow": {
+        "type": "object",
+        "description": "A recent snatch or post-process event.",
+        "required": [
+          "series",
+          "status"
+        ],
+        "properties": {
+          "at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "cv_issue_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "cv_series_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "issue": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "series": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "MylarJobRow": {
+        "type": "object",
+        "description": "One of Mylar's scheduled jobs.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "next_run": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "prev_run": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "MylarPullRow": {
+        "type": "object",
+        "description": "One line of Mylar's weekly pull list.",
+        "required": [
+          "ship_date",
+          "series",
+          "issue",
+          "status"
+        ],
+        "properties": {
+          "cv_issue_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "cv_series_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "ComicVine volume id; null when Mylar's pull service found none."
+          },
+          "issue": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "series": {
+            "type": "string"
+          },
+          "series_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "ship_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "MylarQueueBlock": {
+        "type": "object",
+        "properties": {
+          "counts": {
+            "type": "object",
+            "description": "Entries per status, over the whole queue (not only `items`).",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MylarQueueItem"
+            }
+          }
+        }
+      },
+      "MylarQueueItem": {
+        "type": "object",
+        "description": "One entry of Mylar's direct-download queue. No link and no file name:\nthe script never reads them.",
+        "required": [
+          "title",
+          "status"
+        ],
+        "properties": {
+          "size": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "year": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
       },
       "MylarSnapshot": {
         "type": "object",
@@ -29273,31 +29478,31 @@
           "history": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/HistoryRow"
+              "$ref": "#/components/schemas/MylarHistoryRow"
             }
           },
           "jobs": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/JobRow"
+              "$ref": "#/components/schemas/MylarJobRow"
             }
           },
           "meta": {
-            "$ref": "#/components/schemas/SnapshotMeta"
+            "$ref": "#/components/schemas/MylarSnapshotMeta"
           },
           "pull_list": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/PullRow"
+              "$ref": "#/components/schemas/MylarPullRow"
             }
           },
           "queue": {
-            "$ref": "#/components/schemas/QueueBlock"
+            "$ref": "#/components/schemas/MylarQueueBlock"
           },
           "wanted": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/WantedRow"
+              "$ref": "#/components/schemas/MylarWantedRow"
             }
           },
           "watchlist": {
@@ -29306,6 +29511,36 @@
               "type": "object"
             },
             "description": "Rows of `[ComicVine volume id, status, still publishing]`."
+          }
+        }
+      },
+      "MylarSnapshotMeta": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "generated_at"
+        ],
+        "properties": {
+          "annuals_included": {
+            "type": "boolean",
+            "description": "The operator said Mylar's annual integration is on."
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the script read `mylar.db`. Informational: staleness is\njudged by when Folio received the snapshot."
+          },
+          "mylar_db_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },
@@ -29439,6 +29674,54 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "MylarWantedRow": {
+        "type": "object",
+        "description": "An issue Mylar wants, has snatched, or failed to get.",
+        "required": [
+          "series",
+          "issue",
+          "status"
+        ],
+        "properties": {
+          "added_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "cv_issue_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "cv_series_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "issue": {
+            "type": "string"
+          },
+          "series": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "store_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
           }
         }
       },
@@ -31764,59 +32047,6 @@
           }
         }
       },
-      "PullRow": {
-        "type": "object",
-        "description": "One line of Mylar's weekly pull list.",
-        "required": [
-          "ship_date",
-          "series",
-          "issue",
-          "status"
-        ],
-        "properties": {
-          "cv_issue_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
-          },
-          "cv_series_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "ComicVine volume id; null when Mylar's pull service found none."
-          },
-          "issue": {
-            "type": "string"
-          },
-          "publisher": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "series": {
-            "type": "string"
-          },
-          "series_year": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          },
-          "ship_date": {
-            "type": "string",
-            "format": "date"
-          },
-          "status": {
-            "type": "string"
-          }
-        }
-      },
       "PutPageOverridesReq": {
         "type": "object",
         "description": "Replacement body for `PUT`. Omitted fields default to \"no override\".",
@@ -31836,28 +32066,6 @@
             "items": {
               "type": "integer",
               "format": "int32"
-            }
-          }
-        }
-      },
-      "QueueBlock": {
-        "type": "object",
-        "properties": {
-          "counts": {
-            "type": "object",
-            "description": "Entries per status, over the whole queue (not only `items`).",
-            "additionalProperties": {
-              "type": "integer",
-              "format": "int64"
-            },
-            "propertyNames": {
-              "type": "string"
-            }
-          },
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/QueueItem"
             }
           }
         }
@@ -32082,41 +32290,6 @@
             "type": "integer",
             "format": "int64",
             "description": "Sum across all queues — convenient for the topbar pill."
-          }
-        }
-      },
-      "QueueItem": {
-        "type": "object",
-        "description": "One entry of Mylar's direct-download queue. No link and no file name:\nthe script never reads them.",
-        "required": [
-          "title",
-          "status"
-        ],
-        "properties": {
-          "size": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "status": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "updated_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "year": {
-            "type": [
-              "string",
-              "null"
-            ]
           }
         }
       },
@@ -37390,36 +37563,6 @@
           }
         }
       },
-      "SnapshotMeta": {
-        "type": "object",
-        "required": [
-          "schema_version",
-          "generated_at"
-        ],
-        "properties": {
-          "annuals_included": {
-            "type": "boolean",
-            "description": "The operator said Mylar's annual integration is on."
-          },
-          "generated_at": {
-            "type": "string",
-            "format": "date-time",
-            "description": "When the script read `mylar.db`. Informational: staleness is\njudged by when Folio received the snapshot."
-          },
-          "mylar_db_version": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          },
-          "schema_version": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          }
-        }
-      },
       "SortField": {
         "type": "string",
         "description": "Sort axes a saved view can choose. Distinct from [`Field`] because not\nevery filterable field is a sensible sort axis (e.g., multi-valued\ngenres can't sort).",
@@ -38842,6 +38985,22 @@
           "queued": {
             "type": "boolean",
             "description": "`false` when a pass was already queued."
+          }
+        }
+      },
+      "UpcomingThisWeekView": {
+        "type": "object",
+        "description": "The \"Out this week\" rail.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UpcomingEntryView"
+            },
+            "description": "This week's releases in the caller's series, by release date.\nBounded by the week, so the list is whole: no cursor."
           }
         }
       },
@@ -40288,54 +40447,6 @@
           "double",
           "webtoon"
         ]
-      },
-      "WantedRow": {
-        "type": "object",
-        "description": "An issue Mylar wants, has snatched, or failed to get.",
-        "required": [
-          "series",
-          "issue",
-          "status"
-        ],
-        "properties": {
-          "added_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "cv_issue_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
-          },
-          "cv_series_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
-          },
-          "issue": {
-            "type": "string"
-          },
-          "series": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string"
-          },
-          "store_date": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date"
-          }
-        }
       },
       "WatchMode": {
         "type": "string",

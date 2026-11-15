@@ -1097,6 +1097,12 @@ export type UpcomingWeeksPage = Schemas["CursorPage_UpcomingWeekView"];
 export type UpcomingSummaryView = Schemas["UpcomingSummaryView"];
 export type UpcomingStage = Schemas["UpcomingStage"];
 export type UpcomingScope = "mine" | "all";
+export type UpcomingThisWeekView = Schemas["UpcomingThisWeekView"];
+export type MylarActivityView = Schemas["MylarActivityView"];
+export type MylarWantedRow = Schemas["MylarWantedRow"];
+export type MylarHistoryRow = Schemas["MylarHistoryRow"];
+export type MylarQueueItem = Schemas["MylarQueueItem"];
+export type MylarJobRow = Schemas["MylarJobRow"];
 export type SeriesNextReleaseView = Schemas["SeriesNextReleaseView"];
 export type BulkAcceptRelationshipSuggestionsReq =
   Schemas["BulkAcceptRelationshipSuggestionsReq"];

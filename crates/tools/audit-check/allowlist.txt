@@ -109,6 +109,7 @@ api/libraries.rs::scan_preview            # GET /libraries/{slug}/scan-preview �
 
 # ── admin_upcoming.rs (upcoming-releases 1.0) ───────────────
 api/admin_upcoming.rs::status  # GET /admin/upcoming/status — read-only release-calendar state and counts
+api/admin_upcoming.rs::mylar_activity  # GET /admin/integrations/mylar/activity — read-only view of the stored Mylar snapshot
 
 # ── library_events.rs (observability-split M10) ──────────────
 api/library_events.rs::list_library_events  # GET /admin/library-events — durable manifest read

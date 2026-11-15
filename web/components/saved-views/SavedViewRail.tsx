@@ -15,6 +15,7 @@ import { CoverPriorityProvider } from "@/components/library/cover-priority";
 import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
 import { RailIconPicker } from "@/components/library/RailIconPicker";
 import { SurpriseMeButton } from "@/components/library/SurpriseMeButton";
+import { UpcomingThisWeekRailBody } from "@/components/upcoming/UpcomingRail";
 import { getCoverWidth } from "@/components/library/use-cover-size";
 import {
   useCblListWindowInfinite,
@@ -53,6 +54,11 @@ import {
  *    to the row's `system_key` server-side.
  *  - User-authored views use their UUID id. */
 function viewDetailHref(view: SavedViewView): string {
+  // "Out this week" has no page of its own: it is the first week of the
+  // Upcoming page.
+  if (view.kind === "system" && view.system_key === "upcoming_this_week") {
+    return "/upcoming";
+  }
   if (view.kind === "system" && view.system_key) {
     return `/views/${view.system_key.replace(/_/g, "-")}`;
   }
@@ -165,6 +171,12 @@ function renderRailBody(
   if (view.kind === "system" && view.system_key === "new_in_series") {
     return {
       body: <NewInSeriesRailBody itemStyle={itemStyle} />,
+      hasMore: true,
+    };
+  }
+  if (view.kind === "system" && view.system_key === "upcoming_this_week") {
+    return {
+      body: <UpcomingThisWeekRailBody itemStyle={itemStyle} />,
       hasMore: true,
     };
   }

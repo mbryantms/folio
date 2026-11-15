@@ -42,8 +42,8 @@ export type RailPrefetchResult = "items" | "empty" | "failed" | "unsupported";
  * reads. Never throws: TanStack's `prefetch*` swallow errors, and a failed
  * query is left out of the dehydrated state so the client refetches it.
  *
- * Not prefetched: `on_this_day` (keyed by the *browser's* local date, which
- * the server does not know).
+ * Not prefetched: `on_this_day` and `upcoming_this_week` (keyed by the
+ * *browser's* local date, which the server does not know).
  */
 export async function prefetchRail(
   qc: QueryClient,
