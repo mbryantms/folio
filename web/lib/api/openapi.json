@@ -4385,6 +4385,34 @@
         }
       }
     },
+    "/api/creators/{slug}/profile/refresh": {
+      "post": {
+        "summary": "`POST /creators/{slug}/profile/refresh` — queue a fresh provider fetch\nof the creator's profile. Admin only (it spends provider budget).",
+        "operationId": "creators_refresh_profile",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "queued"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {},
+          "503": {
+            "description": "no provider configured"
+          }
+        }
+      }
+    },
     "/api/filter-options/age_ratings": {
       "get": {
         "operationId": "filter_options_age_ratings",
@@ -20786,19 +20814,69 @@
           "name",
           "roles",
           "credit_count",
-          "rails"
+          "rails",
+          "aliases",
+          "enrichment"
         ],
         "properties": {
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "credit_count": {
             "type": "integer",
             "format": "int64",
             "description": "Total visible credit count across both junction tables (each\ndistinct (series_id) or (issue_id) counted once)."
           },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enrichment": {
+            "$ref": "#/components/schemas/EnrichmentStatus",
+            "description": "Where the profile fetch stands."
+          },
+          "enrichment_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Last fetch failure. Admins get the provider's error text; any other\ncaller gets [`READER_PROFILE_ERROR`] whenever a failure is recorded."
+          },
           "id": {
             "type": "string"
           },
+          "image_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Provider data on the `person` row (roadmap WP-9.9): a portrait, a\none-paragraph description and other names the creator is known by."
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntityLinkView"
+            },
+            "description": "Provider records the creator is linked to."
+          },
           "name": {
             "type": "string"
+          },
+          "profile": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EntityProfileView",
+                "description": "Provider-filled profile (the wiki block), once fetched."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "rails": {
             "type": "array",
@@ -24889,11 +24967,43 @@
               "null"
             ]
           },
+          "born": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Date of birth, `YYYY-MM-DD` when the provider has a full date."
+          },
+          "characters_created": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Characters the creator is credited with creating."
+          },
+          "country": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "creators": {
             "type": "array",
             "items": {
               "type": "string"
             }
+          },
+          "died": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "first_appearance": {
             "oneOf": [
@@ -24906,6 +25016,12 @@
             ]
           },
           "gender": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "hometown": {
             "type": [
               "string",
               "null"
@@ -24936,6 +25052,24 @@
               "null"
             ]
           },
+          "series_credits": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Series the provider credits the creator on. (Its issue count is\n`provider_counts`, as for every kind.)",
+            "minimum": 0
+          },
+          "story_arc_credits": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Story arcs the provider credits the creator on.",
+            "minimum": 0
+          },
           "teams": {
             "type": "array",
             "items": {
@@ -24947,6 +25081,12 @@
             "items": {
               "type": "string"
             }
+          },
+          "website": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

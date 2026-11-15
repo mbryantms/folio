@@ -1900,3 +1900,407 @@ async fn profile_failure_detail_is_admin_only() {
     );
     assert!(!body.to_string().contains("provider.invalid"), "{body}");
 }
+
+// ───────── creator profiles (roadmap WP-9.9) ─────────
+
+async fn add_creator(db: &DatabaseConnection, slug: &str, name: &str, issue_id: &str) -> Uuid {
+    let id = add_entity(db, "person", slug, name).await;
+    exec(
+        db,
+        "INSERT INTO issue_credits (issue_id, role, person, person_id) VALUES ($1, 'writer', $2, $3)",
+        vec![issue_id.into(), name.into(), id.into()],
+    )
+    .await;
+    id
+}
+
+fn link_pairs(body: &serde_json::Value) -> Vec<(String, String)> {
+    body["links"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|l| {
+                    (
+                        l["source"].as_str().unwrap().to_owned(),
+                        l["external_id"].as_str().unwrap().to_owned(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A creator's profile is one merged record: Metron names the creator and
+/// the ComicVine and GCD ids, ComicVine fills the wiki sections and the
+/// fact sheet, including everything it holds on the person.
+#[tokio::test]
+async fn creator_profile_merges_metron_and_comicvine() {
+    let cv = MockServer::start().await;
+    let metron = MockServer::start().await;
+    let gcd = MockServer::start().await;
+    let app = TestApp::spawn_with_all_providers(cv.uri(), metron.uri(), gcd.uri()).await;
+    let f = fixture(&app).await;
+    Mock::given(method("GET"))
+        .and(path("/api/creator/"))
+        .and(query_param("name", "Bill Finger"))
+        .respond_with(json(serde_json::json!({
+            "count": 2, "next": null, "previous": null,
+            "results": [
+                {"id": 500, "name": "Bill Fingerman", "modified": "2024-01-01T00:00:00Z"},
+                {"id": 41, "name": "Bill Finger", "modified": "2024-01-01T00:00:00Z"}
+            ]
+        })))
+        .mount(&metron)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/creator/41/"))
+        .respond_with(json(serde_json::json!({
+            "id": 41, "name": "Bill Finger",
+            "birth": "1914-02-08", "death": "1974-01-18",
+            "desc": "William Finger was an American comic strip and comic book writer.",
+            "image": "https://static.metron.cloud/media/creator/2018/11/11/bill-finger.jpg",
+            "alias": ["William Finger"],
+            "cv_id": 10996, "gcd_id": 600,
+            "resource_url": "https://metron.cloud/creator/bill-finger/"
+        })))
+        .mount(&metron)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/person/4040-10996"))
+        .respond_with(json(serde_json::json!({
+            "status_code": 1, "error": "OK",
+            "results": {
+                "id": 10996, "name": "Bill Finger",
+                "aliases": "Milton Finger\nWilliam Finger",
+                "deck": "The uncredited co-creator of Batman.",
+                "description": "<p>Lead.</p><h2>Career</h2><p>Wrote the first Batman story.</p>",
+                "gender": 1,
+                "birth": "1914-02-08 00:00:00",
+                "death": {"date": "1974-01-18 00:00:00.000000", "timezone_type": 3, "timezone": "America/Los_Angeles"},
+                "country": "United States", "hometown": "Denver, CO",
+                "website": "https://example.com/finger", "email": "finger@example.com",
+                "image": {"medium_url": "https://comicvine.gamespot.com/a/uploads/scale_medium/finger.jpg"},
+                "created_characters": [{"id": 1699, "name": "Batman"}, {"id": 1807, "name": "Robin"}],
+                "volume_credits": [
+                    {"id": 18058, "name": "Detective Comics"},
+                    {"id": 796, "name": "Batman"},
+                    {"id": 3, "name": "World's Finest Comics"}
+                ],
+                "story_arc_credits": [{"id": 9, "name": "Year One"}],
+                "count_of_isssue_appearances": 1432,
+                "site_detail_url": "https://comicvine.gamespot.com/bill-finger/4040-10996/"
+            }
+        })))
+        .mount(&cv)
+        .await;
+    let finger = add_creator(&f.db, "bill-finger", "Bill Finger", &f.a_issues[0]).await;
+
+    server::jobs::entity_enrich::process(&app.state(), ProfileKind::Person, finger)
+        .await
+        .unwrap();
+
+    let (s, body) = get_json(&app, "/api/creators/bill-finger", &f.user).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["enrichment"], "done", "{body}");
+    // The `person` row: ComicVine wins the short fields.
+    assert!(
+        body["image_url"]
+            .as_str()
+            .unwrap()
+            .contains("comicvine.gamespot.com")
+    );
+    assert_eq!(body["description"], "The uncredited co-creator of Batman.");
+    assert_eq!(
+        body["aliases"],
+        serde_json::json!(["Milton Finger", "William Finger"])
+    );
+    // The profile: Metron's summary, ComicVine's sections and facts.
+    let p = &body["profile"];
+    assert!(
+        p["summary"]
+            .as_str()
+            .unwrap()
+            .starts_with("William Finger was")
+    );
+    assert_eq!(p["sources"], serde_json::json!(["metron", "comicvine"]));
+    assert_eq!(p["provider_counts"]["comicvine"], 1432);
+    assert!(p["provider_counts"].get("metron").is_none(), "{p}");
+    let sections = p["sections"].as_array().unwrap();
+    assert_eq!(sections.len(), 2, "{sections:?}");
+    assert_eq!(sections[1]["heading"], "Career");
+    let facts = &p["facts"];
+    assert_eq!(facts["born"], "1914-02-08");
+    assert_eq!(facts["died"], "1974-01-18");
+    assert_eq!(facts["country"], "United States");
+    assert_eq!(facts["hometown"], "Denver, CO");
+    assert_eq!(facts["gender"], "Male");
+    assert_eq!(facts["website"], "https://example.com/finger");
+    assert_eq!(facts["email"], "finger@example.com");
+    assert_eq!(
+        facts["characters_created"],
+        serde_json::json!(["Batman", "Robin"])
+    );
+    assert_eq!(facts["series_credits"], 3);
+    assert_eq!(facts["story_arc_credits"], 1);
+    assert!(
+        facts.get("birthday").is_none(),
+        "a character's field\n{facts}"
+    );
+    // Links: Metron's record named the ComicVine and GCD ids.
+    assert_eq!(
+        link_pairs(&body),
+        vec![
+            ("comicvine".to_owned(), "10996".to_owned()),
+            ("gcd".to_owned(), "600".to_owned()),
+            ("metron".to_owned(), "41".to_owned()),
+        ]
+    );
+
+    // A second fetch goes by the linked ids: no name search this time.
+    let searches_before = metron
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.path() == "/api/creator/")
+        .count();
+    server::jobs::entity_enrich::process(&app.state(), ProfileKind::Person, finger)
+        .await
+        .unwrap();
+    let searches_after = metron
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.path() == "/api/creator/")
+        .count();
+    assert_eq!(searches_before, 1);
+    assert_eq!(searches_after, 1, "a linked creator is fetched by id");
+}
+
+/// The lazy model, as for characters: a reader's view queues nothing, an
+/// admin's first view queues one fetch, and Refresh is admin-only and
+/// audited as `admin.entity.refresh_profile`.
+#[tokio::test]
+async fn creator_profile_is_queued_by_an_admin_view_only_and_refresh_is_audited() {
+    let cv = MockServer::start().await;
+    let metron = MockServer::start().await;
+    let gcd = MockServer::start().await;
+    let app = TestApp::spawn_with_all_providers(cv.uri(), metron.uri(), gcd.uri()).await;
+    let f = fixture(&app).await;
+    Mock::given(method("GET"))
+        .and(path("/api/creator/"))
+        .respond_with(json(serde_json::json!({"count": 0, "results": []})))
+        .mount(&metron)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/people/"))
+        .respond_with(json(serde_json::json!({"status_code": 1, "results": []})))
+        .mount(&cv)
+        .await;
+    let kane = add_creator(&f.db, "bob-kane", "Bob Kane", &f.a_issues[0]).await;
+    let requested = || async {
+        scalar(
+            &f.db,
+            "SELECT count(*) AS n FROM entity_profile WHERE entity_type = 'person' \
+               AND entity_id = $1 AND requested_at IS NOT NULL",
+            vec![kane.into()],
+        )
+        .await
+    };
+    let state = app.state();
+    let queued_jobs = || async {
+        state
+            .jobs
+            .queue_outstanding(&state.jobs.entity_enrich_storage)
+            .await
+            .unwrap()
+    };
+
+    // Reader views, twice: nothing stamped, nothing queued.
+    for _ in 0..2 {
+        let (s, body) = get_json(&app, "/api/creators/bob-kane", &f.user).await;
+        assert_eq!(s, StatusCode::OK, "{body}");
+        assert_eq!(body["enrichment"], "unavailable", "{body}");
+        assert!(body.get("profile").is_none());
+    }
+    assert_eq!(requested().await, Some(0), "reader view stamped a request");
+    assert_eq!(queued_jobs().await, 0, "reader view queued a job");
+
+    // An admin's view queues it, once.
+    for _ in 0..2 {
+        let (_, body) = get_json(&app, "/api/creators/bob-kane", &f.admin).await;
+        assert_eq!(body["enrichment"], "pending", "{body}");
+    }
+    assert_eq!(requested().await, Some(1));
+    assert_eq!(queued_jobs().await, 1, "admin views queued one job");
+    let (_, body) = get_json(&app, "/api/creators/bob-kane", &f.user).await;
+    assert_eq!(body["enrichment"], "pending", "{body}");
+
+    // Neither provider has the name: the fetch records why.
+    server::jobs::entity_enrich::process(&app.state(), ProfileKind::Person, kane)
+        .await
+        .unwrap();
+    let (_, body) = get_json(&app, "/api/creators/bob-kane", &f.user).await;
+    assert_eq!(body["enrichment"], "failed", "{body}");
+    assert_eq!(
+        body["enrichment_error"],
+        server::api::entity_pages::READER_PROFILE_ERROR
+    );
+    let (_, body) = get_json(&app, "/api/creators/bob-kane", &f.admin).await;
+    let err = body["enrichment_error"].as_str().unwrap();
+    assert!(
+        err.contains("Metron has no creator named")
+            && err.contains("ComicVine has no creator named"),
+        "{err}"
+    );
+
+    // Refresh: admin only, audited, back to pending.
+    let (s, _) = post(&app, "/api/creators/bob-kane/profile/refresh", &f.user).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    let (s, _) = post(&app, "/api/creators/nobody/profile/refresh", &f.admin).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, body) = post(&app, "/api/creators/bob-kane/profile/refresh", &f.admin).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{body}");
+    let (_, body) = get_json(&app, "/api/creators/bob-kane", &f.admin).await;
+    assert_eq!(body["enrichment"], "pending", "{body}");
+    let audited = scalar(
+        &f.db,
+        "SELECT count(*) AS n FROM audit_log WHERE action = 'admin.entity.refresh_profile' \
+           AND target_type = 'person' AND target_id = $1",
+        vec![kane.to_string().into()],
+    )
+    .await;
+    assert_eq!(audited, Some(1));
+
+    // Without any provider the page says so and Refresh has nothing to do.
+    let plain = TestApp::spawn().await;
+    let g = fixture(&plain).await;
+    add_creator(&g.db, "bob-kane", "Bob Kane", &g.a_issues[0]).await;
+    let (_, body) = get_json(&plain, "/api/creators/bob-kane", &g.admin).await;
+    assert_eq!(body["enrichment"], "unavailable");
+    let (s, _) = post(&plain, "/api/creators/bob-kane/profile/refresh", &g.admin).await;
+    assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE);
+}
+
+/// Two real creators can share a name, and `person` holds one row per
+/// name. Of the same-named provider records, the one whose series credits
+/// overlap the creator's local series is chosen: through the ComicVine
+/// records Metron's creators name, and through ComicVine's own search.
+#[tokio::test]
+async fn same_named_creators_are_resolved_by_local_series_overlap() {
+    let cv = MockServer::start().await;
+    let metron = MockServer::start().await;
+    let gcd = MockServer::start().await;
+    let app = TestApp::spawn_with_all_providers(cv.uri(), metron.uri(), gcd.uri()).await;
+    let f = fixture(&app).await;
+    let cv_person = |id: i64, name: &str, issues: i64, volume: &str| {
+        json(serde_json::json!({
+            "status_code": 1, "error": "OK",
+            "results": {
+                "id": id, "name": name, "deck": format!("Record {id}."),
+                "count_of_isssue_appearances": issues,
+                "volume_credits": [{"id": id * 10, "name": volume}]
+            }
+        }))
+    };
+
+    // ── John Smith: Metron lists two; each names a ComicVine record ──
+    Mock::given(method("GET"))
+        .and(path("/api/creator/"))
+        .and(query_param("name", "John Smith"))
+        .respond_with(json(serde_json::json!({
+            "count": 3, "results": [
+                {"id": 7, "name": "John Smith"},
+                {"id": 8, "name": "John Smith"},
+                {"id": 9, "name": "John Smithson"}
+            ]
+        })))
+        .mount(&metron)
+        .await;
+    for (id, cv_id) in [(7, 100), (8, 200)] {
+        Mock::given(method("GET"))
+            .and(path(format!("/api/creator/{id}/")))
+            .respond_with(json(serde_json::json!({
+                "id": id, "name": "John Smith", "desc": format!("Metron creator {id}."),
+                "cv_id": cv_id
+            })))
+            .mount(&metron)
+            .await;
+    }
+    // The prolific one never worked on a local series; the other did.
+    Mock::given(method("GET"))
+        .and(path("/person/4040-100"))
+        .respond_with(cv_person(100, "John Smith", 900, "Action Comics"))
+        .mount(&cv)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/person/4040-200"))
+        .respond_with(cv_person(200, "John Smith", 12, "detective  comics"))
+        .mount(&cv)
+        .await;
+    let smith = add_creator(&f.db, "john-smith", "John Smith", &f.a_issues[0]).await;
+    server::jobs::entity_enrich::process(&app.state(), ProfileKind::Person, smith)
+        .await
+        .unwrap();
+    let (_, body) = get_json(&app, "/api/creators/john-smith", &f.admin).await;
+    assert_eq!(body["enrichment"], "done", "{body}");
+    assert_eq!(
+        link_pairs(&body),
+        vec![
+            ("comicvine".to_owned(), "200".to_owned()),
+            ("metron".to_owned(), "8".to_owned()),
+        ],
+        "the record credited on Detective Comics, and the Metron creator that names it"
+    );
+    assert_eq!(body["description"], "Record 200.");
+    assert_eq!(body["profile"]["summary"], "Metron creator 8.");
+
+    // ── Jane Doe: Metron has nobody; ComicVine's search has two ──
+    Mock::given(method("GET"))
+        .and(path("/api/creator/"))
+        .and(query_param("name", "Jane Doe"))
+        .respond_with(json(serde_json::json!({"count": 0, "results": []})))
+        .mount(&metron)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/people/"))
+        .and(query_param("filter", "name:Jane Doe"))
+        .respond_with(json(serde_json::json!({
+            "status_code": 1, "results": [
+                {"id": 300, "name": "Jane Doe", "count_of_isssue_appearances": 700},
+                {"id": 400, "name": "Jane Doe", "count_of_isssue_appearances": 5},
+                {"id": 500, "name": "Jane Doe-Ray", "count_of_isssue_appearances": 9000}
+            ]
+        })))
+        .mount(&cv)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/person/4040-300"))
+        .respond_with(cv_person(300, "Jane Doe", 700, "Superman"))
+        .mount(&cv)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/person/4040-400"))
+        .respond_with(cv_person(400, "Jane Doe", 5, "Detective Comics"))
+        .mount(&cv)
+        .await;
+    let doe = add_creator(&f.db, "jane-doe", "Jane Doe", &f.a_issues[1]).await;
+    server::jobs::entity_enrich::process(&app.state(), ProfileKind::Person, doe)
+        .await
+        .unwrap();
+    let (_, body) = get_json(&app, "/api/creators/jane-doe", &f.admin).await;
+    assert_eq!(body["enrichment"], "done", "{body}");
+    assert_eq!(
+        link_pairs(&body),
+        vec![("comicvine".to_owned(), "400".to_owned())]
+    );
+    // The inexact name was never opened.
+    assert!(
+        cv.received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .all(|r| r.url.path() != "/person/4040-500")
+    );
+}

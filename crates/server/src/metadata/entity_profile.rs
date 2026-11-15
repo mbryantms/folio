@@ -1,5 +1,5 @@
 //! Provider-filled profiles for the entity landing pages (characters,
-//! teams, locations, story arcs) — the "wiki" block.
+//! teams, locations, story arcs, creators) — the "wiki" block.
 //!
 //! One fetch per entity, queued lazily by the first page view (or an
 //! admin's Refresh) and run by `jobs::entity_enrich`:
@@ -13,6 +13,14 @@
 //!    and the appearance count. Without a Metron id it falls back to
 //!    its own exact-name search.
 //!
+//! **Creators** (`ProfileKind::Person`, roadmap WP-9.9) follow the same
+//! order with one more rule. `person` is unique by name, and two real
+//! creators can share one. A provider id the creator already holds (an
+//! apply links it, WP-9.8) is used as it is. Only when there is none is a
+//! name searched, exact matches only, and of several same-named records
+//! the one whose series credits overlap the creator's local series wins
+//! ([`pick_person`]).
+//!
 //! The merged result lands in three places: the entity row's short
 //! fields (`description`, `image_url`, `aliases`, `real_name`) through
 //! [`writers::update_entity_display`], the provider ids through
@@ -25,10 +33,10 @@ use sea_orm::{
     ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult, QueryFilter, Set, Statement,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
-use super::comicvine::{ComicVineClient, CvEntityKind, CvEntityRecord};
+use super::comicvine::{ComicVineClient, CvEntityKind, CvEntityRecord, CvVolumeCredit};
 use super::identifier::{Identifier, Source};
 use super::metron::{MetronClient, MetronEntityKind, MetronEntityRecord};
 use super::provider::ProviderError;
@@ -44,6 +52,8 @@ pub enum ProfileKind {
     Team,
     Location,
     StoryArc,
+    /// A creator (`person` row).
+    Person,
 }
 
 impl ProfileKind {
@@ -55,6 +65,7 @@ impl ProfileKind {
             Self::Team => "team",
             Self::Location => "location",
             Self::StoryArc => "story_arc",
+            Self::Person => "person",
         }
     }
 
@@ -64,6 +75,7 @@ impl ProfileKind {
             "team" => Some(Self::Team),
             "location" => Some(Self::Location),
             "story_arc" => Some(Self::StoryArc),
+            "person" => Some(Self::Person),
             _ => None,
         }
     }
@@ -74,6 +86,7 @@ impl ProfileKind {
             Self::Team => CvEntityKind::Team,
             Self::Location => CvEntityKind::Location,
             Self::StoryArc => CvEntityKind::StoryArc,
+            Self::Person => CvEntityKind::Person,
         }
     }
 
@@ -83,6 +96,7 @@ impl ProfileKind {
             Self::Character => Some(MetronEntityKind::Character),
             Self::Team => Some(MetronEntityKind::Team),
             Self::StoryArc => Some(MetronEntityKind::StoryArc),
+            Self::Person => Some(MetronEntityKind::Creator),
             Self::Location => None,
         }
     }
@@ -132,6 +146,31 @@ pub struct Facts {
     pub powers: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub universes: Vec<String>,
+    // ── creators (roadmap WP-9.9): everything ComicVine holds ──
+    /// Date of birth, `YYYY-MM-DD` when the provider has a full date.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub born: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub died: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub country: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hometown: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub website: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    /// Characters the creator is credited with creating.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub characters_created: Vec<String>,
+    /// Series the provider credits the creator on. (An issue count would
+    /// be `provider_counts`, as for every kind, but ComicVine reports none
+    /// for a person.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub series_credits: Option<u64>,
+    /// Story arcs the provider credits the creator on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub story_arc_credits: Option<u64>,
 }
 
 /// What a fetch produced, before it is written.
@@ -221,10 +260,46 @@ pub async fn enrich(state: &AppState, kind: ProfileKind, entity_id: Uuid) -> any
     let mut profile = Profile::default();
     let mut problems: Vec<String> = Vec::new();
 
+    let (metron, cv) = if kind == ProfileKind::Person {
+        lookup_person(state, entity_id, &name, &known, &mut problems).await?
+    } else {
+        lookup_entity(state, kind, &name, &known, &mut profile, &mut problems).await
+    };
+    if let Some(n) = cv.as_ref().and_then(|c| c.issue_appearances) {
+        profile
+            .provider_counts
+            .insert("comicvine".into(), n.max(0) as u64);
+    }
+
+    if metron.is_none() && cv.is_none() {
+        let error = if problems.is_empty() {
+            "No metadata provider is configured".to_owned()
+        } else {
+            problems.join("; ")
+        };
+        write_failure(db, entity_type, entity_id, &error).await?;
+        return Ok(());
+    }
+
+    merge(&mut profile, kind, metron.as_ref(), cv.as_ref());
+    write_profile(db, kind, entity_id, &profile, &problems).await?;
+    Ok(())
+}
+
+/// The two-provider lookup of a character / team / location / story arc:
+/// Metron for identity, then ComicVine by Metron's id or its own search.
+async fn lookup_entity(
+    state: &AppState,
+    kind: ProfileKind,
+    name: &str,
+    known: &HashMap<String, String>,
+    profile: &mut Profile,
+    problems: &mut Vec<String>,
+) -> (Option<MetronEntityRecord>, Option<CvEntityRecord>) {
     // ── Metron: identity + ids ──
     let mut metron: Option<MetronEntityRecord> = None;
     if let (Some(client), Some(mk)) = (metron_client(state), kind.metron_kind()) {
-        match lookup_metron(&client, mk, &name, known.get("metron").map(String::as_str)).await {
+        match lookup_metron(&client, mk, name, known.get("metron").map(String::as_str)).await {
             Ok(Some((rec, count))) => {
                 if let Some(n) = count {
                     profile.provider_counts.insert("metron".into(), n);
@@ -245,33 +320,250 @@ pub async fn enrich(state: &AppState, kind: ProfileKind, entity_id: Uuid) -> any
                 .and_then(|m| m.cv_id)
                 .map(|id| id.to_string())
         });
-        match lookup_comicvine(&client, kind.cv_kind(), &name, cv_id.as_deref()).await {
-            Ok(Some(rec)) => {
-                if let Some(n) = rec.issue_appearances {
-                    profile
-                        .provider_counts
-                        .insert("comicvine".into(), n.max(0) as u64);
-                }
-                cv = Some(rec);
-            }
+        match lookup_comicvine(&client, kind.cv_kind(), name, cv_id.as_deref()).await {
+            Ok(Some(rec)) => cv = Some(rec),
             Ok(None) => problems.push(format!("ComicVine has no record named {name:?}")),
             Err(e) => problems.push(format!("ComicVine: {e}")),
         }
     }
+    (metron, cv)
+}
 
-    if metron.is_none() && cv.is_none() {
-        let error = if problems.is_empty() {
-            "No metadata provider is configured".to_owned()
-        } else {
-            problems.join("; ")
-        };
-        write_failure(db, entity_type, entity_id, &error).await?;
-        return Ok(());
+// ───────── creators ─────────
+
+/// How many same-named provider records a creator lookup will open to
+/// tell them apart. Each is one request against the provider's budget.
+const MAX_PERSON_CANDIDATES: usize = 3;
+
+/// The series a creator is credited on locally: what a same-named
+/// provider record is compared against.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct LocalSeries {
+    /// ComicVine volume ids of those series.
+    comicvine_ids: HashSet<String>,
+    /// Their names, as [`name_key`] spells them.
+    names: HashSet<String>,
+}
+
+async fn local_series<C: ConnectionTrait>(
+    db: &C,
+    person_id: Uuid,
+) -> Result<LocalSeries, sea_orm::DbErr> {
+    #[derive(Debug, FromQueryResult)]
+    struct Row {
+        name: String,
+        cv_id: Option<String>,
+    }
+    let rows = Row::find_by_statement(Statement::from_sql_and_values(
+        db.get_database_backend(),
+        "SELECT s.name AS name, e.external_id AS cv_id \
+           FROM (SELECT sc.series_id FROM series_credits sc WHERE sc.person_id = $1 \
+                 UNION \
+                 SELECT i.series_id FROM issue_credits ic \
+                   JOIN issues i ON i.id = ic.issue_id WHERE ic.person_id = $1) c \
+           JOIN series s ON s.id = c.series_id \
+           LEFT JOIN external_ids e \
+             ON e.entity_type = 'series' AND e.entity_id = s.id::text \
+            AND e.source = 'comicvine'",
+        [person_id.into()],
+    ))
+    .all(db)
+    .await?;
+    let mut out = LocalSeries::default();
+    for r in rows {
+        out.names.insert(name_key(&r.name));
+        if let Some(id) = r.cv_id {
+            out.comicvine_ids.insert(id);
+        }
+    }
+    Ok(out)
+}
+
+/// How many of a provider record's series credits are series the creator
+/// is credited on locally: by ComicVine volume id, else by name.
+fn series_overlap(credits: &[CvVolumeCredit], local: &LocalSeries) -> usize {
+    credits
+        .iter()
+        .filter(|c| {
+            c.id.is_some_and(|id| local.comicvine_ids.contains(&id.to_string()))
+                || local.names.contains(&name_key(&c.name))
+        })
+        .count()
+}
+
+/// Of several same-named ComicVine creators, the one whose series credits
+/// overlap the local credits most; a tie goes to the record with more
+/// series credits (ComicVine reports no issue count for a person), then
+/// to the earlier candidate (the provider's own order). `None` when no
+/// candidate shares a series with the creator: nothing then says which
+/// one it is, and a guess would stay as the creator's linked record.
+fn pick_person(candidates: Vec<CvEntityRecord>, local: &LocalSeries) -> Option<CvEntityRecord> {
+    let mut best: Option<(usize, usize, CvEntityRecord)> = None;
+    for rec in candidates {
+        let score = (
+            series_overlap(&rec.volume_credits, local),
+            rec.volume_credits.len(),
+        );
+        if score.0 > 0 && best.as_ref().is_none_or(|(o, n, _)| score > (*o, *n)) {
+            best = Some((score.0, score.1, rec));
+        }
+    }
+    best.map(|(_, _, rec)| rec)
+}
+
+/// The creator lookup. A known id is fetched directly. Without one the
+/// name is searched, exact matches only; several same-named records are
+/// opened (at most [`MAX_PERSON_CANDIDATES`]) and told apart by
+/// [`pick_person`]. Metron's creator record has no credits to compare, so
+/// same-named Metron creators are resolved through the ComicVine record
+/// each one names.
+async fn lookup_person(
+    state: &AppState,
+    person_id: Uuid,
+    name: &str,
+    known: &HashMap<String, String>,
+    problems: &mut Vec<String>,
+) -> anyhow::Result<(Option<MetronEntityRecord>, Option<CvEntityRecord>)> {
+    let key = name_key(name);
+    let known_cv = known.get("comicvine").cloned();
+    let local = local_series(&state.db, person_id).await?;
+
+    // ── Metron: every exact-name creator, or the one already linked ──
+    let mut metron_candidates: Vec<MetronEntityRecord> = Vec::new();
+    if let Some(client) = metron_client(state) {
+        let found: Result<Vec<MetronEntityRecord>, ProviderError> = async {
+            let ids: Vec<String> = match known.get("metron") {
+                Some(id) => vec![id.clone()],
+                None => client
+                    .search_entities(MetronEntityKind::Creator, name)
+                    .await?
+                    .into_iter()
+                    .filter(|h| name_key(&h.name) == key)
+                    .take(MAX_PERSON_CANDIDATES)
+                    .map(|h| h.id.to_string())
+                    .collect(),
+            };
+            let mut recs = Vec::with_capacity(ids.len());
+            for id in ids {
+                recs.push(client.fetch_entity(MetronEntityKind::Creator, &id).await?);
+            }
+            Ok(recs)
+        }
+        .await;
+        match found {
+            Ok(recs) if recs.is_empty() => {
+                problems.push(format!("Metron has no creator named {name:?}"));
+            }
+            Ok(recs) => metron_candidates = recs,
+            Err(e) => problems.push(format!("Metron: {e}")),
+        }
+    }
+    // A linked ComicVine id settles which Metron creator this is.
+    if let Some(cv_id) = &known_cv
+        && known.get("metron").is_none()
+        && !metron_candidates.is_empty()
+    {
+        metron_candidates.retain(|m| m.cv_id.is_none_or(|id| &id.to_string() == cv_id));
+        if metron_candidates.is_empty() {
+            problems.push(format!(
+                "Metron's creators named {name:?} are other ComicVine records"
+            ));
+        }
     }
 
-    merge(&mut profile, entity_type, metron.as_ref(), cv.as_ref());
-    write_profile(db, kind, entity_id, &profile, &problems).await?;
-    Ok(())
+    // ── ComicVine: content, and the tie-break between same-named records ──
+    let mut cv: Option<CvEntityRecord> = None;
+    if let Some(client) = comicvine_client(state) {
+        let found: Result<Result<CvEntityRecord, String>, ProviderError> = async {
+            // The ids to open: the linked one, else the records Metron's
+            // candidates name, else ComicVine's own exact-name hits.
+            let mut ids: Vec<String> = match &known_cv {
+                Some(id) => vec![id.clone()],
+                None => metron_candidates
+                    .iter()
+                    .filter_map(|m| m.cv_id.map(|id| id.to_string()))
+                    .collect(),
+            };
+            if ids.is_empty() {
+                let mut hits: Vec<_> = client
+                    .search_entities(CvEntityKind::Person, name)
+                    .await?
+                    .into_iter()
+                    .filter(|h| name_key(&h.name) == key)
+                    .collect();
+                // The longest careers first: those are opened.
+                hits.sort_by_key(|h| std::cmp::Reverse(h.issue_appearances.unwrap_or(0)));
+                ids = hits.into_iter().map(|h| h.id.to_string()).collect();
+            }
+            let mut seen = HashSet::new();
+            ids.retain(|id| seen.insert(id.clone()));
+            // More than one same-named record anywhere (ComicVine's hits,
+            // or Metron's creators even when only one names a ComicVine
+            // id) means the name alone does not say who this is.
+            let ambiguous = known_cv.is_none() && (ids.len() > 1 || metron_candidates.len() > 1);
+            ids.truncate(MAX_PERSON_CANDIDATES);
+            let mut recs = Vec::with_capacity(ids.len());
+            for id in &ids {
+                recs.push(client.fetch_entity(CvEntityKind::Person, id).await?);
+            }
+            if recs.is_empty() {
+                return Ok(Err(format!("ComicVine has no creator named {name:?}")));
+            }
+            if !ambiguous {
+                return Ok(Ok(recs.swap_remove(0)));
+            }
+            let n = recs.len();
+            Ok(pick_person(recs, &local).ok_or_else(|| {
+                format!(
+                    "ComicVine has {n} creators named {name:?} and none is credited on a \
+                     series in this library"
+                )
+            }))
+        }
+        .await;
+        match found {
+            Ok(Ok(rec)) => cv = Some(rec),
+            Ok(Err(why)) => problems.push(why),
+            Err(e) => problems.push(format!("ComicVine: {e}")),
+        }
+    }
+
+    // The Metron creator that is the chosen ComicVine record; with no
+    // ComicVine answer, a lone Metron candidate stands and several are
+    // left alone (nothing tells them apart).
+    let metron = match &cv {
+        Some(c) => {
+            let by_id = metron_candidates.iter().position(|m| m.cv_id == Some(c.id));
+            match by_id {
+                Some(i) => Some(metron_candidates.swap_remove(i)),
+                // Already linked, or a record that names no ComicVine id.
+                None if metron_candidates.len() == 1
+                    && (known.contains_key("metron") || metron_candidates[0].cv_id.is_none()) =>
+                {
+                    metron_candidates.pop()
+                }
+                None => {
+                    if !metron_candidates.is_empty() {
+                        problems.push(format!(
+                            "Metron's creators named {name:?} are other ComicVine records"
+                        ));
+                    }
+                    None
+                }
+            }
+        }
+        None if metron_candidates.len() == 1 => metron_candidates.pop(),
+        None => {
+            if metron_candidates.len() > 1 {
+                problems.push(format!(
+                    "Metron has {} creators named {name:?} and nothing to tell them apart",
+                    metron_candidates.len()
+                ));
+            }
+            None
+        }
+    };
+    Ok((metron, cv))
 }
 
 /// Provider ids the entity already carries (`source → external_id`).
@@ -311,7 +603,11 @@ async fn lookup_metron(
     let rec = client.fetch_entity(kind, &id).await?;
     // The count is one more request; a failure there is not a failure
     // of the record.
-    let count = client.count_entity_issues(kind, &id).await.ok().flatten();
+    let count = if kind.has_issue_list() {
+        client.count_entity_issues(kind, &id).await.ok().flatten()
+    } else {
+        None
+    };
     Ok(Some((rec, count)))
 }
 
@@ -352,10 +648,11 @@ fn dedupe(mut names: Vec<String>) -> Vec<String> {
 /// cross-provider ids.
 fn merge(
     profile: &mut Profile,
-    entity_type: &str,
+    kind: ProfileKind,
     metron: Option<&MetronEntityRecord>,
     cv: Option<&CvEntityRecord>,
 ) {
+    let entity_type = kind.entity_type();
     if let Some(m) = metron {
         profile.sources.push(Source::Metron);
         profile.identifiers.push(Identifier::with_canonical_url(
@@ -408,6 +705,26 @@ fn merge(
         .unwrap_or_default();
 
     let facts = &mut profile.facts;
+    if kind == ProfileKind::Person {
+        facts.gender = cv.and_then(|c| c.gender.clone());
+        facts.born = cv
+            .and_then(|c| c.birth.clone())
+            .or_else(|| metron.and_then(|m| m.birth.clone()));
+        facts.died = cv
+            .and_then(|c| c.death.clone())
+            .or_else(|| metron.and_then(|m| m.death.clone()));
+        if let Some(c) = cv {
+            facts.country = c.country.clone();
+            facts.hometown = c.hometown.clone();
+            facts.website = c.website.clone();
+            facts.email = c.email.clone();
+            facts.characters_created = dedupe(c.created_characters.clone());
+            facts.series_credits =
+                (!c.volume_credits.is_empty()).then_some(c.volume_credits.len() as u64);
+            facts.story_arc_credits = c.story_arc_credits.filter(|n| *n > 0);
+        }
+        return;
+    }
     if let Some(c) = cv {
         facts.real_name = c.real_name.clone();
         facts.gender = c.gender.clone();
@@ -789,6 +1106,66 @@ mod tests {
         assert_eq!(s.len(), 1);
         assert_eq!(s[0].paragraphs, vec!["Just a sentence 'quoted'."]);
         assert!(sections_from_html("   ").is_empty());
+    }
+
+    fn person(id: i64, issues: i64, volumes: &[(i64, &str)]) -> CvEntityRecord {
+        CvEntityRecord {
+            id,
+            name: "John Smith".into(),
+            issue_appearances: Some(issues),
+            volume_credits: volumes
+                .iter()
+                .map(|(id, name)| CvVolumeCredit {
+                    id: Some(*id),
+                    name: (*name).into(),
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn same_named_creators_are_told_apart_by_local_series() {
+        let local = LocalSeries {
+            comicvine_ids: HashSet::from(["18166".to_string()]),
+            names: HashSet::from([name_key("Saga"), name_key("Paper  Girls")]),
+        };
+        // The prolific one shares nothing; the other is credited on two
+        // local series, one by id and one by name.
+        let prolific = person(
+            1,
+            900,
+            &[
+                (5, "Action Comics"),
+                (6, "Detective Comics"),
+                (7, "Superman"),
+            ],
+        );
+        let ours = person(2, 40, &[(18166, "Renamed Volume"), (77, "paper girls")]);
+        assert_eq!(series_overlap(&ours.volume_credits, &local), 2);
+        assert_eq!(series_overlap(&prolific.volume_credits, &local), 0);
+        let picked = pick_person(vec![prolific.clone(), ours.clone()], &local).unwrap();
+        assert_eq!(picked.id, 2);
+        // Equal overlap: more series credits, then the provider's order.
+        let both = LocalSeries {
+            names: HashSet::from([name_key("Detective Comics"), name_key("paper girls")]),
+            ..Default::default()
+        };
+        assert_eq!(
+            pick_person(vec![ours.clone(), prolific.clone()], &both)
+                .unwrap()
+                .id,
+            1
+        );
+        let twin = person(3, 5, &[(8, "A"), (9, "B"), (6, "Detective Comics")]);
+        assert_eq!(
+            pick_person(vec![prolific.clone(), twin], &both).unwrap().id,
+            1
+        );
+        // No overlap anywhere: nothing says which one it is.
+        let none = LocalSeries::default();
+        assert!(pick_person(vec![ours, prolific], &none).is_none());
+        assert!(pick_person(Vec::new(), &none).is_none());
     }
 
     #[test]

@@ -2159,6 +2159,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/creators/{slug}/profile/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /creators/{slug}/profile/refresh` — queue a fresh provider fetch
+         *     of the creator's profile. Admin only (it spends provider budget).
+         */
+        post: operations["creators_refresh_profile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/filter-options/age_ratings": {
         parameters: {
             query?: never;
@@ -9023,14 +9043,31 @@ export interface components {
             slug?: string | null;
         };
         CreatorDetailView: {
+            aliases: string[];
             /**
              * Format: int64
              * @description Total visible credit count across both junction tables (each
              *     distinct (series_id) or (issue_id) counted once).
              */
             credit_count: number;
+            description?: string | null;
+            /** @description Where the profile fetch stands. */
+            enrichment: components["schemas"]["EnrichmentStatus"];
+            /**
+             * @description Last fetch failure. Admins get the provider's error text; any other
+             *     caller gets [`READER_PROFILE_ERROR`] whenever a failure is recorded.
+             */
+            enrichment_error?: string | null;
             id: string;
+            /**
+             * @description Provider data on the `person` row (roadmap WP-9.9): a portrait, a
+             *     one-paragraph description and other names the creator is known by.
+             */
+            image_url?: string | null;
+            /** @description Provider records the creator is linked to. */
+            links?: components["schemas"]["EntityLinkView"][];
             name: string;
+            profile?: components["schemas"]["EntityProfileView"] | null;
             /**
              * @description Series rails — one per role the creator held. Order matches
              *     `roles`; each rail is sorted by series name. Never empty: a
@@ -10518,16 +10555,36 @@ export interface components {
         /** @description Fact sheet. Fields a kind doesn't carry stay empty. */
         Facts: {
             birthday?: string | null;
+            /** @description Date of birth, `YYYY-MM-DD` when the provider has a full date. */
+            born?: string | null;
+            /** @description Characters the creator is credited with creating. */
+            characters_created?: string[];
+            country?: string | null;
             creators?: string[];
+            died?: string | null;
+            email?: string | null;
             first_appearance?: components["schemas"]["FirstAppearance"] | null;
             gender?: string | null;
+            hometown?: string | null;
             /** @description Team members (teams only). */
             members?: string[];
             powers?: string[];
             publisher?: string | null;
             real_name?: string | null;
+            /**
+             * Format: int64
+             * @description Series the provider credits the creator on. (Its issue count is
+             *     `provider_counts`, as for every kind.)
+             */
+            series_credits?: number | null;
+            /**
+             * Format: int64
+             * @description Story arcs the provider credits the creator on.
+             */
+            story_arc_credits?: number | null;
             teams?: string[];
             universes?: string[];
+            website?: string | null;
         };
         /**
          * @description Why a batch issue fell back from a direct lookup to a search.
@@ -22004,6 +22061,46 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    creators_refresh_profile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description queued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no provider configured */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
