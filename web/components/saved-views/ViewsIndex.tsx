@@ -232,13 +232,17 @@ function TabCount({ n }: { n: number }) {
   );
 }
 
-/** A saved-content card (filter view / reading list / collection). The body
- *  links to the detail page (edit happens there); the ⋯ menu folds in the
- *  arrangement + lifecycle actions: pin-to-pages (the search + collapsible
- *  `MultiPinDialog`), show-in-sidebar, Move to group (the keyboard / touch
- *  path for what drag-and-drop does), and Delete. Built-in rows (system
- *  rails + Want to Read) lock Delete. Reading-list cards also show the
- *  list's collection + read-progress stats and when it was last updated. */
+/** The name link, stretched over its card (the nearest `relative`
+ *  ancestor). The focus ring is drawn on the stretch, so keyboard focus
+ *  outlines the card, not the one line of text. `touch-callout: none`:
+ *  the link covers the whole card, and on a board a touch hold anywhere
+ *  on the card starts a drag, so iOS's link preview must not open under
+ *  it. */
+const CARD_LINK =
+  "outline-none after:absolute after:inset-0 after:z-[1] after:rounded-lg after:content-[''] focus-visible:after:ring-ring focus-visible:after:ring-2 [-webkit-touch-callout:none]";
+/** Lifts a control or a tooltip-carrying block above the stretched link. */
+const ABOVE_LINK = "relative z-[2]";
+
 /** The card's cover stack. Every card shares the one `/me/view-covers`
  *  query (react-query dedupes), so a tab of cards is a single request. */
 function ViewCardStack({
@@ -264,6 +268,20 @@ function ViewCardStack({
   );
 }
 
+/** A saved-content card (filter view / reading list / collection). The
+ *  whole card is one link to the detail page (edit happens there): the
+ *  name is the `<Link>`, and its `::after` stretches over the card
+ *  (`CARD_LINK`), so the cover stack, the description and the badges all
+ *  open it while the card keeps one tab stop and one accessible name.
+ *  Anything with a click or a hover tooltip of its own sits above the
+ *  stretch (`ABOVE_LINK`): the ⋯ menu and the reading-list stats.
+ *
+ *  The ⋯ menu folds in the arrangement + lifecycle actions: pin-to-pages
+ *  (the search + collapsible `MultiPinDialog`), show-in-sidebar, Move to
+ *  group (the keyboard / touch path for what drag-and-drop does), and
+ *  Delete. Built-in rows (system rails + Want to Read) lock Delete.
+ *  Reading-list cards also show the list's collection + read-progress
+ *  stats and when it was last updated. */
 export function ViewCard({
   view,
   Icon,
@@ -301,8 +319,11 @@ export function ViewCard({
 
   return (
     <div
+      data-view-card=""
       className={cn(
-        "group hover:bg-accent/40 border-border/60 bg-card flex h-full flex-col rounded-lg border transition-colors",
+        // `isolate`: the stretched link and the blocks lifted above it
+        // keep their z-order inside the card.
+        "group hover:bg-accent/40 border-border/60 bg-card relative isolate flex h-full flex-col rounded-lg border transition-colors",
         large ? "gap-3 p-4" : "gap-2 p-3",
         stacked && "cover-stack-host",
       )}
@@ -317,21 +338,23 @@ export function ViewCard({
             className="text-muted-foreground size-5 shrink-0"
             aria-hidden="true"
           />
-          {menu}
+          <div className={ABOVE_LINK}>{menu}</div>
         </div>
       )}
 
-      <Link
-        href={href}
-        draggable={false}
-        className="focus-visible:ring-ring min-w-0 space-y-0.5 rounded focus-visible:ring-2 focus-visible:outline-none"
-      >
-        <div
-          className={cn("truncate font-medium", !large && "text-sm")}
+      <div className="min-w-0 space-y-0.5">
+        <Link
+          href={href}
+          draggable={false}
+          className={cn(
+            CARD_LINK,
+            "block truncate font-medium",
+            !large && "text-sm",
+          )}
           title={view.name}
         >
           {view.name}
-        </div>
+        </Link>
         {view.description ? (
           <p
             className={cn(
@@ -342,7 +365,7 @@ export function ViewCard({
             {view.description}
           </p>
         ) : null}
-      </Link>
+      </div>
 
       {cblList ? <CblCardStats list={cblList} /> : null}
 
@@ -376,7 +399,7 @@ export function ViewCard({
 function CblCardStats({ list }: { list: CblListView }) {
   const when = formatRelativeDate(list.last_refreshed_at ?? list.imported_at);
   return (
-    <div className="space-y-1.5 pt-0.5">
+    <div className={cn(ABOVE_LINK, "space-y-1.5 pt-0.5")}>
       <div className="flex flex-wrap items-center justify-between gap-1.5">
         <CblStatsPillsStatic
           stats={list.stats}
