@@ -1323,10 +1323,7 @@ pub fn is_safe_redirect_target(s: &str) -> bool {
         .split_once('#')
         .map(|(p, _)| p)
         .unwrap_or(without_query);
-    if path_part.contains(':') {
-        return false;
-    }
-    true
+    !path_part.contains(':')
 }
 
 /// Grant `user_id` uncapped access to every library (see

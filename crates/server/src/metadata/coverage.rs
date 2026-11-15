@@ -3419,8 +3419,10 @@ mod tests {
             (cover.ranges[0].low.as_str(), cover.ranges[0].high.as_str()),
             ("500", "501")
         );
-        for i in 0..3 {
-            assert_eq!(cover.assignment[i], Some((1, DateMatch::Confirmed)));
+        // The slice keeps the bounds check: fewer than three assignments
+        // still fails the test.
+        for assigned in &cover.assignment[..3] {
+            assert_eq!(*assigned, Some((1, DateMatch::Confirmed)));
         }
     }
 
