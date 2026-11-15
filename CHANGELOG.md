@@ -13,6 +13,15 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.85.0](https://github.com/mbryantms/folio/compare/v0.84.0...v0.85.0) (2026-11-15)
+
+
+### Added
+
+* **creators:** a creator's profile is fetched from the providers ([#1682](https://github.com/mbryantms/folio/issues/1682)) ([89b19da](https://github.com/mbryantms/folio/commit/89b19dac4cba16995fc37b2d42a89d7ed0aa62c5))
+* **creators:** the creator page shows the profile and library statistics ([#1683](https://github.com/mbryantms/folio/issues/1683)) ([fceec89](https://github.com/mbryantms/folio/commit/fceec89b9d14b82d44e3108a485f583334261321))
+* **metadata:** a provider apply links its creators on a writeback library ([#1680](https://github.com/mbryantms/folio/issues/1680)) ([1392335](https://github.com/mbryantms/folio/commit/139233536abcdd7d6c7f9c22748e1bd86e66dfd9))
+
 ## [0.84.0](https://github.com/mbryantms/folio/compare/v0.83.0...v0.84.0) (2026-11-15)
 
 
