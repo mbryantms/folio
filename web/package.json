@@ -70,7 +70,7 @@
     "@vitejs/plugin-react": "6.3.0",
     "babel-plugin-react-compiler": "1.0.0",
     "esbuild": "^0.28.2",
-    "eslint": "10.14.0",
+    "eslint": "10.15.0",
     "eslint-config-next": "16.4.6",
     "eslint-plugin-jsx-a11y": "6.10.2",
     "fake-indexeddb": "^6.2.7",
