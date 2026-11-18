@@ -59,6 +59,8 @@ vi.mock("@/lib/api/mutations", async (importOriginal) => {
     useBulkMarkProgress: mutation,
     useBulkMarkSeriesMatchingProgress: mutation,
     useCreateSeriesSelectionBatch: mutation,
+    useBulkMetadataFetch: mutation,
+    useBulkRescan: mutation,
     useSetSeriesCover: mutation,
   };
 });

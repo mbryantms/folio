@@ -69,6 +69,7 @@ export {
 export { restoreProgress, settleProgress, useIssueReadState } from "./progress";
 export * from "./page-overrides";
 export * from "./relationship-suggestions";
+export * from "./bulk-admin";
 export * from "./upcoming";
 export * from "./shared-lists";
 export * from "./issue-user-state";

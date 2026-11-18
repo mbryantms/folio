@@ -6,9 +6,9 @@ import {
   BookOpen,
   FolderPlus,
   ListChecks,
+  Pencil,
   Sparkles,
 } from "lucide-react";
-import { toast } from "sonner";
 
 import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
 import {
@@ -29,8 +29,8 @@ import {
 } from "@/components/library/SeriesCard";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
+import { useAdminSelectionActions } from "@/components/library/useAdminSelectionActions";
 import { EmptyState } from "@/components/folio/empty-state";
-import { apiMutate } from "@/lib/api/mutations";
 import {
   useBulkMarkSeriesProgress,
   useCreateSavedViewBatch,
@@ -147,43 +147,11 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
     ref_id: id,
   }));
 
-  const [bulkFetchPending, setBulkFetchPending] = React.useState(false);
-  const runBulkMetadataFetch = async () => {
-    const ids = selection.selected;
-    if (ids.size === 0) return;
-    const slugs = items.filter((s) => ids.has(s.id)).map((s) => s.slug);
-    if (slugs.length === 0) return;
-    setBulkFetchPending(true);
-    const toastId = toast.loading(
-      `Searching providers for ${slugs.length} series…`,
-    );
-    const results = await Promise.allSettled(
-      slugs.map((slug) =>
-        apiMutate({
-          path: `/series/${encodeURIComponent(slug)}/metadata/search`,
-          method: "POST",
-        }),
-      ),
-    );
-    const ok = results.filter((r) => r.status === "fulfilled").length;
-    const failed = results.length - ok;
-    if (failed === 0) {
-      toast.success(`Queued metadata search for ${ok} series.`, {
-        id: toastId,
-      });
-    } else if (ok === 0) {
-      toast.error(
-        `Failed to queue any metadata searches (${failed} error${failed === 1 ? "" : "s"}).`,
-        {
-          id: toastId,
-        },
-      );
-    } else {
-      toast.message(`Queued ${ok}, ${failed} failed.`, { id: toastId });
-    }
-    setBulkFetchPending(false);
-    selection.exit();
-  };
+  // Fetch metadata + Rescan (admin): one batch over the selected series.
+  const adminBulk = useAdminSelectionActions(
+    { issueIds: [], seriesIds: Array.from(selection.selected) },
+    { onDone: () => selection.exit() },
+  );
 
   return (
     <div className="space-y-6">
@@ -294,18 +262,23 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
             onClick: () => setPickerOpen(true),
             disabled: selection.count === 0,
           },
-          {
-            id: "fetch-metadata",
-            label: "Fetch metadata",
-            icon: Sparkles,
-            onClick: () => void runBulkMetadataFetch(),
-            disabled: bulkFetchPending || selection.count === 0,
-          },
         ]}
+        actionGroups={
+          adminBulk.actions.length > 0
+            ? [
+                {
+                  id: "editing",
+                  label: "Editing",
+                  icon: Pencil,
+                  actions: adminBulk.actions,
+                },
+              ]
+            : []
+        }
         onDone={() => selection.exit()}
         onClear={() => selection.clear()}
         onSelectAll={() => selection.selectAll()}
-        isPending={bulkMark.isPending}
+        isPending={bulkMark.isPending || adminBulk.isPending}
       />
 
       {isInitialLoading ? (

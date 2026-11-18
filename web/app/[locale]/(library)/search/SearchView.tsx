@@ -11,6 +11,7 @@ import {
   Filter,
   FolderPlus,
   Loader2,
+  Pencil,
   Search,
   User,
   X,
@@ -45,6 +46,7 @@ import {
 import { IssueCard } from "@/components/library/IssueCard";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
+import { useAdminSelectionActions } from "@/components/library/useAdminSelectionActions";
 import { SeriesCard } from "@/components/library/SeriesCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -952,6 +954,18 @@ function SelectableResultGrid({
     entry_kind: isSeries ? ("series" as const) : ("issue" as const),
     ref_id: id,
   }));
+  // Fetch metadata + Rescan (admin) over the selection.
+  const adminBulk = useAdminSelectionActions(
+    {
+      issueIds: selectedTargets
+        .filter((t) => t.entry_kind === "issue")
+        .map((t) => t.ref_id),
+      seriesIds: selectedTargets
+        .filter((t) => t.entry_kind === "series")
+        .map((t) => t.ref_id),
+    },
+    { onDone: () => selection.exit() },
+  );
 
   // Esc exits; Cmd/Ctrl+A selects all loaded. Dormant in form fields.
   useEffect(() => {
@@ -1021,10 +1035,22 @@ function SelectableResultGrid({
             disabled: selection.count === 0,
           },
         ]}
+        actionGroups={
+          adminBulk.actions.length > 0
+            ? [
+                {
+                  id: "editing",
+                  label: "Editing",
+                  icon: Pencil,
+                  actions: adminBulk.actions,
+                },
+              ]
+            : []
+        }
         onDone={() => selection.exit()}
         onClear={() => selection.clear()}
         onSelectAll={() => selection.selectAll()}
-        isPending={isPending}
+        isPending={isPending || adminBulk.isPending}
       />
 
       {isSeries ? (
