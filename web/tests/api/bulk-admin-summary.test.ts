@@ -7,8 +7,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   reviewBatchHref,
+  summarizeCoverageSelection,
   summarizeScanSelection,
   summarizeSelectionBatch,
+  summarizeSyncSelection,
+  summarizeWantToReadAdd,
 } from "@/lib/api/mutations";
 import type { BatchCreatedResp } from "@/lib/api/types";
 
@@ -88,5 +91,56 @@ describe("summarizeScanSelection", () => {
       }),
     ).toBe("Nothing to rescan.");
     expect(summarizeScanSelection(null)).toBe("Rescan queued");
+  });
+});
+
+describe("summarizeCoverageSelection", () => {
+  it("counts queued and already-running analyses", () => {
+    expect(
+      summarizeCoverageSelection({
+        queued: 2,
+        already_running: 1,
+        not_found: 0,
+        failed: 0,
+      }),
+    ).toBe("Analyzing coverage for 2 series; 1 already running");
+    expect(
+      summarizeCoverageSelection({
+        queued: 0,
+        already_running: 0,
+        not_found: 0,
+        failed: 0,
+      }),
+    ).toBe("Nothing to analyze.");
+  });
+});
+
+describe("summarizeSyncSelection", () => {
+  it("names the direction and the no-ops", () => {
+    expect(
+      summarizeSyncSelection({ updated: 3, unchanged: 1, not_found: 0 }, true),
+    ).toBe("Paused metadata sync for 3 series; 1 already paused");
+    expect(
+      summarizeSyncSelection({ updated: 1, unchanged: 2, not_found: 1 }, false),
+    ).toBe(
+      "Resumed metadata sync for 1 series; 2 already syncing; 1 not found",
+    );
+    expect(
+      summarizeSyncSelection({ updated: 0, unchanged: 0, not_found: 0 }, true),
+    ).toBe("No changes.");
+  });
+});
+
+describe("summarizeWantToReadAdd", () => {
+  it("reports what landed", () => {
+    expect(
+      summarizeWantToReadAdd({
+        added: 4,
+        already_present: 1,
+        not_found: 1,
+        invalid: 0,
+      }),
+    ).toBe("Added 4 to Want to Read; 1 already there; 1 skipped");
+    expect(summarizeWantToReadAdd(null)).toBe("Added to Want to Read");
   });
 });

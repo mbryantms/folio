@@ -359,7 +359,9 @@ export function SelectionToolbarBody({
                   <ChevronDown className="ml-1.5 size-3.5" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
+              {/* Size to the labels, not the trigger: the shadcn default
+                  (trigger width) wraps "Pause metadata sync" onto 3 lines. */}
+              <DropdownMenuContent align="end" className="w-auto min-w-56">
                 <DropdownMenuLabel>{group.label}</DropdownMenuLabel>
                 {group.actions.map((a, i) => {
                   const Icon = a.icon;

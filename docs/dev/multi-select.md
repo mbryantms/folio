@@ -8,21 +8,38 @@ Plan archive: `~/.claude/plans/multi-select-bulk-actions-1.0.md`.
 
 ## What's covered today
 
-| Surface                  | Cards    | Mark read/unread | Add to collection | Remove from container | Admin: Fetch metadata · Rescan |
-|--------------------------|----------|------------------|-------------------|-----------------------|--------------------------------|
-| Series → Issues panel    | issues   | ✓                | ✓ (overflow)      | —                     | ✓ (+ Edit metadata…, Edit archives…) |
-| Library grid             | either   | ✓                | ✓ (overflow)      | —                     | ✓                              |
-| Search results           | either   | ✓                | ✓ (overflow)      | —                     | ✓                              |
-| Filter view (series)     | series   | ✓ (series-bulk)  | ✓ (overflow)      | —                     | ✓                              |
-| Filter view (issues)     | issues   | ✓                | ✓ (overflow)      | —                     | ✓                              |
-| Collection view detail   | mixed    | ✓ (issues only)  | ✓                 | ✓ (destructive)       | ✓ (+ Edit archives…)           |
-| CBL view detail          | CBL rows | ✓ (matched only) | —                 | —                     | ✓ matched only (+ Edit archives…) |
+| Surface                | Cards    | Mark read/unread | Add to collection / Want to Read | Remove   | Admin Editing group (scope) |
+|------------------------|----------|------------------|----------------------------------|----------|-----------------------------|
+| Series → Issues panel  | issues   | ✓                | ✓ / ✓ (overflow)                 | —        | issues + Edit archives…     |
+| Library grid           | either   | ✓                | ✓ / ✓ (overflow)                 | —        | issues or series, by mode   |
+| Search results         | either   | ✓                | ✓ / ✓ (overflow)                 | —        | issues or series, by kind   |
+| Filter view (series)   | series   | ✓ (series-bulk)  | ✓ / ✓ (overflow)                 | —        | series                      |
+| Filter view (issues)   | issues   | ✓                | ✓ / ✓ (overflow)                 | —        | issues                      |
+| Collection view detail | mixed    | ✓ (issues only)  | ✓ / ✓ (hidden on Want to Read)   | ✓        | mixed + Edit archives…      |
+| CBL view detail        | CBL rows | ✓ (matched only) | — / ✓ (matched only)             | —        | issues + Edit archives…     |
 
-The admin actions live in the toolbar's **Editing** group, which readers
-never see. Every surface gets the same pair from
-[`useAdminSelectionActions`](../../web/components/library/useAdminSelectionActions.ts),
-handing it the selected issue ids and series ids. A mixed selection
-(collections) goes out as one request.
+**Admin Editing group.** Readers never see it. Every surface gets its
+actions from
+[`useAdminSelectionActions`](../../web/components/library/useAdminSelectionActions.tsx).
+The surface passes the selected issue ids, the series ids and a `scope`,
+and renders the hook's `dialogs` once. What each scope shows:
+
+| Action                 | issues | series | mixed | Endpoint                          |
+|------------------------|--------|--------|-------|-----------------------------------|
+| Edit metadata…         | ✓      | —      | ✓     | `PATCH /me/issues/bulk-metadata`  |
+| Fetch metadata         | ✓      | ✓      | ✓     | `POST /metadata/batch/selection`  |
+| Rescan                 | ✓      | ✓      | ✓     | `POST /scans/selection`           |
+| Analyze coverage       | —      | ✓      | ✓     | `POST /metadata/coverage/selection` |
+| Pause / Resume metadata sync | — | ✓     | ✓     | `POST /metadata/sync/selection`   |
+
+An action whose targets are absent (e.g. Analyze coverage on a
+collection selection with no series) is disabled, not hidden. One over
+its server cap is disabled too.
+
+**Add to Want to Read** is for every user. It comes from
+[`useWantToReadSelectionAction`](../../web/components/collections/useWantToReadSelectionAction.ts),
+a one-tap bulk-add to the caller's system collection through the
+existing `members/bulk-add` endpoint.
 
 Not wired yet: home page rails (cards live inside rails, not list
 pages), multi-page rails, recently-read on settings.
@@ -133,6 +150,9 @@ introduce a new gesture layer.
 | `useBulkUpdateMetadata`     | `PATCH /me/issues/bulk-metadata`  | issue-level    |
 | `useBulkMetadataFetch`      | `POST /metadata/batch/selection`  | issues + series (admin) |
 | `useBulkRescan`             | `POST /scans/selection`           | issues + series (admin) |
+| `useBulkAnalyzeCoverage`    | `POST /metadata/coverage/selection` | series (admin) |
+| `useBulkSetMetadataSync`    | `POST /metadata/sync/selection`   | series (admin) |
+| `useBulkAddToWantToRead`    | `POST /me/collections/{id}/members/bulk-add` | any kind (Want to Read) |
 
 All four hooks:
 - Toast on success with a count summary
@@ -274,6 +294,39 @@ folded into that series' scan and counted as `coalesced`. `force`
 defaults to `false` (the size+mtime fast path), unlike the per-item
 buttons, because a selection can name a hundred series. Caps are 500
 issues and 100 series. One `admin.scan.selection` audit row is written
+per call.
+
+### `POST /metadata/coverage/selection` (admin)
+
+```jsonc
+// Request
+{ "series_ids": ["..."] }          // 1–50
+// Response (202)
+{ "queued": 2, "already_running": 1, "not_found": 0, "failed": 0 }
+```
+
+This queues the same `provider_coverage` job as the series Metadata
+tab's **Analyze coverage**, once per series. A series with an analysis
+already in flight counts as `already_running`. It **never sets
+`auto_accept`**: a bulk run only produces proposals, which wait on each
+series' Metadata tab. The cap is 50, below the other series caps,
+because each analysis lists provider series across up to three
+providers. One `admin.series.provider_coverage_analyze_selection`
+audit row is written per call.
+
+### `POST /metadata/sync/selection` (admin)
+
+```jsonc
+// Request
+{ "series_ids": ["..."], "paused": true }   // 1–100
+// Response
+{ "updated": 3, "unchanged": 1, "not_found": 0 }
+```
+
+This flips `series.metadata_sync_paused` in one `UPDATE`. A paused
+series is skipped by the weekly refresh and the scanner's auto-search.
+Removed series are never touched. One
+`admin.series.metadata_{pause,resume}_selection` audit row is written
 per call.
 
 ## How a new list page wires it up

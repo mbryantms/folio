@@ -27,6 +27,7 @@ import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useAdminSelectionActions } from "@/components/library/useAdminSelectionActions";
+import { useWantToReadSelectionAction } from "@/components/collections/useWantToReadSelectionAction";
 import { DropdownMenuItem } from "@/components/folio/dropdown-menu";
 import { EmptyState } from "@/components/folio/empty-state";
 import {
@@ -133,8 +134,12 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
   // Fetch metadata + Rescan (admin) over the selected issues.
   const adminBulk = useAdminSelectionActions(
     { issueIds: Array.from(selection.selected), seriesIds: [] },
-    { onDone: () => selection.exit() },
+    { scope: "issues", onDone: () => selection.exit() },
   );
+  // Add to Want to Read — every user (their own list).
+  const wantToRead = useWantToReadSelectionAction(selectedTargets, {
+    onDone: () => selection.exit(),
+  });
 
   const selectButtonRef = React.useRef<HTMLButtonElement | null>(null);
   const wasSelectModeRef = React.useRef(false);
@@ -253,6 +258,7 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
             onClick: () => setPickerOpen(true),
             disabled: selection.count === 0,
           },
+          wantToRead.action,
         ]}
         actionGroups={
           adminBulk.actions.length > 0
@@ -269,8 +275,11 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
         onDone={() => selection.exit()}
         onClear={() => selection.clear()}
         onSelectAll={() => selection.selectAll()}
-        isPending={bulkMark.isPending || adminBulk.isPending}
+        isPending={
+          bulkMark.isPending || adminBulk.isPending || wantToRead.isPending
+        }
       />
+      {adminBulk.dialogs}
 
       {results.isLoading ? (
         <ul role="list" className="grid gap-4" style={COVER_GRID_STYLE}>

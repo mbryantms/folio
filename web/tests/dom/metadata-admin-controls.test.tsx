@@ -20,6 +20,7 @@ let role: "admin" | "user" = "admin";
 
 vi.mock("@/lib/api/queries", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
+  useCollections: () => ({ data: [] }),
   useSeriesIssuesInfinite: () => ({
     data: {
       pages: [
@@ -61,6 +62,9 @@ vi.mock("@/lib/api/mutations", async (importOriginal) => {
     useCreateSeriesSelectionBatch: mutation,
     useBulkMetadataFetch: mutation,
     useBulkRescan: mutation,
+    useBulkAnalyzeCoverage: mutation,
+    useBulkSetMetadataSync: mutation,
+    useBulkAddToWantToRead: mutation,
     useSetSeriesCover: mutation,
   };
 });

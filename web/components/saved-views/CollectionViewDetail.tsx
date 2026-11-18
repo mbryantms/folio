@@ -44,6 +44,7 @@ import { CoverGridSkeleton } from "@/components/skeletons/LoadingShapes";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useAdminSelectionActions } from "@/components/library/useAdminSelectionActions";
+import { useWantToReadSelectionAction } from "@/components/collections/useWantToReadSelectionAction";
 import { SeriesCard } from "@/components/library/SeriesCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -268,8 +269,13 @@ export function CollectionViewDetail({
         .filter((t) => t.entry_kind === "series")
         .map((t) => t.ref_id),
     },
-    { onDone: () => selection.exit() },
+    { scope: "mixed", onDone: () => selection.exit() },
   );
+  // Add to Want to Read — every user (their own list).
+  const wantToRead = useWantToReadSelectionAction(selectedTargets, {
+    onDone: () => selection.exit(),
+    disabled: isWantToRead,
+  });
 
   // Esc exits select mode; Cmd/Ctrl+A selects every loaded entry.
   // Both gated on `selectMode` so other handlers are free when the
@@ -548,6 +554,7 @@ export function CollectionViewDetail({
             icon: FolderPlus,
             onClick: () => setPickerOpen(true),
           },
+          ...(isWantToRead ? [] : [wantToRead.action]),
           {
             id: "remove",
             label: "Remove from this collection",
@@ -582,9 +589,13 @@ export function CollectionViewDetail({
         onClear={() => selection.clear()}
         onSelectAll={() => selection.selectAll()}
         isPending={
-          bulkMark.isPending || bulkRemove.isPending || adminBulk.isPending
+          bulkMark.isPending ||
+          bulkRemove.isPending ||
+          adminBulk.isPending ||
+          wantToRead.isPending
         }
       />
+      {adminBulk.dialogs}
 
       {entriesQ.isLoading ? (
         <CoverGridSkeleton label="Loading collection…" />

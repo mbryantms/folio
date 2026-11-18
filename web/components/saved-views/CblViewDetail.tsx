@@ -38,6 +38,7 @@ import {
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useAdminSelectionActions } from "@/components/library/useAdminSelectionActions";
+import { useWantToReadSelectionAction } from "@/components/collections/useWantToReadSelectionAction";
 import {
   CoverGridSkeleton,
   LoadingRegion,
@@ -323,7 +324,17 @@ function CblViewDetailInner({
   // Fetch metadata + Rescan (admin) over the matched selected entries.
   const adminBulk = useAdminSelectionActions(
     { issueIds: selectedIssueIds, seriesIds: [] },
-    { onDone: () => selection.exit() },
+    { scope: "issues", onDone: () => selection.exit() },
+  );
+  // Add to Want to Read — every user (their own list).
+  const wantToRead = useWantToReadSelectionAction(
+    selectedIssueIds.map((id) => ({
+      entry_kind: "issue" as const,
+      ref_id: id,
+    })),
+    {
+      onDone: () => selection.exit(),
+    },
   );
 
   if (detail.isLoading) {
@@ -716,6 +727,7 @@ function CblViewDetailInner({
             disabled: selectedIssueIds.length === 0,
           },
         ]}
+        overflow={[wantToRead.action]}
         // Admin-only (audit 2026-11 E16): the archive edit rewrites files,
         // the fetch starts a metadata batch, the rescan queues scans.
         actionGroups={
@@ -741,8 +753,11 @@ function CblViewDetailInner({
         onDone={() => selection.exit()}
         onClear={() => selection.clear()}
         onSelectAll={() => selection.selectAll()}
-        isPending={bulkMark.isPending || adminBulk.isPending}
+        isPending={
+          bulkMark.isPending || adminBulk.isPending || wantToRead.isPending
+        }
       />
+      {adminBulk.dialogs}
 
       {entriesQuery.isLoading ? (
         <CoverGridSkeleton label="Loading entries…" />

@@ -6,14 +6,25 @@
  *
  * Both accept issues and series together, from any number of series and
  * libraries, so a mixed collection or a search result is one request.
+ *
+ * Series-only (phase 2): "Analyze coverage" queues a provider-coverage
+ * analysis per series (`POST /metadata/coverage/selection`, proposals
+ * only), and "Pause / Resume metadata sync" flips the series' sync flag
+ * (`POST /metadata/sync/selection`).
  */
-import { SCANS_HREF } from "@/lib/admin/routes";
+import { useQueryClient } from "@tanstack/react-query";
+
+import { JOBS_HREF, SCANS_HREF } from "@/lib/admin/routes";
 
 import type {
+  AnalyzeCoverageSelectionReq,
+  AnalyzeCoverageSelectionResp,
   BatchCreatedResp,
   ScanSelectionReq,
   ScanSelectionResp,
   SelectionBatchReq,
+  SyncSelectionReq,
+  SyncSelectionResp,
 } from "../types";
 import { useApiMutation } from "./_core";
 
@@ -25,6 +36,10 @@ export const FETCH_SELECTION_MAX_ISSUES = 200;
 export const FETCH_SELECTION_MAX_SERIES = 100;
 export const RESCAN_SELECTION_MAX_ISSUES = 500;
 export const RESCAN_SELECTION_MAX_SERIES = 100;
+/** `COVERAGE_SELECTION_MAX_SERIES` (provider_coverage.rs). */
+export const COVERAGE_SELECTION_MAX_SERIES = 50;
+/** `SYNC_SELECTION_MAX_SERIES` (metadata_search.rs). */
+export const SYNC_SELECTION_MAX_SERIES = 100;
 
 export function reviewBatchHref(batchId: string): string {
   return `/admin/metadata?tab=review&batch=${encodeURIComponent(batchId)}`;
@@ -88,6 +103,83 @@ export function useBulkRescan() {
         resp && resp.queued > 0
           ? { label: "View scans", href: SCANS_HREF }
           : undefined,
+    },
+  );
+}
+
+/** Toast copy for a bulk coverage analysis. */
+export function summarizeCoverageSelection(
+  resp: AnalyzeCoverageSelectionResp | null,
+): string {
+  if (!resp) return "Coverage analysis queued";
+  const parts: string[] = [];
+  if (resp.queued > 0)
+    parts.push(
+      `Analyzing coverage for ${plural(resp.queued, "series", "series")}`,
+    );
+  if (resp.already_running > 0)
+    parts.push(`${resp.already_running} already running`);
+  if (resp.not_found > 0) parts.push(`${resp.not_found} not found`);
+  if (resp.failed > 0) parts.push(`${resp.failed} failed`);
+  return parts.length > 0 ? parts.join("; ") : "Nothing to analyze.";
+}
+
+/** Toast copy for a bulk pause / resume. */
+export function summarizeSyncSelection(
+  resp: SyncSelectionResp | null,
+  paused: boolean,
+): string {
+  const verb = paused ? "Paused" : "Resumed";
+  if (!resp) return `${verb} metadata sync`;
+  const parts: string[] = [];
+  if (resp.updated > 0)
+    parts.push(
+      `${verb} metadata sync for ${plural(resp.updated, "series", "series")}`,
+    );
+  if (resp.unchanged > 0)
+    parts.push(`${resp.unchanged} already ${paused ? "paused" : "syncing"}`);
+  if (resp.not_found > 0) parts.push(`${resp.not_found} not found`);
+  return parts.length > 0 ? parts.join("; ") : "No changes.";
+}
+
+/** Analyze provider coverage for selected series (proposals only). */
+export function useBulkAnalyzeCoverage() {
+  return useApiMutation<
+    AnalyzeCoverageSelectionResp,
+    AnalyzeCoverageSelectionReq
+  >(
+    (body) => ({
+      path: "/metadata/coverage/selection",
+      method: "POST",
+      body,
+    }),
+    {
+      successMessage: (resp) => summarizeCoverageSelection(resp),
+      successVariant: (resp) => (resp && resp.queued > 0 ? "success" : "info"),
+      successAction: (resp) =>
+        resp && resp.queued > 0
+          ? { label: "View progress", href: JOBS_HREF }
+          : undefined,
+    },
+  );
+}
+
+/** Pause or resume metadata sync for selected series. */
+export function useBulkSetMetadataSync() {
+  const qc = useQueryClient();
+  return useApiMutation<SyncSelectionResp, SyncSelectionReq>(
+    (body) => ({ path: "/metadata/sync/selection", method: "POST", body }),
+    {
+      successMessage: (resp, input) =>
+        summarizeSyncSelection(resp, input.paused),
+      successVariant: (resp) => (resp && resp.updated > 0 ? "success" : "info"),
+      onSuccess: () => {
+        // Each series' sync-status card + Metadata tab overview.
+        qc.invalidateQueries({
+          predicate: (q) =>
+            q.queryKey[0] === "series" && q.queryKey[2] === "metadata",
+        });
+      },
     },
   );
 }

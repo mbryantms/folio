@@ -17,6 +17,7 @@ import type { IssueListFilters } from "@/lib/api/queries";
 const seen: IssueListFilters[] = [];
 vi.mock("@/lib/api/queries", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
+  useCollections: () => ({ data: [] }),
   useSeriesIssuesInfinite: (_slug: string, filters: IssueListFilters) => {
     seen.push(filters);
     return {
@@ -40,6 +41,9 @@ vi.mock("@/lib/api/mutations", async (importOriginal) => {
     useCreateSeriesSelectionBatch: mutation,
     useBulkMetadataFetch: mutation,
     useBulkRescan: mutation,
+    useBulkAnalyzeCoverage: mutation,
+    useBulkSetMetadataSync: mutation,
+    useBulkAddToWantToRead: mutation,
     useSetSeriesCover: mutation,
   };
 });

@@ -19,6 +19,7 @@ vi.mock("@/lib/api/auth-refresh", async (importOriginal) => ({
 }));
 vi.mock("@/lib/api/queries", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
+  useCollections: () => ({ data: [] }),
   useMe: () => ({ data: { role: "user" } }),
 }));
 vi.mock("@/lib/api/mutations", async (importOriginal) => {
@@ -28,6 +29,11 @@ vi.mock("@/lib/api/mutations", async (importOriginal) => {
     useBulkMarkProgress: mutation,
     useBulkMarkSeriesMatchingProgress: mutation,
     useCreateSeriesSelectionBatch: mutation,
+    useBulkMetadataFetch: mutation,
+    useBulkRescan: mutation,
+    useBulkAnalyzeCoverage: mutation,
+    useBulkSetMetadataSync: mutation,
+    useBulkAddToWantToRead: mutation,
     useSetSeriesCover: mutation,
   };
 });

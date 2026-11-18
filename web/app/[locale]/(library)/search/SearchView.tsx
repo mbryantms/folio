@@ -47,6 +47,7 @@ import { IssueCard } from "@/components/library/IssueCard";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useAdminSelectionActions } from "@/components/library/useAdminSelectionActions";
+import { useWantToReadSelectionAction } from "@/components/collections/useWantToReadSelectionAction";
 import { SeriesCard } from "@/components/library/SeriesCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -964,8 +965,12 @@ function SelectableResultGrid({
         .filter((t) => t.entry_kind === "series")
         .map((t) => t.ref_id),
     },
-    { onDone: () => selection.exit() },
+    { scope: isSeries ? "series" : "issues", onDone: () => selection.exit() },
   );
+  // Add to Want to Read — every user (their own list).
+  const wantToRead = useWantToReadSelectionAction(selectedTargets, {
+    onDone: () => selection.exit(),
+  });
 
   // Esc exits; Cmd/Ctrl+A selects all loaded. Dormant in form fields.
   useEffect(() => {
@@ -1034,6 +1039,7 @@ function SelectableResultGrid({
             onClick: () => setPickerOpen(true),
             disabled: selection.count === 0,
           },
+          wantToRead.action,
         ]}
         actionGroups={
           adminBulk.actions.length > 0
@@ -1050,8 +1056,9 @@ function SelectableResultGrid({
         onDone={() => selection.exit()}
         onClear={() => selection.clear()}
         onSelectAll={() => selection.selectAll()}
-        isPending={isPending || adminBulk.isPending}
+        isPending={isPending || adminBulk.isPending || wantToRead.isPending}
       />
+      {adminBulk.dialogs}
 
       {isSeries ? (
         <SeriesGrid series={items as SeriesView[]} selection={selection} />

@@ -30,6 +30,7 @@ import {
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useAdminSelectionActions } from "@/components/library/useAdminSelectionActions";
+import { useWantToReadSelectionAction } from "@/components/collections/useWantToReadSelectionAction";
 import { StickyToolbarRow } from "@/components/library/StickyToolbarRow";
 import { VirtualizedCardGrid } from "@/components/library/VirtualizedCardGrid";
 import { Input } from "@/components/ui/input";
@@ -68,13 +69,6 @@ import { COVER_GRID_STYLE } from "@/lib/library/cover-size";
 // Bulk dialogs are heavy (metadata form / archive-edit + dnd) and only open
 // from the selection toolbar — lazy so they stay out of the series-page
 // initial bundle; each chunk loads on first open (G6).
-const EditMetadataDialog = dynamic(
-  () =>
-    import("@/components/library/EditMetadataDialog").then(
-      (m) => m.EditMetadataDialog,
-    ),
-  { ssr: false },
-);
 const BulkArchiveEditDialog = dynamic(
   () =>
     import("@/components/library/BulkArchiveEditDialog").then(
@@ -184,12 +178,9 @@ export function IssuesPanel({
   const bulkMarkMatching = useBulkMarkSeriesMatchingProgress(seriesSlug);
   const [allMatchingSelected, setAllMatchingSelected] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [editMetadataOpen, setEditMetadataOpen] = useState(false);
   const [archiveEditOpen, setArchiveEditOpen] = useState(false);
   // Mount each lazy dialog on first open and keep it mounted so its
   // open/close animation still runs on later toggles (G6).
-  const [editMetadataMounted, setEditMetadataMounted] = useState(false);
-  if (editMetadataOpen && !editMetadataMounted) setEditMetadataMounted(true);
   const [archiveEditMounted, setArchiveEditMounted] = useState(false);
   if (archiveEditOpen && !archiveEditMounted) setArchiveEditMounted(true);
   const [markReadOpen, setMarkReadOpen] = useState(false);
@@ -281,12 +272,17 @@ export function IssuesPanel({
     ref_id: id,
   }));
 
-  // Fetch metadata + Rescan, shared with every multi-select surface. The
-  // fetch is one server batch, so its toast deep-links the Review queue.
+  // Edit metadata… / Fetch metadata / Rescan, shared with every
+  // multi-select surface. The fetch is one server batch, so its toast
+  // deep-links the Review queue.
   const adminBulk = useAdminSelectionActions(
     { issueIds: Array.from(selection.selected), seriesIds: [] },
-    { onDone: clearSelection, disabled: allMatchingSelected },
+    { scope: "issues", onDone: clearSelection, disabled: allMatchingSelected },
   );
+  const wantToRead = useWantToReadSelectionAction(selectedTargets, {
+    onDone: clearSelection,
+    disabled: allMatchingSelected,
+  });
   // Post-audit T4.2: admins pick the series cover from any card's menu.
   const setSeriesCover = useSetSeriesCover(seriesSlug);
   const seriesCoverAction = (issueId: string) =>
@@ -544,6 +540,7 @@ export function IssuesPanel({
             onClick: () => setPickerOpen(true),
             disabled: allMatchingSelected,
           },
+          wantToRead.action,
         ]}
         // Every editing action is admin-only (audit 2026-11 E16): the bulk
         // edit writes shared rows + pins, the fetch starts a metadata batch,
@@ -556,13 +553,6 @@ export function IssuesPanel({
                   label: "Editing",
                   icon: Pencil,
                   actions: [
-                    {
-                      id: "edit-metadata",
-                      label: "Edit metadata…",
-                      icon: Pencil,
-                      onClick: () => setEditMetadataOpen(true),
-                      disabled: allMatchingSelected,
-                    },
                     ...adminBulk.actions,
                     // The server skips issues whose library has writeback
                     // off (reported in the result).
@@ -599,7 +589,8 @@ export function IssuesPanel({
         isPending={
           bulkMark.isPending ||
           bulkMarkMatching.isPending ||
-          adminBulk.isPending
+          adminBulk.isPending ||
+          wantToRead.isPending
         }
       />
       <BulkAddToCollectionDialog
@@ -610,16 +601,7 @@ export function IssuesPanel({
         }}
         targets={selectedTargets}
       />
-      {editMetadataMounted && (
-        <EditMetadataDialog
-          open={editMetadataOpen}
-          onOpenChange={(next) => {
-            setEditMetadataOpen(next);
-            if (!next) clearSelection();
-          }}
-          issueIds={Array.from(selection.selected)}
-        />
-      )}
+      {adminBulk.dialogs}
       {archiveEditMounted && (
         <BulkArchiveEditDialog
           open={archiveEditOpen}
