@@ -35,6 +35,12 @@ ignore = [
     # `astral-tokio-tar` unmaintained: test-only, via testcontainers 0.28
     # (latest). deny.toml carries the full rationale.
     "RUSTSEC-2026-0440",
+    # `chrono` / `chrono-tz` unmaintained (informational, no fixed
+    # version): sea-orm, sqlx, openidconnect, utoipa and
+    # tokio-cron-scheduler all depend on it. deny.toml carries the full
+    # rationale.
+    "RUSTSEC-2026-0543",
+    "RUSTSEC-2026-0555",
     # Bundled SQLite < 3.54 with a mismatched `-wal` sibling: libsqlite3-sys
     # 0.37 is pinned by sqlx-sqlite 0.9.0 (latest, `<0.38`); the fix is
     # 0.39. Folio's only open (`local_db::open`) is `immutable=true`, which
