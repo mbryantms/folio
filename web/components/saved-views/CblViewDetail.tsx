@@ -13,6 +13,7 @@ import {
   HardDriveDownload,
   ListChecks,
   Loader2,
+  Pencil,
   RefreshCw,
   Search as SearchIcon,
   Sparkles,
@@ -36,6 +37,7 @@ import {
 } from "@/components/library/PhoneControlsBar";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
+import { useAdminSelectionActions } from "@/components/library/useAdminSelectionActions";
 import {
   CoverGridSkeleton,
   LoadingRegion,
@@ -318,6 +320,11 @@ function CblViewDetailInner({
   const [archiveEditMounted, setArchiveEditMounted] = React.useState(false);
   if (archiveEditOpen && !archiveEditMounted) setArchiveEditMounted(true);
   const isAdmin = useMe().data?.role === "admin";
+  // Fetch metadata + Rescan (admin) over the matched selected entries.
+  const adminBulk = useAdminSelectionActions(
+    { issueIds: selectedIssueIds, seriesIds: [] },
+    { onDone: () => selection.exit() },
+  );
 
   if (detail.isLoading) {
     return (
@@ -709,14 +716,24 @@ function CblViewDetailInner({
             disabled: selectedIssueIds.length === 0,
           },
         ]}
-        overflow={
+        // Admin-only (audit 2026-11 E16): the archive edit rewrites files,
+        // the fetch starts a metadata batch, the rescan queues scans.
+        actionGroups={
           isAdmin
             ? [
                 {
-                  id: "edit-archives",
-                  label: "Edit archives…",
-                  icon: FileCog,
-                  onClick: () => setArchiveEditOpen(true),
+                  id: "editing",
+                  label: "Editing",
+                  icon: Pencil,
+                  actions: [
+                    {
+                      id: "edit-archives",
+                      label: "Edit archives…",
+                      icon: FileCog,
+                      onClick: () => setArchiveEditOpen(true),
+                    },
+                    ...adminBulk.actions,
+                  ],
                 },
               ]
             : []
@@ -724,7 +741,7 @@ function CblViewDetailInner({
         onDone={() => selection.exit()}
         onClear={() => selection.clear()}
         onSelectAll={() => selection.selectAll()}
-        isPending={bulkMark.isPending}
+        isPending={bulkMark.isPending || adminBulk.isPending}
       />
 
       {entriesQuery.isLoading ? (

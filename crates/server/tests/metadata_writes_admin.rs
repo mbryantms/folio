@@ -322,6 +322,16 @@ async fn metadata_writes_require_admin_reads_stay_open() {
         ),
         (
             Method::POST,
+            "/api/metadata/batch/selection".to_owned(),
+            Some(json!({"issue_ids": [f.issue_id], "series_ids": [series_id]})),
+        ),
+        (
+            Method::POST,
+            "/api/scans/selection".to_owned(),
+            Some(json!({"issue_ids": [f.issue_id], "series_ids": [series_id]})),
+        ),
+        (
+            Method::POST,
             "/api/metadata/batch/saved-view".to_owned(),
             Some(json!({"saved_view_id": bogus})),
         ),

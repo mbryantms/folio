@@ -46,6 +46,8 @@ vi.mock("@/lib/api/mutations", async (importOriginal) => {
   return {
     ...(await importOriginal<Record<string, unknown>>()),
     useBulkMarkProgress: () => ({ mutate: bulkMutate, isPending: false }),
+    useBulkMetadataFetch: () => ({ mutate: vi.fn(), isPending: false }),
+    useBulkRescan: () => ({ mutate: vi.fn(), isPending: false }),
     useCreateSavedViewBatch: inert,
     useSidebarSavedView: inert,
   };

@@ -80,6 +80,7 @@ pub mod relationship_suggestions;
 pub mod saved_views;
 pub mod scan_batches;
 pub mod scan_runs;
+pub mod scan_selection;
 pub mod series;
 pub mod series_completion_prefs;
 pub mod series_external_relationships;

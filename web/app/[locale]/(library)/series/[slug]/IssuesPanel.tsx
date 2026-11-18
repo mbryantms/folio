@@ -9,11 +9,9 @@ import {
   ListChecks,
   Pencil,
   SearchX,
-  Sparkles,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { toast } from "sonner";
 
 import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
 import {
@@ -31,6 +29,7 @@ import {
 } from "@/components/library/PhoneControlsBar";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
+import { useAdminSelectionActions } from "@/components/library/useAdminSelectionActions";
 import { StickyToolbarRow } from "@/components/library/StickyToolbarRow";
 import { VirtualizedCardGrid } from "@/components/library/VirtualizedCardGrid";
 import { Input } from "@/components/ui/input";
@@ -51,7 +50,6 @@ import { RailError } from "@/components/saved-views/RailError";
 import {
   useBulkMarkProgress,
   useBulkMarkSeriesMatchingProgress,
-  useCreateSeriesSelectionBatch,
   useSetSeriesCover,
 } from "@/lib/api/mutations";
 import {
@@ -283,10 +281,12 @@ export function IssuesPanel({
     ref_id: id,
   }));
 
-  // Bulk fetch routes through one server batch (not N fire-and-forget POSTs)
-  // so it returns a `batch_id` the completion toast can deep-link to the
-  // Review queue — B5: bulk fetch is no longer a dead end.
-  const selectionBatch = useCreateSeriesSelectionBatch(seriesSlug);
+  // Fetch metadata + Rescan, shared with every multi-select surface. The
+  // fetch is one server batch, so its toast deep-links the Review queue.
+  const adminBulk = useAdminSelectionActions(
+    { issueIds: Array.from(selection.selected), seriesIds: [] },
+    { onDone: clearSelection, disabled: allMatchingSelected },
+  );
   // Post-audit T4.2: admins pick the series cover from any card's menu.
   const setSeriesCover = useSetSeriesCover(seriesSlug);
   const seriesCoverAction = (issueId: string) =>
@@ -302,36 +302,6 @@ export function IssuesPanel({
           },
         ]
       : undefined;
-  const runBulkMetadataFetch = () => {
-    const ids = Array.from(selection.selected);
-    if (ids.length === 0) return;
-    selectionBatch.mutate(
-      { issue_ids: ids },
-      {
-        onSuccess: (resp) => {
-          if (!resp) return;
-          clearSelection();
-          if (resp.items_total === 0) {
-            toast.info("Nothing to search — those issues are already queued.");
-            return;
-          }
-          toast.success(
-            `Searching ${resp.items_total} issue${resp.items_total === 1 ? "" : "s"} for metadata`,
-            {
-              action: {
-                label: "Review results",
-                onClick: () =>
-                  router.push(
-                    `/admin/metadata?tab=review&batch=${resp.batch_id}`,
-                  ),
-              },
-            },
-          );
-        },
-      },
-    );
-  };
-
   // Auto-fetch the next page when the sentinel scrolls into view.
   // Depend on the three fields, not the whole result object — TanStack
   // returns a fresh object identity per render, so `[query]` tore the
@@ -593,13 +563,7 @@ export function IssuesPanel({
                       onClick: () => setEditMetadataOpen(true),
                       disabled: allMatchingSelected,
                     },
-                    {
-                      id: "fetch-metadata",
-                      label: "Fetch metadata",
-                      icon: Sparkles,
-                      onClick: () => runBulkMetadataFetch(),
-                      disabled: allMatchingSelected || selectionBatch.isPending,
-                    },
+                    ...adminBulk.actions,
                     // The server skips issues whose library has writeback
                     // off (reported in the result).
                     {
@@ -632,7 +596,11 @@ export function IssuesPanel({
               }
         }
         matchingTotal={matchingTotal}
-        isPending={bulkMark.isPending || bulkMarkMatching.isPending}
+        isPending={
+          bulkMark.isPending ||
+          bulkMarkMatching.isPending ||
+          adminBulk.isPending
+        }
       />
       <BulkAddToCollectionDialog
         open={pickerOpen}

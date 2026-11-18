@@ -6,6 +6,7 @@ import {
   BookOpenCheck,
   FolderPlus,
   ListChecks,
+  Pencil,
   Sparkles,
 } from "lucide-react";
 
@@ -25,6 +26,7 @@ import {
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
+import { useAdminSelectionActions } from "@/components/library/useAdminSelectionActions";
 import { DropdownMenuItem } from "@/components/folio/dropdown-menu";
 import { EmptyState } from "@/components/folio/empty-state";
 import {
@@ -128,6 +130,11 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
     entry_kind: "issue" as const,
     ref_id: id,
   }));
+  // Fetch metadata + Rescan (admin) over the selected issues.
+  const adminBulk = useAdminSelectionActions(
+    { issueIds: Array.from(selection.selected), seriesIds: [] },
+    { onDone: () => selection.exit() },
+  );
 
   const selectButtonRef = React.useRef<HTMLButtonElement | null>(null);
   const wasSelectModeRef = React.useRef(false);
@@ -247,10 +254,22 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
             disabled: selection.count === 0,
           },
         ]}
+        actionGroups={
+          adminBulk.actions.length > 0
+            ? [
+                {
+                  id: "editing",
+                  label: "Editing",
+                  icon: Pencil,
+                  actions: adminBulk.actions,
+                },
+              ]
+            : []
+        }
         onDone={() => selection.exit()}
         onClear={() => selection.clear()}
         onSelectAll={() => selection.selectAll()}
-        isPending={bulkMark.isPending}
+        isPending={bulkMark.isPending || adminBulk.isPending}
       />
 
       {results.isLoading ? (
