@@ -1,7 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { ChevronDown, MoreHorizontal, X } from "lucide-react";
+import {
+  CheckCheck,
+  ChevronDown,
+  ListChecks,
+  MoreHorizontal,
+  X,
+} from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -13,6 +19,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/folio/dropdown-menu";
+import { splitDestructive } from "@/components/folio/menu-actions";
 import { cn } from "@/lib/utils";
 import { CHROME_BAND_CLASS } from "@/lib/ui/chrome-band";
 
@@ -285,35 +292,50 @@ export function SelectionToolbarBody({
             <DropdownMenuContent align="end">
               {canSelectAll && (
                 <DropdownMenuItem onClick={onSelectAll}>
+                  <ListChecks className="size-4" />
                   Select loaded ({total})
                 </DropdownMenuItem>
               )}
               {canSelectAllMatching && (
                 <DropdownMenuItem onClick={onSelectAllMatching}>
+                  <CheckCheck className="size-4" />
                   {matchingLabel}
                 </DropdownMenuItem>
               )}
               {canClear && (
-                <DropdownMenuItem onClick={onClear}>Clear</DropdownMenuItem>
+                <DropdownMenuItem onClick={onClear}>
+                  <X className="size-4" />
+                  Clear
+                </DropdownMenuItem>
               )}
               {(canSelectAll || canSelectAllMatching || canClear) &&
                 overflowItems.length > 0 && <DropdownMenuSeparator />}
-              {overflowItems.map((a, i) => {
-                const Icon = a.icon;
-                return (
-                  <React.Fragment key={a.id}>
-                    {a.destructive && i > 0 && <DropdownMenuSeparator />}
+              {(() => {
+                const { safe, destructive } = splitDestructive(overflowItems);
+                const item = (a: SelectionAction) => {
+                  const Icon = a.icon;
+                  return (
                     <DropdownMenuItem
+                      key={a.id}
                       onClick={a.onClick}
                       disabled={a.disabled || actionDisabled}
-                      className={a.destructive ? "text-destructive" : undefined}
+                      variant={a.destructive ? "destructive" : "default"}
                     >
-                      {Icon && <Icon className="mr-2 size-4" />}
+                      {Icon && <Icon className="size-4" />}
                       {a.label}
                     </DropdownMenuItem>
-                  </React.Fragment>
+                  );
+                };
+                return (
+                  <>
+                    {safe.map(item)}
+                    {safe.length > 0 && destructive.length > 0 && (
+                      <DropdownMenuSeparator />
+                    )}
+                    {destructive.map(item)}
+                  </>
                 );
-              })}
+              })()}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -363,26 +385,34 @@ export function SelectionToolbarBody({
                   (trigger width) wraps "Pause metadata sync" onto 3 lines. */}
               <DropdownMenuContent align="end" className="w-auto min-w-56">
                 <DropdownMenuLabel>{group.label}</DropdownMenuLabel>
-                {group.actions.map((a, i) => {
-                  const Icon = a.icon;
-                  return (
-                    <React.Fragment key={a.id}>
-                      {a.destructive && i > 0 && <DropdownMenuSeparator />}
+                {(() => {
+                  const { safe, destructive } = splitDestructive(group.actions);
+                  const item = (a: SelectionAction) => {
+                    const Icon = a.icon;
+                    return (
                       <DropdownMenuItem
+                        key={a.id}
                         onClick={a.onClick}
                         disabled={
                           group.disabled || a.disabled || actionDisabled
                         }
-                        className={
-                          a.destructive ? "text-destructive" : undefined
-                        }
+                        variant={a.destructive ? "destructive" : "default"}
                       >
-                        {Icon && <Icon className="mr-2 size-4" />}
+                        {Icon && <Icon className="size-4" />}
                         {a.label}
                       </DropdownMenuItem>
-                    </React.Fragment>
+                    );
+                  };
+                  return (
+                    <>
+                      {safe.map(item)}
+                      {safe.length > 0 && destructive.length > 0 && (
+                        <DropdownMenuSeparator />
+                      )}
+                      {destructive.map(item)}
+                    </>
                   );
-                })}
+                })()}
               </DropdownMenuContent>
             </DropdownMenu>
           );

@@ -476,11 +476,11 @@ function CblViewDetailInner({
           onSelect={fetchViewMetadata}
           disabled={createBatch.isPending}
         >
-          <Sparkles className="mr-2 size-4" /> Fetch metadata for view
+          <Sparkles className="size-4" /> Fetch metadata for view
         </DropdownMenuItem>
       )}
       <DropdownMenuItem onSelect={() => setOfflineOpen(true)}>
-        <HardDriveDownload className="mr-2 size-4" />
+        <HardDriveDownload className="size-4" />
         Download for offline…
       </DropdownMenuItem>
       <DropdownMenuItem asChild>
@@ -489,7 +489,7 @@ function CblViewDetailInner({
           download
           title="Download as .cbl"
         >
-          <Download className="mr-2 size-4" /> Export
+          <Download className="size-4" /> Export
         </a>
       </DropdownMenuItem>
       {missingCount > 0 ? (
@@ -500,9 +500,9 @@ function CblViewDetailInner({
           }}
         >
           {hideMissing ? (
-            <Check className="mr-2 size-4" />
+            <Check className="size-4" />
           ) : (
-            <EyeOff className="mr-2 size-4" />
+            <EyeOff className="size-4" />
           )}
           {hideMissing
             ? `Showing matched only (${missingCount} hidden)`

@@ -477,8 +477,12 @@ export function IssuesPanel({
         />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
+            {/* Search results come back in match order, so sorting is off
+                while a query is active — say so instead of a silent grey. */}
             <Button variant="outline" disabled={!!debouncedQ}>
-              Sort: {SORT_LABELS[sort]} ({order === "asc" ? "↑" : "↓"})
+              {debouncedQ
+                ? "Sort off while searching"
+                : `Sort: ${SORT_LABELS[sort]} (${order === "asc" ? "↑" : "↓"})`}
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">

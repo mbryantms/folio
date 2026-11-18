@@ -455,7 +455,7 @@ export function CollectionViewDetail({
         extraMenuItems={
           <>
             <DropdownMenuItem onSelect={() => setOfflineOpen(true)}>
-              <HardDriveDownload className="mr-2 size-4" />
+              <HardDriveDownload className="size-4" />
               Download for offline…
             </DropdownMenuItem>
             {/* Data-liberation (3.3): export the collection as a CBL
@@ -468,7 +468,7 @@ export function CollectionViewDetail({
                 download
                 title="Download as a .cbl reading list"
               >
-                <Download className="mr-2 size-4" /> Export CBL
+                <Download className="size-4" /> Export CBL
               </a>
             </DropdownMenuItem>
           </>

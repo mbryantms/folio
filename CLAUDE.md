@@ -861,6 +861,7 @@ Default admin (first registered user becomes admin):
 - Similar series (signals, IDF weights + caps, neighbour cache + invalidation hooks, per-request ACL / hidden filtering): [docs/dev/similar-series.md](docs/dev/similar-series.md)
 - Saved views (filter DSL, per-entity field registry, `filter_series` vs `filter_issues` compiler roots): [docs/dev/saved-views.md](docs/dev/saved-views.md)
 - Reader keyboard map: [docs/dev/reader-shortcuts.md](docs/dev/reader-shortcuts.md)
+- Dropdown menus (width standard, grouping, separators, phone submenus, destructive placement): [docs/dev/menus.md](docs/dev/menus.md)
 - OPDS readiness audit: [docs/dev/opds-audit.md](docs/dev/opds-audit.md)
 - Runtime-config split (env vs DB): [docs/dev/runtime-configuration.md](docs/dev/runtime-configuration.md)
 - OCR pipeline (detector + recognizer + cache + admin surfaces): [docs/dev/ocr.md](docs/dev/ocr.md)

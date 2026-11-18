@@ -252,27 +252,27 @@ export function SeriesSettingsMenu({
             )}
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-60">
+        <DropdownMenuContent align="end">
           <DropdownMenuLabel>Reading</DropdownMenuLabel>
           <DropdownMenuGroup>
             {readIncognitoHref && (
               <DropdownMenuItem onSelect={readIncognito}>
-                <EyeOff className="mr-2 size-4" />
-                Read incognito
+                <EyeOff className="size-4" />
+                Read in incognito
               </DropdownMenuItem>
             )}
             {firstIssue && (
               <DropdownMenuItem onSelect={readFromStart}>
-                <RotateCcw className="mr-2 size-4" />
+                <RotateCcw className="size-4" />
                 Read from beginning
               </DropdownMenuItem>
             )}
             <DropdownMenuItem onSelect={markAllRead}>
-              <CheckCircle2 className="mr-2 size-4" />
+              <CheckCircle2 className="size-4" />
               Mark all as read
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={markAllUnread}>
-              <Circle className="mr-2 size-4" />
+              <Circle className="size-4" />
               Mark all as unread
             </DropdownMenuItem>
           </DropdownMenuGroup>
@@ -282,18 +282,18 @@ export function SeriesSettingsMenu({
           <DropdownMenuGroup>
             <DropdownMenuItem
               onSelect={addToReadingList}
-              disabled={!wtrId || addToWtr.isPending}
+              disabled={addToWtr.isPending}
             >
-              <BookmarkPlus className="mr-2 size-4" />
+              <BookmarkPlus className="size-4" />
               Add to Want to Read
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => setCollectionDialogOpen(true)}>
-              <Folder className="mr-2 size-4" />
+              <Folder className="size-4" />
               Add to collection…
             </DropdownMenuItem>
             {firstIssue && (
               <DropdownMenuItem onSelect={() => setOfflineOpen(true)}>
-                <HardDriveDownload className="mr-2 size-4" />
+                <HardDriveDownload className="size-4" />
                 Download for offline…
               </DropdownMenuItem>
             )}
@@ -305,7 +305,7 @@ export function SeriesSettingsMenu({
                 )
               }
             >
-              <Link2 className="mr-2 size-4" />
+              <Link2 className="size-4" />
               {share.label}
             </DropdownMenuItem>
             {share.canShare && (
@@ -314,12 +314,12 @@ export function SeriesSettingsMenu({
                   void share.copyLink(seriesUrl({ slug: seriesSlug }))
                 }
               >
-                <Link2 className="mr-2 size-4" />
+                <Link2 className="size-4" />
                 Copy link
               </DropdownMenuItem>
             )}
             <DropdownMenuResponsiveSub
-              icon={<ListChecks className="mr-2 size-4" />}
+              icon={<ListChecks className="size-4" />}
               label="Specials in completion"
             >
               <DropdownMenuRadioGroup
@@ -347,7 +347,7 @@ export function SeriesSettingsMenu({
                 router.push(`${seriesUrl(seriesSlug)}?tab=metadata`)
               }
             >
-              <Sparkles className="mr-2 size-4" />
+              <Sparkles className="size-4" />
               Metadata
             </DropdownMenuItem>
           </DropdownMenuGroup>
@@ -361,40 +361,43 @@ export function SeriesSettingsMenu({
                   onSelect={triggerScan}
                   disabled={scan.isPending}
                 >
-                  <RefreshCw className="mr-2 size-4" />
+                  <RefreshCw className="size-4" />
                   Scan series
                 </DropdownMenuItem>
                 <DropdownMenuResponsiveSub
-                  icon={<Images className="mr-2 size-4" />}
+                  icon={<Images className="size-4" />}
                   label="Thumbnails"
                 >
                   <DropdownMenuItem
                     onSelect={() => regenerateCover.mutate()}
                     disabled={regenerateCover.isPending}
                   >
-                    <ImageIcon className="mr-2 size-4" />
+                    <ImageIcon className="size-4" />
                     Rebuild cover
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onSelect={() => generatePageMap.mutate()}
                     disabled={generatePageMap.isPending}
                   >
-                    <Images className="mr-2 size-4" />
+                    <Images className="size-4" />
                     Fill missing page thumbnails
                   </DropdownMenuItem>
                   {onForceRecreatePageMap && (
-                    <DropdownMenuItem
-                      onSelect={onForceRecreatePageMap}
-                      className="text-destructive focus:text-destructive"
-                    >
-                      <Images className="mr-2 size-4" />
-                      Rebuild all page thumbnails
-                    </DropdownMenuItem>
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        variant="destructive"
+                        onSelect={onForceRecreatePageMap}
+                      >
+                        <Images className="size-4" />
+                        Rebuild all page thumbnails
+                      </DropdownMenuItem>
+                    </>
                   )}
                 </DropdownMenuResponsiveSub>
                 {onEdit && (
                   <DropdownMenuItem onSelect={onEdit}>
-                    <Pencil className="mr-2 size-4" />
+                    <Pencil className="size-4" />
                     Edit series
                   </DropdownMenuItem>
                 )}

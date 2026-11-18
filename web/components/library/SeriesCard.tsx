@@ -123,13 +123,13 @@ function SeriesCardImpl({
   const read = seriesReadState(series.progress_summary);
   const menuActions: CoverMenuAction[] = [
     {
-      label: "Mark all read",
+      label: "Mark all as read",
       // Whole-series mark-all is almost always cataloging — prompt
       // so the user picks whether it counts toward reading activity.
       onSelect: () => setMarkAllReadOpen(true),
     },
     {
-      label: "Mark all unread",
+      label: "Mark all as unread",
       // Resets every issue's read state and saved page with no Undo —
       // confirm first, like every destructive mutation.
       onSelect: () => setMarkAllUnreadOpen(true),

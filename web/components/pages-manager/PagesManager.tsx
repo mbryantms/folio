@@ -284,14 +284,14 @@ function PageHeader({ page }: { page: PageView }) {
             <MoreHorizontal className="size-4" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="min-w-[14rem]">
+        <DropdownMenuContent align="end">
           <DropdownMenuItem
             onSelect={(e) => {
               e.preventDefault();
               setDescOpen(true);
             }}
           >
-            <MessageSquare className="mr-2 size-4" />
+            <MessageSquare className="size-4" />
             {hasDescription ? "Edit description" : "Add description"}
           </DropdownMenuItem>
           {hasDescription ? (
@@ -301,7 +301,7 @@ function PageHeader({ page }: { page: PageView }) {
                 updatePage.mutate({ description: "" });
               }}
             >
-              <X className="mr-2 size-4" />
+              <X className="size-4" />
               Clear description
             </DropdownMenuItem>
           ) : null}
@@ -314,11 +314,11 @@ function PageHeader({ page }: { page: PageView }) {
             >
               {page.show_in_sidebar ? (
                 <>
-                  <PanelLeftClose className="mr-2 size-4" /> Hide from sidebar
+                  <PanelLeftClose className="size-4" /> Hide from sidebar
                 </>
               ) : (
                 <>
-                  <PanelLeft className="mr-2 size-4" /> Show in sidebar
+                  <PanelLeft className="size-4" /> Show in sidebar
                 </>
               )}
             </DropdownMenuItem>
@@ -329,9 +329,9 @@ function PageHeader({ page }: { page: PageView }) {
               <DropdownMenuItem
                 disabled={del.isPending}
                 onSelect={() => void del.run()}
-                className="text-destructive focus:text-destructive"
+                variant="destructive"
               >
-                <Trash2 className="mr-2 size-4" /> Delete page
+                <Trash2 className="size-4" /> Delete page
               </DropdownMenuItem>
             </>
           )}

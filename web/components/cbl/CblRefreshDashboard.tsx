@@ -398,7 +398,7 @@ export function CblUpdatesMenu() {
             <ChevronDown className="size-3.5 opacity-60" aria-hidden="true" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-64">
+        <DropdownMenuContent align="end">
           <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
             {u.statusLine}
           </DropdownMenuLabel>

@@ -99,8 +99,10 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/folio/dropdown-menu";
+import { splitDestructive } from "@/components/folio/menu-actions";
 import { BOOKMARKS_CARD_SIZE_KEY } from "@/lib/library/cover-size";
 
 type KindFilter = BookmarksFeedKind | "all" | "favorite";
@@ -1319,20 +1321,29 @@ function PageNoteRow({
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  {actions.map((a) => (
-                    <DropdownMenuItem
-                      key={a.label}
-                      disabled={a.disabled}
-                      onSelect={a.onSelect}
-                      className={
-                        a.destructive
-                          ? "text-destructive focus:text-destructive"
-                          : undefined
-                      }
-                    >
-                      {a.label}
-                    </DropdownMenuItem>
-                  ))}
+                  {(() => {
+                    // Destructive last, behind a separator (menus.md).
+                    const { safe, destructive } = splitDestructive(actions);
+                    const item = (a: (typeof actions)[number]) => (
+                      <DropdownMenuItem
+                        key={a.label}
+                        disabled={a.disabled}
+                        onSelect={a.onSelect}
+                        variant={a.destructive ? "destructive" : "default"}
+                      >
+                        {a.label}
+                      </DropdownMenuItem>
+                    );
+                    return (
+                      <>
+                        {safe.map(item)}
+                        {safe.length > 0 && destructive.length > 0 && (
+                          <DropdownMenuSeparator />
+                        )}
+                        {destructive.map(item)}
+                      </>
+                    );
+                  })()}
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : null}

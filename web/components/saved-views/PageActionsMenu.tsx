@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import {
-  Check,
   ListChecks,
   MessageSquare,
   MoreHorizontal,
@@ -77,14 +76,14 @@ export function PageActionsMenu({
             <MoreHorizontal className="size-4" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="min-w-[14rem]">
+        <DropdownMenuContent align="end">
           <DropdownMenuItem
             onSelect={(e) => {
               e.preventDefault();
               setDescOpen(true);
             }}
           >
-            <MessageSquare className="mr-2 size-4" />
+            <MessageSquare className="size-4" />
             {hasDescription ? "Edit description" : "Add description"}
           </DropdownMenuItem>
           {hasDescription ? (
@@ -94,7 +93,7 @@ export function PageActionsMenu({
                 updatePage.mutate({ description: "" });
               }}
             >
-              <X className="mr-2 size-4" />
+              <X className="size-4" />
               Clear description
             </DropdownMenuItem>
           ) : null}
@@ -107,18 +106,15 @@ export function PageActionsMenu({
             >
               {showInSidebar ? (
                 <>
-                  <PanelLeftClose className="mr-2 size-4" />
+                  <PanelLeftClose className="size-4" />
                   Hide from sidebar
                 </>
               ) : (
                 <>
-                  <PanelLeft className="mr-2 size-4" />
+                  <PanelLeft className="size-4" />
                   Show in sidebar
                 </>
               )}
-              {showInSidebar ? (
-                <Check className="text-muted-foreground ml-auto size-3.5" />
-              ) : null}
             </DropdownMenuItem>
           )}
           <DropdownMenuItem
@@ -127,7 +123,7 @@ export function PageActionsMenu({
               setPinOpen(true);
             }}
           >
-            <ListChecks className="mr-2 size-4" />
+            <ListChecks className="size-4" />
             Manage rails…
           </DropdownMenuItem>
           {!isSystem && (
@@ -136,9 +132,9 @@ export function PageActionsMenu({
               <DropdownMenuItem
                 disabled={del.isPending}
                 onSelect={() => void del.run()}
-                className="text-destructive focus:text-destructive"
+                variant="destructive"
               >
-                <Trash2 className="mr-2 size-4" />
+                <Trash2 className="size-4" />
                 Delete page
               </DropdownMenuItem>
             </>

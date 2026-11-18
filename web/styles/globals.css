@@ -749,6 +749,27 @@ body {
     background-color: var(--accent);
     color: var(--accent-foreground);
   }
+  /* Menu separators (docs/dev/menus.md). A separator only divides: one
+   * that would sit first or last in its menu / group, or right after
+   * another separator (conditional items hidden, a flattened phone
+   * submenu's fence next to the group divider) is not drawn. */
+  :is(
+      [data-slot="dropdown-menu-content"],
+      [data-slot="dropdown-menu-sub-content"],
+      [data-slot="dropdown-menu-group"]
+    )
+    > [data-slot="dropdown-menu-separator"]:is(:first-child, :last-child),
+  [data-slot="dropdown-menu-separator"]
+    + [data-slot="dropdown-menu-separator"] {
+    display: none;
+  }
+  /* Menu labels and items wrap only past the 20rem menu cap; a word longer
+   * than the line (a URL, a path) breaks instead of widening the menu. */
+  [data-slot="dropdown-menu-item"][data-slot="dropdown-menu-item"],
+  [data-slot="dropdown-menu-sub-trigger"][data-slot="dropdown-menu-sub-trigger"],
+  [data-slot="dropdown-menu-label"][data-slot="dropdown-menu-label"] {
+    overflow-wrap: anywhere;
+  }
   /* Badges keep `rounded-md` corners instead of upstream's `rounded-4xl`
    * pill, so they match the hero chips (`[data-hero-chip]`, which draw
    * `rounded-md` themselves) they sit beside (folio-flair). A link styled

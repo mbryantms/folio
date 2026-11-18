@@ -183,7 +183,7 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
               onSelect={fetchViewMetadata}
               disabled={createBatch.isPending}
             >
-              <Sparkles className="mr-2 size-4" />
+              <Sparkles className="size-4" />
               Fetch metadata for view
             </DropdownMenuItem>
           ) : undefined
