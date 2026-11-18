@@ -59,7 +59,8 @@ describe("useAdminSelectionActions", () => {
 
     action(result.current.actions, "fetch-metadata").onClick();
     expect(fetchMutate).toHaveBeenCalledWith(body, expect.any(Object));
-    fetchMutate.mock.calls[0][1].onSuccess();
+    const opts = fetchMutate.mock.calls[0]?.[1] as { onSuccess: () => void };
+    opts.onSuccess();
     expect(onDone).toHaveBeenCalledTimes(1);
 
     action(result.current.actions, "rescan").onClick();
