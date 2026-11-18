@@ -1783,7 +1783,7 @@ function GroupMenu({
           <MoreHorizontal className="size-4" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-60">
+      <DropdownMenuContent align="end">
         <DropdownMenuItem onSelect={onStartRename}>
           <Pencil className="size-4" /> Rename
         </DropdownMenuItem>
@@ -1857,10 +1857,7 @@ function GroupMenu({
           </>
         ) : null}
         <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onSelect={onDelete}
-          className="text-destructive focus:text-destructive"
-        >
+        <DropdownMenuItem onSelect={onDelete} variant="destructive">
           <Trash2 className="size-4" /> Delete group
         </DropdownMenuItem>
       </DropdownMenuContent>
@@ -1889,7 +1886,9 @@ function MenuItemText({
 }) {
   return (
     <span className="flex min-w-0 flex-col">
-      <span className="truncate">{label}</span>
+      <span className="min-w-0 truncate" title={label}>
+        {label}
+      </span>
       {reason ? (
         <span className="text-muted-foreground text-xs">{reason}</span>
       ) : null}

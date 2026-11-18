@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { useReaderStore } from "@/lib/reader/store";
 import { useMe } from "@/lib/api/queries";
+import { cn } from "@/lib/utils";
 import {
   formatKey,
   readMeKeybinds,
@@ -510,9 +511,9 @@ function MarkerMenuItems({ pageIndex }: { pageIndex: number }) {
   return (
     <>
       <DropdownMenuItem onSelect={openNote} className="flex-col items-start">
-        <span className="flex items-center font-medium">
+        <span className="flex w-full items-center font-medium">
           <StickyNote className="mr-2 size-4" /> Add note
-          <ChromeShortcut action="addNote" />
+          <ChromeShortcut action="addNote" className="ml-auto pl-3" />
         </span>
         <span className="text-muted-foreground ml-6 text-xs">
           Page-level markdown note. Optional panel selection.
@@ -523,9 +524,9 @@ function MarkerMenuItems({ pageIndex }: { pageIndex: number }) {
         onSelect={() => startHighlight("select-rect")}
         className="flex-col items-start"
       >
-        <span className="flex items-center font-medium">
+        <span className="flex w-full items-center font-medium">
           <Square className="mr-2 size-4" /> Highlight a region
-          <ChromeShortcut action="startHighlight" />
+          <ChromeShortcut action="startHighlight" className="ml-auto pl-3" />
         </span>
         <span className="text-muted-foreground ml-6 text-xs">
           Drag a rectangle. Saves just the box — fastest.
@@ -535,9 +536,9 @@ function MarkerMenuItems({ pageIndex }: { pageIndex: number }) {
         onSelect={() => startHighlight("select-text")}
         className="flex-col items-start"
       >
-        <span className="flex items-center font-medium">
+        <span className="flex w-full items-center font-medium">
           <Type className="mr-2 size-4" /> Highlight + capture text
-          <ChromeShortcut action="captureText" />
+          <ChromeShortcut action="captureText" className="ml-auto pl-3" />
         </span>
         <span className="text-muted-foreground ml-6 text-xs">
           Tap a speech bubble, or drag a box. Runs OCR so the text shows up in
@@ -548,7 +549,7 @@ function MarkerMenuItems({ pageIndex }: { pageIndex: number }) {
         onSelect={() => startHighlight("select-image")}
         className="flex-col items-start"
       >
-        <span className="flex items-center font-medium">
+        <span className="flex w-full items-center font-medium">
           <ImageIcon className="mr-2 size-4" /> Highlight + image hash
         </span>
         <span className="text-muted-foreground ml-6 text-xs">
@@ -623,11 +624,17 @@ function useReaderBindings(): Record<KeybindAction, string> {
 
 /** The bound key for a reader action, as a keycap in a tooltip (or a
  *  menu row). Nothing when the action is unbound. */
-function ChromeShortcut({ action }: { action: KeybindAction }) {
+function ChromeShortcut({
+  action,
+  className,
+}: {
+  action: KeybindAction;
+  className?: string;
+}) {
   const spec = useReaderBindings()[action];
   if (!spec) return null;
   return (
-    <Kbd size="md" className="ml-1 min-w-5 px-1 py-0">
+    <Kbd size="md" className={cn("ml-1 min-w-5 px-1 py-0", className)}>
       {formatKey(spec)}
     </Kbd>
   );

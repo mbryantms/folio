@@ -133,7 +133,7 @@ export function UserFooter({
             </button>
           )}
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" side="top" className="w-56">
+        <DropdownMenuContent align="start" side="top">
           <DropdownMenuLabel className="tracking-normal normal-case">
             <span className="text-muted-foreground block text-[10px] tracking-widest uppercase">
               Signed in as
@@ -192,7 +192,7 @@ export function UserFooter({
               void signOut();
             }}
             disabled={pending}
-            className="text-destructive focus:bg-destructive/10 focus:text-destructive"
+            variant="destructive"
           >
             <LogOut /> Sign out
           </DropdownMenuItem>

@@ -52,7 +52,7 @@ export function useCoverMenuCollectionActions(opts: {
   const actions: CoverMenuAction[] = [
     {
       label: "Add to Want to Read",
-      disabled: !wtrId || addToWtr.isPending,
+      disabled: addToWtr.isPending,
       onSelect: () => {
         if (!wtrId) {
           toast.error(TOAST.WTR_NOT_READY);
@@ -85,7 +85,7 @@ export function useCoverMenuCollectionActions(opts: {
       },
     },
     {
-      label: "Add to Collection…",
+      label: "Add to collection…",
       onSelect: () => setDialogOpen(true),
     },
   ];

@@ -7,8 +7,10 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/folio/dropdown-menu";
+import { splitDestructive } from "@/components/folio/menu-actions";
 import { useTouchDevice } from "@/lib/ui/use-coarse-pointer";
 import { cn } from "@/lib/utils";
 
@@ -97,33 +99,41 @@ export function CoverMenuButton({
           <MoreHorizontal className="size-4" aria-hidden="true" />
         </span>
       </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="start"
-        className="min-w-[11rem]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {actions.map((a, i) => (
-          <DropdownMenuItem
-            key={i}
-            disabled={a.disabled}
-            onSelect={() => {
-              // Let Radix close the menu first (default `onSelect`
-              // behavior). If we `preventDefault()` here the dropdown
-              // stays open over any follow-up toast — that swallowed
-              // the first click on Sonner's "Undo" action for
-              // Add-to-Want-to-Read because the menu sat on top of
-              // the toast layer.
-              if (!a.disabled) a.onSelect();
-            }}
-            className={cn(
-              a.destructive
-                ? "text-destructive focus:text-destructive"
-                : undefined,
-            )}
-          >
-            {a.label}
-          </DropdownMenuItem>
-        ))}
+      <DropdownMenuContent align="start" onClick={(e) => e.stopPropagation()}>
+        {(() => {
+          const { safe, destructive } = splitDestructive(actions);
+          const item = (a: CoverMenuAction, i: number) => (
+            <DropdownMenuItem
+              key={`${a.destructive ? "d" : "s"}${i}`}
+              disabled={a.disabled}
+              variant={a.destructive ? "destructive" : "default"}
+              onSelect={() => {
+                // Let Radix close the menu first (default `onSelect`
+                // behavior). If we `preventDefault()` here the dropdown
+                // stays open over any follow-up toast — that swallowed
+                // the first click on Sonner's "Undo" action for
+                // Add-to-Want-to-Read because the menu sat on top of
+                // the toast layer.
+                if (!a.disabled) a.onSelect();
+              }}
+            >
+              {/* Labels carry titles ("Read <series name>"): one line,
+                  full text on hover. */}
+              <span className="min-w-0 truncate" title={a.label}>
+                {a.label}
+              </span>
+            </DropdownMenuItem>
+          );
+          return (
+            <>
+              {safe.map(item)}
+              {safe.length > 0 && destructive.length > 0 && (
+                <DropdownMenuSeparator />
+              )}
+              {destructive.map(item)}
+            </>
+          );
+        })()}
       </DropdownMenuContent>
     </DropdownMenu>
   );
