@@ -11,6 +11,9 @@
 //! - `POST /series/{slug}/provider-coverage/accept` writes one provider's
 //!   proposal, optionally with a chosen main series ("Choose series").
 //!
+//! - `POST /metadata/coverage/selection` queues an analysis for each series
+//!   of a multi-select (proposals only — never auto-accepted).
+//!
 //! Admin-only; the mutating routes are audited
 //! (`admin.series.provider_coverage_analyze` / `…_accept`). The engine is
 //! [`crate::metadata::coverage`].
@@ -28,6 +31,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use super::error;
+use crate::api::extractors::Validated;
 use crate::auth::RequireAdmin;
 use crate::jobs::provider_coverage::{self, CoverageJobState, CoverageTrigger};
 use crate::metadata::coverage::{
@@ -37,12 +41,14 @@ use crate::metadata::identifier::Source;
 use crate::middleware::RequestContext;
 use crate::state::AppState;
 use server_macros::handler;
+use uuid::Uuid;
 
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(analyze))
         .routes(routes!(coverage_analysis))
         .routes(routes!(accept))
+        .routes(routes!(analyze_selection))
 }
 
 #[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
@@ -154,6 +160,97 @@ pub async fn analyze(
         }),
     )
         .into_response()
+}
+
+/// Most series one bulk coverage analysis may name. Each analysis lists
+/// provider series across up to three providers, so the cap sits well below
+/// the 100 of the other series bulk actions.
+pub const COVERAGE_SELECTION_MAX_SERIES: usize = 50;
+
+/// `POST /metadata/coverage/selection` request.
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
+pub struct AnalyzeCoverageSelectionReq {
+    #[garde(length(min = 1, max = COVERAGE_SELECTION_MAX_SERIES))]
+    pub series_ids: Vec<Uuid>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct AnalyzeCoverageSelectionResp {
+    /// Analyses newly queued.
+    pub queued: usize,
+    /// Series that already had an analysis queued or running.
+    pub already_running: usize,
+    /// Unknown or removed series.
+    pub not_found: usize,
+    /// Series whose enqueue failed.
+    pub failed: usize,
+}
+
+/// `POST /metadata/coverage/selection` — queue a coverage analysis for each
+/// selected series (the multi-select "Analyze coverage"). Same job as the
+/// series Metadata tab's button, but never with `auto_accept`: a bulk run
+/// only produces proposals, which stay on each series' Metadata tab until
+/// accepted. One audit row per call.
+#[utoipa::path(
+    operation_id = "provider_coverage_analyze_selection", post,
+    path = "/metadata/coverage/selection",
+    request_body = AnalyzeCoverageSelectionReq,
+    responses(
+        (status = 202, body = AnalyzeCoverageSelectionResp),
+        (status = 403, description = "admin only"),
+        (status = 422, description = "empty selection, or over the cap"),
+    )
+)]
+#[handler]
+pub async fn analyze_selection(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    Validated(req): Validated<AnalyzeCoverageSelectionReq>,
+) -> Response {
+    let targets = match crate::api::metadata_search::resolve_selected_series(
+        &app.db,
+        &req.series_ids,
+    )
+    .await
+    {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(error = %e, "coverage selection: series lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    let distinct: std::collections::HashSet<Uuid> = req.series_ids.iter().copied().collect();
+    let mut resp = AnalyzeCoverageSelectionResp {
+        queued: 0,
+        already_running: 0,
+        not_found: distinct.len() - targets.len(),
+        failed: 0,
+    };
+    for (series_id, _) in &targets {
+        match provider_coverage::enqueue(&app, *series_id, actor.id, false).await {
+            Ok((_, true)) => resp.queued += 1,
+            Ok((_, false)) => resp.already_running += 1,
+            Err(e) => {
+                tracing::warn!(series_id = %series_id, error = %e, "coverage selection: enqueue failed");
+                resp.failed += 1;
+            }
+        }
+    }
+    crate::record_admin_action!(
+        db = &app.db,
+        ctx = ctx,
+        actor = actor.id,
+        action = "admin.series.provider_coverage_analyze_selection",
+        payload = serde_json::json!({
+            "series_ids": targets.iter().map(|(id, _)| id.to_string()).collect::<Vec<_>>(),
+            "queued": resp.queued,
+            "already_running": resp.already_running,
+            "not_found": resp.not_found,
+            "failed": resp.failed,
+        }),
+    );
+    (StatusCode::ACCEPTED, Json(resp)).into_response()
 }
 
 #[utoipa::path(

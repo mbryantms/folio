@@ -73,6 +73,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(apply_series))
         .routes(routes!(pause_series))
         .routes(routes!(resume_series))
+        .routes(routes!(sync_selection))
         .routes(routes!(sync_status_series))
         .routes(routes!(search_issue))
         .routes(routes!(lookup_issue))
@@ -983,6 +984,114 @@ pub async fn resume_series(
     };
     crate::audit::record(&app.db, entry).await;
     resp
+}
+
+/// Most series one bulk pause/resume may name.
+pub const SYNC_SELECTION_MAX_SERIES: usize = 100;
+
+/// `POST /metadata/sync/selection` request.
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
+pub struct SyncSelectionReq {
+    #[garde(length(min = 1, max = SYNC_SELECTION_MAX_SERIES))]
+    pub series_ids: Vec<Uuid>,
+    /// `true` pauses metadata sync, `false` resumes it.
+    #[garde(skip)]
+    pub paused: bool,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SyncSelectionResp {
+    /// Series whose flag changed.
+    pub updated: usize,
+    /// Series already in the requested state.
+    pub unchanged: usize,
+    /// Unknown or removed series.
+    pub not_found: usize,
+}
+
+/// `POST /metadata/sync/selection` — pause or resume metadata sync for every
+/// selected series (the multi-select "Pause / Resume metadata sync"): a
+/// paused series is skipped by the weekly refresh and the automatic
+/// searches, same as the series Metadata tab's toggle. One `UPDATE`, one
+/// audit row.
+#[utoipa::path(
+    operation_id = "metadata_sync_selection",    post,
+    path = "/metadata/sync/selection",
+    request_body = SyncSelectionReq,
+    responses(
+        (status = 200, body = SyncSelectionResp),
+        (status = 403, description = "admin only"),
+        (status = 422, description = "empty selection, or over the cap"),
+    )
+)]
+#[handler]
+pub async fn sync_selection(
+    State(app): State<AppState>,
+    RequireAdmin(user): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    Validated(req): Validated<SyncSelectionReq>,
+) -> Response {
+    let targets = match resolve_selected_series(&app.db, &req.series_ids).await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(error = %e, "sync selection: series lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    let distinct: std::collections::HashSet<Uuid> = req.series_ids.iter().copied().collect();
+    let ids: Vec<Uuid> = targets.iter().map(|(id, _)| *id).collect();
+    let updated = if ids.is_empty() {
+        0
+    } else {
+        match series::Entity::update_many()
+            .col_expr(
+                series::Column::MetadataSyncPaused,
+                sea_orm::sea_query::Expr::value(req.paused),
+            )
+            .col_expr(
+                series::Column::UpdatedAt,
+                sea_orm::sea_query::Expr::value(chrono::Utc::now().fixed_offset()),
+            )
+            .filter(series::Column::Id.is_in(ids.iter().copied()))
+            .filter(series::Column::MetadataSyncPaused.ne(req.paused))
+            .exec(&app.db)
+            .await
+        {
+            Ok(r) => r.rows_affected as usize,
+            Err(e) => {
+                tracing::error!(error = %e, "sync selection: update failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        }
+    };
+    let resp = SyncSelectionResp {
+        updated,
+        unchanged: ids.len() - updated,
+        not_found: distinct.len() - ids.len(),
+    };
+    crate::audit::record(
+        &app.db,
+        crate::audit::AuditEntry {
+            actor_id: user.id,
+            action: if req.paused {
+                "admin.series.metadata_pause_selection"
+            } else {
+                "admin.series.metadata_resume_selection"
+            },
+            target_type: None,
+            target_id: None,
+            payload: serde_json::json!({
+                "series_ids": ids.iter().map(Uuid::to_string).collect::<Vec<_>>(),
+                "updated": resp.updated,
+                "unchanged": resp.unchanged,
+                "not_found": resp.not_found,
+            }),
+            ip: ctx.ip_string(),
+            user_agent: ctx.user_agent.clone(),
+        },
+    )
+    .await;
+    Json(resp).into_response()
 }
 
 /// Flip `series.metadata_sync_paused`. Returns the response plus the audit
@@ -3485,7 +3594,7 @@ async fn resolve_selected_issues(
 
 /// Selected series that can be searched: not soft-removed. Request order is
 /// kept, duplicates drop. Returns `(series_id, library_id)` pairs.
-async fn resolve_selected_series(
+pub(crate) async fn resolve_selected_series(
     db: &sea_orm::DatabaseConnection,
     ids: &[Uuid],
 ) -> Result<Vec<(Uuid, Uuid)>, sea_orm::DbErr> {

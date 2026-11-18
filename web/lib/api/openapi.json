@@ -10731,6 +10731,72 @@
         }
       }
     },
+    "/api/metadata/coverage/selection": {
+      "post": {
+        "summary": "`POST /metadata/coverage/selection` — queue a coverage analysis for each\nselected series (the multi-select \"Analyze coverage\"). Same job as the\nseries Metadata tab's button, but never with `auto_accept`: a bulk run\nonly produces proposals, which stay on each series' Metadata tab until\naccepted. One audit row per call.",
+        "operationId": "provider_coverage_analyze_selection",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalyzeCoverageSelectionReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyzeCoverageSelectionResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "422": {
+            "description": "empty selection, or over the cap"
+          }
+        }
+      }
+    },
+    "/api/metadata/sync/selection": {
+      "post": {
+        "summary": "`POST /metadata/sync/selection` — pause or resume metadata sync for every\nselected series (the multi-select \"Pause / Resume metadata sync\"): a\npaused series is skipped by the weekly refresh and the automatic\nsearches, same as the series Metadata tab's toggle. One `UPDATE`, one\naudit row.",
+        "operationId": "metadata_sync_selection",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyncSelectionReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncSelectionResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "422": {
+            "description": "empty selection, or over the cap"
+          }
+        }
+      }
+    },
     "/api/people": {
       "get": {
         "operationId": "people_list",
@@ -15928,6 +15994,53 @@
           "auto_accept": {
             "type": "boolean",
             "description": "Accept high-confidence, conflict-free proposals automatically\n(series id as provider-set, ranges as automated rows)."
+          }
+        }
+      },
+      "AnalyzeCoverageSelectionReq": {
+        "type": "object",
+        "description": "`POST /metadata/coverage/selection` request.",
+        "required": [
+          "series_ids"
+        ],
+        "properties": {
+          "series_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
+      "AnalyzeCoverageSelectionResp": {
+        "type": "object",
+        "required": [
+          "queued",
+          "already_running",
+          "not_found",
+          "failed"
+        ],
+        "properties": {
+          "already_running": {
+            "type": "integer",
+            "description": "Series that already had an analysis queued or running.",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "description": "Series whose enqueue failed.",
+            "minimum": 0
+          },
+          "not_found": {
+            "type": "integer",
+            "description": "Unknown or removed series.",
+            "minimum": 0
+          },
+          "queued": {
+            "type": "integer",
+            "description": "Analyses newly queued.",
+            "minimum": 0
           }
         }
       },
@@ -38181,6 +38294,52 @@
           "modified",
           "stale"
         ]
+      },
+      "SyncSelectionReq": {
+        "type": "object",
+        "description": "`POST /metadata/sync/selection` request.",
+        "required": [
+          "series_ids",
+          "paused"
+        ],
+        "properties": {
+          "paused": {
+            "type": "boolean",
+            "description": "`true` pauses metadata sync, `false` resumes it."
+          },
+          "series_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
+      "SyncSelectionResp": {
+        "type": "object",
+        "required": [
+          "updated",
+          "unchanged",
+          "not_found"
+        ],
+        "properties": {
+          "not_found": {
+            "type": "integer",
+            "description": "Unknown or removed series.",
+            "minimum": 0
+          },
+          "unchanged": {
+            "type": "integer",
+            "description": "Series already in the requested state.",
+            "minimum": 0
+          },
+          "updated": {
+            "type": "integer",
+            "description": "Series whose flag changed.",
+            "minimum": 0
+          }
+        }
       },
       "SyncStatusResp": {
         "type": "object",

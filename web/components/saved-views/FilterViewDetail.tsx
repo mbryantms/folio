@@ -30,6 +30,7 @@ import {
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useAdminSelectionActions } from "@/components/library/useAdminSelectionActions";
+import { useWantToReadSelectionAction } from "@/components/collections/useWantToReadSelectionAction";
 import { EmptyState } from "@/components/folio/empty-state";
 import {
   useBulkMarkSeriesProgress,
@@ -150,8 +151,12 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
   // Fetch metadata + Rescan (admin): one batch over the selected series.
   const adminBulk = useAdminSelectionActions(
     { issueIds: [], seriesIds: Array.from(selection.selected) },
-    { onDone: () => selection.exit() },
+    { scope: "series", onDone: () => selection.exit() },
   );
+  // Add to Want to Read — every user (their own list).
+  const wantToRead = useWantToReadSelectionAction(selectedTargets, {
+    onDone: () => selection.exit(),
+  });
 
   return (
     <div className="space-y-6">
@@ -262,6 +267,7 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
             onClick: () => setPickerOpen(true),
             disabled: selection.count === 0,
           },
+          wantToRead.action,
         ]}
         actionGroups={
           adminBulk.actions.length > 0
@@ -278,8 +284,11 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
         onDone={() => selection.exit()}
         onClear={() => selection.clear()}
         onSelectAll={() => selection.selectAll()}
-        isPending={bulkMark.isPending || adminBulk.isPending}
+        isPending={
+          bulkMark.isPending || adminBulk.isPending || wantToRead.isPending
+        }
       />
+      {adminBulk.dialogs}
 
       {isInitialLoading ? (
         <SeriesGridSkeleton />

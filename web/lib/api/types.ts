@@ -945,6 +945,12 @@ export type BatchCreatedResp = Schemas["BatchCreatedResp"];
 export type SelectionBatchReq = Schemas["SelectionBatchReq"];
 export type ScanSelectionReq = Schemas["ScanSelectionReq"];
 export type ScanSelectionResp = Schemas["ScanSelectionResp"];
+export type AnalyzeCoverageSelectionReq =
+  Schemas["AnalyzeCoverageSelectionReq"];
+export type AnalyzeCoverageSelectionResp =
+  Schemas["AnalyzeCoverageSelectionResp"];
+export type SyncSelectionReq = Schemas["SyncSelectionReq"];
+export type SyncSelectionResp = Schemas["SyncSelectionResp"];
 export type BatchStatusResp = Schemas["BatchStatusResp"];
 export type BatchChildRow = Schemas["BatchChildRow"];
 export type BatchAggregate = Schemas["BatchAggregate"];

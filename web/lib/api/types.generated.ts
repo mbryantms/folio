@@ -4955,6 +4955,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/metadata/coverage/selection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /metadata/coverage/selection` — queue a coverage analysis for each
+         *     selected series (the multi-select "Analyze coverage"). Same job as the
+         *     series Metadata tab's button, but never with `auto_accept`: a bulk run
+         *     only produces proposals, which stay on each series' Metadata tab until
+         *     accepted. One audit row per call.
+         */
+        post: operations["provider_coverage_analyze_selection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/metadata/sync/selection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /metadata/sync/selection` — pause or resume metadata sync for every
+         *     selected series (the multi-select "Pause / Resume metadata sync"): a
+         *     paused series is skipped by the weekly refresh and the automatic
+         *     searches, same as the series Metadata tab's toggle. One `UPDATE`, one
+         *     audit row.
+         */
+        post: operations["metadata_sync_selection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/people": {
         parameters: {
             query?: never;
@@ -6871,6 +6917,20 @@ export interface components {
              *     (series id as provider-set, ranges as automated rows).
              */
             auto_accept?: boolean;
+        };
+        /** @description `POST /metadata/coverage/selection` request. */
+        AnalyzeCoverageSelectionReq: {
+            series_ids: string[];
+        };
+        AnalyzeCoverageSelectionResp: {
+            /** @description Series that already had an analysis queued or running. */
+            already_running: number;
+            /** @description Series whose enqueue failed. */
+            failed: number;
+            /** @description Unknown or removed series. */
+            not_found: number;
+            /** @description Analyses newly queued. */
+            queued: number;
         };
         AppPasswordCreatedView: {
             created_at: string;
@@ -16487,6 +16547,20 @@ export interface components {
          * @enum {string}
          */
         SuggestionStatus: "pending" | "accepted" | "rejected" | "modified" | "stale";
+        /** @description `POST /metadata/sync/selection` request. */
+        SyncSelectionReq: {
+            /** @description `true` pauses metadata sync, `false` resumes it. */
+            paused: boolean;
+            series_ids: string[];
+        };
+        SyncSelectionResp: {
+            /** @description Unknown or removed series. */
+            not_found: number;
+            /** @description Series already in the requested state. */
+            unchanged: number;
+            /** @description Series whose flag changed. */
+            updated: number;
+        };
         SyncStatusResp: {
             last_metadata_sync_at?: string | null;
             /**
@@ -27903,6 +27977,80 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["BatchListResp"];
                 };
+            };
+        };
+    };
+    provider_coverage_analyze_selection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnalyzeCoverageSelectionReq"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalyzeCoverageSelectionResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description empty selection, or over the cap */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_sync_selection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SyncSelectionReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncSelectionResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description empty selection, or over the cap */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
