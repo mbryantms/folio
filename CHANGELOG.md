@@ -13,6 +13,35 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.86.0](https://github.com/mbryantms/folio/compare/v0.85.0...v0.86.0) (2026-11-19)
+
+
+### Added
+
+* **selection:** Fetch metadata and Rescan on every multi-select surface ([#1699](https://github.com/mbryantms/folio/issues/1699)) ([c1d2479](https://github.com/mbryantms/folio/commit/c1d24799e763511ed57aa0493221dbb30986a14c))
+* **selection:** series admin actions, Edit metadata everywhere, Want to Read ([#1700](https://github.com/mbryantms/folio/issues/1700)) ([920be9b](https://github.com/mbryantms/folio/commit/920be9b5f53dd8a7d5ceb233afe94a47b69cc5a7))
+
+
+### Fixed
+
+* **deps:** accept chrono unmaintained advisories and bump lettre to 0.11.24 ([#1702](https://github.com/mbryantms/folio/issues/1702)) ([02e4b23](https://github.com/mbryantms/folio/commit/02e4b23f360db199a4600c2e379c97126793e77e))
+* **web:** one sizing and structure standard for dropdown menus ([#1701](https://github.com/mbryantms/folio/issues/1701)) ([2e09b14](https://github.com/mbryantms/folio/commit/2e09b14507249a1bfa10a6edef0d084fae9c3adb))
+
+
+### Dependencies
+
+* lock file maintenance ([#1685](https://github.com/mbryantms/folio/issues/1685)) ([955b828](https://github.com/mbryantms/folio/commit/955b828332d6bd5dba522d531971f53787936095))
+* lock file maintenance ([#1688](https://github.com/mbryantms/folio/issues/1688)) ([c95989d](https://github.com/mbryantms/folio/commit/c95989d23063aa83d391c2e2fd133e6c13eb3a56))
+* lock file maintenance ([#1689](https://github.com/mbryantms/folio/issues/1689)) ([941950f](https://github.com/mbryantms/folio/commit/941950f7b980f0315be918c2a7e3aea684cf877b))
+* update dependency eslint to v10.15.0 ([#1692](https://github.com/mbryantms/folio/issues/1692)) ([d99881f](https://github.com/mbryantms/folio/commit/d99881f12dd450a17a1d64254cac95b33bdf08bc))
+* update dependency jsdom to v31.0.1 ([#1687](https://github.com/mbryantms/folio/issues/1687)) ([5bb2099](https://github.com/mbryantms/folio/commit/5bb2099aeb3f621ae3712370c84f2cc24a84a8e1))
+* update dependency lucide-react to v1.73.0 ([#1694](https://github.com/mbryantms/folio/issues/1694)) ([97ac972](https://github.com/mbryantms/folio/commit/97ac972be5561555e2d9f3672415b7e27214a3f2))
+* update dependency pnpm to v12.21.0 ([#1691](https://github.com/mbryantms/folio/issues/1691)) ([5878418](https://github.com/mbryantms/folio/commit/587841818e11f37893f83078ebad7f03fd8d1917))
+* update dependency postcss@&lt;8.5.10 to v8.5.33 ([#1693](https://github.com/mbryantms/folio/issues/1693)) ([de0fb08](https://github.com/mbryantms/folio/commit/de0fb08ebf4a0fe531f14f83ee5b3ef509397414))
+* update postgres:18-alpine docker digest to b6972e1 ([#1696](https://github.com/mbryantms/folio/issues/1696)) ([1b6d2f0](https://github.com/mbryantms/folio/commit/1b6d2f0d98732f46a80e4ad3da3b3557a1bd048a))
+* update rust crate jsonwebtoken to v12 ([#1690](https://github.com/mbryantms/folio/issues/1690)) ([a56cb3b](https://github.com/mbryantms/folio/commit/a56cb3bce12d1fc8162fbeaafff97aa44c7742a7))
+* update web-dev-tooling (weekly) ([#1684](https://github.com/mbryantms/folio/issues/1684)) ([06ed9be](https://github.com/mbryantms/folio/commit/06ed9bea80d68a31701826790774ac19d79848f2))
+
 ## [0.85.0](https://github.com/mbryantms/folio/compare/v0.84.0...v0.85.0) (2026-11-15)
 
 
