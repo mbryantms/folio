@@ -517,40 +517,44 @@ function CblRailBody({
   const leftSentinelIdx = sentinelOffset;
   const rightSentinelIdx = items.length - 1 - sentinelOffset;
 
+  // The sentinels render inside a card's wrapper, absolutely positioned
+  // on its left / right edge, rather than as flex siblings: a zero-width
+  // flex child still takes the track's `gap-3` on both sides, which
+  // doubled the gutter next to it (and broke the 12px-per-card math in
+  // the prepend compensation above).
   return (
     <>
       {items.map((entry, i) => {
         const isCurrent = anchorPos != null && entry.position === anchorPos;
         return (
-          <React.Fragment key={entry.issue.id}>
+          <div
+            key={entry.issue.id}
+            style={itemStyle}
+            className="relative shrink-0"
+            // The rail wrapper looks for this attribute on mount to
+            // auto-scroll the current entry into view.
+            data-rail-current={isCurrent ? "true" : undefined}
+          >
             {i === leftSentinelIdx && (
               <div
                 ref={setLeftSentinel}
                 aria-hidden
-                className="pointer-events-none w-0 shrink-0"
+                className="pointer-events-none absolute inset-y-0 left-0 w-0"
               />
             )}
-            <div
-              style={itemStyle}
-              className="shrink-0"
-              // The rail wrapper looks for this attribute on mount to
-              // auto-scroll the current entry into view.
-              data-rail-current={isCurrent ? "true" : undefined}
-            >
-              <CblWindowCard
-                entry={entry}
-                isCurrent={isCurrent}
-                cblSavedViewId={view.id}
-              />
-            </div>
+            <CblWindowCard
+              entry={entry}
+              isCurrent={isCurrent}
+              cblSavedViewId={view.id}
+            />
             {i === rightSentinelIdx && i !== leftSentinelIdx && (
               <div
                 ref={setRightSentinel}
                 aria-hidden
-                className="pointer-events-none w-0 shrink-0"
+                className="pointer-events-none absolute inset-y-0 right-0 w-0"
               />
             )}
-          </React.Fragment>
+          </div>
         );
       })}
     </>
