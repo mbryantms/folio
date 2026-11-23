@@ -14,7 +14,7 @@
  * The stub models a real IntersectionObserver: an observed target that is
  * already in view reports as intersecting straight away.
  */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -170,8 +170,8 @@ describe("useInfiniteSentinel with a sentinel that mounts late", () => {
   );
 });
 
-describe("CblViewDetail", () => {
-  it("drives its entry grid through the shared sentinel hook", () => {
+describe("infinite-scroll sentinels", () => {
+  it("CblViewDetail drives its entry grid through the shared hook", () => {
     // A hand-rolled `useRef` observer here is how the 100-entry stop
     // shipped; keep the page on the callback-ref hook.
     const src = readFileSync(
@@ -180,5 +180,38 @@ describe("CblViewDetail", () => {
     );
     expect(src).toContain("useInfiniteSentinel(entriesQuery)");
     expect(src).not.toMatch(/new IntersectionObserver/);
+  });
+
+  it("no page hand-rolls a next-page IntersectionObserver", () => {
+    // Every vertical/horizontal "fetch the next page" sentinel goes
+    // through `useInfiniteSentinel` (or `<InfiniteSentinel>`), whose
+    // callback ref attaches whenever the sentinel mounts. A `useRef` copy
+    // misses a sentinel that mounts after the query settles.
+    const allowed = new Set([
+      // The hook itself.
+      "lib/ui/use-infinite-sentinel.ts",
+      // Bidirectional home rail: two edge sentinels rooted on the rail's
+      // own scroller, already attached through callback refs.
+      "components/saved-views/SavedViewRail.tsx",
+    ]);
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(join(process.cwd(), dir))) {
+        const rel = `${dir}/${name}`;
+        if (statSync(join(process.cwd(), rel)).isDirectory()) {
+          walk(rel);
+        } else if (/\.tsx?$/.test(name) && !allowed.has(rel)) {
+          const src = readFileSync(join(process.cwd(), rel), "utf8");
+          if (
+            src.includes("new IntersectionObserver") &&
+            /fetch(Next|Previous)Page/.test(src)
+          ) {
+            offenders.push(rel);
+          }
+        }
+      }
+    };
+    for (const dir of ["app", "components", "lib"]) walk(dir);
+    expect(offenders).toEqual([]);
   });
 });

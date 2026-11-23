@@ -44,6 +44,7 @@ import { useSelection } from "@/lib/selection/use-selection";
 import { EditFilterViewSheet } from "./EditFilterViewSheet";
 import { ViewHeader } from "./ViewHeader";
 import { LoadMoreError } from "@/components/folio/infinite-sentinel";
+import { useInfiniteSentinel } from "@/lib/ui/use-infinite-sentinel";
 
 /** Issue-level (`filter_issues`, WP-5.4) view detail page: header +
  *  cursor-paginated issue grid, auto-loading the next page from an
@@ -62,29 +63,16 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
   const createBatch = useCreateSavedViewBatch();
   const isAdmin = useMe().data?.role === "admin";
 
-  const sentinelRef = React.useRef<HTMLDivElement | null>(null);
   const {
     hasNextPage,
     isFetchingNextPage,
     isFetchNextPageError,
     fetchNextPage,
   } = results;
-  React.useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el || isFetchNextPageError) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          if (hasNextPage && !isFetchingNextPage) {
-            void fetchNextPage();
-          }
-        }
-      },
-      { rootMargin: "600px" },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
+  const sentinelRef = useInfiniteSentinel(
+    { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage },
+    { rootMargin: "600px" },
+  );
 
   const fetchViewMetadata = () => {
     createBatch.mutate({ saved_view_id: view.id });

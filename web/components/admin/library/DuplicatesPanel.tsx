@@ -32,6 +32,7 @@ import type {
 } from "@/lib/api/types";
 import { LoadMoreError } from "@/components/folio/infinite-sentinel";
 import { RailError } from "@/components/saved-views/RailError";
+import { useInfiniteSentinel } from "@/lib/ui/use-infinite-sentinel";
 
 const FILTERS: { value: DuplicateKindFilter; label: string }[] = [
   { value: "all", label: "All" },
@@ -83,24 +84,13 @@ export function DuplicatesPanel({ libraryId }: { libraryId: string }) {
     isFetchNextPageError,
   } = query;
   const fetchNextPage = query.fetchNextPage;
-  const sentinelRef = React.useRef<HTMLDivElement | null>(null);
 
   // Auto-fetch the next page when the sentinel scrolls into view. Depend
   // on the fields, not the result object (fresh identity per render).
-  React.useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el || isFetchNextPageError) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
-        }
-      },
-      { rootMargin: "400px 0px" },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
+  const sentinelRef = useInfiniteSentinel(
+    { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage },
+    { rootMargin: "400px 0px" },
+  );
 
   const groups = data?.pages.flatMap((p) => p.items) ?? [];
   const first = data?.pages[0];

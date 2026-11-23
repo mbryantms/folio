@@ -31,7 +31,16 @@ export type InfiniteSentinelQuery = {
  *  the sentinel later than the query settled (an early-return skeleton
  *  while a sibling query loads, as on the CBL view) never observed it and
  *  stopped at the first page. */
-export function useInfiniteSentinel(query: InfiniteSentinelQuery) {
+export function useInfiniteSentinel(
+  query: InfiniteSentinelQuery,
+  {
+    rootMargin = "400px",
+  }: {
+    /** How far outside the viewport the sentinel triggers a fetch.
+     *  Horizontal rails pass a right-edge margin (`"0px 400px 0px 0px"`). */
+    rootMargin?: string;
+  } = {},
+) {
   const {
     hasNextPage,
     isFetchingNextPage,
@@ -51,12 +60,13 @@ export function useInfiniteSentinel(query: InfiniteSentinelQuery) {
           void fetchNextPage();
         }
       },
-      { rootMargin: "400px" },
+      { rootMargin },
     );
     obs.observe(el);
     return () => obs.disconnect();
   }, [
     el,
+    rootMargin,
     hasNextPage,
     isFetchingNextPage,
     isFetchNextPageError,

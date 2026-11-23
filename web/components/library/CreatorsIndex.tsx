@@ -15,6 +15,7 @@ import type { CreatorListItem } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 import { LoadMoreError } from "@/components/folio/infinite-sentinel";
 import { RailError } from "@/components/saved-views/RailError";
+import { useInfiniteSentinel } from "@/lib/ui/use-infinite-sentinel";
 
 const SEARCH_DEBOUNCE_MS = 250;
 /** Min query length before switching from browse to search — matches the
@@ -95,23 +96,12 @@ export function CreatorsIndex({
   // Same sentinel shape as `IssuesPanel` / `MarkersList` — depend on the
   // three fields (not the whole result object) so the observer isn't torn
   // down on every render.
-  const sentinelRef = React.useRef<HTMLDivElement | null>(null);
-  React.useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el || isFetchNextPageError) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          if (hasNextPage && !isFetchingNextPage) {
-            void fetchNextPage();
-          }
-        }
-      },
-      { rootMargin: "400px" },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
+  const sentinelRef = useInfiniteSentinel({
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  });
 
   const items = React.useMemo(
     () => query.data?.pages.flatMap((p) => p.items) ?? [],

@@ -45,6 +45,7 @@ import type {
   ReadingStatsRange,
 } from "@/lib/api/types";
 import { LoadMoreError } from "@/components/folio/infinite-sentinel";
+import { useInfiniteSentinel } from "@/lib/ui/use-infinite-sentinel";
 
 type GroupBy = "day" | "week" | "month";
 
@@ -108,7 +109,6 @@ export function ActivityReportPage() {
   // Sentinel near the bottom triggers the next page fetch as the
   // user scrolls — the report can grow very long, so we lazy-load
   // even at limit 60 per page.
-  const sentinelRef = React.useRef<HTMLDivElement | null>(null);
   // Depend on the three fields, not the whole query object (audit G10) —
   // `[query]` rebuilt the observer every render.
   const {
@@ -117,24 +117,12 @@ export function ActivityReportPage() {
     isFetchNextPageError,
     fetchNextPage,
   } = query;
-  React.useEffect(() => {
-    const node = sentinelRef.current;
-    if (!node || isFetchNextPageError) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (
-          entries.some((e) => e.isIntersecting) &&
-          hasNextPage &&
-          !isFetchingNextPage
-        ) {
-          void fetchNextPage();
-        }
-      },
-      { rootMargin: "400px" },
-    );
-    obs.observe(node);
-    return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
+  const sentinelRef = useInfiniteSentinel({
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  });
 
   const events = React.useMemo(
     () => query.data?.pages.flatMap((p) => p.events) ?? [],

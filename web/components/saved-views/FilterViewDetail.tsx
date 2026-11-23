@@ -47,6 +47,7 @@ import type { SavedViewView } from "@/lib/api/types";
 import { EditFilterViewSheet } from "./EditFilterViewSheet";
 import { ViewHeader } from "./ViewHeader";
 import { LoadMoreError } from "@/components/folio/infinite-sentinel";
+import { useInfiniteSentinel } from "@/lib/ui/use-infinite-sentinel";
 
 /** Filter-view detail page: header + paginated series grid. The
  *  cursor-paginated results endpoint pages at 60; an IntersectionObserver
@@ -63,29 +64,16 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
   // Infinite-scroll sentinel — same shape as CblViewDetail / the creators
   // index. Depend on the three result fields (not the whole object) so the
   // observer isn't rebuilt every render.
-  const sentinelRef = React.useRef<HTMLDivElement | null>(null);
   const {
     hasNextPage,
     isFetchingNextPage,
     isFetchNextPageError,
     fetchNextPage,
   } = results;
-  React.useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el || isFetchNextPageError) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          if (hasNextPage && !isFetchingNextPage) {
-            void fetchNextPage();
-          }
-        }
-      },
-      { rootMargin: "600px" },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
+  const sentinelRef = useInfiniteSentinel(
+    { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage },
+    { rootMargin: "600px" },
+  );
 
   const fetchViewMetadata = () => {
     createBatch.mutate({ saved_view_id: view.id });

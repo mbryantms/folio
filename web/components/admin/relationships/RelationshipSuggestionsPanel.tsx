@@ -99,6 +99,7 @@ import { kindLabel } from "@/lib/relationships";
 import { useReturnFocus } from "@/lib/ui/use-return-focus";
 import { seriesUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
+import { useInfiniteSentinel } from "@/lib/ui/use-infinite-sentinel";
 
 export const STATUS_FILTERS: {
   value: SuggestionStatusFilter;
@@ -184,22 +185,11 @@ export function RelationshipSuggestionsPanel() {
     isFetchNextPageError,
   } = query;
   const fetchNextPage = query.fetchNextPage;
-  const sentinelRef = React.useRef<HTMLDivElement | null>(null);
 
-  React.useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el || isFetchNextPageError) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
-        }
-      },
-      { rootMargin: "400px 0px" },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
+  const sentinelRef = useInfiniteSentinel(
+    { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage },
+    { rootMargin: "400px 0px" },
+  );
 
   const items = React.useMemo(
     () => data?.pages.flatMap((p) => p.items) ?? [],
