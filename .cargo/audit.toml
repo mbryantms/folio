@@ -25,13 +25,6 @@ ignore = [
     # via openidconnect (public-key RS256 verify only) and jsonwebtoken
     # (we sign with Ed25519); deny.toml carries the full rationale.
     "RUSTSEC-2023-0071",
-    # `crypto-bigint 0.5.5` timing variability in constant-time ops
-    # (RUSTSEC-2026-0387). Patched only in the 0.7 line; in the graph via
-    # p256/p384 0.13 from jsonwebtoken 11.1 + openidconnect 4.0, both at
-    # their latest and pinned to p256 ^0.13. Only ECDSA *verification* of
-    # OIDC id_tokens; our own tokens are EdDSA. deny.toml carries the full
-    # rationale and the delete-when condition.
-    "RUSTSEC-2026-0387",
     # `astral-tokio-tar` unmaintained: test-only, via testcontainers 0.28
     # (latest). deny.toml carries the full rationale.
     "RUSTSEC-2026-0440",

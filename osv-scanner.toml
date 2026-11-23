@@ -23,10 +23,6 @@ id = "RUSTSEC-2023-0071"
 reason = "`rsa 0.9.10` Marvin Attack — transitive via jsonwebtoken / openidconnect; we sign JWTs with Ed25519 only and RS256 id_token verification is a public-key op. Fixed in rsa 0.10 (our OIDC test dev-dep is on it); delete when jsonwebtoken and openidconnect move to 0.10 and `cargo tree -i rsa@0.9.10` is empty."
 
 [[IgnoredVulns]]
-id = "RUSTSEC-2026-0387"
-reason = "`crypto-bigint 0.5.5` constant-time variability — patched only in 0.7.6+ (RustCrypto 0.14 train); reaches us via p256/p384 0.13 from jsonwebtoken 11.1 + openidconnect 4.0.1, both latest and pinned to p256 ^0.13. Only ECDSA *verification* of OIDC id_tokens; our tokens are EdDSA. Delete when `cargo tree -i crypto-bigint` shows no 0.5."
-
-[[IgnoredVulns]]
 id = "RUSTSEC-2026-0459"
 reason = "Bundled SQLite <3.54 returns uninitialized page-cache memory with a mismatched `-wal` sibling — libsqlite3-sys 0.37 is pinned by sqlx-sqlite 0.9.0 (latest, `<0.38`; fix is 0.39). Folio's only open, `metadata::local_db::open`, uses `immutable=true`, which never reads a WAL. Delete when sqlx-sqlite allows libsqlite3-sys 0.39."
 
