@@ -270,11 +270,16 @@ async fn retag_detected_after_backfill() {
         8,
         4096,
     );
-    filetime::set_file_mtime(
-        &file,
-        filetime::FileTime::from_unix_time(Utc::now().timestamp() + 60, 0),
-    )
-    .unwrap();
+    std::fs::File::open(&file)
+        .and_then(|f| {
+            f.set_modified(
+                std::time::UNIX_EPOCH
+                    + std::time::Duration::from_secs(
+                        u64::try_from(Utc::now().timestamp() + 60).unwrap(),
+                    ),
+            )
+        })
+        .unwrap();
     let stats = scanner::scan_library(&state, lib_id).await.unwrap();
     assert_eq!(stats.files_updated, 1, "retag is an update: {stats:?}");
     assert_eq!(stats.files_added, 0);
@@ -318,11 +323,16 @@ async fn retag_before_backfill_settles_through_rescan() {
     assert_eq!(pending.hash_algorithm, 0);
 
     write_cbz(&file, Some(&comic_info("Early", 1)), 22, 2048);
-    filetime::set_file_mtime(
-        &file,
-        filetime::FileTime::from_unix_time(Utc::now().timestamp() + 60, 0),
-    )
-    .unwrap();
+    std::fs::File::open(&file)
+        .and_then(|f| {
+            f.set_modified(
+                std::time::UNIX_EPOCH
+                    + std::time::Duration::from_secs(
+                        u64::try_from(Utc::now().timestamp() + 60).unwrap(),
+                    ),
+            )
+        })
+        .unwrap();
     let stats = scanner::scan_library(&state, lib_id).await.unwrap();
     assert_eq!(stats.files_updated, 1, "{stats:?}");
 

@@ -31,8 +31,10 @@ const DAY: Duration = Duration::from_secs(86_400);
 /// backup's age, stays "now").
 fn touch_aged(path: &Path, age: Duration) {
     std::fs::write(path, b"backup bytes").unwrap();
-    let t = filetime::FileTime::from_system_time(SystemTime::now() - age);
-    filetime::set_file_mtime(path, t).unwrap();
+    let t = SystemTime::now() - age;
+    std::fs::File::open(path)
+        .and_then(|file| file.set_modified(t))
+        .unwrap();
 }
 
 /// A moment strictly between the files made before and after it, far
@@ -301,8 +303,8 @@ fn stage(
     let mut f = io.staging_file()?;
     f.write_all(bytes)?;
     if bump {
-        let ahead = filetime::FileTime::from_system_time(SystemTime::now() + 365 * DAY);
-        filetime::set_file_handle_times(&f, None, Some(ahead))?;
+        let ahead = SystemTime::now() + 365 * DAY;
+        std::fs::File::set_modified(&f, ahead)?;
     }
     Ok(())
 }
@@ -345,8 +347,8 @@ fn rewrite_checks_the_link_against_the_staging_files_time() {
 fn a_future_dated_archive_is_backed_up_by_copy_and_an_old_one_by_link() {
     let dir = tempdir().unwrap();
     let root = server::library::no_follow::LibraryRoot::resolve(dir.path());
-    let future = filetime::FileTime::from_system_time(SystemTime::now() + 365 * DAY);
-    let past = filetime::FileTime::from_system_time(SystemTime::now() - 400 * DAY);
+    let future = SystemTime::now() + 365 * DAY;
+    let past = SystemTime::now() - 400 * DAY;
     let fresh = |p: &Path| {
         let m = std::fs::symlink_metadata(p).unwrap();
         let mtime = m.modified().unwrap();
@@ -357,7 +359,9 @@ fn a_future_dated_archive_is_backed_up_by_copy_and_an_old_one_by_link() {
         // rewrite_atomic
         let archive = dir.path().join(format!("rw-{label}.cbz"));
         std::fs::write(&archive, b"v1").unwrap();
-        filetime::set_file_mtime(&archive, stamp).unwrap();
+        std::fs::File::open(&archive)
+            .and_then(|file| file.set_modified(stamp))
+            .unwrap();
         let before = ino(&archive);
         let out = server::archive_rewrite::rewrite_atomic(&root, &archive, 1, |io| {
             stage(io, b"v2", false)
@@ -376,7 +380,9 @@ fn a_future_dated_archive_is_backed_up_by_copy_and_an_old_one_by_link() {
         let original = dir.path().join(format!("cv-{label}.cbr"));
         let dst = dir.path().join(format!("cv-{label}.cbz"));
         std::fs::write(&original, b"rar").unwrap();
-        filetime::set_file_mtime(&original, stamp).unwrap();
+        std::fs::File::open(&original)
+            .and_then(|file| file.set_modified(stamp))
+            .unwrap();
         let before = ino(&original);
         let converted = server::archive_rewrite::convert_atomic(&root, &original, &dst, |io| {
             stage(io, b"zip", false)

@@ -316,8 +316,10 @@ mod tests {
     /// Set `path`'s mtime to `age` before now. Its ctime stays "now":
     /// nothing in user space can move a ctime back, which is the point.
     fn backdate_mtime(path: &Path, age: Duration) {
-        let t = filetime::FileTime::from_system_time(SystemTime::now() - age);
-        filetime::set_file_mtime(path, t).unwrap();
+        let t = SystemTime::now() - age;
+        std::fs::File::open(path)
+            .and_then(|file| file.set_modified(t))
+            .unwrap();
     }
 
     /// Two moments around which files are made, far enough apart that the
@@ -497,8 +499,10 @@ mod tests {
         let known = dir.path().join("known.cbz.bak");
         write(&unknown);
         write(&known);
-        let future = filetime::FileTime::from_system_time(SystemTime::now() + 365 * DAY);
-        filetime::set_file_mtime(&unknown, future).unwrap();
+        let future = SystemTime::now() + 365 * DAY;
+        std::fs::File::open(&unknown)
+            .and_then(|file| file.set_modified(future))
+            .unwrap();
         assert_eq!(
             crate::archive_rewrite::backup_made_at(&fs::symlink_metadata(&unknown).unwrap()),
             None

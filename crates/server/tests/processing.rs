@@ -555,7 +555,7 @@ async fn rewriting_missing_comicinfo_archive_resolves_health_issue() {
     write_cbz_with_xml(&archive, 1, 2, Some(good), None);
     // Force a real mtime delta that's portable across filesystems.
     let later = std::time::SystemTime::now() + std::time::Duration::from_secs(2);
-    let _ = filetime::set_file_mtime(&archive, filetime::FileTime::from_system_time(later));
+    let _ = std::fs::File::open(&archive).and_then(|file| file.set_modified(later));
 
     scanner::scan_library(&state, lib_id).await.unwrap();
     let after_second: Vec<_> = HealthEntity::find()
@@ -959,17 +959,21 @@ async fn series_json_takes_effect_even_when_folder_mtime_unchanged() {
         }
     }"#;
     std::fs::write(folder.join("series.json"), series_json).unwrap();
-    let backdate = filetime::FileTime::from_system_time(
-        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000),
-    );
-    filetime::set_file_mtime(folder.join("series.json"), backdate).unwrap();
-    filetime::set_file_mtime(folder.join("Theta 001.cbz"), backdate).unwrap();
-    filetime::set_file_mtime(&folder, backdate).unwrap();
+    let backdate = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+    std::fs::File::open(folder.join("series.json"))
+        .and_then(|file| file.set_modified(backdate))
+        .unwrap();
+    std::fs::File::open(folder.join("Theta 001.cbz"))
+        .and_then(|file| file.set_modified(backdate))
+        .unwrap();
+    std::fs::File::open(&folder)
+        .and_then(|file| file.set_modified(backdate))
+        .unwrap();
     // Sanity: the folder's recursive max mtime is now older than the
     // series row's last_scanned_at, so the scanner's folder fast-path
     // will mark this folder skipped_unchanged.
     assert!(
-        backdate.unix_seconds() < last_scanned.timestamp(),
+        backdate < std::time::SystemTime::from(last_scanned),
         "backdated mtime must be before last_scanned_at to exercise the fast-path"
     );
 
