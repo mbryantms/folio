@@ -163,8 +163,8 @@ async fn build_shared_pg() -> Result<SharedPg, String> {
         });
     }
 
-    // Pin to 18-alpine: the search migration needs STORED generated columns
-    // (Postgres 12+) and the prod compose stack is on 18 anyway. Built from
+    // Pin to 19-alpine: the search migration needs STORED generated columns
+    // (Postgres 12+) and the prod compose stack is on 19 anyway. Built from
     // `GenericImage` rather than `testcontainers_modules::postgres` so the
     // harness doesn't depend on that crate tracking the testcontainers minor.
     // The readiness gate mirrors the module's: the docker-library entrypoint
@@ -174,7 +174,7 @@ async fn build_shared_pg() -> Result<SharedPg, String> {
     // clone shares this one server) and drop durability — pointless for
     // ephemeral test data, and it speeds migrations + writes.
     let build = || {
-        GenericImage::new("postgres", "18-alpine")
+        GenericImage::new("postgres", "19-alpine")
             .with_exposed_port(5432.tcp())
             .with_wait_for(WaitFor::message_on_stderr(
                 "database system is ready to accept connections",

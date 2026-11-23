@@ -2,7 +2,7 @@
 #
 # The harness (scripts/perf/perf-explain.sh, docs/dev/load-testing.md)
 # builds the server, generates the 50,000-issue stress fixture, scans it
-# into a throwaway Postgres 18 + Redis, drives every endpoint in
+# into a throwaway Postgres 19 + Redis, drives every endpoint in
 # scripts/perf/endpoints.txt and endpoints-m7.txt with auto_explain on, and
 # exits 1 when a plan seq-scans a table of 5,000 rows or more that is not a
 # reviewed exception in scripts/perf/expected_seqscans.txt. It is too slow
@@ -69,7 +69,7 @@ jobs:
       # same images ci.yml's service containers use, through mirror.gcr.io
       # (Docker Hub's anonymous pull limit 429s the shared runner IPs).
       # Keep these digests in step with ci.yml.
-      PERF_PG_IMAGE: mirror.gcr.io/library/postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
+      PERF_PG_IMAGE: mirror.gcr.io/library/postgres:19-alpine@sha256:8b0ff4cdf221f0c53d7fcda681d3b461be725c492cd881c5ec9c0ad25023f188
       PERF_REDIS_IMAGE: mirror.gcr.io/library/redis:8-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

@@ -41,7 +41,7 @@ these steps:
    selectivity looks like a real library rather than 2,500 near-identical
    "Series NNNN" names. Without `--rich` the stress set is unchanged, so
    `just perf-scan` numbers stay comparable.
-2. **Throwaway services.** Starts `postgres:18-alpine` (with `auto_explain`
+2. **Throwaway services.** Starts `postgres:19-alpine` (with `auto_explain`
    preloaded) and `redis:8-alpine` on free loopback ports, named
    `folio-perf-{pg,redis}-<ts>-<pid>`. The run never touches the dev
    services on 5432 and 6380. On exit it removes only the containers it

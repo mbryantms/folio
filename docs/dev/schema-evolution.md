@@ -54,7 +54,7 @@ Every migration ships a `down`, and CI now runs the newest ten of them:
 the `Rust — migration down round-trip` job
 ([scripts/ci/migration-roundtrip.sh](../../scripts/ci/migration-roundtrip.sh),
 wired into `.github/workflows/ci.yml` and folded into the `rust-check`
-aggregate) builds only the `migration` crate and, against a fresh Postgres 18
+aggregate) builds only the `migration` crate and, against a fresh Postgres 19
 service DB:
 
 1. `up` (all) and snapshots `pg_dump --schema-only`;
@@ -68,7 +68,7 @@ that re-adds a dropped column can only append it). Run locally against a
 throwaway PG18 container:
 
 ```sh
-docker run -d --rm --name mig-rt -e POSTGRES_USER=comic -e POSTGRES_PASSWORD=comic -p 55438:5432 postgres:18-alpine
+docker run -d --rm --name mig-rt -e POSTGRES_USER=comic -e POSTGRES_PASSWORD=comic -p 55438:5432 postgres:19-alpine
 cargo build -p migration
 PG_CONTAINER=mig-rt PG_URL_BASE=postgres://comic:comic@localhost:55438 scripts/ci/migration-roundtrip.sh
 docker stop mig-rt

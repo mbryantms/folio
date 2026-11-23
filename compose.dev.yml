@@ -3,12 +3,13 @@
 
 services:
   postgres:
-    # Same major as CI + compose.test.yml (postgres:18) — dev must not run a
+    # Same major as CI + compose.test.yml (postgres:19) — dev must not run a
     # different Postgres than the suite tests against. NOTE: bumping the major
-    # requires re-initializing the volume (postgres won't start an 18 binary
-    # on an older-initialized data dir): `pg_dumpall` under the old major
-    # first, move `.dev-data/postgres` aside, bring the new major up, restore.
-    image: postgres:18-alpine@sha256:b6972e1115a4ff8eba5d7f7d19184926d1e16d7d1136ae1e1a7ebf286da0f015
+    # needs the data moved across (the new image refuses to start while the
+    # old major's cluster is in the volume): `just pg-major-upgrade
+    # compose.dev.yml` dumps under the old major, sets that cluster aside,
+    # starts the new one and restores (docs/install/upgrades.md).
+    image: postgres:19-alpine@sha256:8b0ff4cdf221f0c53d7fcda681d3b461be725c492cd881c5ec9c0ad25023f188
     restart: unless-stopped
     environment:
       POSTGRES_USER: comic

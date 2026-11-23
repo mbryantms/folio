@@ -52,7 +52,7 @@ dev-services-reset:
     # `rm -rf` often leaves the "fresh" DB behind. Remove dev state from a
     # disposable container running as root, and include app data so thumbnails,
     # generated secrets, and stale cookies are invalidated too.
-    docker run --rm -v "$PWD/.dev-data:/data" postgres:18-alpine sh -c 'rm -rf /data/postgres /data/redis /data/app'
+    docker run --rm -v "$PWD/.dev-data:/data" postgres:19-alpine sh -c 'rm -rf /data/postgres /data/redis /data/app'
     @[ -f .dev-data/dex-config.yaml ] || git checkout .dev-data/dex-config.yaml
 
 # Stop the app, wipe all persisted dev state, recreate services, and run
@@ -366,7 +366,7 @@ perf-scan email='first@example.com' password='Atvvasa22Atvvasa22' api='http://12
 
 # EXPLAIN (ANALYZE, BUFFERS) for the top list/filter/sort endpoints against a
 # 50,000-issue stress library (`fixtures/build.py --scale stress --series 2500
-# --rich`), scanned by the real server into a throwaway Postgres 18 + Redis on
+# --rich`), scanned by the real server into a throwaway Postgres 19 + Redis on
 # free ports (never the dev services). Plans are captured with auto_explain
 # while each endpoint is driven over HTTP, split per endpoint into
 # perf-out/explain-<ts>/plans/, and summarised; exits 1 if any plan
@@ -530,7 +530,7 @@ test-rust-fast:
     docker rm -f folio-test-pg folio-test-redis >/dev/null 2>&1 || true
     docker run -d --name folio-test-pg \
       -e POSTGRES_USER=comic -e POSTGRES_PASSWORD=comic -e POSTGRES_DB=comic_reader_test \
-      -p 5433:5432 postgres:18-alpine -c max_connections=300 -c fsync=off >/dev/null
+      -p 5433:5432 postgres:19-alpine -c max_connections=300 -c fsync=off >/dev/null
     # One shared Redis + a per-test logical DB (mirrors CI). `--databases 256`
     # so nextest oversubscription has plenty of isolated DBs. Port 6381 avoids
     # the dev Redis on 6380. Removed BY NAME only — never touch the dev Redis.
@@ -559,7 +559,7 @@ sidecar-interop:
     docker rm -f folio-interop-pg folio-interop-redis >/dev/null 2>&1 || true
     docker run -d --name folio-interop-pg \
       -e POSTGRES_USER=comic -e POSTGRES_PASSWORD=comic -e POSTGRES_DB=comic_reader_test \
-      -p 5434:5432 postgres:18-alpine -c max_connections=100 -c fsync=off >/dev/null
+      -p 5434:5432 postgres:19-alpine -c max_connections=100 -c fsync=off >/dev/null
     docker run -d --name folio-interop-redis \
       -p 6382:6379 redis:8-alpine redis-server --databases 16 >/dev/null
     until docker exec folio-interop-pg pg_isready -U comic >/dev/null 2>&1; do sleep 0.5; done
@@ -786,6 +786,16 @@ restore file compose='compose.prod.yml':
     docker compose -f "$COMPOSE" exec -T postgres \
         pg_restore --clean --if-exists --no-owner -U comic -d comic_reader < "$DUMP"
     echo "==> restore complete; migrations (if any are newer than the dump) run on app boot"
+
+# Move the stack's Postgres volume to the major named in the compose file's
+# postgres image: dump under the old major, set its cluster aside on the
+# volume, start the new major, restore, compare row counts. Asks to confirm.
+# Stop `just dev` first when upgrading compose.dev.yml. See
+# docs/install/upgrades.md "Postgres major upgrade" (rollback included).
+#
+# Move a compose stack's Postgres volume to a new major (dump/restore; asks to confirm).
+pg-major-upgrade compose='compose.prod.yml' *args='':
+    scripts/postgres-major-upgrade.sh {{compose}} {{args}}
 
 # ───── release ─────
 

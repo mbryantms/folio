@@ -29,7 +29,7 @@ and the run is short.
 | cargo + npm **patch** of `0.x` packages                                         | `0.x.y -> 0.x.z` is compatible under cargo and npm caret rules.                                              |
 | Weekly **web dev-tooling** group (vitest, prettier, tailwind, …)                | Dev-only; one Monday PR instead of a trickle.                                                                |
 | **Lock-file maintenance** (weekly, transitive refresh)                          | Only moves within declared ranges; the suite is the gate.                                                    |
-| **Docker digest** refreshes of pinned tags (`postgres:18-alpine@sha256:…`)      | Same tag, newer OS packages — the CVE fix we want; smoke test boots it.                                      |
+| **Docker digest** refreshes of pinned tags (`postgres:19-alpine@sha256:…`)      | Same tag, newer OS packages — the CVE fix we want; smoke test boots it.                                      |
 | **GitHub Actions** patch/minor/digest                                           | Digest-pinned; CI is the consumer and proves it.                                                             |
 | **Rust toolchain** patch/minor (`rust-toolchain.toml` + Dockerfile `rust:` tag) | clippy `-D warnings`, the suite and the Docker build all run on the new compiler.                            |
 | **pnpm** patch/minor (package.json + workflows + `web/Dockerfile`, one PR)      | The pin is no longer recorded in the lockfile (`pmOnFail: ignore`), so the bump is verifiable by CI.         |
@@ -152,7 +152,7 @@ missed_heartbeats (10)`.
 ## What the gate actually proves
 
 The Rust side: ~1,800 tests, nearly every endpoint exercised against real
-Postgres 18 + Redis 8, migrations applied per test process, wiremock on
+Postgres 19 + Redis 8, migrations applied per test process, wiremock on
 every outbound HTTP client, a real OIDC round-trip, the CBR reader against
 a committed RAR5 fixture (`fixtures/synthetic-3page.cbr`), and
 `tests/job_worker_loop.rs`, which boots the real apalis `Monitor` and
