@@ -70,8 +70,13 @@ fn write_cbz(path: &Path, pages: &[[u8; 3]], mtime_bump: i64) {
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, buf.into_inner()).unwrap();
     std::fs::rename(&tmp, path).unwrap();
-    let t = filetime::FileTime::from_unix_time(Utc::now().timestamp() + mtime_bump, 0);
-    filetime::set_file_mtime(path, t).unwrap();
+    let t = std::time::UNIX_EPOCH
+        + std::time::Duration::from_secs(
+            u64::try_from(Utc::now().timestamp() + mtime_bump).unwrap(),
+        );
+    std::fs::File::open(path)
+        .and_then(|file| file.set_modified(t))
+        .unwrap();
 }
 
 struct Authed {
@@ -439,8 +444,11 @@ async fn archive_edit_restamps_hashes_so_the_rescan_sees_no_drift() {
     );
 
     // The follow-up rescan (new bytes) resolves every anchor in place.
-    let t = filetime::FileTime::from_unix_time(Utc::now().timestamp() + 60, 0);
-    filetime::set_file_mtime(&path, t).unwrap();
+    let t = std::time::UNIX_EPOCH
+        + std::time::Duration::from_secs(u64::try_from(Utc::now().timestamp() + 60).unwrap());
+    std::fs::File::open(&path)
+        .and_then(|file| file.set_modified(t))
+        .unwrap();
     scanner::scan_library(&app.state(), lib).await.unwrap();
     assert_eq!(markers(&app, &issue_id).await, rows);
     assert_eq!(progress(&app, auth.user_id, &issue_id).await.last_page, 0);

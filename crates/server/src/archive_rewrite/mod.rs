@@ -2955,8 +2955,10 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let src = dir.path().join("issue.cbz");
         fs::write(&src, b"payload").unwrap();
-        let old = filetime::FileTime::from_system_time(SystemTime::now() - 400 * day);
-        filetime::set_file_mtime(&src, old).unwrap();
+        let old = SystemTime::now() - 400 * day;
+        std::fs::File::open(&src)
+            .and_then(|file| file.set_modified(old))
+            .unwrap();
         // A stale slot makes `hard_link` fail with EEXIST → copy path.
         let bak = dir.path().join("issue.cbz.bak");
         fs::write(&bak, b"stale").unwrap();
