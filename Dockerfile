@@ -97,7 +97,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # The build stages above are trixie too (see the `deps` stage), so the binary
 # is linked against the glibc and C++ library this image carries. Verified
 # by the docker-smoke job.
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:08476c244888bfb425bae1ae4dd7c17f093e972aab8426883d97f3c6f280f7c1 AS runtime
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:532c7a94f9e96ba9db75eb9388f4227751131c7cb0a411d1a8521af4096135de AS runtime
 WORKDIR /app
 
 # Re-declare build-time args in the final stage so the LABEL block below

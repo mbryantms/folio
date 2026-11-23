@@ -48,7 +48,7 @@ RUN cd web && pnpm build
 # tag carried a fixable CRITICAL + 5 HIGH libssl3 CVEs for weeks (2026-09)
 # while the trixie tag was clean. The standalone bundle is JS + prebuilt
 # native modules and runs on the newer glibc unchanged (docker-smoke boots it).
-FROM gcr.io/distroless/nodejs26-debian13:nonroot@sha256:9b945e92c1b5463a4b75f11e8417515e4bea7355f6adfd79ec220fbbe905dda8 AS runtime
+FROM gcr.io/distroless/nodejs26-debian13:nonroot@sha256:ffa8a7545403036c94ec76674b5dbac2d425af2d679147cdf3e30180071487b7 AS runtime
 WORKDIR /app
 
 LABEL org.opencontainers.image.title="Folio Web" \

@@ -27,18 +27,9 @@ ignore = [
     # hf-hub's default blocking client; Folio's hf-hub has no default
     # features), and the `memmap2` copy under candle (RUSTSEC-2026-0186).
     #
-    # `crypto-bigint 0.5` timing variability in constant-time ops
-    # (RUSTSEC-2026-0387, 2026-10-23). Patched only in the 0.7 line
-    # (>= 0.7.6), i.e. the RustCrypto 0.14 release train; we get 0.5.5
-    # via `p256`/`p384 0.13` ← `jsonwebtoken 11.1` and `openidconnect 4.0`,
-    # both at their latest release and still pinned to `p256 ^0.13`, so no
-    # bump on our side can clear it. Folio's own tokens are EdDSA
-    # (`auth/jwt.rs`); the only ECDSA path is *verifying* an OIDC
-    # provider's ES-signed id_token with the provider's public key, so no
-    # secret of ours flows through the affected arithmetic.
-    # Delete when `cargo tree -i crypto-bigint` shows no 0.5 (jsonwebtoken /
-    # openidconnect move to p256 0.14).
-    "RUSTSEC-2026-0387",
+    # Pruned 2026-11-23: RUSTSEC-2026-0387 (`crypto-bigint 0.5`) — the
+    # graph now carries only crypto-bigint 0.7.11, which is patched.
+    #
     # `rsa 0.9.10` Marvin Attack (RUSTSEC-2023-0071 / CVE-2023-49092) —
     # timing sidechannel in RSA *private-key* operations (decrypt/sign).
     # Fixed in `rsa` 0.10.0 (the advisory's patched range since 2026-11),
