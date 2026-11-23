@@ -104,6 +104,7 @@ import {
 } from "@/components/folio/dropdown-menu";
 import { splitDestructive } from "@/components/folio/menu-actions";
 import { BOOKMARKS_CARD_SIZE_KEY } from "@/lib/library/cover-size";
+import { useInfiniteSentinel } from "@/lib/ui/use-infinite-sentinel";
 
 type KindFilter = BookmarksFeedKind | "all" | "favorite";
 
@@ -318,29 +319,18 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
   // Depend on the three fields, not the whole result object — TanStack
   // returns a fresh object identity per render, so `[query]` tore the
   // observer down and rebuilt it on every state change.
-  const sentinelRef = React.useRef<HTMLDivElement | null>(null);
   const {
     hasNextPage,
     isFetchingNextPage,
     isFetchNextPageError,
     fetchNextPage,
   } = query;
-  React.useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el || isFetchNextPageError) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          if (hasNextPage && !isFetchingNextPage) {
-            void fetchNextPage();
-          }
-        }
-      },
-      { rootMargin: "400px" },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
+  const sentinelRef = useInfiniteSentinel({
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  });
 
   function toggleTag(tag: string) {
     setSelectedTags((prev) =>

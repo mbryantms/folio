@@ -10,6 +10,7 @@ import {
 import { useSameUniverseInfinite } from "@/lib/api/queries";
 import type { SharedUniverse } from "@/lib/api/types";
 import { LoadMoreError } from "@/components/folio/infinite-sentinel";
+import { useInfiniteSentinel } from "@/lib/ui/use-infinite-sentinel";
 
 /** "Universe: Mignolaverse · Group: B.P.R.D." */
 export function sharedCaption(shared: SharedUniverse[]): string {
@@ -38,7 +39,6 @@ export function SameUniverseSection({
   itemWidthPx: number;
 }) {
   const query = useSameUniverseInfinite(seriesSlug);
-  const sentinelRef = React.useRef<HTMLDivElement | null>(null);
   const {
     hasNextPage,
     isFetchingNextPage,
@@ -46,20 +46,10 @@ export function SameUniverseSection({
     fetchNextPage,
   } = query;
 
-  React.useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el || isFetchNextPageError) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
-        }
-      },
-      { rootMargin: "0px 400px 0px 0px" },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
+  const sentinelRef = useInfiniteSentinel(
+    { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage },
+    { rootMargin: "0px 400px 0px 0px" },
+  );
 
   const items = query.data?.pages.flatMap((p) => p.items) ?? [];
   const total = query.data?.pages[0]?.total ?? null;

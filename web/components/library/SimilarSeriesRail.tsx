@@ -8,6 +8,7 @@ import { SimilarSeriesCard } from "@/components/library/SimilarSeriesCard";
 import { useSimilarSeriesInfinite } from "@/lib/api/queries";
 import { DEFAULT_COVER_SIZE_PX } from "@/lib/library/cover-size";
 import { LoadMoreError } from "@/components/folio/infinite-sentinel";
+import { useInfiniteSentinel } from "@/lib/ui/use-infinite-sentinel";
 
 /**
  * WP-7.4 "Similar series" rail on the series page. Content-based
@@ -33,7 +34,6 @@ export function SimilarSeriesRail({
   itemWidthPx?: number;
 }) {
   const query = useSimilarSeriesInfinite(seriesSlug);
-  const sentinelRef = React.useRef<HTMLDivElement | null>(null);
   const {
     hasNextPage,
     isFetchingNextPage,
@@ -41,20 +41,10 @@ export function SimilarSeriesRail({
     fetchNextPage,
   } = query;
 
-  React.useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el || isFetchNextPageError) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
-        }
-      },
-      { rootMargin: "0px 400px 0px 0px" },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
+  const sentinelRef = useInfiniteSentinel(
+    { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage },
+    { rootMargin: "0px 400px 0px 0px" },
+  );
 
   const items = query.data?.pages.flatMap((p) => p.items) ?? [];
   if (!query.isLoading && items.length === 0) return null;

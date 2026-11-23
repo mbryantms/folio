@@ -50,6 +50,7 @@ import {
   InfiniteSentinel,
   LoadMoreError,
 } from "@/components/folio/infinite-sentinel";
+import { useInfiniteSentinel } from "@/lib/ui/use-infinite-sentinel";
 
 /** Query filters for the New Issues detail grid: the FULL ingest-ordered
  *  issue list. Deliberately uncapped — the home rail's per-series cap is
@@ -211,7 +212,6 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
  *  here, so a bulk import is fully browsable. */
 function NewIssuesGrid() {
   const query = useIssuesCrossListInfinite(NEW_ISSUES_FILTERS);
-  const sentinelRef = React.useRef<HTMLDivElement | null>(null);
 
   // Depend on the three fields, not the whole result object — TanStack
   // returns a fresh object identity per render, so `[query]` would tear
@@ -222,22 +222,12 @@ function NewIssuesGrid() {
     isFetchNextPageError,
     fetchNextPage,
   } = query;
-  React.useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el || isFetchNextPageError) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          if (hasNextPage && !isFetchingNextPage) {
-            void fetchNextPage();
-          }
-        }
-      },
-      { rootMargin: "400px" },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
+  const sentinelRef = useInfiniteSentinel({
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  });
 
   if (query.isLoading) {
     return (
@@ -276,29 +266,18 @@ function NewIssuesGrid() {
  *  page by page through the IntersectionObserver sentinel. */
 function SimilarSeriesGrid() {
   const query = useSimilarRailInfinite();
-  const sentinelRef = React.useRef<HTMLDivElement | null>(null);
   const {
     hasNextPage,
     isFetchingNextPage,
     isFetchNextPageError,
     fetchNextPage,
   } = query;
-  React.useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el || isFetchNextPageError) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          if (hasNextPage && !isFetchingNextPage) {
-            void fetchNextPage();
-          }
-        }
-      },
-      { rootMargin: "400px" },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
+  const sentinelRef = useInfiniteSentinel({
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  });
 
   if (query.isLoading) {
     return (

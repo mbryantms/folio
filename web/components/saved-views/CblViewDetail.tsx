@@ -81,6 +81,7 @@ import { useCblHideMissing } from "@/lib/cbl/use-hide-missing";
 
 import { StickyToolbarRow } from "@/components/library/StickyToolbarRow";
 import { LoadMoreError } from "@/components/folio/infinite-sentinel";
+import { useInfiniteSentinel } from "@/lib/ui/use-infinite-sentinel";
 import { RailError } from "@/components/saved-views/RailError";
 
 import { ViewActionsMenu } from "./ViewActionsMenu";
@@ -177,33 +178,18 @@ function CblViewDetailInner({
     React.useState<HTMLElement | null>(null);
 
   // Infinite-scroll sentinel — once it intersects the viewport,
-  // fetch the next page. Matches the pattern in IssuesPanel +
-  // ResolutionTab so behavior stays consistent across surfaces.
-  const sentinelRef = React.useRef<HTMLDivElement | null>(null);
-  // Depend on the three fields, not the whole query object (audit G10) —
-  // `[entriesQuery]` rebuilt the observer every render.
+  // fetch the next page. The shared hook hands back a callback ref, so
+  // the observer attaches when the sentinel mounts: it renders only
+  // after the list detail below has loaded, and the entries query can
+  // settle first. With a `useRef` + query-state deps the observer was
+  // never attached in that order and the view stopped at 100 entries.
+  const sentinelRef = useInfiniteSentinel(entriesQuery);
+  // The Up Next jump below walks pages with the same fields.
   const {
     hasNextPage: entriesHasNext,
     isFetchingNextPage: entriesFetchingNext,
-    isFetchNextPageError: entriesNextError,
     fetchNextPage: entriesFetchNext,
   } = entriesQuery;
-  React.useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el || entriesNextError) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          if (entriesHasNext && !entriesFetchingNext) {
-            void entriesFetchNext();
-          }
-        }
-      },
-      { rootMargin: "600px" },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [entriesHasNext, entriesFetchingNext, entriesNextError, entriesFetchNext]);
 
   // Hooks must run unconditionally — keep them above the early
   // returns and use empty arrays for selection-relevant state while

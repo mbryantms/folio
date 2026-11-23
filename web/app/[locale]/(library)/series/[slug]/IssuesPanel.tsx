@@ -65,6 +65,7 @@ import type { IssueSort, SortOrder } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 import { SpecialsExtrasSection } from "./SpecialsExtrasSection";
 import { COVER_GRID_STYLE } from "@/lib/library/cover-size";
+import { useInfiniteSentinel } from "@/lib/ui/use-infinite-sentinel";
 
 // Bulk dialogs are heavy (metadata form / archive-edit + dnd) and only open
 // from the selection toolbar — lazy so they stay out of the series-page
@@ -168,7 +169,6 @@ export function IssuesPanel({
     : (specialsQuery.data?.pages.flatMap((p) => p.items) ?? []);
   // Everything on screen, for selection / bulk actions.
   const items = [...mainRunItems, ...specialItems];
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   // Multi-select state — first surface to land for the
   // multi-select-bulk-actions plan. M1 wires Mark read / Mark
@@ -311,22 +311,12 @@ export function IssuesPanel({
     fetchNextPage,
     isFetchNextPageError,
   } = query;
-  useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el || isFetchNextPageError) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          if (hasNextPage && !isFetchingNextPage) {
-            void fetchNextPage();
-          }
-        }
-      },
-      { rootMargin: "400px" },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage, isFetchNextPageError]);
+  const sentinelRef = useInfiniteSentinel({
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  });
 
   // A failed fetch with nothing cached is not an empty series: say so and
   // offer Retry instead of "No issues yet". The specials query counts too

@@ -83,6 +83,7 @@ import { RailError } from "@/components/saved-views/RailError";
 
 import { ManualMatchPopover } from "./manual-match-popover";
 import { RefreshFailureNotice } from "./RefreshFailureNotice";
+import { useInfiniteSentinel } from "@/lib/ui/use-infinite-sentinel";
 
 const STATUS_FILTERS: { value: "all" | CblMatchStatus; label: string }[] = [
   { value: "all", label: "All" },
@@ -573,7 +574,6 @@ function ResolutionTab({
 
   // IntersectionObserver sentinel — works because Resolution scrolls
   // its outer TabsContent rather than running a virtualizer.
-  const sentinelRef = React.useRef<HTMLDivElement | null>(null);
   // Depend on the three fields, not the whole query object — TanStack
   // returns a fresh object identity each render, so `[query]` tore the
   // observer down and rebuilt it on every render (audit G10).
@@ -583,22 +583,12 @@ function ResolutionTab({
     isFetchNextPageError,
     fetchNextPage,
   } = query;
-  React.useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el || isFetchNextPageError) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          if (hasNextPage && !isFetchingNextPage) {
-            void fetchNextPage();
-          }
-        }
-      },
-      { rootMargin: "400px" },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
+  const sentinelRef = useInfiniteSentinel({
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  });
 
   if (stats.ambiguous + stats.missing === 0) {
     return (

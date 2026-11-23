@@ -7,7 +7,7 @@
  */
 
 import { ChevronRight, Loader2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge as AdminStatusBadge } from "@/components/admin/StatusBadge";
@@ -17,6 +17,7 @@ import { FilterPill } from "@/components/folio/filter-pill";
 import { useAdminMetadataRun, useAdminMetadataRuns } from "@/lib/api/queries";
 import type { RunRow } from "@/lib/api/types";
 import { LoadMoreError } from "@/components/folio/infinite-sentinel";
+import { useInfiniteSentinel } from "@/lib/ui/use-infinite-sentinel";
 
 export function RunsTab() {
   const [scope, setScope] = useState<string>("");
@@ -30,29 +31,18 @@ export function RunsTab() {
 
   // Auto-fetch the next page when the sentinel nears the viewport. Depend
   // on the three fields, not the result object (fresh identity per render).
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
   const {
     hasNextPage,
     isFetchingNextPage,
     isFetchNextPageError,
     fetchNextPage,
   } = runs;
-  useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el || isFetchNextPageError) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          if (hasNextPage && !isFetchingNextPage) {
-            void fetchNextPage();
-          }
-        }
-      },
-      { rootMargin: "400px" },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
+  const sentinelRef = useInfiniteSentinel({
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  });
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_28rem]">
