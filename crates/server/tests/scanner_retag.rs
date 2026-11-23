@@ -295,8 +295,10 @@ async fn force_scan_picks_up_retag_with_unchanged_mtime() {
     // Retag, then forcibly reset the file's mtime back to the pre-retag
     // value. Default scans would short-circuit; force=true must not.
     write_cbz(&file, Some(RICH_COMICINFO), 801);
-    let pinned = filetime::FileTime::from_system_time(original_mtime);
-    filetime::set_file_mtime(&file, pinned).unwrap();
+    let pinned = original_mtime;
+    std::fs::File::open(&file)
+        .and_then(|file| file.set_modified(pinned))
+        .unwrap();
 
     let stats = scanner::scan_issue_file(&state, lib_id, &issue_id, true, None)
         .await

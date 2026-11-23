@@ -1137,7 +1137,7 @@ struct ParkedSeries {
     reader: Authed,
     reader_id: Uuid,
     read_issue: String,
-    old_mtime: filetime::FileTime,
+    old_mtime: std::time::SystemTime,
 }
 
 impl ParkedSeries {
@@ -1153,13 +1153,18 @@ impl ParkedSeries {
         std::fs::create_dir_all(&folder).unwrap();
         // Everything an hour old, so the folder is unambiguously "older than
         // the last scan" regardless of filesystem timestamp granularity.
-        let old_mtime = filetime::FileTime::from_unix_time(Utc::now().timestamp() - 3600, 0);
+        let old_mtime = std::time::UNIX_EPOCH
+            + std::time::Duration::from_secs(u64::try_from(Utc::now().timestamp() - 3600).unwrap());
         for n in 1..=4u32 {
             let p = folder.join(format!("Tau {n:03}.cbz"));
             write_cbz(&p, 100 + n);
-            filetime::set_file_mtime(&p, old_mtime).unwrap();
+            std::fs::File::open(&p)
+                .and_then(|file| file.set_modified(old_mtime))
+                .unwrap();
         }
-        filetime::set_file_mtime(&folder, old_mtime).unwrap();
+        std::fs::File::open(&folder)
+            .and_then(|file| file.set_modified(old_mtime))
+            .unwrap();
         // Keeps the root non-empty once Tau's folder is parked.
         let decoy = root.join("Series Upsilon (2025)");
         std::fs::create_dir_all(&decoy).unwrap();
@@ -1274,7 +1279,9 @@ impl ParkedSeries {
     /// it on most filesystems; set it explicitly so the test doesn't care).
     fn move_back(&self) {
         std::fs::rename(self.park.path().join(Self::NAME), &self.folder).unwrap();
-        filetime::set_file_mtime(&self.folder, self.old_mtime).unwrap();
+        std::fs::File::open(&self.folder)
+            .and_then(|file| file.set_modified(self.old_mtime))
+            .unwrap();
     }
 
     async fn reader_get(&self, uri: String) -> axum::response::Response {
@@ -1453,7 +1460,9 @@ async fn returning_duplicate_removed_issue_keeps_series_removed() {
             std::fs::remove_file(&i.file_path).unwrap();
         }
     }
-    filetime::set_file_mtime(&f.folder, f.old_mtime).unwrap();
+    std::fs::File::open(&f.folder)
+        .and_then(|file| file.set_modified(f.old_mtime))
+        .unwrap();
 
     let s = scanner::scan_library(&f.app.state(), f.lib_id)
         .await
@@ -1521,13 +1530,18 @@ async fn returning_duplicate_removed_issue_keeps_series_removed() {
 /// "older than the last scan" whatever the filesystem timestamp granularity.
 fn write_old_folder(folder: &Path, prefix: &str, count: u32, marker: u32) {
     std::fs::create_dir_all(folder).unwrap();
-    let old = filetime::FileTime::from_unix_time(Utc::now().timestamp() - 3600, 0);
+    let old = std::time::UNIX_EPOCH
+        + std::time::Duration::from_secs(u64::try_from(Utc::now().timestamp() - 3600).unwrap());
     for n in 1..=count {
         let p = folder.join(format!("{prefix} {n:03}.cbz"));
         write_cbz(&p, marker + n);
-        filetime::set_file_mtime(&p, old).unwrap();
+        std::fs::File::open(&p)
+            .and_then(|file| file.set_modified(old))
+            .unwrap();
     }
-    filetime::set_file_mtime(folder, old).unwrap();
+    std::fs::File::open(folder)
+        .and_then(|file| file.set_modified(old))
+        .unwrap();
 }
 
 async fn series_named(app: &TestApp, needle: &str) -> entity::series::Model {

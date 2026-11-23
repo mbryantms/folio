@@ -657,13 +657,14 @@ async fn thumb_etag_ignores_mtime_and_length_when_bytes_change() {
         .path()
         .join("thumbs")
         .join(format!("{id}.webp"));
-    let mtime =
-        filetime::FileTime::from_last_modification_time(&std::fs::metadata(&cover).unwrap());
+    let mtime = std::fs::Metadata::modified(&std::fs::metadata(&cover).unwrap()).unwrap();
     let mut bytes = std::fs::read(&cover).unwrap();
     let last = bytes.len() - 1;
     bytes[last] ^= 0xFF;
     std::fs::write(&cover, &bytes).unwrap();
-    filetime::set_file_mtime(&cover, mtime).unwrap();
+    std::fs::File::open(&cover)
+        .and_then(|file| file.set_modified(mtime))
+        .unwrap();
 
     let second = fetch_thumb_response(&app, &session, &id, 0, Some("cover"), Some(&etag)).await;
     assert_eq!(

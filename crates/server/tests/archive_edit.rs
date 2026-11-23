@@ -770,8 +770,10 @@ async fn page_edit_preserves_foreign_sidecars_cbz_and_cbt() {
 fn aged_file(dir: &Path, name: &str, age: std::time::Duration) -> std::path::PathBuf {
     let p = dir.join(name);
     std::fs::write(&p, b"leftover").unwrap();
-    let t = filetime::FileTime::from_system_time(std::time::SystemTime::now() - age);
-    filetime::set_file_mtime(&p, t).unwrap();
+    let t = std::time::SystemTime::now() - age;
+    std::fs::File::open(&p)
+        .and_then(|file| file.set_modified(t))
+        .unwrap();
     p
 }
 

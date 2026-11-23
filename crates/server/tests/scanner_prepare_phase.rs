@@ -129,8 +129,13 @@ fn replace(path: &Path, bytes: &[u8], mtime_bump: i64) {
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, bytes).unwrap();
     std::fs::rename(&tmp, path).unwrap();
-    let t = filetime::FileTime::from_unix_time(Utc::now().timestamp() + mtime_bump, 0);
-    filetime::set_file_mtime(path, t).unwrap();
+    let t = std::time::UNIX_EPOCH
+        + std::time::Duration::from_secs(
+            u64::try_from(Utc::now().timestamp() + mtime_bump).unwrap(),
+        );
+    std::fs::File::open(path)
+        .and_then(|file| file.set_modified(t))
+        .unwrap();
 }
 
 struct Authed {
@@ -545,12 +550,14 @@ async fn hashed_anchor_written_between_phases_with_a_same_size_same_mtime_replac
     let between = async {
         hash_bookmark(&a).await;
         let before = std::fs::metadata(&later).unwrap();
-        let mtime = filetime::FileTime::from_last_modification_time(&before);
+        let mtime = std::fs::Metadata::modified(&before).unwrap();
         // Same images in another order: same size. GREEN on 0.
         let tmp = later.with_extension("tmp");
         std::fs::write(&tmp, cbz_bytes(&[GREEN, RED, BLUE, YELLOW])).unwrap();
         std::fs::rename(&tmp, &later).unwrap();
-        filetime::set_file_mtime(&later, mtime).unwrap();
+        std::fs::File::open(&later)
+            .and_then(|file| file.set_modified(mtime))
+            .unwrap();
         let after = std::fs::metadata(&later).unwrap();
         use std::os::unix::fs::MetadataExt;
         assert_eq!(after.len(), before.len(), "same size");
@@ -623,10 +630,11 @@ async fn page_hashes_are_read_only_when_an_anchor_can_use_them() {
     // Plain rename: size and mtime kept, so persist sees no content
     // change and re-anchors nothing.
     let renamed = a.root.join("Anchors").join("Anchors 001 (renamed).cbz");
-    let before =
-        filetime::FileTime::from_last_modification_time(&std::fs::metadata(&a.path).unwrap());
+    let before = std::fs::Metadata::modified(&std::fs::metadata(&a.path).unwrap()).unwrap();
     std::fs::rename(&a.path, &renamed).unwrap();
-    filetime::set_file_mtime(&renamed, before).unwrap();
+    std::fs::File::open(&renamed)
+        .and_then(|file| file.set_modified(before))
+        .unwrap();
     let stats = scanner::scan_library(&state, a.lib).await.unwrap();
     assert_eq!(stats.files_page_hashed, 0, "{stats:?}");
     assert_eq!(row_at(&a.app, &renamed).await.unwrap().id, a.issue_id);
