@@ -23,7 +23,14 @@ export type InfiniteSentinelQuery = {
  *  A failed next page stops the auto-fetch: the observer is rebuilt when
  *  `isFetchingNextPage` flips back and would report the still-visible
  *  sentinel as intersecting straight away, so without the gate a failing
- *  server got a request loop. `<LoadMoreError>` offers the Retry. */
+ *  server got a request loop. `<LoadMoreError>` offers the Retry.
+ *
+ *  Returns a callback ref, not a `useRef`: the element lives in state, so
+ *  the observer attaches whenever the sentinel mounts. With a plain ref
+ *  the effect only re-ran on query-state changes — a page that rendered
+ *  the sentinel later than the query settled (an early-return skeleton
+ *  while a sibling query loads, as on the CBL view) never observed it and
+ *  stopped at the first page. */
 export function useInfiniteSentinel(query: InfiniteSentinelQuery) {
   const {
     hasNextPage,
@@ -31,9 +38,8 @@ export function useInfiniteSentinel(query: InfiniteSentinelQuery) {
     isFetchNextPageError,
     fetchNextPage,
   } = query;
-  const ref = React.useRef<HTMLDivElement | null>(null);
+  const [el, setEl] = React.useState<HTMLDivElement | null>(null);
   React.useEffect(() => {
-    const el = ref.current;
     if (!el || isFetchNextPageError) return;
     const obs = new IntersectionObserver(
       (entries) => {
@@ -49,6 +55,12 @@ export function useInfiniteSentinel(query: InfiniteSentinelQuery) {
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
-  return ref;
+  }, [
+    el,
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  ]);
+  return setEl;
 }
