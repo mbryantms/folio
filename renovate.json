@@ -305,7 +305,7 @@
       "platformAutomerge": true
     },
     {
-      "description": "Digest refresh of an already-pinned image tag (e.g. postgres:19-alpine@sha256:...) is the upstream rebuilding the same tag with newer OS packages - exactly what the CVE scan wants us to take. Nothing an operator chose changes, and CI boots the images (smoke test), so auto-merge.",
+      "description": "Digest refresh of an already-pinned image tag (e.g. postgres:18-alpine@sha256:...) is the upstream rebuilding the same tag with newer OS packages - exactly what the CVE scan wants us to take. Nothing an operator chose changes, and CI boots the images (smoke test), so auto-merge.",
       "matchManagers": [
         "dockerfile",
         "docker-compose",
