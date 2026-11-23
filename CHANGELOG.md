@@ -13,6 +13,18 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.86.2](https://github.com/mbryantms/folio/compare/v0.86.1...v0.86.2) (2026-11-23)
+
+
+### Fixed
+
+* **web:** CBL view loads past the first 100 entries ([#1754](https://github.com/mbryantms/folio/issues/1754)) ([b755f88](https://github.com/mbryantms/folio/commit/b755f88a4ed8f229afa5ef1b1dc35b7ceeb2b51b))
+
+
+### Dependencies
+
+* update dependency @hookform/resolvers to v7.0.8 ([#1755](https://github.com/mbryantms/folio/issues/1755)) ([b1f0a30](https://github.com/mbryantms/folio/commit/b1f0a30b5e6d629d07adb47a8c33cc30767d3944))
+
 ## [0.86.1](https://github.com/mbryantms/folio/compare/v0.86.0...v0.86.1) (2026-11-23)
 
 
