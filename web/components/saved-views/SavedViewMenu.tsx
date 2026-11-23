@@ -183,7 +183,7 @@ export function SavedViewMenu({
             <TriggerIcon className="size-4" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuContent align="end">
           {/* Same wording as the list's own page (`ViewActionsMenu`), so
               the menu also says where the view is pinned. */}
           <DropdownMenuItem onSelect={() => setPinOpen(true)}>
@@ -234,7 +234,7 @@ export function SavedViewMenu({
                         <Check className="size-4" />
                       ) : null}
                     </span>
-                    <span className="truncate">
+                    <span className="min-w-0 truncate">
                       {/* Two groups of one name show their paths. */}
                       {all.filter((o) => o.name === g.name).length > 1
                         ? g.path.join(" / ")
@@ -270,7 +270,7 @@ export function SavedViewMenu({
               <DropdownMenuItem
                 onSelect={() => void handleDelete()}
                 disabled={deleting}
-                className="text-destructive focus:text-destructive"
+                variant="destructive"
               >
                 <Trash2 className="size-4" /> Delete
               </DropdownMenuItem>

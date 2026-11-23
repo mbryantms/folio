@@ -29,6 +29,7 @@ const issues = ["i1", "i2", "i3"].map(
 
 vi.mock("@/lib/api/queries", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
+  useCollections: () => ({ data: [] }),
   useSavedViewIssueResultsInfinite: () => ({
     data: { pages: [{ items: issues, total: issues.length }] },
     isLoading: false,
@@ -46,6 +47,11 @@ vi.mock("@/lib/api/mutations", async (importOriginal) => {
   return {
     ...(await importOriginal<Record<string, unknown>>()),
     useBulkMarkProgress: () => ({ mutate: bulkMutate, isPending: false }),
+    useBulkMetadataFetch: () => ({ mutate: vi.fn(), isPending: false }),
+    useBulkRescan: () => ({ mutate: vi.fn(), isPending: false }),
+    useBulkAnalyzeCoverage: () => ({ mutate: vi.fn(), isPending: false }),
+    useBulkSetMetadataSync: () => ({ mutate: vi.fn(), isPending: false }),
+    useBulkAddToWantToRead: () => ({ mutate: vi.fn(), isPending: false }),
     useCreateSavedViewBatch: inert,
     useSidebarSavedView: inert,
   };

@@ -34,6 +34,14 @@ reason = "Bundled SQLite <3.54 returns uninitialized page-cache memory with a mi
 id = "RUSTSEC-2026-0440"
 reason = "`astral-tokio-tar` unmaintained — test-only, via testcontainers 0.28 (latest); not in the production binary. Delete when testcontainers moves off it."
 
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0543"
+reason = "`chrono` unmaintained (informational, no fixed version) — sea-orm, sqlx, openidconnect, utoipa and tokio-cron-scheduler all depend on it. Delete when `cargo tree -i chrono` is empty. deny.toml carries the full rationale."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0555"
+reason = "`chrono-tz` unmaintained (informational, no fixed version) — backs per-user timezones and tokio-cron-scheduler. Delete with RUSTSEC-2026-0543. deny.toml carries the full rationale."
+
 # ── Rust, GitHub-advisory-only (mirrored from the `osv-only:` lines in ──
 # deny.toml). The RustSec db has no id for these yet, so cargo-deny and
 # cargo-audit cannot be told about them; this is the one scanner that

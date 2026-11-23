@@ -30,6 +30,7 @@ import {
   GripVertical,
   HardDriveDownload,
   ListChecks,
+  Pencil,
   Play,
   Trash2,
 } from "lucide-react";
@@ -42,6 +43,8 @@ import { IssueCard } from "@/components/library/IssueCard";
 import { CoverGridSkeleton } from "@/components/skeletons/LoadingShapes";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
+import { useAdminSelectionActions } from "@/components/library/useAdminSelectionActions";
+import { useWantToReadSelectionAction } from "@/components/collections/useWantToReadSelectionAction";
 import { SeriesCard } from "@/components/library/SeriesCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -258,6 +261,21 @@ export function CollectionViewDetail({
     [selectedTargets],
   );
   const selectedSeriesCount = selectedTargets.length - selectedIssueIds.length;
+  // Fetch metadata + Rescan (admin) take a mixed selection in one request.
+  const adminBulk = useAdminSelectionActions(
+    {
+      issueIds: selectedIssueIds,
+      seriesIds: selectedTargets
+        .filter((t) => t.entry_kind === "series")
+        .map((t) => t.ref_id),
+    },
+    { scope: "mixed", onDone: () => selection.exit() },
+  );
+  // Add to Want to Read — every user (their own list).
+  const wantToRead = useWantToReadSelectionAction(selectedTargets, {
+    onDone: () => selection.exit(),
+    disabled: isWantToRead,
+  });
 
   // Esc exits select mode; Cmd/Ctrl+A selects every loaded entry.
   // Both gated on `selectMode` so other handlers are free when the
@@ -437,7 +455,7 @@ export function CollectionViewDetail({
         extraMenuItems={
           <>
             <DropdownMenuItem onSelect={() => setOfflineOpen(true)}>
-              <HardDriveDownload className="mr-2 size-4" />
+              <HardDriveDownload className="size-4" />
               Download for offline…
             </DropdownMenuItem>
             {/* Data-liberation (3.3): export the collection as a CBL
@@ -450,7 +468,7 @@ export function CollectionViewDetail({
                 download
                 title="Download as a .cbl reading list"
               >
-                <Download className="mr-2 size-4" /> Export CBL
+                <Download className="size-4" /> Export CBL
               </a>
             </DropdownMenuItem>
           </>
@@ -536,16 +554,7 @@ export function CollectionViewDetail({
             icon: FolderPlus,
             onClick: () => setPickerOpen(true),
           },
-          ...(isAdmin
-            ? [
-                {
-                  id: "edit-archives",
-                  label: "Edit archives…",
-                  icon: FileCog,
-                  onClick: () => setArchiveEditOpen(true),
-                },
-              ]
-            : []),
+          ...(isWantToRead ? [] : [wantToRead.action]),
           {
             id: "remove",
             label: "Remove from this collection",
@@ -554,11 +563,39 @@ export function CollectionViewDetail({
             destructive: true,
           },
         ]}
+        // Admin-only (audit 2026-11 E16): the archive edit rewrites files,
+        // the fetch starts a metadata batch, the rescan queues scans.
+        actionGroups={
+          isAdmin
+            ? [
+                {
+                  id: "editing",
+                  label: "Editing",
+                  icon: Pencil,
+                  actions: [
+                    {
+                      id: "edit-archives",
+                      label: "Edit archives…",
+                      icon: FileCog,
+                      onClick: () => setArchiveEditOpen(true),
+                    },
+                    ...adminBulk.actions,
+                  ],
+                },
+              ]
+            : []
+        }
         onDone={() => selection.exit()}
         onClear={() => selection.clear()}
         onSelectAll={() => selection.selectAll()}
-        isPending={bulkMark.isPending || bulkRemove.isPending}
+        isPending={
+          bulkMark.isPending ||
+          bulkRemove.isPending ||
+          adminBulk.isPending ||
+          wantToRead.isPending
+        }
       />
+      {adminBulk.dialogs}
 
       {entriesQ.isLoading ? (
         <CoverGridSkeleton label="Loading collection…" />

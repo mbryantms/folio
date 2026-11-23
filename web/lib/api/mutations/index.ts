@@ -69,6 +69,7 @@ export {
 export { restoreProgress, settleProgress, useIssueReadState } from "./progress";
 export * from "./page-overrides";
 export * from "./relationship-suggestions";
+export * from "./bulk-admin";
 export * from "./upcoming";
 export * from "./shared-lists";
 export * from "./issue-user-state";
@@ -569,6 +570,45 @@ export function useBulkAddToCollection(collectionId: string) {
       onSuccess: () => {
         invalidateCollectionEntries(qc, collectionId);
       },
+    },
+  );
+}
+
+/** Most members one bulk-add may carry (`MAX_MEMBERS`, collections.rs). */
+export const BULK_ADD_MAX_MEMBERS = 500;
+
+/** Toast copy for the multi-select "Add to Want to Read". */
+export function summarizeWantToReadAdd(
+  data: BulkAddMembersResp | null,
+): string {
+  if (!data) return "Added to Want to Read";
+  const { added, already_present, not_found, invalid } = data;
+  const parts: string[] = [];
+  if (added > 0) parts.push(`Added ${added} to Want to Read`);
+  if (already_present > 0) parts.push(`${already_present} already there`);
+  const lost = not_found + invalid;
+  if (lost > 0) parts.push(`${lost} skipped`);
+  return parts.length > 0 ? parts.join("; ") : "No changes";
+}
+
+/** Bulk-add a selection to the caller's Want to Read collection — the
+ *  same endpoint as `useBulkAddToCollection`, with Want to Read copy. */
+export function useBulkAddToWantToRead(wantToReadId: string) {
+  const qc = useQueryClient();
+  return useApiMutation<
+    BulkAddMembersResp,
+    { members: { entry_kind: "issue" | "series"; ref_id: string }[] }
+  >(
+    (input) => ({
+      path: apiPath`/me/collections/${wantToReadId}/members/bulk-add`,
+      method: "POST",
+      body: input,
+    }),
+    {
+      successMessage: (data) => summarizeWantToReadAdd(data),
+      successVariant: (data) => (data && data.added > 0 ? "success" : "info"),
+      toastId: `bulk-add-${wantToReadId}`,
+      onSuccess: () => invalidateCollectionEntries(qc, wantToReadId),
     },
   );
 }

@@ -148,7 +148,9 @@ describe("series Mark all unread", () => {
   it("confirms on the series card before writing", async () => {
     wrap(<SeriesCard series={series} />);
     await confirmFlow(() =>
-      fireEvent.click(screen.getByRole("button", { name: "Mark all unread" })),
+      fireEvent.click(
+        screen.getByRole("button", { name: "Mark all as unread" }),
+      ),
     );
   });
 

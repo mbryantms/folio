@@ -1043,6 +1043,129 @@ async fn selection_batch_searches_only_the_chosen_in_series_issues() {
     assert!(children.iter().all(|r| r.scope == "issue"));
 }
 
+#[tokio::test]
+async fn cross_series_selection_batch_mixes_issues_and_series() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let db = &app.state().db;
+    // Two series in two libraries: an issue from each, plus the second
+    // series itself as a series-level target.
+    let dir = tempdir().unwrap();
+    let (lib1, series1) = seed_series_in_library(&app, dir.path()).await;
+    let a = IssueSeed::new(lib1, series1, &dir.path().join("a.cbz"), b"a", 1.0)
+        .insert(db)
+        .await;
+    let dir2 = tempdir().unwrap();
+    let (lib2, series2) = seed_series_in_library(&app, dir2.path()).await;
+    let b = IssueSeed::new(lib2, series2, &dir2.path().join("b.cbz"), b"b", 1.0)
+        .insert(db)
+        .await;
+    // A removed series: its id and its issue both drop out.
+    let dir3 = tempdir().unwrap();
+    let (lib3, removed) = seed_series_in_library(&app, dir3.path()).await;
+    let gone = IssueSeed::new(lib3, removed, &dir3.path().join("g.cbz"), b"g", 1.0)
+        .insert(db)
+        .await;
+    let row = entity::series::Entity::find_by_id(removed)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: entity::series::ActiveModel = row.into();
+    am.removed_at = Set(Some(Utc::now().fixed_offset()));
+    am.update(db).await.unwrap();
+
+    let resp = post_json(
+        &app,
+        &admin,
+        "/api/metadata/batch/selection",
+        json!({
+            "issue_ids": [a, b, a, gone, "not-a-real-id"],
+            "series_ids": [series2, removed, Uuid::now_v7()],
+        }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body = body_json(resp.into_body()).await;
+    // Two issue searches (the duplicate `a` counts once) + one series search.
+    assert_eq!(body["jobs_enqueued"].as_u64().unwrap(), 3);
+    let batch_id = Uuid::parse_str(body["batch_id"].as_str().expect("batch_id")).unwrap();
+
+    let batch = entity::metadata_batch::Entity::find_by_id(batch_id)
+        .one(db)
+        .await
+        .unwrap()
+        .expect("batch row");
+    assert_eq!(batch.scope, "selection");
+    assert_eq!(batch.items_total, 3);
+    // Targets span two libraries, so the batch isn't pinned to one.
+    assert_eq!(batch.library_id, None);
+
+    let children = entity::metadata_run::Entity::find()
+        .filter(entity::metadata_run::Column::BatchId.eq(batch_id))
+        .all(db)
+        .await
+        .unwrap();
+    assert_eq!(children.iter().filter(|r| r.scope == "issue").count(), 2);
+    assert_eq!(children.iter().filter(|r| r.scope == "series").count(), 1);
+    assert!(children.iter().all(|r| r.trigger_kind == "manual"));
+}
+
+#[tokio::test]
+async fn cross_series_selection_batch_pins_a_single_library() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (lib, series) = seed_series_in_library(&app, dir.path()).await;
+    let a = IssueSeed::new(lib, series, &dir.path().join("a.cbz"), b"a", 1.0)
+        .insert(&app.state().db)
+        .await;
+    let resp = post_json(
+        &app,
+        &admin,
+        "/api/metadata/batch/selection",
+        json!({ "issue_ids": [a], "series_ids": [series] }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body = body_json(resp.into_body()).await;
+    let batch_id = Uuid::parse_str(body["batch_id"].as_str().unwrap()).unwrap();
+    let batch = entity::metadata_batch::Entity::find_by_id(batch_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(batch.library_id, Some(lib));
+}
+
+#[tokio::test]
+async fn cross_series_selection_batch_rejects_empty_and_oversized() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let resp = post_json(&app, &admin, "/api/metadata/batch/selection", json!({})).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let too_many: Vec<String> = (0..=server::api::metadata_search::SELECTION_BATCH_MAX_ISSUES)
+        .map(|i| format!("issue-{i}"))
+        .collect();
+    let resp = post_json(
+        &app,
+        &admin,
+        "/api/metadata/batch/selection",
+        json!({ "issue_ids": too_many }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["details"][0]["field"], "issue_ids");
+    // Nothing was created for either refusal.
+    let batches = entity::metadata_batch::Entity::find()
+        .count(&app.state().db)
+        .await
+        .unwrap();
+    assert_eq!(batches, 0);
+}
+
 /// Seed a one-child batch whose child is a `multi_good` (needs-review) run
 /// with two providers' candidates. `applied` flips both candidates' applied_at
 /// so the run looks already-applied. Returns the batch id.

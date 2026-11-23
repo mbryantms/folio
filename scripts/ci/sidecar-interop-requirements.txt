@@ -7,4 +7,4 @@
 # beside metron-tagger so the resolver can't float it.
 comictagger==1.6.0b11.dev0
 metron-tagger==5.2.0
-darkseid==9.1.0
+darkseid==10.0.0

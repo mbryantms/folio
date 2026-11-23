@@ -15,8 +15,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/folio/dropdown-menu";
 import {
@@ -82,9 +80,7 @@ export function ViewActionsMenu({
             <MoreHorizontal className="size-4" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="min-w-[10rem]">
-          <DropdownMenuLabel>Actions</DropdownMenuLabel>
-          <DropdownMenuSeparator />
+        <DropdownMenuContent align="end">
           {canEdit ? (
             <DropdownMenuItem
               onSelect={(e) => {
@@ -92,14 +88,14 @@ export function ViewActionsMenu({
                 onEdit?.();
               }}
             >
-              <Pencil className="mr-2 size-4" /> Edit
+              <Pencil className="size-4" /> Edit
             </DropdownMenuItem>
           ) : null}
           {extraMenuItems}
           {isAdmin && view.kind === "cbl" && !view.is_system ? (
             // Let the menu close; the confirm dialog opens on its own.
             <DropdownMenuItem onSelect={() => setShareOpen(true)}>
-              <Share2 className="mr-2 size-4" /> Share with everyone…
+              <Share2 className="size-4" /> Share with everyone…
             </DropdownMenuItem>
           ) : null}
           <DropdownMenuItem
@@ -113,11 +109,11 @@ export function ViewActionsMenu({
           >
             {view.show_in_sidebar ? (
               <>
-                <PanelLeftClose className="mr-2 size-4" /> Hide from sidebar
+                <PanelLeftClose className="size-4" /> Hide from sidebar
               </>
             ) : (
               <>
-                <PanelLeft className="mr-2 size-4" /> Show in sidebar
+                <PanelLeft className="size-4" /> Show in sidebar
               </>
             )}
           </DropdownMenuItem>
@@ -127,7 +123,7 @@ export function ViewActionsMenu({
               setPinOpen(true);
             }}
           >
-            <Pin className="mr-2 size-4" />
+            <Pin className="size-4" />
             {pinnedCount === 0
               ? "Pin to pages…"
               : pinnedCount === 1

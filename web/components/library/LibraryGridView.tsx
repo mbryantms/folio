@@ -8,6 +8,7 @@ import {
   Circle,
   FolderPlus,
   ListChecks,
+  Pencil,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -35,6 +36,8 @@ import {
 } from "@/components/library/PhoneControlsBar";
 import { MetadataWorklistButton } from "@/components/library/MetadataWorklistButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
+import { useAdminSelectionActions } from "@/components/library/useAdminSelectionActions";
+import { useWantToReadSelectionAction } from "@/components/collections/useWantToReadSelectionAction";
 import { VirtualizedCardGrid } from "@/components/library/VirtualizedCardGrid";
 import { ISSUE_TEXT_H, SERIES_TEXT_H } from "@/lib/library/grid-window";
 import type { FilterBuilderState } from "@/components/filters/filter-builder";
@@ -264,6 +267,25 @@ export function LibraryGridView({
     entry_kind: isSeriesMode ? ("series" as const) : ("issue" as const),
     ref_id: id,
   }));
+  // Fetch metadata + Rescan (admin) over the selection.
+  const adminBulk = useAdminSelectionActions(
+    {
+      issueIds: selectedTargets
+        .filter((t) => t.entry_kind === "issue")
+        .map((t) => t.ref_id),
+      seriesIds: selectedTargets
+        .filter((t) => t.entry_kind === "series")
+        .map((t) => t.ref_id),
+    },
+    {
+      scope: isSeriesMode ? "series" : "issues",
+      onDone: () => selection.exit(),
+    },
+  );
+  // Add to Want to Read — every user (their own list).
+  const wantToRead = useWantToReadSelectionAction(selectedTargets, {
+    onDone: () => selection.exit(),
+  });
 
   // Esc exits select mode; Cmd/Ctrl+A selects every loaded card.
   // Dormant while focus is in a form field (search input, etc.).
@@ -523,12 +545,26 @@ export function LibraryGridView({
             onClick: () => setPickerOpen(true),
             disabled: selection.count === 0,
           },
+          wantToRead.action,
         ]}
+        actionGroups={
+          adminBulk.actions.length > 0
+            ? [
+                {
+                  id: "editing",
+                  label: "Editing",
+                  icon: Pencil,
+                  actions: adminBulk.actions,
+                },
+              ]
+            : []
+        }
         onDone={() => selection.exit()}
         onClear={() => selection.clear()}
         onSelectAll={() => selection.selectAll()}
-        isPending={isMarkPending}
+        isPending={isMarkPending || adminBulk.isPending || wantToRead.isPending}
       />
+      {adminBulk.dialogs}
       <BulkAddToCollectionDialog
         open={pickerOpen}
         onOpenChange={(next) => {

@@ -224,7 +224,7 @@ export function ClosingNoteRow({
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
-                  className="text-destructive focus:text-destructive"
+                  variant="destructive"
                   disabled={!canMutate || mut.isPending}
                   onSelect={remove}
                 >

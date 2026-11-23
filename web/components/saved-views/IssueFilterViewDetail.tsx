@@ -6,6 +6,7 @@ import {
   BookOpenCheck,
   FolderPlus,
   ListChecks,
+  Pencil,
   Sparkles,
 } from "lucide-react";
 
@@ -25,6 +26,8 @@ import {
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
+import { useAdminSelectionActions } from "@/components/library/useAdminSelectionActions";
+import { useWantToReadSelectionAction } from "@/components/collections/useWantToReadSelectionAction";
 import { DropdownMenuItem } from "@/components/folio/dropdown-menu";
 import { EmptyState } from "@/components/folio/empty-state";
 import {
@@ -128,6 +131,15 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
     entry_kind: "issue" as const,
     ref_id: id,
   }));
+  // Fetch metadata + Rescan (admin) over the selected issues.
+  const adminBulk = useAdminSelectionActions(
+    { issueIds: Array.from(selection.selected), seriesIds: [] },
+    { scope: "issues", onDone: () => selection.exit() },
+  );
+  // Add to Want to Read — every user (their own list).
+  const wantToRead = useWantToReadSelectionAction(selectedTargets, {
+    onDone: () => selection.exit(),
+  });
 
   const selectButtonRef = React.useRef<HTMLButtonElement | null>(null);
   const wasSelectModeRef = React.useRef(false);
@@ -171,7 +183,7 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
               onSelect={fetchViewMetadata}
               disabled={createBatch.isPending}
             >
-              <Sparkles className="mr-2 size-4" />
+              <Sparkles className="size-4" />
               Fetch metadata for view
             </DropdownMenuItem>
           ) : undefined
@@ -246,12 +258,28 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
             onClick: () => setPickerOpen(true),
             disabled: selection.count === 0,
           },
+          wantToRead.action,
         ]}
+        actionGroups={
+          adminBulk.actions.length > 0
+            ? [
+                {
+                  id: "editing",
+                  label: "Editing",
+                  icon: Pencil,
+                  actions: adminBulk.actions,
+                },
+              ]
+            : []
+        }
         onDone={() => selection.exit()}
         onClear={() => selection.clear()}
         onSelectAll={() => selection.selectAll()}
-        isPending={bulkMark.isPending}
+        isPending={
+          bulkMark.isPending || adminBulk.isPending || wantToRead.isPending
+        }
       />
+      {adminBulk.dialogs}
 
       {results.isLoading ? (
         <ul role="list" className="grid gap-4" style={COVER_GRID_STYLE}>

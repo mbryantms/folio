@@ -13,6 +13,7 @@ import {
   HardDriveDownload,
   ListChecks,
   Loader2,
+  Pencil,
   RefreshCw,
   Search as SearchIcon,
   Sparkles,
@@ -36,6 +37,8 @@ import {
 } from "@/components/library/PhoneControlsBar";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
+import { useAdminSelectionActions } from "@/components/library/useAdminSelectionActions";
+import { useWantToReadSelectionAction } from "@/components/collections/useWantToReadSelectionAction";
 import {
   CoverGridSkeleton,
   LoadingRegion,
@@ -318,6 +321,21 @@ function CblViewDetailInner({
   const [archiveEditMounted, setArchiveEditMounted] = React.useState(false);
   if (archiveEditOpen && !archiveEditMounted) setArchiveEditMounted(true);
   const isAdmin = useMe().data?.role === "admin";
+  // Fetch metadata + Rescan (admin) over the matched selected entries.
+  const adminBulk = useAdminSelectionActions(
+    { issueIds: selectedIssueIds, seriesIds: [] },
+    { scope: "issues", onDone: () => selection.exit() },
+  );
+  // Add to Want to Read — every user (their own list).
+  const wantToRead = useWantToReadSelectionAction(
+    selectedIssueIds.map((id) => ({
+      entry_kind: "issue" as const,
+      ref_id: id,
+    })),
+    {
+      onDone: () => selection.exit(),
+    },
+  );
 
   if (detail.isLoading) {
     return (
@@ -458,11 +476,11 @@ function CblViewDetailInner({
           onSelect={fetchViewMetadata}
           disabled={createBatch.isPending}
         >
-          <Sparkles className="mr-2 size-4" /> Fetch metadata for view
+          <Sparkles className="size-4" /> Fetch metadata for view
         </DropdownMenuItem>
       )}
       <DropdownMenuItem onSelect={() => setOfflineOpen(true)}>
-        <HardDriveDownload className="mr-2 size-4" />
+        <HardDriveDownload className="size-4" />
         Download for offline…
       </DropdownMenuItem>
       <DropdownMenuItem asChild>
@@ -471,7 +489,7 @@ function CblViewDetailInner({
           download
           title="Download as .cbl"
         >
-          <Download className="mr-2 size-4" /> Export
+          <Download className="size-4" /> Export
         </a>
       </DropdownMenuItem>
       {missingCount > 0 ? (
@@ -482,9 +500,9 @@ function CblViewDetailInner({
           }}
         >
           {hideMissing ? (
-            <Check className="mr-2 size-4" />
+            <Check className="size-4" />
           ) : (
-            <EyeOff className="mr-2 size-4" />
+            <EyeOff className="size-4" />
           )}
           {hideMissing
             ? `Showing matched only (${missingCount} hidden)`
@@ -709,14 +727,25 @@ function CblViewDetailInner({
             disabled: selectedIssueIds.length === 0,
           },
         ]}
-        overflow={
+        overflow={[wantToRead.action]}
+        // Admin-only (audit 2026-11 E16): the archive edit rewrites files,
+        // the fetch starts a metadata batch, the rescan queues scans.
+        actionGroups={
           isAdmin
             ? [
                 {
-                  id: "edit-archives",
-                  label: "Edit archives…",
-                  icon: FileCog,
-                  onClick: () => setArchiveEditOpen(true),
+                  id: "editing",
+                  label: "Editing",
+                  icon: Pencil,
+                  actions: [
+                    {
+                      id: "edit-archives",
+                      label: "Edit archives…",
+                      icon: FileCog,
+                      onClick: () => setArchiveEditOpen(true),
+                    },
+                    ...adminBulk.actions,
+                  ],
                 },
               ]
             : []
@@ -724,8 +753,11 @@ function CblViewDetailInner({
         onDone={() => selection.exit()}
         onClear={() => selection.clear()}
         onSelectAll={() => selection.selectAll()}
-        isPending={bulkMark.isPending}
+        isPending={
+          bulkMark.isPending || adminBulk.isPending || wantToRead.isPending
+        }
       />
+      {adminBulk.dialogs}
 
       {entriesQuery.isLoading ? (
         <CoverGridSkeleton label="Loading entries…" />

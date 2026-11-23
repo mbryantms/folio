@@ -4871,6 +4871,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/metadata/batch/selection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /metadata/batch/selection` — fan out a metadata search over a
+         *     multi-select from any list surface (library grid, search, collections,
+         *     reading lists, filter views): each selected issue gets an issue search,
+         *     each selected series a series search, all under one `metadata_batch` so
+         *     the caller can deep-link the Review queue to the returned `batch_id`.
+         *     Unknown, inactive and removed targets drop out; an all-empty request is
+         *     a 422. Children run as `manual`, so nothing auto-applies.
+         */
+        post: operations["metadata_create_selection_batch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/metadata/batch/{batch_id}": {
         parameters: {
             query?: never;
@@ -4924,6 +4949,52 @@ export interface paths {
         get: operations["metadata_list_batches"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/metadata/coverage/selection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /metadata/coverage/selection` — queue a coverage analysis for each
+         *     selected series (the multi-select "Analyze coverage"). Same job as the
+         *     series Metadata tab's button, but never with `auto_accept`: a bulk run
+         *     only produces proposals, which stay on each series' Metadata tab until
+         *     accepted. One audit row per call.
+         */
+        post: operations["provider_coverage_analyze_selection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/metadata/sync/selection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /metadata/sync/selection` — pause or resume metadata sync for every
+         *     selected series (the multi-select "Pause / Resume metadata sync"): a
+         *     paused series is skipped by the weekly refresh and the automatic
+         *     searches, same as the series Metadata tab's toggle. One `UPDATE`, one
+         *     audit row.
+         */
+        post: operations["metadata_sync_selection"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5016,6 +5087,22 @@ export interface paths {
         get: operations["relationship_kinds"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scans/selection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["scans_scan_selection"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6830,6 +6917,20 @@ export interface components {
              *     (series id as provider-set, ranges as automated rows).
              */
             auto_accept?: boolean;
+        };
+        /** @description `POST /metadata/coverage/selection` request. */
+        AnalyzeCoverageSelectionReq: {
+            series_ids: string[];
+        };
+        AnalyzeCoverageSelectionResp: {
+            /** @description Series that already had an analysis queued or running. */
+            already_running: number;
+            /** @description Series whose enqueue failed. */
+            failed: number;
+            /** @description Unknown or removed series. */
+            not_found: number;
+            /** @description Analyses newly queued. */
+            queued: number;
         };
         AppPasswordCreatedView: {
             created_at: string;
@@ -15244,6 +15345,28 @@ export interface components {
             state: components["schemas"]["ScanRunState"];
             stats: unknown;
         };
+        ScanSelectionReq: {
+            /**
+             * @description Bypass the size+mtime fast path (content-verify every file).
+             *     Defaults to `false`.
+             */
+            force?: boolean;
+            issue_ids?: string[];
+            series_ids?: string[];
+        };
+        ScanSelectionResp: {
+            /**
+             * @description Targets that joined a scan already queued or running — including
+             *     selected issues covered by their selected series' scan.
+             */
+            coalesced: number;
+            /** @description Targets whose enqueue failed. */
+            failed: number;
+            /** @description Unknown, inactive or removed targets (nothing queued). */
+            not_found: number;
+            /** @description Scans newly queued. */
+            queued: number;
+        };
         /**
          * @description Optional per-run query overrides for `POST …/metadata/search`
          *     (WP-2.8). Each supplied field replaces the corresponding fact read
@@ -15308,6 +15431,16 @@ export interface components {
              */
             level: number;
             paragraphs: string[];
+        };
+        /**
+         * @description `POST /metadata/batch/selection` request — a multi-select from any list
+         *     surface: issues and series, from any number of series and libraries.
+         */
+        SelectionBatchReq: {
+            /** @description Issues to search one by one. */
+            issue_ids?: string[];
+            /** @description Series to search at the series level. */
+            series_ids?: string[];
         };
         /** @description A series → story-arc edge ("this series is a tie-in to *arc*"). */
         SeriesArcRelationshipView: {
@@ -16414,6 +16547,20 @@ export interface components {
          * @enum {string}
          */
         SuggestionStatus: "pending" | "accepted" | "rejected" | "modified" | "stale";
+        /** @description `POST /metadata/sync/selection` request. */
+        SyncSelectionReq: {
+            /** @description `true` pauses metadata sync, `false` resumes it. */
+            paused: boolean;
+            series_ids: string[];
+        };
+        SyncSelectionResp: {
+            /** @description Unknown or removed series. */
+            not_found: number;
+            /** @description Series already in the requested state. */
+            unchanged: number;
+            /** @description Series whose flag changed. */
+            updated: number;
+        };
         SyncStatusResp: {
             last_metadata_sync_at?: string | null;
             /**
@@ -27710,6 +27857,43 @@ export interface operations {
             };
         };
     };
+    metadata_create_selection_batch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SelectionBatchReq"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchCreatedResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description empty selection, or over the per-batch cap */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     metadata_batch_status: {
         parameters: {
             query?: never;
@@ -27793,6 +27977,80 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["BatchListResp"];
                 };
+            };
+        };
+    };
+    provider_coverage_analyze_selection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnalyzeCoverageSelectionReq"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalyzeCoverageSelectionResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description empty selection, or over the cap */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_sync_selection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SyncSelectionReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncSelectionResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description empty selection, or over the cap */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -27922,6 +28180,43 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["RelationshipCatalogue"];
                 };
+            };
+        };
+    };
+    scans_scan_selection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScanSelectionReq"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanSelectionResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description empty selection, or over the cap */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

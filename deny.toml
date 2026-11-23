@@ -61,6 +61,20 @@ ignore = [
     # is not in the production binary. Delete when `cargo tree -i
     # astral-tokio-tar` is empty (testcontainers moves to another tar crate).
     "RUSTSEC-2026-0440",
+    # `chrono` + `chrono-tz` unmaintained (RUSTSEC-2026-0543 / -0555,
+    # 2026-09-14; chronotope/chrono#1768). Informational, no fixed version
+    # and no vulnerability: the maintainers recommend `jiff` or `time`.
+    # Not removable by a bump: sea-orm 2.0 (`with-chrono`), sea-query,
+    # sqlx-core, openidconnect/oauth2, utoipa (`chrono` feature) and
+    # tokio-cron-scheduler/croner all depend on it, and ~310 Folio source
+    # files use `chrono::` types directly (chrono-tz backs the per-user
+    # timezone in reading stats and the profile-timezone check). Moving off
+    # it is a workspace-wide migration that has to wait for sea-orm/sqlx to
+    # offer a jiff backend. Delete both ids when `cargo tree -i chrono`
+    # comes back empty, or re-triage if a real (non-informational) chrono
+    # advisory lands — no upstream will ship a fix for it.
+    "RUSTSEC-2026-0543",
+    "RUSTSEC-2026-0555",
     # Bundled SQLite < 3.54.0 can return uninitialized page-cache memory
     # when a database is opened together with a sibling `-wal` file whose
     # page size differs (RUSTSEC-2026-0459 / CVE-2026-119375, 2026-10-30).

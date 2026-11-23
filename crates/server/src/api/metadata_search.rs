@@ -73,6 +73,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(apply_series))
         .routes(routes!(pause_series))
         .routes(routes!(resume_series))
+        .routes(routes!(sync_selection))
         .routes(routes!(sync_status_series))
         .routes(routes!(search_issue))
         .routes(routes!(lookup_issue))
@@ -85,6 +86,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(create_series_batch))
         .routes(routes!(create_series_selection_batch))
         .routes(routes!(create_saved_view_batch))
+        .routes(routes!(create_selection_batch))
         .routes(routes!(batch_status))
         .routes(routes!(list_batches))
         .routes(routes!(batch_apply))
@@ -982,6 +984,114 @@ pub async fn resume_series(
     };
     crate::audit::record(&app.db, entry).await;
     resp
+}
+
+/// Most series one bulk pause/resume may name.
+pub const SYNC_SELECTION_MAX_SERIES: usize = 100;
+
+/// `POST /metadata/sync/selection` request.
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
+pub struct SyncSelectionReq {
+    #[garde(length(min = 1, max = SYNC_SELECTION_MAX_SERIES))]
+    pub series_ids: Vec<Uuid>,
+    /// `true` pauses metadata sync, `false` resumes it.
+    #[garde(skip)]
+    pub paused: bool,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SyncSelectionResp {
+    /// Series whose flag changed.
+    pub updated: usize,
+    /// Series already in the requested state.
+    pub unchanged: usize,
+    /// Unknown or removed series.
+    pub not_found: usize,
+}
+
+/// `POST /metadata/sync/selection` — pause or resume metadata sync for every
+/// selected series (the multi-select "Pause / Resume metadata sync"): a
+/// paused series is skipped by the weekly refresh and the automatic
+/// searches, same as the series Metadata tab's toggle. One `UPDATE`, one
+/// audit row.
+#[utoipa::path(
+    operation_id = "metadata_sync_selection",    post,
+    path = "/metadata/sync/selection",
+    request_body = SyncSelectionReq,
+    responses(
+        (status = 200, body = SyncSelectionResp),
+        (status = 403, description = "admin only"),
+        (status = 422, description = "empty selection, or over the cap"),
+    )
+)]
+#[handler]
+pub async fn sync_selection(
+    State(app): State<AppState>,
+    RequireAdmin(user): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    Validated(req): Validated<SyncSelectionReq>,
+) -> Response {
+    let targets = match resolve_selected_series(&app.db, &req.series_ids).await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(error = %e, "sync selection: series lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    let distinct: std::collections::HashSet<Uuid> = req.series_ids.iter().copied().collect();
+    let ids: Vec<Uuid> = targets.iter().map(|(id, _)| *id).collect();
+    let updated = if ids.is_empty() {
+        0
+    } else {
+        match series::Entity::update_many()
+            .col_expr(
+                series::Column::MetadataSyncPaused,
+                sea_orm::sea_query::Expr::value(req.paused),
+            )
+            .col_expr(
+                series::Column::UpdatedAt,
+                sea_orm::sea_query::Expr::value(chrono::Utc::now().fixed_offset()),
+            )
+            .filter(series::Column::Id.is_in(ids.iter().copied()))
+            .filter(series::Column::MetadataSyncPaused.ne(req.paused))
+            .exec(&app.db)
+            .await
+        {
+            Ok(r) => r.rows_affected as usize,
+            Err(e) => {
+                tracing::error!(error = %e, "sync selection: update failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        }
+    };
+    let resp = SyncSelectionResp {
+        updated,
+        unchanged: ids.len() - updated,
+        not_found: distinct.len() - ids.len(),
+    };
+    crate::audit::record(
+        &app.db,
+        crate::audit::AuditEntry {
+            actor_id: user.id,
+            action: if req.paused {
+                "admin.series.metadata_pause_selection"
+            } else {
+                "admin.series.metadata_resume_selection"
+            },
+            target_type: None,
+            target_id: None,
+            payload: serde_json::json!({
+                "series_ids": ids.iter().map(Uuid::to_string).collect::<Vec<_>>(),
+                "updated": resp.updated,
+                "unchanged": resp.unchanged,
+                "not_found": resp.not_found,
+            }),
+            ip: ctx.ip_string(),
+            user_agent: ctx.user_agent.clone(),
+        },
+    )
+    .await;
+    Json(resp).into_response()
 }
 
 /// Flip `series.metadata_sync_paused`. Returns the response plus the audit
@@ -3413,6 +3523,211 @@ pub async fn create_saved_view_batch(
         }
         Err(resp) => resp,
     }
+}
+
+/// Most issues one cross-series selection batch may name — the same cap as
+/// every other issue fan-out ([`refresh::REFRESH_BATCH_CAP`]). Over it the
+/// request is refused (422), never silently truncated.
+pub const SELECTION_BATCH_MAX_ISSUES: usize = refresh::REFRESH_BATCH_CAP;
+/// Most series one cross-series selection batch may name (the series-bulk
+/// cap used by `/me/progress/series-bulk`).
+pub const SELECTION_BATCH_MAX_SERIES: usize = 100;
+
+/// `POST /metadata/batch/selection` request — a multi-select from any list
+/// surface: issues and series, from any number of series and libraries.
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
+pub struct SelectionBatchReq {
+    /// Issues to search one by one.
+    #[serde(default)]
+    #[garde(length(max = SELECTION_BATCH_MAX_ISSUES))]
+    pub issue_ids: Vec<String>,
+    /// Series to search at the series level.
+    #[serde(default)]
+    #[garde(length(max = SELECTION_BATCH_MAX_SERIES))]
+    pub series_ids: Vec<Uuid>,
+}
+
+/// Selected issues that can be searched: active, not removed, in a series
+/// that isn't soft-removed. Request order is kept, duplicates drop. Returns
+/// `(issue_id, library_id)` pairs.
+async fn resolve_selected_issues(
+    db: &sea_orm::DatabaseConnection,
+    ids: &[String],
+) -> Result<Vec<(String, Uuid)>, sea_orm::DbErr> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows: Vec<(String, Uuid, Uuid)> = issue::Entity::find()
+        .select_only()
+        .column(issue::Column::Id)
+        .column(issue::Column::SeriesId)
+        .column(issue::Column::LibraryId)
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
+        .filter(issue::Column::RemovedAt.is_null())
+        .filter(issue::Column::Id.is_in(ids.iter().cloned()))
+        .into_tuple()
+        .all(db)
+        .await?;
+    let series_ids: Vec<Uuid> = rows.iter().map(|(_, s, _)| *s).collect();
+    let live_series: std::collections::HashSet<Uuid> =
+        crate::library::access::active_series_select()
+            .select_only()
+            .column(series::Column::Id)
+            .filter(series::Column::Id.is_in(series_ids))
+            .into_tuple::<Uuid>()
+            .all(db)
+            .await?
+            .into_iter()
+            .collect();
+    let by_id: std::collections::HashMap<String, Uuid> = rows
+        .into_iter()
+        .filter(|(_, s, _)| live_series.contains(s))
+        .map(|(id, _, lib)| (id, lib))
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    Ok(ids
+        .iter()
+        .filter(|id| seen.insert(id.as_str()))
+        .filter_map(|id| by_id.get(id).map(|lib| (id.clone(), *lib)))
+        .collect())
+}
+
+/// Selected series that can be searched: not soft-removed. Request order is
+/// kept, duplicates drop. Returns `(series_id, library_id)` pairs.
+pub(crate) async fn resolve_selected_series(
+    db: &sea_orm::DatabaseConnection,
+    ids: &[Uuid],
+) -> Result<Vec<(Uuid, Uuid)>, sea_orm::DbErr> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let by_id: std::collections::HashMap<Uuid, Uuid> =
+        crate::library::access::active_series_select()
+            .select_only()
+            .column(series::Column::Id)
+            .column(series::Column::LibraryId)
+            .filter(series::Column::Id.is_in(ids.iter().copied()))
+            .into_tuple::<(Uuid, Uuid)>()
+            .all(db)
+            .await?
+            .into_iter()
+            .collect();
+    let mut seen = std::collections::HashSet::new();
+    Ok(ids
+        .iter()
+        .filter(|id| seen.insert(**id))
+        .filter_map(|id| by_id.get(id).map(|lib| (*id, *lib)))
+        .collect())
+}
+
+/// `POST /metadata/batch/selection` — fan out a metadata search over a
+/// multi-select from any list surface (library grid, search, collections,
+/// reading lists, filter views): each selected issue gets an issue search,
+/// each selected series a series search, all under one `metadata_batch` so
+/// the caller can deep-link the Review queue to the returned `batch_id`.
+/// Unknown, inactive and removed targets drop out; an all-empty request is
+/// a 422. Children run as `manual`, so nothing auto-applies.
+#[utoipa::path(
+    operation_id = "metadata_create_selection_batch",    post,
+    path = "/metadata/batch/selection",
+    request_body = SelectionBatchReq,
+    responses(
+        (status = 202, body = BatchCreatedResp),
+        (status = 403, description = "admin only"),
+        (status = 422, description = "empty selection, or over the per-batch cap"),
+    )
+)]
+#[handler]
+pub async fn create_selection_batch(
+    State(app): State<AppState>,
+    RequireAdmin(user): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    Validated(req): Validated<SelectionBatchReq>,
+) -> Response {
+    if req.issue_ids.is_empty() && req.series_ids.is_empty() {
+        return crate::api::validation("select at least one issue or series");
+    }
+    let (issues, series_targets) = match tokio::try_join!(
+        resolve_selected_issues(&app.db, &req.issue_ids),
+        resolve_selected_series(&app.db, &req.series_ids),
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "create_selection_batch: target lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
+    // Pin the batch to a library only when every target shares one.
+    let mut libraries = issues
+        .iter()
+        .map(|(_, l)| *l)
+        .chain(series_targets.iter().map(|(_, l)| *l));
+    let library_id = libraries
+        .next()
+        .filter(|first| libraries.all(|l| l == *first));
+
+    let batch_id =
+        match insert_metadata_batch(&app.db, "selection", library_id, Some(user.id)).await {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::error!(error = %e, "create_selection_batch: batch insert failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        };
+
+    let issue_ids: Vec<String> = issues.into_iter().map(|(id, _)| id).collect();
+    let mut tally = fan_out_issue_batch(&app, &issue_ids, Some(user.id), batch_id).await;
+    for (series_id, _) in &series_targets {
+        match metadata_search::enqueue_series_search(
+            &app,
+            *series_id,
+            Some(user.id),
+            orchestrator::trigger_kind::MANUAL,
+            Some(batch_id),
+        )
+        .await
+        {
+            Ok(o) if o.coalesced => tally.jobs_coalesced += 1,
+            Ok(_) => tally.jobs_enqueued += 1,
+            Err(e) => {
+                tracing::warn!(series_id = %series_id, error = %e, "selection batch: enqueue failed");
+                tally.jobs_failed += 1;
+            }
+        }
+    }
+    set_batch_items_total(&app.db, batch_id, tally.jobs_enqueued as i32).await;
+    crate::audit::record(
+        &app.db,
+        batch_created_audit_entry(
+            &ctx,
+            user.id,
+            batch_id,
+            "selection",
+            format!(
+                "{} issues, {} series",
+                issue_ids.len(),
+                series_targets.len()
+            ),
+            &tally,
+        ),
+    )
+    .await;
+
+    (
+        StatusCode::ACCEPTED,
+        Json(BatchCreatedResp {
+            batch_id,
+            items_total: tally.jobs_enqueued,
+            jobs_enqueued: tally.jobs_enqueued,
+            jobs_coalesced: tally.jobs_coalesced,
+            jobs_failed: tally.jobs_failed,
+            eligible: 0,
+            recently_fetched: 0,
+            remainder: 0,
+        }),
+    )
+        .into_response()
 }
 
 // ───────── batch status + budget (refine-bulk-metadata M2) ─────────

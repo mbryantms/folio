@@ -334,34 +334,34 @@ export function IssueSettingsMenu({
             )}
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-60">
+        <DropdownMenuContent align="end">
           <DropdownMenuLabel>Reading</DropdownMenuLabel>
           <DropdownMenuGroup>
             {showReadFromStart && (
               <DropdownMenuItem onSelect={readFromStart}>
-                <RotateCcw className="mr-2 size-4" />
+                <RotateCcw className="size-4" />
                 Read from beginning
               </DropdownMenuItem>
             )}
             {canRead && (
               <DropdownMenuItem onSelect={readIncognito}>
-                <EyeOff className="mr-2 size-4" />
+                <EyeOff className="size-4" />
                 Read in incognito
               </DropdownMenuItem>
             )}
             <DropdownMenuItem onSelect={markRead}>
-              <CheckCircle2 className="mr-2 size-4" />
+              <CheckCircle2 className="size-4" />
               Mark as read
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={markUnread}>
-              <Circle className="mr-2 size-4" />
+              <Circle className="size-4" />
               Mark as unread
             </DropdownMenuItem>
             <DropdownMenuItem
               onSelect={toggleBookmark}
               disabled={createMarker.isPending || deleteMarker.isPending}
             >
-              <Bookmark className="mr-2 size-4" />
+              <Bookmark className="size-4" />
               {existingBookmark ? "Remove bookmark" : "Bookmark"}
             </DropdownMenuItem>
           </DropdownMenuGroup>
@@ -371,44 +371,44 @@ export function IssueSettingsMenu({
           <DropdownMenuGroup>
             <DropdownMenuItem
               onSelect={addToReadingList}
-              disabled={!wtrId || addToWtr.isPending}
+              disabled={addToWtr.isPending}
             >
-              <BookmarkPlus className="mr-2 size-4" />
+              <BookmarkPlus className="size-4" />
               Add to Want to Read
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => setCollectionDialogOpen(true)}>
-              <Folder className="mr-2 size-4" />
+              <Folder className="size-4" />
               Add to collection…
             </DropdownMenuItem>
             <DropdownMenuItem
               onSelect={() => void share.shareOrCopy(issueUrl(issue), label)}
             >
-              <Link2 className="mr-2 size-4" />
+              <Link2 className="size-4" />
               {share.label}
             </DropdownMenuItem>
             {share.canShare && (
               <DropdownMenuItem
                 onSelect={() => void share.copyLink(issueUrl(issue))}
               >
-                <Link2 className="mr-2 size-4" />
+                <Link2 className="size-4" />
                 Copy link
               </DropdownMenuItem>
             )}
             <DropdownMenuItem onSelect={() => setMetadataDialogOpen(true)}>
-              <Sparkles className="mr-2 size-4" />
+              <Sparkles className="size-4" />
               Fetch metadata…
             </DropdownMenuItem>
             {canRead && (
               <DropdownMenuItem asChild>
                 <a href={`/opds/v1/issues/${issue.id}/file`} download>
-                  <Download className="mr-2 size-4" />
+                  <Download className="size-4" />
                   Download
                 </a>
               </DropdownMenuItem>
             )}
             {canRead && (
               <DropdownMenuItem onSelect={() => setOfflineOpen(true)}>
-                <HardDriveDownload className="mr-2 size-4" />
+                <HardDriveDownload className="size-4" />
                 Download for offline…
               </DropdownMenuItem>
             )}
@@ -423,46 +423,49 @@ export function IssueSettingsMenu({
                   onSelect={triggerScan}
                   disabled={scan.isPending}
                 >
-                  <RefreshCw className="mr-2 size-4" />
+                  <RefreshCw className="size-4" />
                   Scan issue
                 </DropdownMenuItem>
                 <DropdownMenuResponsiveSub
-                  icon={<Images className="mr-2 size-4" />}
+                  icon={<Images className="size-4" />}
                   label="Thumbnails"
                 >
                   <DropdownMenuItem
                     onSelect={() => regenerateCover.mutate()}
                     disabled={regenerateCover.isPending}
                   >
-                    <ImageIcon className="mr-2 size-4" />
+                    <ImageIcon className="size-4" />
                     Rebuild cover
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onSelect={() => generatePageMap.mutate()}
                     disabled={generatePageMap.isPending}
                   >
-                    <Images className="mr-2 size-4" />
+                    <Images className="size-4" />
                     Fill missing page thumbnails
                   </DropdownMenuItem>
                   {onForceRecreatePageMap && (
-                    <DropdownMenuItem
-                      onSelect={onForceRecreatePageMap}
-                      className="text-destructive focus:text-destructive"
-                    >
-                      <Images className="mr-2 size-4" />
-                      Rebuild all page thumbnails
-                    </DropdownMenuItem>
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        variant="destructive"
+                        onSelect={onForceRecreatePageMap}
+                      >
+                        <Images className="size-4" />
+                        Rebuild all page thumbnails
+                      </DropdownMenuItem>
+                    </>
                   )}
                 </DropdownMenuResponsiveSub>
                 {onEdit && (
                   <DropdownMenuItem onSelect={onEdit}>
-                    <Pencil className="mr-2 size-4" />
+                    <Pencil className="size-4" />
                     Edit issue
                   </DropdownMenuItem>
                 )}
                 {onChooseCoverPage && (
                   <DropdownMenuItem onSelect={onChooseCoverPage}>
-                    <ImageIcon className="mr-2 size-4" />
+                    <ImageIcon className="size-4" />
                     Choose cover page…
                   </DropdownMenuItem>
                 )}
@@ -475,27 +478,31 @@ export function IssueSettingsMenu({
                   }
                   disabled={setSeriesCover.isPending}
                 >
-                  <Star className="mr-2 size-4" />
+                  <Star className="size-4" />
                   Use as series cover
                 </DropdownMenuItem>
                 {issue.allow_archive_writeback && onEditArchive && canRead && (
                   <DropdownMenuItem onSelect={onEditArchive}>
-                    <Layers className="mr-2 size-4" />
+                    <Layers className="size-4" />
                     Edit archive…
                   </DropdownMenuItem>
                 )}
-                {issue.allow_archive_writeback &&
-                  onRestoreArchive &&
-                  issue.last_rewrite_at && (
+              </DropdownMenuGroup>
+              {/* Destructive last, behind its own separator. */}
+              {issue.allow_archive_writeback &&
+                onRestoreArchive &&
+                issue.last_rewrite_at && (
+                  <>
+                    <DropdownMenuSeparator />
                     <DropdownMenuItem
+                      variant="destructive"
                       onSelect={onRestoreArchive}
-                      className="text-destructive focus:text-destructive"
                     >
-                      <History className="mr-2 size-4" />
+                      <History className="size-4" />
                       Restore from backup…
                     </DropdownMenuItem>
-                  )}
-              </DropdownMenuGroup>
+                  </>
+                )}
             </>
           )}
         </DropdownMenuContent>
