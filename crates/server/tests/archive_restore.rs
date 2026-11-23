@@ -437,7 +437,9 @@ async fn listing_reports_when_each_backup_was_made() {
     let dir = tempdir().unwrap();
     let (id, path) = seed(&app, dir.path(), 3, "issue.cbz", b"v1").await;
     let old = SystemTime::now() - Duration::from_secs(400 * 86_400);
-    filetime::set_file_mtime(&path, filetime::FileTime::from_system_time(old)).unwrap();
+    std::fs::File::open(&path)
+        .and_then(|file| file.set_modified(old))
+        .unwrap();
 
     let before = SystemTime::now() - Duration::from_secs(2);
     // Hard link: the rewrite links the original into `.bak`.
@@ -452,7 +454,9 @@ async fn listing_reports_when_each_backup_was_made() {
     // A copy that kept the original's modification time.
     let copy = slot(&path, 2);
     std::fs::write(&copy, b"v0").unwrap();
-    filetime::set_file_mtime(&copy, filetime::FileTime::from_system_time(old)).unwrap();
+    std::fs::File::open(&copy)
+        .and_then(|file| file.set_modified(old))
+        .unwrap();
 
     let (status, body) = call(
         &app,

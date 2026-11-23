@@ -179,8 +179,10 @@ async fn second_scan_reuses_series_via_folder_path() {
         .unwrap()
         .write_all(&[])
         .ok();
-    let new_time = filetime::FileTime::from_system_time(std::time::SystemTime::now());
-    filetime::set_file_mtime(folder.join("Iota 001.cbz"), new_time).unwrap();
+    let new_time = std::time::SystemTime::now();
+    std::fs::File::open(folder.join("Iota 001.cbz"))
+        .and_then(|file| file.set_modified(new_time))
+        .unwrap();
 
     let s2 = scanner::scan_library(&state, lib_id).await.unwrap();
     assert_eq!(s2.series_created, 0, "second scan reuses series: {s2:?}");
@@ -221,8 +223,10 @@ async fn folder_rename_keeps_same_series_row() {
     std::fs::rename(&folder, &renamed).unwrap();
     // Touch the renamed file so per-folder mtime gate fires for both old and new
     // (the rename usually updates parent mtime; force the file mtime too).
-    let new_time = filetime::FileTime::from_system_time(std::time::SystemTime::now());
-    filetime::set_file_mtime(renamed.join("Kappa 001.cbz"), new_time).unwrap();
+    let new_time = std::time::SystemTime::now();
+    std::fs::File::open(renamed.join("Kappa 001.cbz"))
+        .and_then(|file| file.set_modified(new_time))
+        .unwrap();
 
     let s2 = scanner::scan_library(&state, lib_id).await.unwrap();
     // Note: with no ComicInfo and a different folder name, filename inference
