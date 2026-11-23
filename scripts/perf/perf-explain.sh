@@ -5,7 +5,7 @@
 # What it does (docs/dev/load-testing.md has the full write-up):
 #   1. Generates the stress fixture (`fixtures/build.py --scale stress
 #      --series $PERF_SERIES --rich`) unless it already exists.
-#   2. Starts a throwaway Postgres 18 + Redis on free ports (never touches
+#   2. Starts a throwaway Postgres 19 + Redis on free ports (never touches
 #      the dev services on 5432 / 6380). Postgres preloads `auto_explain`.
 #   3. Boots the server binary against them, registers the first (admin)
 #      user, creates a library over the fixture and scans it (thumbnails
@@ -63,7 +63,7 @@ OUT="$REPO/perf-out/explain-$TS"
 mkdir -p "$OUT"
 EMAIL="perf@example.com"
 PASSWORD="perf-explain-correct-horse-battery"
-PG_IMAGE="${PERF_PG_IMAGE:-postgres:18-alpine}"
+PG_IMAGE="${PERF_PG_IMAGE:-postgres:19-alpine}"
 REDIS_IMAGE="${PERF_REDIS_IMAGE:-redis:8-alpine}"
 
 log() { printf '==> %s\n' "$*" >&2; }

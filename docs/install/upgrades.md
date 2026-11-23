@@ -67,12 +67,67 @@ refusing to boot: Postgres 16.9 is too old; Folio requires Postgres 17.0 or newe
 ```
 
 There is no override. If you run Folio against your own Postgres (not
-the one in `compose.prod.yml`, which ships `postgres:18`), upgrade the
+the one in `compose.prod.yml`, which ships `postgres:19`), upgrade the
 server first. Moving an existing volume across a Postgres major is a
 `pg_dump` → new server → `pg_restore` operation — `just backup` /
 `just restore` wrap that (see [`backup.md`](./backup.md)); the Postgres
 image's entrypoint refuses to start on a data directory from a different
 major rather than corrupt it.
+
+## Postgres major upgrade
+
+The Postgres image refuses to start on a volume that holds another
+major's cluster: it exits with "there appears to be PostgreSQL data in
+/var/lib/postgresql/18/docker" rather than touch it. So changing the
+`postgres` image to a new major (18 → 19, as `compose.prod.yml` now
+ships) needs the data moved across. A release image update never does
+this for you: `docker compose pull` changes `app` and `web` only, and
+your `docker-compose.yml` keeps its Postgres image until you change it.
+
+`scripts/postgres-major-upgrade.sh` does the move as a dump and restore.
+Copy it from the Folio repository (the tag your images run) next to your
+compose file, then:
+
+```bash
+cd /opt/folio
+# 1. Set the postgres image to the new major in your compose file, e.g.
+#    image: postgres:19-alpine@sha256:<digest from compose.prod.yml>
+#    Don't run `docker compose up` yet (if you did, postgres is
+#    restarting in a loop; that is harmless and the script handles it).
+# 2. Run the script with the compose file (asks you to type "upgrade").
+./postgres-major-upgrade.sh docker-compose.yml
+```
+
+It stops `app` and `web`, starts the old major to take a `pg_dump -Fc`
+(written to `/var/backups/folio`, with per-table row counts), renames
+the old cluster to `18/docker-pre-19` inside the same volume, starts the
+new major, restores, runs ANALYZE, checks that every table has the same
+row count as before, and starts `app` and `web` again. Downtime is the
+dump plus the restore. The volume
+needs room for the second cluster while the old one is kept, and the
+backup directory room for the dump (roughly a tenth of the database
+size).
+
+A dump and restore rather than `pg_upgrade`: the restore rebuilds every
+index and recomputes the generated search columns, which Postgres 19's
+release notes ask for after an upgrade (full-text search, `pg_trgm` and
+`fuzzystrmatch` changed behaviour).
+
+**Rollback.** The old cluster stays on the volume until you delete it:
+
+```bash
+./postgres-major-upgrade.sh docker-compose.yml --rollback
+# put the old postgres image back in docker-compose.yml, then
+docker compose up -d
+```
+
+Rollback deletes the new cluster, so anything written after the upgrade
+is lost. Once you are happy with the new major, the script prints the
+command that frees the old cluster's space.
+
+From a checkout, `just pg-major-upgrade` runs the same script
+(`just pg-major-upgrade compose.dev.yml` for the dev stack; stop
+`just dev` first).
 
 ## CPU requirement
 
@@ -166,6 +221,17 @@ docker compose -f compose.prod.yml up -d --no-deps app
 ```
 
 ## Breaking changes by version
+
+### Unreleased — Postgres 19 in the compose template
+
+- `compose.prod.yml` now runs `postgres:19-alpine`. An existing volume
+  holds a Postgres 18 cluster, which the 19 image refuses to start on.
+  Before taking the new image line into your compose file, read
+  [Postgres major upgrade](#postgres-major-upgrade): one script moves
+  the data, and keeps the 18 cluster for rollback.
+- Staying on 18 is supported. Folio still requires Postgres 17 or newer,
+  so keep your compose file's `postgres:18` line until you choose to
+  upgrade.
 
 ### Unreleased — upcoming releases (off by default)
 

@@ -13,7 +13,7 @@
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 /// Minimum supported `server_version_num` — Postgres 17.0. The dev / CI
-/// stack pins `postgres:18-alpine`; anything from 17.0 up is accepted.
+/// stack pins `postgres:19-alpine`; anything from 17.0 up is accepted.
 pub const MIN_SERVER_VERSION_NUM: u32 = 170_000;
 
 /// Parse the text `SHOW server_version_num` returns (e.g. `"180001"`).
@@ -50,7 +50,7 @@ pub fn check_supported(num: u32) -> Result<(), String> {
          {min_num}). The search migration uses 17+ features and would \
          fail part-way through, leaving a half-applied schema. Upgrade \
          the database server (the shipped compose.prod.yml runs \
-         postgres:18 — see docs/install/upgrades.md for the dump/restore \
+         postgres:19 — see docs/install/upgrades.md for the dump/restore \
          path when moving a volume across a Postgres major) and restart.",
         found = format_version_num(num),
         min = format_version_num(MIN_SERVER_VERSION_NUM),

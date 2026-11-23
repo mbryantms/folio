@@ -29,7 +29,7 @@ need to Ctrl-C and re-run after every server-side change.
 
 ### Postgres version
 
-`compose.dev.yml` runs `postgres:18-alpine`, matching CI and the
+`compose.dev.yml` runs `postgres:19-alpine`, matching CI and the
 integration-test harness. The server **requires Postgres 17+**: the search
 migration depends on 17+ behaviour, so `app::serve` runs
 `SHOW server_version_num` after connecting and refuses to boot (before any
