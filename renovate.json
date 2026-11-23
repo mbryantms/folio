@@ -321,6 +321,25 @@
       "platformAutomerge": true
     },
     {
+      "description": "gcr.io and mirror.gcr.io report no release timestamps, so the global 3-day minimumReleaseAge (under Renovate's default minimumReleaseAgeBehaviour=timestamp-required) holds their digest refreshes as pending forever: the distroless bases sat two weeks on a zlib CVE upstream had already fixed (#1355), and every refresh so far was done by hand (#940, #1751). Digest-only refreshes from these registries skip the age gate and arrive as one PR a week, so frequent distroless rebuilds don't churn. The digest auto-merge rule above still applies, and CI builds and smoke-tests the images.",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "gcr.io/**",
+        "mirror.gcr.io/**"
+      ],
+      "matchUpdateTypes": [
+        "digest",
+        "pinDigest"
+      ],
+      "minimumReleaseAge": null,
+      "groupName": "gcr.io image digests",
+      "schedule": [
+        "before 6am on monday"
+      ]
+    },
+    {
       "description": "reqwest is held at 0.12 (see the Cargo.toml comment block): oauth2/openidconnect pin 0.12 in their feature graphs and a local bump pulls two reqwest versions side-by-side. A config-level ceiling beats closed-PR memory (branch cleanup wiped that once and the update resurrected as #350). Remove when oauth2 ships reqwest-0.13 support.",
       "matchManagers": [
         "cargo"
@@ -397,7 +416,9 @@
   ],
   "prHourlyLimit": 0,
   "osvVulnerabilityAlerts": true,
-  "dependencyDashboardOSVVulnerabilitySummary": "unresolved",
+  "dependencyDashboard": {
+    "osvVulnerabilitySummary": "unresolved"
+  },
   "customManagers": [
     {
       "customType": "regex",
