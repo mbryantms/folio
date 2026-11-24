@@ -55,6 +55,7 @@ export function CblIssueCard({
   selectMode,
   onEnterSelectMode,
   isCurrent = false,
+  extraActions,
 }: {
   entry: CblEntryView;
   /** Hydrated issue when `entry.matched_issue_id` resolves to a row in
@@ -81,6 +82,9 @@ export function CblIssueCard({
    *  treatment on the home rail so the detail-page grid and the rail
    *  use one shared idiom for the anchor card. */
   isCurrent?: boolean;
+  /** List-level actions appended to the card menu (linked reading
+   *  lists: "Mark read up to here", "Insert reading list after this"). */
+  extraActions?: CoverMenuAction[];
 }) {
   const positionLabel = `#${entry.position + 1}`;
   const numberLabel = entry.issue_number ? `#${entry.issue_number}` : "—";
@@ -121,6 +125,7 @@ export function CblIssueCard({
               }),
           },
           ...collectionActions.actions,
+          ...(extraActions ?? []),
         ]
       : [];
   // Hook is always called (rules-of-hooks); when there's no resolved

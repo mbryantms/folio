@@ -561,6 +561,8 @@ export const queryKeys = {
     opts?: { before?: number; after?: number; limit?: number },
   ) => ["cbl-lists", "window-infinite", id, opts ?? {}] as const,
   cblRefreshLog: (id: string) => ["cbl-lists", "refresh-log", id] as const,
+  /** Linked reading lists: a list's events, next part and chapters. */
+  cblListLinks: (id: string) => ["cbl-lists", "links", id] as const,
   /** Markers + Collections M2 — user collections (kind='collection') with
    *  Want to Read auto-seeded on first GET. */
   collections: ["collections", "list"] as const,

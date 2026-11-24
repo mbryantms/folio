@@ -11,9 +11,11 @@ import {
   EyeOff,
   FileCog,
   HardDriveDownload,
+  Link2,
   ListChecks,
   Loader2,
   Pencil,
+  ListTree,
   RefreshCw,
   Search as SearchIcon,
   Sparkles,
@@ -64,14 +66,44 @@ import {
 import {
   useCblList,
   useCblListEntriesInfinite,
+  useCblListLinks,
   useCblListWindow,
   useMe,
 } from "@/lib/api/queries";
 import {
   useBulkMarkProgress,
+  useCreateCblLink,
   useCreateSavedViewBatch,
+  useDeleteCblLink,
+  useMarkCblReadThrough,
   useRefreshCblList,
+  useSkipCblLink,
 } from "@/lib/api/mutations";
+import { EventBand } from "@/components/cbl/links/EventBand";
+import {
+  ChapterHeader,
+  ChapterRail,
+  ChapterRailButton,
+  ChapterRailSheet,
+  chapterAnchorId,
+} from "@/components/cbl/links/ChapterParts";
+import {
+  InsertListDialog,
+  MarkThroughDialog,
+  RemoveLinkDialog,
+} from "@/components/cbl/links/LinkDialogs";
+import {
+  buildChapterBlocks,
+  foldedChapters,
+  isChapterDone,
+  seekStart,
+  type PlanItem,
+} from "@/lib/cbl/linked-plan";
+import {
+  useChapterRailHidden,
+  useShowReadChapters,
+} from "@/lib/cbl/use-show-read-chapters";
+import type { ReadingListLinkView } from "@/lib/api/types";
 import { skippedEntryIds } from "@/lib/library/bulk-archive-skips";
 import { COVER_GRID_STYLE } from "@/lib/library/cover-size";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
@@ -150,10 +182,49 @@ function CblViewDetailInner({
     const t = setTimeout(() => setDebouncedQ(q.trim()), 200);
     return () => clearTimeout(t);
   }, [q]);
-  const entriesQuery = useCblListEntriesInfinite(listId, {
-    status: hideMissing ? "matched,ambiguous,manual" : undefined,
-    q: debouncedQ || undefined,
-  });
+  // Linked reading lists: events, next part and chapters. The entries
+  // query waits for them so it can start at the reader's chapter.
+  const linksQuery = useCblListLinks(listId);
+  const chapters = React.useMemo(
+    () => linksQuery.data?.chapters ?? [],
+    [linksQuery.data?.chapters],
+  );
+  const linkEvents = React.useMemo(
+    () => linksQuery.data?.events ?? [],
+    [linksQuery.data?.events],
+  );
+  const [showReadChapters, setShowReadChapters] = useShowReadChapters(listId);
+  const [railHidden, setRailHidden] = useChapterRailHidden();
+  const [foldOverrides, setFoldOverrides] = React.useState<
+    Record<number, boolean>
+  >({});
+  // Which chapters were finished when the page opened (see foldedChapters).
+  const [doneAtLoad, setDoneAtLoad] = React.useState<Set<number> | null>(null);
+  if (doneAtLoad == null && linksQuery.data) {
+    setDoneAtLoad(new Set(chapters.filter(isChapterDone).map((c) => c.index)));
+  }
+  const foldingActive = debouncedQ.length === 0 && chapters.length > 1;
+  const folded = React.useMemo(
+    () =>
+      foldingActive
+        ? foldedChapters(
+            chapters,
+            foldOverrides,
+            showReadChapters,
+            doneAtLoad ?? undefined,
+          )
+        : new Set<number>(),
+    [foldingActive, chapters, foldOverrides, showReadChapters, doneAtLoad],
+  );
+  const fromPosition = foldingActive ? seekStart(chapters, folded) : undefined;
+  const entriesQuery = useCblListEntriesInfinite(
+    linksQuery.isPending ? "" : listId,
+    {
+      status: hideMissing ? "matched,ambiguous,manual" : undefined,
+      q: debouncedQ || undefined,
+      fromPosition,
+    },
+  );
   // Tiny piggy-back on the rail's window query so the detail page
   // highlights the same "Up next" anchor card as the home rail.
   // before=0 keeps the response cheap — we only need `current_index`
@@ -306,7 +377,36 @@ function CblViewDetailInner({
   // close animation still runs (G6).
   const [archiveEditMounted, setArchiveEditMounted] = React.useState(false);
   if (archiveEditOpen && !archiveEditMounted) setArchiveEditMounted(true);
-  const isAdmin = useMe().data?.role === "admin";
+  const me = useMe().data;
+  const isAdmin = me?.role === "admin";
+  const createLink = useCreateCblLink(listId);
+  const deleteLink = useDeleteCblLink(listId);
+  const skipLink = useSkipCblLink(listId);
+  const markThrough = useMarkCblReadThrough(listId);
+  const [chaptersOpen, setChaptersOpen] = React.useState(false);
+  const [insertTarget, setInsertTarget] = React.useState<{
+    entryId: string | null;
+    label: string | null;
+  } | null>(null);
+  const [markTarget, setMarkTarget] = React.useState<{
+    position: number;
+    label: string;
+  } | null>(null);
+  const [removeTarget, setRemoveTarget] =
+    React.useState<ReadingListLinkView | null>(null);
+  // The rail asked for a chapter; scroll once its header is in the DOM.
+  const [pendingChapter, setPendingChapter] = React.useState<number | null>(
+    null,
+  );
+  React.useEffect(() => {
+    if (pendingChapter == null) return;
+    const el = document.getElementById(chapterAnchorId(pendingChapter));
+    if (!el) return;
+    requestAnimationFrame(() => {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      setPendingChapter(null);
+    });
+  });
   // Fetch metadata + Rescan (admin) over the matched selected entries.
   const adminBulk = useAdminSelectionActions(
     { issueIds: selectedIssueIds, seriesIds: [] },
@@ -426,9 +526,7 @@ function CblViewDetailInner({
   // positions to insert a `gap` placeholder where the canonical CBL
   // index isn't contiguous. Position numbers on the visible cards
   // stay truthful regardless of how many were hidden.
-  type RenderItem =
-    | { kind: "entry"; entry: CblEntryHydratedView }
-    | { kind: "gap"; key: string; count: number };
+  type RenderItem = PlanItem<CblEntryHydratedView>;
   const items: RenderItem[] = [];
   if (hideMissing && debouncedQ.length === 0) {
     let prevPos: number | null = null;
@@ -440,17 +538,95 @@ function CblViewDetailInner({
             kind: "gap",
             key: `gap-${prevPos}-${entry.position}`,
             count: gap,
+            position: entry.position,
           });
         }
       }
-      items.push({ kind: "entry", entry });
+      items.push({ kind: "entry", entry, position: entry.position });
       prevPos = entry.position;
     }
   } else {
     for (const entry of filteredEntries) {
-      items.push({ kind: "entry", entry });
+      items.push({ kind: "entry", entry, position: entry.position });
     }
   }
+
+  // Linked reading lists: who may change links (the server enforces the
+  // same), what is already linked, and the chapter blocks to draw.
+  const canManageLinks =
+    list.owner_user_id != null ? list.owner_user_id === me?.id : isAdmin;
+  const nextPart = linksQuery.data?.continues ?? null;
+  const linkedIds = new Set([
+    ...linkEvents.map((e) => e.child_list_id),
+    ...(nextPart ? [nextPart.child_list_id] : []),
+  ]);
+  const blocks = buildChapterBlocks(
+    items,
+    chapters,
+    linkEvents,
+    folded,
+    foldingActive,
+    !entriesQuery.hasNextPage,
+  );
+  const hasChapters = chapters.length > 1;
+  const jumpToChapter = (index: number) => {
+    if (folded.has(index)) {
+      setFoldOverrides((o) => ({ ...o, [index]: false }));
+    }
+    setPendingChapter(index);
+  };
+  const entryLabel = (e: CblEntryHydratedView) =>
+    `${e.series_name} #${e.issue_number}`;
+  const cardActions = (e: CblEntryHydratedView) => [
+    {
+      label: "Mark read up to here",
+      onSelect: () =>
+        setMarkTarget({ position: e.position, label: entryLabel(e) }),
+    },
+    ...(canManageLinks
+      ? [
+          {
+            label: "Insert reading list after this",
+            onSelect: () =>
+              setInsertTarget({ entryId: e.id, label: entryLabel(e) }),
+          },
+        ]
+      : []),
+  ];
+  const renderCard = (entry: CblEntryHydratedView) => (
+    <CblIssueCard
+      entry={entry}
+      issue={entry.issue ?? undefined}
+      cblSavedViewId={savedView.id}
+      isCurrent={upNextPosition != null && entry.position === upNextPosition}
+      selectMode={
+        selection.selectMode
+          ? {
+              isActive: true,
+              isSelected: selection.isSelected(entry.id),
+              onToggle: (ev) => selection.toggle(entry.id, ev),
+            }
+          : undefined
+      }
+      onEnterSelectMode={() => selection.toggle(entry.id)}
+      extraActions={cardActions(entry)}
+    />
+  );
+  const renderEvent = (link: ReadingListLinkView) => (
+    <EventBand
+      key={link.id}
+      link={link}
+      parentListId={list.id}
+      afterLabel={
+        link.anchor?.series
+          ? `${link.anchor.series} #${link.anchor.number ?? ""}`
+          : null
+      }
+      canManage={canManageLinks}
+      onSkip={(skip) => skipLink.mutate({ linkId: link.id, skip })}
+      onRemove={() => setRemoveTarget(link)}
+    />
+  );
 
   // `⋯` menu body, shared by the phone bar's instance and the pinned
   // row's instance (one per breakpoint composition).
@@ -493,6 +669,29 @@ function CblViewDetailInner({
           {hideMissing
             ? `Showing matched only (${missingCount} hidden)`
             : `Hide ${missingCount} missing`}
+        </DropdownMenuItem>
+      ) : null}
+      {hasChapters ? (
+        <DropdownMenuItem
+          onSelect={(e) => {
+            e.preventDefault();
+            setFoldOverrides({});
+            setShowReadChapters(!showReadChapters);
+          }}
+        >
+          {showReadChapters ? (
+            <Check className="size-4" />
+          ) : (
+            <EyeOff className="size-4" />
+          )}
+          {showReadChapters ? "Showing read chapters" : "Show read chapters"}
+        </DropdownMenuItem>
+      ) : null}
+      {canManageLinks && !nextPart ? (
+        <DropdownMenuItem
+          onSelect={() => setInsertTarget({ entryId: null, label: null })}
+        >
+          <Link2 className="size-4" /> Link the next part…
         </DropdownMenuItem>
       ) : null}
       {canRefresh ? (
@@ -599,6 +798,17 @@ function CblViewDetailInner({
                     Select
                   </PhoneMenuAction>
                 ) : null}
+                {hasChapters ? (
+                  <PhoneMenuAction
+                    icon={<ListTree className="size-4" />}
+                    onClick={() => {
+                      close();
+                      setChaptersOpen(true);
+                    }}
+                  >
+                    Chapters
+                  </PhoneMenuAction>
+                ) : null}
               </>
             )}
           />
@@ -659,6 +869,12 @@ function CblViewDetailInner({
               active={selection.selectMode}
               onEnter={() => selection.enter()}
               onExit={() => selection.exit()}
+            />
+          )}
+          {hasChapters && (
+            <ChapterRailButton
+              onClick={() => setChaptersOpen(true)}
+              railHidden={railHidden}
             />
           )}
           <CoverSizeOptions />
@@ -745,7 +961,7 @@ function CblViewDetailInner({
       />
       {adminBulk.dialogs}
 
-      {entriesQuery.isLoading ? (
+      {entriesQuery.isLoading || linksQuery.isPending ? (
         <CoverGridSkeleton label="Loading entries…" />
       ) : list.stats.total === 0 ? (
         <div className="border-border/60 text-muted-foreground rounded-lg border border-dashed p-8 text-center text-sm">
@@ -760,66 +976,182 @@ function CblViewDetailInner({
               : "No entries to show."}
         </div>
       ) : (
-        <>
-          <ul role="list" className="grid gap-4" style={COVER_GRID_STYLE}>
-            {items.map((item) =>
-              item.kind === "entry" ? (
-                <li key={item.entry.id} id={`cbl-entry-${item.entry.position}`}>
-                  <CblIssueCard
-                    entry={item.entry}
-                    issue={item.entry.issue ?? undefined}
-                    cblSavedViewId={savedView.id}
-                    isCurrent={
-                      upNextPosition != null &&
-                      item.entry.position === upNextPosition
-                    }
-                    selectMode={
-                      selection.selectMode
-                        ? {
-                            isActive: true,
-                            isSelected: selection.isSelected(item.entry.id),
-                            onToggle: (ev) =>
-                              selection.toggle(item.entry.id, ev),
+        <div className="flex items-start gap-6">
+          <div className="min-w-0 flex-1 space-y-4">
+            {blocks.map((block) => (
+              <section
+                key={block.chapter ? `chapter-${block.chapter.index}` : "all"}
+                aria-label={
+                  block.chapter
+                    ? `Chapter ${block.chapter.index + 1}: ${block.chapter.label}`
+                    : undefined
+                }
+                className="space-y-4"
+              >
+                {block.chapter && hasChapters && (
+                  <ChapterHeader
+                    chapter={block.chapter}
+                    folded={foldingActive ? block.folded : undefined}
+                    onToggle={
+                      foldingActive
+                        ? () => {
+                            const idx = block.chapter!.index;
+                            setFoldOverrides((o) => ({
+                              ...o,
+                              [idx]: !block.folded,
+                            }));
                           }
                         : undefined
                     }
-                    onEnterSelectMode={() => selection.toggle(item.entry.id)}
                   />
-                </li>
-              ) : (
-                <li
-                  key={item.key}
-                  className="grid place-items-center"
-                  aria-label={`${item.count} missing ${item.count === 1 ? "entry" : "entries"} hidden`}
-                  title={`${item.count} missing ${item.count === 1 ? "entry" : "entries"} hidden`}
-                >
-                  <div className="border-border/60 text-muted-foreground/80 inline-flex flex-col items-center rounded-md border border-dashed px-2.5 py-1.5">
-                    <span className="font-mono text-sm leading-none tracking-widest">
-                      •••
-                    </span>
-                    <span className="mt-1 text-[10px] tracking-wider uppercase">
-                      {item.count} missing
-                    </span>
+                )}
+                {block.items.length > 0 && (
+                  <ul
+                    role="list"
+                    className="grid gap-4"
+                    style={COVER_GRID_STYLE}
+                  >
+                    {block.items.map((item) =>
+                      item.kind === "entry" ? (
+                        <li
+                          key={item.entry.id}
+                          id={`cbl-entry-${item.entry.position}`}
+                        >
+                          {renderCard(item.entry)}
+                        </li>
+                      ) : (
+                        <li
+                          key={item.key}
+                          className="grid place-items-center"
+                          aria-label={`${item.count} missing ${item.count === 1 ? "entry" : "entries"} hidden`}
+                          title={`${item.count} missing ${item.count === 1 ? "entry" : "entries"} hidden`}
+                        >
+                          <div className="border-border/60 text-muted-foreground/80 inline-flex flex-col items-center rounded-md border border-dashed px-2.5 py-1.5">
+                            <span className="font-mono text-sm leading-none tracking-widest">
+                              •••
+                            </span>
+                            <span className="mt-1 text-[10px] tracking-wider uppercase">
+                              {item.count} missing
+                            </span>
+                          </div>
+                        </li>
+                      ),
+                    )}
+                  </ul>
+                )}
+                {block.events.length > 0 && (
+                  <div className="space-y-3">
+                    {block.events.map(renderEvent)}
                   </div>
-                </li>
-              ),
+                )}
+              </section>
+            ))}
+            {nextPart && !entriesQuery.hasNextPage && (
+              <div
+                data-testid="next-part"
+                className="border-border/60 flex min-h-11 items-center gap-2 rounded-md border border-dashed px-3 py-2 text-sm"
+              >
+                <span className="text-muted-foreground">Continues in</span>
+                {nextPart.child_view_id ? (
+                  <a
+                    href={`/views/${nextPart.child_view_id}`}
+                    className="font-medium hover:underline"
+                  >
+                    {nextPart.child_name}
+                  </a>
+                ) : (
+                  <span className="font-medium">{nextPart.child_name}</span>
+                )}
+                <span className="text-muted-foreground ml-auto text-xs">
+                  {nextPart.read} / {nextPart.total} read
+                </span>
+                {canManageLinks && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setRemoveTarget(nextPart)}
+                  >
+                    Unlink
+                  </Button>
+                )}
+              </div>
             )}
-          </ul>
-          <div
-            ref={sentinelRef}
-            aria-hidden
-            className={entriesQuery.hasNextPage ? "h-12" : "hidden"}
-          />
-          <LoadMoreError query={entriesQuery} />
-          {entriesQuery.isFetchingNextPage ? (
-            <p className="text-muted-foreground flex items-center justify-center gap-2 text-xs">
-              <Loader2 className="size-3 animate-spin" /> Loading more (
-              {loadedEntries.length}
-              {filterTotal != null ? ` of ${filterTotal}` : ""})…
-            </p>
-          ) : null}
-        </>
+            <div
+              ref={sentinelRef}
+              aria-hidden
+              className={entriesQuery.hasNextPage ? "h-12" : "hidden"}
+            />
+            <LoadMoreError query={entriesQuery} />
+            {entriesQuery.isFetchingNextPage ? (
+              <p className="text-muted-foreground flex items-center justify-center gap-2 text-xs">
+                <Loader2 className="size-3 animate-spin" /> Loading more (
+                {loadedEntries.length}
+                {filterTotal != null ? ` of ${filterTotal}` : ""})…
+              </p>
+            ) : null}
+          </div>
+          {hasChapters && !railHidden && (
+            <ChapterRail
+              chapters={chapters}
+              events={linkEvents}
+              next={nextPart}
+              onJump={jumpToChapter}
+              onHide={() => setRailHidden(true)}
+            />
+          )}
+        </div>
       )}
+
+      {hasChapters && (
+        <ChapterRailSheet
+          open={chaptersOpen}
+          onOpenChange={setChaptersOpen}
+          onShowRail={railHidden ? () => setRailHidden(false) : undefined}
+          chapters={chapters}
+          events={linkEvents}
+          next={nextPart}
+          onJump={jumpToChapter}
+        />
+      )}
+      <InsertListDialog
+        key={insertTarget ? (insertTarget.entryId ?? "next-part") : "closed"}
+        open={insertTarget != null}
+        onOpenChange={(o) => !o && setInsertTarget(null)}
+        parent={list}
+        afterLabel={insertTarget?.label ?? null}
+        alreadyLinked={linkedIds}
+        hasNextPart={nextPart != null}
+        onPick={(childId, kind) => {
+          const t = insertTarget;
+          setInsertTarget(null);
+          createLink.mutate({
+            child_list_id: childId,
+            kind,
+            after_entry_id: kind === "event" ? (t?.entryId ?? null) : null,
+          });
+        }}
+      />
+      <MarkThroughDialog
+        listId={listId}
+        target={markTarget}
+        onOpenChange={(o) => !o && setMarkTarget(null)}
+        isPending={markThrough.isPending}
+        onConfirm={(position) =>
+          markThrough.mutate(
+            { position },
+            { onSuccess: () => setMarkTarget(null) },
+          )
+        }
+      />
+      <RemoveLinkDialog
+        name={removeTarget?.child_name ?? null}
+        onOpenChange={(o) => !o && setRemoveTarget(null)}
+        onConfirm={() => {
+          const t = removeTarget;
+          setRemoveTarget(null);
+          if (t) deleteLink.mutate({ linkId: t.id });
+        }}
+      />
 
       <Sheet open={editOpen} onOpenChange={setEditOpen}>
         <SheetContent

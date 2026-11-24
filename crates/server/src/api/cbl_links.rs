@@ -16,6 +16,9 @@
 //!   caller's own "skip this event".
 //! - `POST   /me/cbl-lists/{id}/progress/through` — mark every issue up to
 //!   a position read (with `dry_run` to count first).
+//! - `POST   /me/cbl-lists/{id}/view` — the caller's saved view of a list,
+//!   created when they have none, so an event band always opens its list.
+//!   Linking an event also gives the linker a view of it.
 //!
 //! Writes use the list's own rules ([`super::cbl_lists::ensure_can_manage`]):
 //! the owner of a personal list, an admin for a shared one, audited as
@@ -64,6 +67,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(update_link, delete_link))
         .routes(routes!(skip_link, unskip_link))
         .routes(routes!(mark_read_through))
+        .routes(routes!(open_list_view))
 }
 
 // ───── wire types ─────
@@ -171,6 +175,14 @@ pub struct MarkThroughReq {
     /// Count only; write nothing.
     #[serde(default)]
     pub dry_run: bool,
+}
+
+/// The caller's saved view of a reading list.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ListViewRef {
+    pub view_id: String,
+    /// The view was created by this call.
+    pub created: bool,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -786,6 +798,12 @@ pub async fn create_link(
         tracing::warn!(error = %e, "cbl links: insert failed");
         return error(StatusCode::CONFLICT, "conflict", "already linked");
     }
+    // The linker can open the event from the band straight away.
+    if req.kind == LinkKind::Event
+        && let Err(e) = super::saved_views::ensure_cbl_view(&app.db, user.id, &child).await
+    {
+        tracing::warn!(error = %e, "cbl links: couldn't create the event's view");
+    }
     audit_admin_list_write(
         &app,
         &ctx,
@@ -1136,4 +1154,48 @@ pub async fn mark_read_through(
         }
     }
     Json(MarkThroughResp { marked, failed }).into_response()
+}
+
+#[utoipa::path(
+    operation_id = "cbl_lists_open_view",
+    post,
+    path = "/me/cbl-lists/{id}/view",
+    params(("id" = String, Path,)),
+    responses(
+        (status = 200, body = ListViewRef, description = "the caller's existing view"),
+        (status = 201, body = ListViewRef, description = "a view was created for the caller"),
+        (status = 404, description = "list not found"),
+    )
+)]
+#[handler]
+pub async fn open_list_view(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    AxPath(id): AxPath<Uuid>,
+) -> Response {
+    let list = match fetch_list(&app.db, id).await {
+        Ok(l) => l,
+        Err(r) => return r,
+    };
+    if let Err(r) = ensure_owner(&list, &user).await {
+        return r;
+    }
+    match super::saved_views::ensure_cbl_view(&app.db, user.id, &list).await {
+        Ok((view_id, created)) => (
+            if created {
+                StatusCode::CREATED
+            } else {
+                StatusCode::OK
+            },
+            Json(ListViewRef {
+                view_id: view_id.to_string(),
+                created,
+            }),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "cbl links: open view failed");
+            internal()
+        }
+    }
 }

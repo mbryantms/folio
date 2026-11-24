@@ -492,8 +492,8 @@ async fn event_and_next_part_round_trip_with_progress_and_chapters() {
     assert!(ev["first_unread"]["series_slug"].is_string());
     assert_eq!(ev["skipped"], false);
     assert!(
-        ev["child_view_id"].is_null(),
-        "no saved view of the event list yet"
+        ev["child_view_id"].is_string(),
+        "linking an event gives the linker a view of it"
     );
     let chapters = body["chapters"].as_array().unwrap();
     assert_eq!(chapters.len(), 2, "{chapters:#?}");
@@ -803,8 +803,35 @@ async fn shared_lists_link_shared_lists_and_admin_writes_are_audited() {
     let (_, body) = get_json(&app, &links_uri(shared_master), &admin).await;
     assert_eq!(body["events"][0]["skipped"], false, "skip is per reader");
 
+    // The reader has no view of the shared event: the band opens it by
+    // creating theirs once, then reuses it.
+    let (_, body) = get_json(&app, &links_uri(shared_master), &user).await;
+    let admin_view = body["events"][0]["child_view_id"].clone();
+    assert!(
+        admin_view.is_null(),
+        "the admin's personal view isn't theirs"
+    );
+    let view_uri = format!("/api/me/cbl-lists/{shared_event}/view");
+    let (status, first) = send(&app, Method::POST, &view_uri, &user, None).await;
+    assert_eq!(status, StatusCode::CREATED, "{first:#?}");
+    assert_eq!(first["created"], true);
+    let (status, again) = send(&app, Method::POST, &view_uri, &user, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(again["view_id"], first["view_id"]);
+    let (_, body) = get_json(&app, &links_uri(shared_master), &user).await;
+    assert_eq!(body["events"][0]["child_view_id"], first["view_id"]);
+
     // Someone else's private list answers like an unknown one.
     let (status, _) = get_json(&app, &links_uri(users_private), &admin).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = send(
+        &app,
+        Method::POST,
+        &format!("/api/me/cbl-lists/{users_private}/view"),
+        &admin,
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     let (status, _) = send(
