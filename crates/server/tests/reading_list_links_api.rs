@@ -23,7 +23,9 @@ use entity::{
     library,
     series::{ActiveModel as SeriesAM, normalize_name},
 };
-use sea_orm::{ActiveModelTrait, ColumnTrait, Database, EntityTrait, QueryFilter, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, Database, EntityTrait, PaginatorTrait, QueryFilter, Set,
+};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -822,6 +824,229 @@ async fn shared_lists_link_shared_lists_and_admin_writes_are_audited() {
         .await
         .unwrap();
     assert_eq!(deleted.len(), 1);
+}
+
+fn breaks_uri(list: Uuid) -> String {
+    format!("/api/me/cbl-lists/{list}/breaks")
+}
+
+/// (start, end, label, break_id set) of each chapter.
+fn chapter_shape(body: &serde_json::Value) -> Vec<(i64, i64, String, bool)> {
+    body["chapters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (
+                c["start_position"].as_i64().unwrap(),
+                c["end_position"].as_i64().unwrap(),
+                c["label"].as_str().unwrap().to_owned(),
+                c["break_id"].is_string(),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn chapter_breaks_split_chapters_with_and_without_events() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "breaks-admin@example.com").await;
+    let other = register(&app, "breaks-other@example.com").await;
+    let (_, issues) = seed_cbl_with_matched_entries(&app, user.user_id, 14).await;
+    let master = make_list(&app, Some(user.user_id), "Master", &issues[..10]).await;
+    let event = make_list(&app, Some(user.user_id), "House of M", &issues[10..]).await;
+
+    // An unnamed break at 3 is named after its first issue.
+    let at3 = entry_at(&app, master, 3).await;
+    let (status, body) = send(
+        &app,
+        Method::POST,
+        &breaks_uri(master),
+        &user,
+        Some(serde_json::json!({ "entry_id": at3 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body:#?}");
+    assert_eq!(
+        chapter_shape(&body),
+        vec![
+            (0, 2, "Master".into(), false),
+            (3, 9, "From Master series #3".into(), true),
+        ]
+    );
+    let break3 = body["breaks"][0]["id"].as_str().unwrap().to_owned();
+
+    // An event after 5 ends the second chapter; a named break at 8.
+    let at5 = entry_at(&app, master, 5).await;
+    let (status, _) = send(
+        &app,
+        Method::POST,
+        &links_uri(master),
+        &user,
+        Some(serde_json::json!({"child_list_id": event, "kind": "event", "after_entry_id": at5})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let at8 = entry_at(&app, master, 8).await;
+    let (status, body) = send(
+        &app,
+        Method::POST,
+        &breaks_uri(master),
+        &user,
+        Some(serde_json::json!({ "entry_id": at8, "label": "  Aftermath  " })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body:#?}");
+    assert_eq!(
+        chapter_shape(&body),
+        vec![
+            (0, 2, "Master".into(), false),
+            (3, 5, "Up to House of M".into(), true),
+            (6, 7, "After House of M".into(), false),
+            (8, 9, "Aftermath".into(), true),
+        ]
+    );
+    assert_eq!(
+        body["chapters"][1]["event_link_ids"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(body["chapters"][1]["break_id"], break3.as_str());
+    let break8 = body["breaks"][1]["id"].as_str().unwrap().to_owned();
+
+    // Rules: the first issue, a second break at one issue, an over-long name.
+    let at0 = entry_at(&app, master, 0).await;
+    let (status, body) = send(
+        &app,
+        Method::POST,
+        &breaks_uri(master),
+        &user,
+        Some(serde_json::json!({ "entry_id": at0 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["error"]["details"][0]["field"], "entry_id");
+    let (status, _) = send(
+        &app,
+        Method::POST,
+        &breaks_uri(master),
+        &user,
+        Some(serde_json::json!({ "entry_id": at3 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let (status, body) = send(
+        &app,
+        Method::POST,
+        &breaks_uri(master),
+        &user,
+        Some(serde_json::json!({ "entry_id": at5, "label": "x".repeat(121) })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["error"]["details"][0]["field"], "label");
+
+    // Someone else's personal list answers like an unknown one.
+    let (status, _) = send(
+        &app,
+        Method::POST,
+        &breaks_uri(master),
+        &other,
+        Some(serde_json::json!({ "entry_id": at5 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Rename, unname (blank), remove.
+    let (status, body) = send(
+        &app,
+        Method::PATCH,
+        &format!("{}/{break3}", breaks_uri(master)),
+        &user,
+        Some(serde_json::json!({ "label": "Decimation" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:#?}");
+    assert_eq!(body["chapters"][1]["label"], "Decimation");
+    let (_, body) = send(
+        &app,
+        Method::PATCH,
+        &format!("{}/{break8}", breaks_uri(master)),
+        &user,
+        Some(serde_json::json!({ "label": " " })),
+    )
+    .await;
+    assert!(body["breaks"][1]["label"].is_null());
+    assert_eq!(
+        body["chapters"][3]["label"], "From Master series #8",
+        "not right after the event, so named after its first issue"
+    );
+    let (status, _) = send(
+        &app,
+        Method::DELETE,
+        &format!("{}/{break3}", breaks_uri(master)),
+        &user,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, body) = get_json(&app, &links_uri(master), &user).await;
+    assert_eq!(
+        chapter_shape(&body),
+        vec![
+            (0, 5, "Up to House of M".into(), false),
+            (6, 7, "After House of M".into(), false),
+            (8, 9, "From Master series #8".into(), true),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn admin_breaks_on_a_shared_list_are_audited() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "breaks-share-admin@example.com").await;
+    let reader = register(&app, "breaks-share-reader@example.com").await;
+    let (_, issues) = seed_cbl_with_matched_entries(&app, admin.user_id, 4).await;
+    let shared = make_list(&app, None, "Shared", &issues).await;
+    let at2 = entry_at(&app, shared, 2).await;
+
+    let (status, _) = send(
+        &app,
+        Method::POST,
+        &breaks_uri(shared),
+        &reader,
+        Some(serde_json::json!({ "entry_id": at2 })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "readers don't manage shared lists"
+    );
+    let (status, body) = send(
+        &app,
+        Method::POST,
+        &breaks_uri(shared),
+        &admin,
+        Some(serde_json::json!({ "entry_id": at2, "label": "Part two" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body:#?}");
+    let (_, body) = get_json(&app, &links_uri(shared), &reader).await;
+    assert_eq!(
+        body["chapters"][1]["label"], "Part two",
+        "readers see breaks"
+    );
+
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let audited = audit_log::Entity::find()
+        .filter(audit_log::Column::Action.eq("admin.cbl_list.break.create"))
+        .count(&db)
+        .await
+        .unwrap();
+    assert_eq!(audited, 1);
 }
 
 #[tokio::test]

@@ -7047,6 +7047,128 @@
         }
       }
     },
+    "/api/me/cbl-lists/{id}/breaks": {
+      "post": {
+        "operationId": "cbl_breaks_create",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBreakReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadingListLinksView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "list not found"
+          },
+          "409": {
+            "description": "a chapter already starts at that issue"
+          },
+          "422": {
+            "description": "validation"
+          }
+        }
+      }
+    },
+    "/api/me/cbl-lists/{id}/breaks/{break_id}": {
+      "delete": {
+        "operationId": "cbl_breaks_delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "break_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "404": {
+            "description": "list or chapter break not found"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "cbl_breaks_update",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "break_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateBreakReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadingListLinksView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "list or chapter break not found"
+          },
+          "422": {
+            "description": "validation"
+          }
+        }
+      }
+    },
     "/api/me/cbl-lists/{id}/check": {
       "post": {
         "operationId": "cbl_lists_check_one",
@@ -20716,6 +20838,26 @@
           }
         }
       },
+      "CreateBreakReq": {
+        "type": "object",
+        "required": [
+          "entry_id"
+        ],
+        "properties": {
+          "entry_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The entry the new chapter starts at."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The chapter's name; omitted or blank = named after its first issue."
+          }
+        }
+      },
       "CreateCatalogSourceReq": {
         "type": "object",
         "required": [
@@ -33474,9 +33616,33 @@
           "rtl"
         ]
       },
+      "ReadingListBreakView": {
+        "type": "object",
+        "description": "A chapter break: a new chapter starts at the anchor issue (PR 3a).",
+        "required": [
+          "id",
+          "anchor"
+        ],
+        "properties": {
+          "anchor": {
+            "$ref": "#/components/schemas/LinkAnchorView",
+            "description": "The issue the chapter starts at."
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The chapter's name; `None` = named after its first issue."
+          }
+        }
+      },
       "ReadingListChapterView": {
         "type": "object",
-        "description": "A stretch of the parent list between two event anchors.",
+        "description": "A stretch of the parent list. Chapters end at event anchors and start\nat chapter breaks.",
         "required": [
           "index",
           "start_position",
@@ -33488,6 +33654,13 @@
           "read"
         ],
         "properties": {
+          "break_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The chapter break that starts this chapter, if any (for renaming or\nremoving it)."
+          },
           "end_position": {
             "type": "integer",
             "format": "int32",
@@ -33615,10 +33788,18 @@
         "type": "object",
         "required": [
           "events",
+          "breaks",
           "chapters",
           "linked_from"
         ],
         "properties": {
+          "breaks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReadingListBreakView"
+            },
+            "description": "Chapter breaks in position order."
+          },
           "chapters": {
             "type": "array",
             "items": {
@@ -40193,6 +40374,18 @@
           "week_start": {
             "type": "string",
             "format": "date"
+          }
+        }
+      },
+      "UpdateBreakReq": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The new name; `null` or blank = named after its first issue."
           }
         }
       },

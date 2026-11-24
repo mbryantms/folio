@@ -5,6 +5,7 @@
  * anchors divide it into — the pinned header above each stretch, and the
  * rail that jumps between them (desktop beside the grid, phone in a sheet).
  */
+import type * as React from "react";
 import {
   ChevronRight,
   CircleCheck,
@@ -43,11 +44,14 @@ export function ChapterHeader({
   chapter,
   folded,
   onToggle,
+  actions,
 }: {
   chapter: ReadingListChapterView;
   /** `undefined` when folding is off (search / filters active). */
   folded?: boolean;
   onToggle?: () => void;
+  /** Trailing controls (the chapter-break menu, for managers). */
+  actions?: React.ReactNode;
 }) {
   const done = chapterDone(chapter);
   return (
@@ -88,6 +92,7 @@ export function ChapterHeader({
         )}
         {chapter.read} / {chapter.total} read
       </span>
+      {actions}
     </div>
   );
 }

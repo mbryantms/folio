@@ -54,6 +54,15 @@ Default bindings — global scope (work outside the reader too):
 | `/`     | Open search (alias) | Common web convention; not user-rebindable |
 | `Alt+T` | Focus latest toast  | Then Tab to action, Enter to fire          |
 
+Reading-list page (a list split into chapters by events or chapter
+breaks; outside text fields, not rebindable; source
+[`list-shortcuts.ts`](../../web/lib/keyboard/list-shortcuts.ts)):
+
+| Key | Action           | Notes                                                                                  |
+| --- | ---------------- | -------------------------------------------------------------------------------------- |
+| `]` | Next chapter     | Unfolds a folded chapter; loads pages until an unloaded one renders                    |
+| `[` | Previous chapter | First returns to the start of the current chapter when you're past it, then steps back |
+
 ### Always-on (hard-coded, not rebindable)
 
 | Key             | Action                              | Source                                                                                                                                           |

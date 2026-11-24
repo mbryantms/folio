@@ -122,3 +122,34 @@ export function buildChapterBlocks<E>(
   }
   return blocks;
 }
+
+/**
+ * Which chapter a next / previous chapter shortcut goes to (PR 3a).
+ *
+ * @param tops each chapter section's top edge relative to the reading
+ *   line (the bottom of the pinned toolbar), in chapter order; `<= 0`
+ *   means it starts at or above the line.
+ * @returns the chapter index to jump to, or `null` to stay.
+ *
+ * "Previous" first returns to the start of the current chapter when the
+ * reader is past it (like a media player's back button), then steps back.
+ */
+export function chapterStep(
+  tops: readonly number[],
+  dir: 1 | -1,
+  slack = 24,
+): number | null {
+  if (tops.length === 0) return null;
+  // The reader is always at least in the first chapter: at the top of the
+  // page it can't scroll above the line, so it never counts as "passed".
+  let current = 0;
+  for (let i = 1; i < tops.length; i++) {
+    if (tops[i]! <= slack) current = i;
+  }
+  if (dir === 1) {
+    const next = current + 1;
+    return next < tops.length ? next : null;
+  }
+  if (tops[current]! < -slack) return current;
+  return current > 0 ? current - 1 : null;
+}

@@ -12,6 +12,7 @@ import type {
 } from "@/lib/api/types";
 import {
   buildChapterBlocks,
+  chapterStep,
   foldedChapters,
   seekStart,
   type PlanItem,
@@ -201,5 +202,27 @@ describe("cblEntriesPageQuery", () => {
     expect(cblEntriesPageQuery("from:120")).toEqual({ from_position: 120 });
     expect(cblEntriesPageQuery("abc")).toEqual({ cursor: "abc" });
     expect(cblEntriesPageQuery(undefined)).toEqual({ cursor: undefined });
+  });
+});
+
+describe("chapterStep", () => {
+  // Chapter tops relative to the reading line: <= 0 is at or above it.
+  it("next goes to the chapter after the one under the line", () => {
+    expect(chapterStep([-900, -10, 400, 1200], 1)).toBe(2);
+    expect(chapterStep([50, 400], 1)).toBe(1);
+    expect(chapterStep([-900, -100], 1)).toBeNull();
+  });
+  it("previous returns to the start of this chapter first, then steps back", () => {
+    expect(chapterStep([-900, -300, 400], -1)).toBe(1);
+    expect(chapterStep([-900, 0, 400], -1)).toBe(0);
+    expect(chapterStep([0, 400], -1)).toBeNull();
+    expect(chapterStep([50, 400], -1)).toBeNull();
+  });
+  it("at the top of the page the reader is in the first chapter", () => {
+    expect(chapterStep([140, 700], 1)).toBe(1);
+    expect(chapterStep([140, 700], -1)).toBeNull();
+  });
+  it("an unloaded chapter counts as below the line", () => {
+    expect(chapterStep([-10, Number.POSITIVE_INFINITY], 1)).toBe(1);
   });
 });

@@ -4,6 +4,7 @@
 //! - a refresh that moves the anchor issue moves the link's position hint;
 //! - a refresh that drops it marks the link `lost` (kept, last position),
 //!   and a later refresh that brings it back marks it `placed` again;
+//! - a chapter break (PR 3a) follows its issue the same way;
 //! - deleting either list removes the link;
 //! - the table refuses self-links, anchored `continues` links, anchorless
 //!   `event` links and a second `continues` from one list.
@@ -12,8 +13,8 @@ mod common;
 
 use chrono::Utc;
 use common::TestApp;
-use entity::cbl_list;
 use entity::reading_list_link::{self, AnchorStatus, LinkKind, LinkPlacement};
+use entity::{cbl_list, reading_list_break};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait, ModelTrait};
 use server::cbl::import::{RefreshTrigger, apply_parsed};
 use uuid::Uuid;
@@ -170,6 +171,62 @@ async fn anchor_follows_a_reorder_and_survives_removal() {
         .unwrap();
     assert_eq!(row.anchor_status, AnchorStatus::Placed);
     assert_eq!(row.anchor_position_hint, Some(4));
+}
+
+#[tokio::test]
+async fn a_chapter_break_follows_its_issue_across_refreshes() {
+    let app = TestApp::spawn().await;
+    let db = &app.state().db;
+    let master = import_list(&app, &cbl("Master", MASTER)).await;
+    let now = Utc::now().fixed_offset();
+    let brk = reading_list_break::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        list_id: Set(master),
+        label: Set(Some("Messiah Complex".into())),
+        anchor_cv_issue_id: Set(Some(104)),
+        anchor_series: Set(Some("Cable & Deadpool".into())),
+        anchor_number: Set(Some("18".into())),
+        anchor_volume: Set(Some("2004".into())),
+        anchor_year: Set(Some("2005".into())),
+        anchor_position_hint: Set(Some(3)),
+        anchor_status: Set(AnchorStatus::Placed),
+        created_by: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+
+    let moved = [
+        ("Cable & Deadpool", "18", 104),
+        ("Black Panther", "8", 101),
+        ("Excalibur", "11", 102),
+    ];
+    let summary = refresh(&app, master, &cbl("Master", &moved)).await;
+    assert_eq!((summary.links_lost, summary.links_restored), (0, 0));
+    let row = reading_list_break::Entity::find_by_id(brk.id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (row.anchor_status, row.anchor_position_hint),
+        (AnchorStatus::Placed, Some(0))
+    );
+
+    let summary = refresh(&app, master, &cbl("Master", &moved[1..])).await;
+    assert_eq!((summary.links_lost, summary.links_restored), (1, 0));
+    let row = reading_list_break::Entity::find_by_id(brk.id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (row.anchor_status, row.anchor_position_hint),
+        (AnchorStatus::Lost, Some(0)),
+        "kept where it last was"
+    );
 }
 
 #[tokio::test]

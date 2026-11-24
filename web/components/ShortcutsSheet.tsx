@@ -18,6 +18,7 @@ import {
   type KeybindAction,
 } from "@/lib/reader/keybinds";
 import { ISSUE_SHORTCUTS } from "@/lib/keyboard/issue-shortcuts";
+import { LIST_SHORTCUTS } from "@/lib/keyboard/list-shortcuts";
 
 /**
  * Display-only key aliases for registry actions. Values are
@@ -129,6 +130,21 @@ export function ShortcutsSheet({
       ))}
     </Section>
   );
+  const listSection = (
+    <Section
+      title="Reading list"
+      hint="On a reading list split into chapters, outside text fields."
+      key="list"
+    >
+      {LIST_SHORTCUTS.map((entry) => (
+        <Row
+          key={entry.action}
+          label={entry.label}
+          keys={[formatKey(entry.key)]}
+        />
+      ))}
+    </Section>
+  );
   const markerSection = (
     <Section
       title="While drawing a region (mouse held)"
@@ -142,8 +158,14 @@ export function ShortcutsSheet({
   );
   const sections =
     initialSection === "reader"
-      ? [readerSection, globalSection, markerSection, issueSection]
-      : [globalSection, issueSection, readerSection, markerSection];
+      ? [readerSection, globalSection, markerSection, issueSection, listSection]
+      : [
+          globalSection,
+          issueSection,
+          listSection,
+          readerSection,
+          markerSection,
+        ];
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -170,9 +192,10 @@ export function ShortcutsSheet({
            *  `initialSection` doesn't pick a "lead" here — it only
            *  steers the mobile fallback below. */}
           <div className="hidden gap-x-6 gap-y-4 md:grid md:grid-cols-2">
-            <div className="md:row-span-3">{readerSection}</div>
+            <div className="md:row-span-4">{readerSection}</div>
             <div>{globalSection}</div>
             <div>{issueSection}</div>
+            <div>{listSection}</div>
             <div>{markerSection}</div>
           </div>
           {/* Mobile (single column): respect `initialSection` so the

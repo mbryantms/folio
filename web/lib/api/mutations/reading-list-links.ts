@@ -1,6 +1,7 @@
 /**
  * Linked reading lists (PR 2b): mutations on a list's event / next-part
- * links, the reader's own "skip this event", and "mark read up to here".
+ * links, the reader's own "skip this event", "mark read up to here", and
+ * (PR 3a) the list's chapter breaks.
  *
  * Every write returns or changes the links view, so each one invalidates
  * `queryKeys.cblListLinks(listId)`; progress writes also refresh the
@@ -11,9 +12,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { apiPath } from "../path";
 import { queryKeys } from "../queries";
 import type {
+  CreateBreakReq,
   CreateLinkReq,
   MarkThroughResp,
   ReadingListLinksView,
+  UpdateBreakReq,
   UpdateLinkReq,
 } from "../types";
 import { apiMutate, useApiMutation } from "./_core";
@@ -72,6 +75,46 @@ export function useDeleteCblLink(listId: string) {
       method: "DELETE",
     }),
     { successMessage: "Link removed", onSuccess: invalidate },
+  );
+}
+
+/** Start a new chapter at an entry, optionally named. */
+export function useCreateCblBreak(listId: string) {
+  const invalidate = useInvalidateLinks(listId);
+  return useApiMutation<ReadingListLinksView, CreateBreakReq>(
+    (body) => ({
+      path: apiPath`/me/cbl-lists/${listId}/breaks`,
+      method: "POST",
+      body,
+    }),
+    { successMessage: "Chapter started", onSuccess: invalidate },
+  );
+}
+
+/** Rename a chapter break; a blank label names it after its first issue. */
+export function useUpdateCblBreak(listId: string) {
+  const invalidate = useInvalidateLinks(listId);
+  return useApiMutation<
+    ReadingListLinksView,
+    { breakId: string } & UpdateBreakReq
+  >(
+    ({ breakId, ...body }) => ({
+      path: apiPath`/me/cbl-lists/${listId}/breaks/${breakId}`,
+      method: "PATCH",
+      body,
+    }),
+    { successMessage: "Chapter renamed", onSuccess: invalidate },
+  );
+}
+
+export function useDeleteCblBreak(listId: string) {
+  const invalidate = useInvalidateLinks(listId);
+  return useApiMutation<null, { breakId: string }>(
+    ({ breakId }) => ({
+      path: apiPath`/me/cbl-lists/${listId}/breaks/${breakId}`,
+      method: "DELETE",
+    }),
+    { successMessage: "Chapter break removed", onSuccess: invalidate },
   );
 }
 
