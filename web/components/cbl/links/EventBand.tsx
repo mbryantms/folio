@@ -92,6 +92,7 @@ function useOpenThroughView(parentListId: string, link: ReadingListLinkView) {
 export function EventBand({
   link,
   parentListId,
+  parentViewId = null,
   afterLabel,
   canManage,
   onSkip,
@@ -101,6 +102,9 @@ export function EventBand({
   link: ReadingListLinkView;
   /** The master list the band sits in. */
   parentListId: string;
+  /** The reader's view of that master: carried as `?via=` into the event
+   *  so its page links back, and its last issue returns, here. */
+  parentViewId?: string | null;
   /** "Excalibur #12": the issue the event comes after. */
   afterLabel: string | null;
   canManage: boolean;
@@ -110,19 +114,23 @@ export function EventBand({
 }) {
   const state = eventBandState(link);
   const opener = useOpenThroughView(parentListId, link);
-  const viewHref = link.child_view_id ? `/views/${link.child_view_id}` : null;
+  const via = parentViewId;
+  const viewPath = (id: string) =>
+    via ? `/views/${id}?via=${encodeURIComponent(via)}` : `/views/${id}`;
+  const viewHref = link.child_view_id ? viewPath(link.child_view_id) : null;
   const first = link.first_unread;
   const startHref =
     first && link.child_view_id
       ? readerUrl(first.series_slug, first.issue_slug, {
           cbl: link.child_view_id,
+          via,
         })
       : null;
-  const openList = () => opener.go((id) => `/views/${id}`);
+  const openList = () => opener.go(viewPath);
   const start = first
     ? () =>
         opener.go((id) =>
-          readerUrl(first.series_slug, first.issue_slug, { cbl: id }),
+          readerUrl(first.series_slug, first.issue_slug, { cbl: id, via }),
         )
     : null;
   const percent = link.total > 0 ? (link.read / link.total) * 100 : 0;
@@ -169,8 +177,9 @@ export function EventBand({
     return (
       <div
         data-testid="event-band"
+        data-event-link={link.id}
         data-state={state}
-        className="border-border/60 flex min-h-11 items-center gap-2 rounded-md border px-3 py-1.5"
+        className="border-border/60 flex min-h-11 scroll-mt-32 items-center gap-2 rounded-md border px-3 py-1.5"
       >
         {state === "finished" ? (
           <CircleCheck
@@ -213,6 +222,7 @@ export function EventBand({
       onStart={start}
       opening={opener.pending}
       menu={menu}
+      via={via}
     />
   );
 }
@@ -228,6 +238,7 @@ function EventBandFull({
   onStart,
   opening,
   menu,
+  via,
 }: {
   link: ReadingListLinkView;
   afterLabel: string | null;
@@ -240,6 +251,8 @@ function EventBandFull({
   onStart: (() => void) | null;
   opening: boolean;
   menu: React.ReactNode;
+  /** The master's view id, carried as `?via=`. */
+  via: string | null;
 }) {
   const [peekOpen, setPeekOpen] = React.useState(false);
   const covers = useCblListEntriesInfinite(link.child_list_id, {
@@ -255,9 +268,10 @@ function EventBandFull({
     <Collapsible open={peekOpen} onOpenChange={setPeekOpen}>
       <section
         data-testid="event-band"
+        data-event-link={link.id}
         data-state="full"
         aria-label={`Event: ${link.child_name}`}
-        className="cover-stack-host border-border bg-card rounded-lg border p-3 sm:p-4"
+        className="cover-stack-host border-border bg-card scroll-mt-32 rounded-lg border p-3 sm:p-4"
       >
         <div className="text-muted-foreground mb-2 flex items-center gap-2 text-xs">
           <Zap
@@ -347,7 +361,10 @@ function EventBandFull({
               <li key={item.id} className="w-14 shrink-0 sm:w-16">
                 {item.issue ? (
                   <Link
-                    href={readerUrl(item.issue, { cbl: link.child_view_id })}
+                    href={readerUrl(item.issue, {
+                      cbl: link.child_view_id,
+                      via,
+                    })}
                     aria-label={`Read ${item.series_name} #${item.issue_number}`}
                   >
                     <Cover

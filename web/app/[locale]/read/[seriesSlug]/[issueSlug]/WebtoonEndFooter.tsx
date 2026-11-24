@@ -29,6 +29,7 @@ import { nextUpListSubtitle } from "@/lib/reader/list-context";
 import type { WrapUpProps } from "@/lib/reader/wrap-up";
 
 import { WrapUpBody, WrapUpStrip } from "./WrapUp";
+import { DetourButtons } from "./DetourButtons";
 
 export function WebtoonEndFooter({
   data,
@@ -39,6 +40,7 @@ export function WebtoonEndFooter({
   exitUrl,
   onExit,
   wrapUp,
+  viaViewId = null,
 }: {
   data: NextUpView | undefined;
   isLoading: boolean;
@@ -53,6 +55,8 @@ export function WebtoonEndFooter({
   /** Rating / closing note / markers for the finished issue; omitted →
    *  the footer renders as before. */
   wrapUp?: WrapUpProps;
+  /** The `?cbl=` view being read: events offered here return to it. */
+  viaViewId?: string | null;
 }) {
   const [wrapOpen, setWrapOpen] = useState(false);
   const target = data?.target;
@@ -71,6 +75,11 @@ export function WebtoonEndFooter({
 
   return (
     <footer className="relative z-20 mx-auto w-full max-w-sm px-6 py-16 text-center">
+      {data?.detours?.length ? (
+        <div className="mb-8">
+          <DetourButtons detours={data.detours} viaViewId={viaViewId} />
+        </div>
+      ) : null}
       {source !== "none" && target ? (
         <>
           <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">

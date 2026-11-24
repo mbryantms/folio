@@ -138,6 +138,7 @@ import {
   setSeriesPrefTransport,
 } from "@/lib/reader/series-prefs-sync";
 import { apiMutate } from "@/lib/api/mutations/_core";
+import { ensureListView } from "@/lib/reader/list-context";
 import type { SeriesReaderPrefsView } from "@/lib/api/types";
 import { PageImage } from "./PageImage";
 import type { DragPeekPages } from "./DragTurnPeek";
@@ -157,6 +158,7 @@ export function Reader({
   seriesId,
   cblSavedViewId,
   collectionId = null,
+  viaViewId = null,
   serverSeriesPrefs = null,
   exitUrl,
   totalPages,
@@ -236,6 +238,9 @@ export function Reader({
    *  (`?collection=`). Wins over `cblSavedViewId` server-side; forwarded
    *  onto the next-issue URL when source === "collection". */
   collectionId?: string | null;
+  /** Linked reading lists: the list view the reader came from into the
+   *  `?cbl=` event (`?via=`); the event's end returns there. */
+  viaViewId?: string | null;
   /** The account's per-series reader overrides (post-audit T4.4), or
    *  `null` when the page could not fetch them. See `store.init`. */
   serverSeriesPrefs?: SeriesReaderPrefsView | null;
@@ -403,7 +408,11 @@ export function Reader({
   // (and the M4 end-of-issue card) can navigate without waiting on a
   // round-trip. The hook handles the CBL > series > none resolution
   // server-side; the client just consumes the result.
-  const listContext = { cbl: cblSavedViewId, collection: collectionId };
+  const listContext = {
+    cbl: cblSavedViewId,
+    collection: collectionId,
+    via: viaViewId,
+  };
   const overridden = nextUpOverride !== undefined;
   const liveNextUp = useNextUp(issueId, listContext, { enabled: !overridden });
   const nextUp = useMemo(
@@ -473,15 +482,17 @@ export function Reader({
     [issueMarkers.data],
   );
   const [cblParamScrubbed, setCblParamScrubbed] = useState(false);
-  if (
-    !cblParamScrubbed &&
-    cblSavedViewId &&
-    nextUp.data?.cbl_param_was_stale === true
-  ) {
+  const staleParam =
+    cblSavedViewId && nextUp.data?.cbl_param_was_stale === true
+      ? "cbl"
+      : viaViewId && nextUp.data?.via_param_was_stale === true
+        ? "via"
+        : null;
+  if (!cblParamScrubbed && staleParam) {
     setCblParamScrubbed(true);
     if (typeof window !== "undefined") {
       const url = new URL(window.location.href);
-      url.searchParams.delete("cbl");
+      url.searchParams.delete(staleParam);
       router.replace(url.pathname + url.search);
     }
   }
@@ -523,13 +534,35 @@ export function Reader({
     // and the next read should reset to series-only context. Replace, not
     // push (audit U-02): one reader entry however many issues are read,
     // so the exit still goes back to where reading started.
-    const href = readerUrl(data.target, {
-      cbl: data.source === "cbl" ? cblSavedViewId : null,
-      collection: data.source === "collection" ? collectionId : null,
-    });
-    noteReplace(href);
-    router.replace(href);
-  }, [cblSavedViewId, collectionId, nextUp.data, onNextIssue, router]);
+    const target = data.target;
+    const go = (cbl: string | null, via: string | null) => {
+      const href = readerUrl(target, {
+        cbl,
+        collection: data.source === "collection" ? collectionId : null,
+        via,
+      });
+      noteReplace(href);
+      router.replace(href);
+    };
+    // Linked reading lists: the target is in the next part, or back in
+    // the list an event is part of — read it with that list's view.
+    const sw = data.switch_to;
+    if (sw) {
+      void ensureListView(sw.list_id, sw.view_id).then((v) => go(v, null));
+      return;
+    }
+    go(
+      data.source === "cbl" ? cblSavedViewId : null,
+      data.source === "cbl" ? viaViewId : null,
+    );
+  }, [
+    cblSavedViewId,
+    collectionId,
+    viaViewId,
+    nextUp.data,
+    onNextIssue,
+    router,
+  ]);
 
   // Symmetric to useNextUp for the `Shift+P` keybind. Pure sequential
   // back-navigation (no finished-state filter); the resolver returns
@@ -1691,6 +1724,7 @@ export function Reader({
             exitUrl={exitUrl}
             onExit={handleQuitReader}
             wrapUp={wrapUp}
+            viaViewId={cblSavedViewId}
           />
         ) : viewMode === "double" ? (
           <DoublePageView
@@ -1793,6 +1827,7 @@ export function Reader({
           onDismiss={dismissEndCard}
           wrapUp={wrapUp}
           finished={finishedMoment}
+          viaViewId={cblSavedViewId}
         />
       ) : null}
     </div>
@@ -2315,6 +2350,7 @@ function WebtoonView({
   exitUrl,
   onExit,
   wrapUp,
+  viaViewId,
 }: {
   issueId: string;
   totalPages: number;
@@ -2340,6 +2376,7 @@ function WebtoonView({
   exitUrl: string;
   onExit: () => void;
   wrapUp: WrapUpProps | undefined;
+  viaViewId: string | null;
 }) {
   const markerMode = useReaderStore((s) => s.markerMode);
   const currentPage = useReaderStore((s) => s.currentPage);
@@ -2471,6 +2508,7 @@ function WebtoonView({
         isLoading={nextUpLoading}
         isError={nextUpError}
         onRetry={onRetryNextUp}
+        viaViewId={viaViewId}
         onReadNext={onReadNext}
         exitUrl={exitUrl}
         onExit={onExit}

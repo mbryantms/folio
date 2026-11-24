@@ -136,6 +136,7 @@ function listContextQuery(ctx?: IssueUrlOpts | null): string {
   const qs = buildQuery({
     cbl: ctx?.cbl ?? undefined,
     collection: ctx?.collection ?? undefined,
+    via: ctx?.via ?? undefined,
   });
   return qs;
 }

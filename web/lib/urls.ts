@@ -54,13 +54,20 @@ export function adminSeriesUrl(s: { slug: string } | string): string {
  * reader uses either to pick "next" out of the list instead of the
  * parent series. Omit both when the user is not in a list context.
  */
-export type IssueUrlOpts = { cbl?: string | null; collection?: string | null };
+export type IssueUrlOpts = {
+  cbl?: string | null;
+  collection?: string | null;
+  /** Linked reading lists: the list view the reader came from into the
+   *  `cbl` event, so the event's end returns there. */
+  via?: string | null;
+};
 
 function appendOpts(base: string, opts?: IssueUrlOpts): string {
   const params: string[] = [];
   if (opts?.cbl) params.push(`cbl=${encodeURIComponent(opts.cbl)}`);
   if (opts?.collection)
     params.push(`collection=${encodeURIComponent(opts.collection)}`);
+  if (opts?.via) params.push(`via=${encodeURIComponent(opts.via)}`);
   if (params.length === 0) return base;
   const sep = base.includes("?") ? "&" : "?";
   return `${base}${sep}${params.join("&")}`;

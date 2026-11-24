@@ -666,6 +666,7 @@ export const queryKeys = {
       issueId,
       ctx?.cbl ?? "",
       ctx?.collection ?? "",
+      ctx?.via ?? "",
     ] as const,
   /** Reader's single-issue "what came before?" resolver
    *  (`/issues/{id}/prev-up`). Symmetric with nextUp; pure sequence

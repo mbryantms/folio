@@ -41,6 +41,7 @@ import { noteReplace } from "@/lib/ui/back-flight";
 import { issueLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
+import { DetourButtons } from "./DetourButtons";
 import { FinishedMoment } from "./FinishedMoment";
 import { WrapUpBody, WrapUpStrip } from "./WrapUp";
 
@@ -57,6 +58,7 @@ export function EndOfIssueCard({
   onDismiss,
   wrapUp,
   finished,
+  viaViewId = null,
 }: {
   open: boolean;
   /** Resolver result. `undefined` while the prefetch is in flight; the
@@ -93,6 +95,8 @@ export function EndOfIssueCard({
    *  and the series' progress ring (`progress` null while unknown or
    *  offline). Omitted → the card opens straight on Up Next. */
   finished?: { issueLabel: string; progress: SeriesFinishProgress | null };
+  /** The `?cbl=` view being read: events offered here return to it. */
+  viaViewId?: string | null;
 }) {
   const target = data?.target;
   const source = data?.source ?? "none";
@@ -100,6 +104,13 @@ export function EndOfIssueCard({
   // up", which is only true for a confirmed empty resolver result.
   const failed = isError && !data;
   const listSubtitle = nextUpListSubtitle(data);
+  const detours = (
+    <DetourButtons
+      detours={data?.detours}
+      viaViewId={viaViewId}
+      onStart={onDismiss}
+    />
+  );
   // A plain click on an exit link leaves through `onExit` instead of
   // pushing `exitUrl` (audit U-02).
   const onExitNavigate = onExit
@@ -441,6 +452,7 @@ export function EndOfIssueCard({
               </div>
 
               <div className="border-border flex flex-col gap-2 border-t p-4">
+                {source !== "none" && target ? null : detours}
                 {source !== "none" && target ? (
                   <>
                     <Button
@@ -450,6 +462,9 @@ export function EndOfIssueCard({
                     >
                       Read
                     </Button>
+                    {/* Linked reading lists: an event read here instead
+                    of the main line (D2). */}
+                    {detours}
                     {/* Detail-page escape hatches: a matched outline pair for
                     the issue just finished (the chrome-exit destination)
                     and the resolver's pick, so the user can inspect either
