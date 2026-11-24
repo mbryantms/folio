@@ -138,7 +138,6 @@ import {
   setSeriesPrefTransport,
 } from "@/lib/reader/series-prefs-sync";
 import { apiMutate } from "@/lib/api/mutations/_core";
-import { ensureListView } from "@/lib/reader/list-context";
 import type { SeriesReaderPrefsView } from "@/lib/api/types";
 import { PageImage } from "./PageImage";
 import type { DragPeekPages } from "./DragTurnPeek";
@@ -554,8 +553,14 @@ export function Reader({
       router.replace(href);
       return;
     }
-    if (sw?.list_id) {
-      void ensureListView(sw.list_id, sw.view_id).then((v) => go(v, null));
+    const listId = sw?.list_id;
+    if (sw && listId) {
+      // Loaded on use: it is only needed at a list switch, and a static
+      // import puts the view-ensuring mutation in first-load JS (bundle
+      // budget, `lazy.tsx`).
+      void import("@/lib/reader/list-context")
+        .then((m) => m.ensureListView(listId, sw.view_id))
+        .then((v) => go(v, null));
       return;
     }
     go(
