@@ -27,7 +27,7 @@ import { ADMIN_STATE } from "./tests/e2e/support/admin";
  *  route sweep is one of them; its public half drops the session with an
  *  empty `storageState` of its own. */
 const ADMIN_SPECS =
-  /(reader-flow|relationship-review|a11y|upcoming|view-card-link)\.spec\.ts/;
+  /(reader-flow|relationship-review|a11y|upcoming|view-card-link|linked-lists)\.spec\.ts/;
 
 export default defineConfig({
   testDir: "./tests/e2e",

@@ -412,3 +412,165 @@ pub(crate) async fn after_list_end(
     }
     Ok((None, stale))
 }
+
+/// A linked list as an OPDS feed links to it.
+#[derive(Debug, Clone)]
+pub(crate) struct FeedListLink {
+    pub list_id: Uuid,
+    pub name: String,
+    /// For an event: the 0-based position and label of the issue it is
+    /// read after.
+    pub after: Option<(i32, String)>,
+}
+
+/// What a reading list's OPDS feed links to (PR 6): its events in
+/// reading order, its next part, and the lists it is part of — only
+/// lists the caller can see. A fixed number of statements.
+#[derive(Debug, Default)]
+pub(crate) struct FeedLinks {
+    pub events: Vec<FeedListLink>,
+    pub continues: Option<FeedListLink>,
+    pub parents: Vec<FeedListLink>,
+}
+
+pub(crate) async fn feed_links(
+    app: &AppState,
+    user_id: Uuid,
+    list_id: Uuid,
+) -> Result<FeedLinks, sea_orm::DbErr> {
+    let mut links = reading_list_link::Entity::find()
+        .filter(reading_list_link::Column::ParentListId.eq(list_id))
+        .all(&app.db)
+        .await?;
+    let children: HashMap<Uuid, cbl_list::Model> = if links.is_empty() {
+        HashMap::new()
+    } else {
+        cbl_list::Entity::find()
+            .filter(
+                cbl_list::Column::Id
+                    .is_in(links.iter().map(|l| l.child_list_id).collect::<Vec<_>>()),
+            )
+            .all(&app.db)
+            .await?
+            .into_iter()
+            .filter(|c| visible(c, user_id))
+            .map(|c| (c.id, c))
+            .collect()
+    };
+    links.sort_by_key(|l| {
+        (
+            l.anchor_position_hint.unwrap_or(i32::MAX),
+            l.sort_within_anchor,
+            l.created_at,
+        )
+    });
+    let mut out = FeedLinks::default();
+    for l in links {
+        let Some(child) = children.get(&l.child_list_id) else {
+            continue;
+        };
+        let link = FeedListLink {
+            list_id: child.id,
+            name: child.parsed_name.clone(),
+            after: match (l.kind, l.anchor_status, l.anchor_position_hint) {
+                (LinkKind::Event, AnchorStatus::Placed, Some(p)) => Some((
+                    p,
+                    match (&l.anchor_series, &l.anchor_number) {
+                        (Some(s), Some(n)) => format!("{s} #{n}"),
+                        _ => format!("#{}", p + 1),
+                    },
+                )),
+                _ => None,
+            },
+        };
+        match l.kind {
+            LinkKind::Event => out.events.push(link),
+            LinkKind::Continues => out.continues = Some(link),
+        }
+    }
+    out.parents = parents_of(app, user_id, list_id)
+        .await?
+        .into_iter()
+        .filter_map(|p| {
+            Some(FeedListLink {
+                list_id: Uuid::parse_str(&p.list_id).ok()?,
+                name: p.name,
+                after: p.anchor_position.zip(p.anchor_label),
+            })
+        })
+        .collect();
+    Ok(out)
+}
+
+impl FeedListLink {
+    /// "Event after #379 FF #8: Age of Ultron" / "Continues in: Part 2" /
+    /// "Part of: Marvel Master Part #07".
+    pub(crate) fn title(&self, role: &str) -> String {
+        match &self.after {
+            Some((p, label)) if role == "event" => {
+                format!("Event after #{} {label}: {}", p + 1, self.name)
+            }
+            _ => match role {
+                "continues" => format!("Continues in: {}", self.name),
+                "parent" => format!("Part of: {}", self.name),
+                _ => self.name.clone(),
+            },
+        }
+    }
+}
+
+/// `GET /me/cbl-lists/{id}/export?inline_events=true`: the list's CBL
+/// with each placed event's books written in after its anchor issue — a
+/// "with events" file for readers that don't know about links. Events
+/// the caller can't see, and links whose anchor is lost, are left out
+/// (never guessed into place). Returns `None` when the stored XML does
+/// not parse.
+pub(crate) async fn inline_events_xml(
+    app: &AppState,
+    user_id: Uuid,
+    list: &cbl_list::Model,
+) -> Result<Option<String>, sea_orm::DbErr> {
+    let Ok(mut master) = parsers::cbl::parse(list.raw_xml.as_bytes()) else {
+        return Ok(None);
+    };
+    let mut links: Vec<reading_list_link::Model> = reading_list_link::Entity::find()
+        .filter(reading_list_link::Column::ParentListId.eq(list.id))
+        .filter(reading_list_link::Column::Kind.eq(LinkKind::Event))
+        .filter(reading_list_link::Column::AnchorStatus.eq(AnchorStatus::Placed))
+        .all(&app.db)
+        .await?;
+    links.retain(|l| l.anchor_position_hint.is_some());
+    if links.is_empty() {
+        return Ok(parsers::cbl::to_xml(&master).ok());
+    }
+    let children: HashMap<Uuid, cbl_list::Model> = cbl_list::Entity::find()
+        .filter(
+            cbl_list::Column::Id.is_in(links.iter().map(|l| l.child_list_id).collect::<Vec<_>>()),
+        )
+        .all(&app.db)
+        .await?
+        .into_iter()
+        .filter(|c| visible(c, user_id))
+        .map(|c| (c.id, c))
+        .collect();
+    links.sort_by_key(|l| (l.anchor_position_hint, l.sort_within_anchor, l.created_at));
+    let mut after: HashMap<usize, Vec<parsers::cbl::ParsedCblBook>> = HashMap::new();
+    for l in &links {
+        let Some(child) = children.get(&l.child_list_id) else {
+            continue;
+        };
+        let Ok(parsed) = parsers::cbl::parse(child.raw_xml.as_bytes()) else {
+            continue;
+        };
+        let at = usize::try_from(l.anchor_position_hint.unwrap_or_default()).unwrap_or(0);
+        after.entry(at).or_default().extend(parsed.books);
+    }
+    let books = std::mem::take(&mut master.books);
+    for (i, b) in books.into_iter().enumerate() {
+        master.books.push(b);
+        if let Some(extra) = after.remove(&i) {
+            master.books.extend(extra);
+        }
+    }
+    Ok(parsers::cbl::to_xml(&master).ok())
+}

@@ -464,6 +464,14 @@ pub struct ManualMatchReq {
     pub issue_id: String,
 }
 
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+pub struct ExportQuery {
+    /// Write each placed event's books in after its anchor issue (a
+    /// "with events" file). Off by default: the stored file, unchanged.
+    #[serde(default)]
+    pub inline_events: bool,
+}
+
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct DetailQuery {
     #[serde(default)]
@@ -2896,7 +2904,7 @@ pub async fn issues(
 #[utoipa::path(
     operation_id = "cbl_lists_export",    get,
     path = "/me/cbl-lists/{id}/export",
-    params(("id" = String, Path,)),
+    params(("id" = String, Path,), ExportQuery),
     responses(
         (status = 200, description = "CBL bytes", content_type = "application/xml"),
         (status = 404, description = "list not found"),
@@ -2907,6 +2915,7 @@ pub async fn export(
     State(app): State<AppState>,
     user: CurrentUser,
     AxPath(id): AxPath<Uuid>,
+    Query(q): Query<ExportQuery>,
 ) -> impl IntoResponse {
     let list = match fetch_list(&app.db, id).await {
         Ok(r) => r,
@@ -2915,6 +2924,15 @@ pub async fn export(
     if let Err(resp) = ensure_owner(&list, &user).await {
         return resp;
     }
+    let xml = if q.inline_events {
+        match super::cbl_link_nav::inline_events_xml(&app, user.id, &list).await {
+            Ok(Some(x)) => x,
+            Ok(None) => list.raw_xml.clone(),
+            Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
+        }
+    } else {
+        list.raw_xml.clone()
+    };
     // Slug-ify the parsed name for a friendlier filename.
     let safe: String = list
         .parsed_name
@@ -2922,13 +2940,14 @@ pub async fn export(
         .map(|c| if c.is_alphanumeric() { c } else { '_' })
         .collect();
     let trimmed = safe.trim_matches('_');
+    let suffix = if q.inline_events { "_with_events" } else { "" };
     let filename = if trimmed.is_empty() {
-        format!("{id}.cbl")
+        format!("{id}{suffix}.cbl")
     } else {
-        format!("{trimmed}.cbl")
+        format!("{trimmed}{suffix}.cbl")
     };
 
-    let bytes = list.raw_xml.into_bytes();
+    let bytes = xml.into_bytes();
     use axum::http::header;
     let disposition = crate::util::content_disposition::content_disposition(
         crate::util::content_disposition::Disposition::Attachment,

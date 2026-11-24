@@ -145,9 +145,10 @@ out into `want_to_read` and is **not** repeated here.
 | Field | Type |
 |---|---|
 | `position` | int (0-based) |
-| `entry_kind` | `issue` \| `series` |
+| `entry_kind` | `issue` \| `series` \| `list` |
 | `issue` | `IssueRef` \| null — set when `entry_kind = issue` |
 | `series` | `SeriesRef` \| null — set when `entry_kind = series` |
+| `list` | `ListRef` \| null — set when `entry_kind = list` (a reading list kept in the collection) |
 | `added_at` | timestamp |
 
 ### `want_to_read` — the per-user system collection
@@ -286,13 +287,48 @@ Raw stored values; `null` means "no preference, use the default".
 | `opds_wtr_reorder`, `opds_progress_glyphs` | bool |
 | `max_rails_per_page` | int |
 
+### `reading_list_links` — `reading_list_links`
+
+Links on the reading lists the user owns (see
+[reading-list-links.md](reading-list-links.md)).
+
+| Field | Type |
+|---|---|
+| `id` | uuid |
+| `kind` | `event` \| `continues` |
+| `parent`, `child` | `ListRef` |
+| `anchor` | `Anchor` \| null — `null` for `continues` |
+| `placement` | `manual` \| `auto_twin` \| `auto_chain` |
+| `sort_within_anchor` | int |
+| `created_at` | timestamp |
+
+### `reading_list_breaks` — `reading_list_breaks`
+
+| Field | Type |
+|---|---|
+| `id` | uuid |
+| `list` | `ListRef` |
+| `label` | string \| null |
+| `anchor` | `Anchor` |
+| `created_at` | timestamp |
+
+`ListRef`: `{list_id, name, catalog_path}`. `name` is the CBL `<Name>`
+(`null` when the list is gone); `catalog_path` is set for catalog imports.
+Both survive a re-import, the id does not.
+
+`Anchor`: `{cv_issue_id, series, number, volume, year, position_hint,
+status}`. The issue the link or break sits after, keyed by ComicVine id
+when known, else series / number / volume / year; never an entry id.
+`status` is `placed` or `lost`.
+
 ## What is not included
 
 - Anything not owned by the user: library metadata, issue metadata edits
   (these live on the issue and are covered by sidecar writeback), admin
   settings, other users' data.
 - Credentials: password hash, TOTP secret, app passwords, sessions.
-- CBL list bodies (see `saved_views` above).
+- CBL list bodies (see `saved_views` above). Each list's own export
+  also takes `?inline_events=true` for a single "with events" file.
 - Library-access grants (an admin decision, not user data).
 
 ## Query shape
@@ -475,3 +511,6 @@ the extension. The headers shown above carry both parameters.
 - **notes v1** (2026-09-30, WP-5.1) — notes export (`folio-notes-export` v1).
 - **v1, additive** (2026-10-02, WP-8.4) — `page_hash` on `progress` rows and
   `markers` (also in the notes export's JSON form). No version bump.
+- **v1, additive** (2026-11-24, linked reading lists) — `reading_list_links`
+  and `reading_list_breaks` sections; `entry_kind = list` collection
+  entries with a `list` ref. No version bump.

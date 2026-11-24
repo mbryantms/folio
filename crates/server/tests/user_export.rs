@@ -14,12 +14,14 @@ use axum::{
 use chrono::Utc;
 use common::TestApp;
 use common::seed::{
-    seed_collection, seed_collection_entry_issue, seed_issue, seed_library, seed_progress,
-    seed_series,
+    seed_cbl_list, seed_collection, seed_collection_entry_issue, seed_issue, seed_library,
+    seed_progress, seed_series,
 };
+use entity::reading_list_link::{AnchorStatus, LinkKind, LinkPlacement};
 use entity::{
-    marker, progress_record, rail_dismissal, reading_session, saved_view, user, user_page,
-    user_rating, user_sidebar_entry, user_view_pin,
+    collection_entry, marker, progress_record, rail_dismissal, reading_list_break,
+    reading_list_link, reading_session, saved_view, user, user_page, user_rating,
+    user_sidebar_entry, user_view_pin,
 };
 use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, EntityTrait, Set};
 use serde_json::{Value, json};
@@ -546,6 +548,8 @@ async fn export_contains_every_section_the_user_owns() {
         "sidebar",
         "rail_dismissals",
         "reading_log",
+        "reading_list_links",
+        "reading_list_breaks",
     ] {
         assert_eq!(
             sb[section].as_array().map(Vec::len),
@@ -608,6 +612,8 @@ async fn export_is_json_even_when_the_user_owns_nothing() {
         "sidebar",
         "rail_dismissals",
         "reading_log",
+        "reading_list_links",
+        "reading_list_breaks",
     ] {
         assert!(
             doc["sections"][section].is_array(),
@@ -616,4 +622,106 @@ async fn export_is_json_even_when_the_user_owns_nothing() {
         );
     }
     assert!(doc["sections"]["preferences"].is_object());
+}
+
+/// Linked reading lists: the export names each list by id, CBL name and
+/// catalog path, keys anchors by the issue (never an entry id), and
+/// carries a reading list kept in a collection.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_carries_reading_list_links_breaks_and_list_entries() {
+    let app = TestApp::spawn().await;
+    let a = register(&app, "lists@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let now = Utc::now().fixed_offset();
+
+    let master = seed_cbl_list(&db, a.user_id, "Master Part #1").await;
+    let event = seed_cbl_list(&db, a.user_id, "Age of Ultron").await;
+    let next = seed_cbl_list(&db, a.user_id, "Master Part #2").await;
+    let link_am = |child: Uuid, kind: LinkKind| reading_list_link::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        parent_list_id: Set(master),
+        child_list_id: Set(child),
+        kind: Set(kind),
+        anchor_cv_issue_id: Set((kind == LinkKind::Event).then_some(4242)),
+        anchor_series: Set((kind == LinkKind::Event).then(|| "Fantastic Four".into())),
+        anchor_number: Set((kind == LinkKind::Event).then(|| "8".into())),
+        anchor_volume: Set(None),
+        anchor_year: Set(None),
+        anchor_position_hint: Set((kind == LinkKind::Event).then_some(7)),
+        anchor_status: Set(AnchorStatus::Placed),
+        placement: Set(LinkPlacement::Manual),
+        sort_within_anchor: Set(0),
+        created_by: Set(Some(a.user_id)),
+        created_at: Set(now),
+        updated_at: Set(now),
+    };
+    link_am(event, LinkKind::Event).insert(&db).await.unwrap();
+    link_am(next, LinkKind::Continues)
+        .insert(&db)
+        .await
+        .unwrap();
+    reading_list_break::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        list_id: Set(master),
+        label: Set(Some("Chapter 2".into())),
+        anchor_cv_issue_id: Set(Some(5151)),
+        anchor_series: Set(Some("Avengers".into())),
+        anchor_number: Set(Some("1".into())),
+        anchor_volume: Set(None),
+        anchor_year: Set(None),
+        anchor_position_hint: Set(Some(10)),
+        anchor_status: Set(AnchorStatus::Placed),
+        created_by: Set(Some(a.user_id)),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+    let col = seed_collection(&db, a.user_id, "Events").await;
+    collection_entry::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        saved_view_id: Set(col),
+        position: Set(0),
+        entry_kind: Set("list".into()),
+        series_id: Set(None),
+        issue_id: Set(None),
+        cbl_list_id: Set(Some(event)),
+        added_at: Set(now),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+
+    let resp = get_export(&app, &a).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let doc = body_json(resp.into_body()).await;
+    let s = &doc["sections"];
+
+    let links = s["reading_list_links"].as_array().unwrap();
+    assert_eq!(links.len(), 2, "{links:?}");
+    let ev = links.iter().find(|l| l["kind"] == "event").unwrap();
+    assert_eq!(ev["parent"]["list_id"], master.to_string());
+    assert_eq!(ev["child"]["list_id"], event.to_string());
+    assert_eq!(ev["child"]["name"], "Age of Ultron");
+    assert_eq!(ev["anchor"]["cv_issue_id"], 4242);
+    assert_eq!(ev["anchor"]["series"], "Fantastic Four");
+    assert_eq!(ev["anchor"]["number"], "8");
+    assert_eq!(ev["placement"], "manual");
+    let cont = links.iter().find(|l| l["kind"] == "continues").unwrap();
+    assert_eq!(cont["child"]["name"], "Master Part #2");
+    assert!(cont["anchor"].is_null(), "a continues link has no anchor");
+
+    let breaks = s["reading_list_breaks"].as_array().unwrap();
+    assert_eq!(breaks.len(), 1);
+    assert_eq!(breaks[0]["label"], "Chapter 2");
+    assert_eq!(breaks[0]["list"]["name"], "Master Part #1");
+    assert_eq!(breaks[0]["anchor"]["cv_issue_id"], 5151);
+
+    let cols = s["collections"].as_array().unwrap();
+    let entries = cols[0]["entries"].as_array().unwrap();
+    assert_eq!(entries[0]["entry_kind"], "list");
+    assert_eq!(entries[0]["list"]["list_id"], event.to_string());
+    assert_eq!(entries[0]["list"]["name"], "Age of Ultron");
+    assert!(entries[0]["issue"].is_null() && entries[0]["series"].is_null());
 }

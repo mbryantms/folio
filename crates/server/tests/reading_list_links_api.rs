@@ -1665,3 +1665,151 @@ async fn collection_list_entries_obey_the_kind_checks() {
         .unwrap();
     assert_eq!(left, 0);
 }
+
+async fn get_text(app: &TestApp, uri: &str, auth: &Authed) -> (StatusCode, String) {
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri(uri)
+        .header(
+            header::COOKIE,
+            format!(
+                "__Host-comic_session={}; __Host-comic_csrf={}",
+                auth.session, auth.csrf
+            ),
+        )
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.router.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    (status, String::from_utf8(bytes.to_vec()).unwrap())
+}
+
+/// PR 6: OPDS clients see a list's events, its next part and the lists
+/// it is part of as `related` links (v1) / a `groups` navigation block
+/// (v2), and a reading list kept in a collection as a subsection in its
+/// place.
+#[tokio::test]
+async fn opds_feeds_carry_linked_lists_and_collection_list_entries() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "opds-links@example.com").await;
+    let (master, issues) = seed_cbl_with_matched_entries(&app, user.user_id, 8).await;
+    let event = make_list(&app, Some(user.user_id), "Age of Ultron", &issues[4..6]).await;
+    let next = make_list(&app, Some(user.user_id), "Part Two", &issues[6..8]).await;
+    link(&app, &user, master, event, Some(2)).await;
+    link(&app, &user, master, next, None).await;
+
+    // v1: the master lists the event (after #3) and the next part.
+    let (s, xml) = get_text(&app, &format!("/opds/v1/lists/{master}"), &user).await;
+    assert_eq!(s, StatusCode::OK, "{xml}");
+    let event_href = format!("rel=\"related\" href=\"/opds/v1/lists/{event}\"");
+    assert!(xml.contains(&event_href), "{xml}");
+    assert!(xml.contains("title=\"Event after #3"), "{xml}");
+    assert!(xml.contains("Age of Ultron\""), "{xml}");
+    let next_href = format!("rel=\"related\" href=\"/opds/v1/lists/{next}\"");
+    assert!(xml.contains(&next_href), "{xml}");
+    assert!(xml.contains("title=\"Continues in: Part Two\""), "{xml}");
+    // ...and the event points back at the master.
+    let (_, xml) = get_text(&app, &format!("/opds/v1/lists/{event}"), &user).await;
+    let back = format!("rel=\"related\" href=\"/opds/v1/lists/{master}\"");
+    assert!(xml.contains(&back), "{xml}");
+    assert!(xml.contains("title=\"Part of: "), "{xml}");
+
+    // v2: the same links, plus a navigation group.
+    let (s, body) = get_json(&app, &format!("/opds/v2/lists/{master}"), &user).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    let related: Vec<&serde_json::Value> = body["links"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|l| l["rel"] == "related")
+        .collect();
+    assert_eq!(related.len(), 2, "{body}");
+    let ev = related
+        .iter()
+        .find(|l| l["properties"]["folio:link"] == "event")
+        .unwrap();
+    assert_eq!(ev["properties"]["folio:afterPosition"], 3);
+    let nav = body["groups"][0]["navigation"].as_array().unwrap();
+    assert!(
+        nav.iter()
+            .any(|n| n["href"] == format!("/opds/v2/lists/{event}")),
+        "{body}"
+    );
+
+    // A collection holding the event shows it as a subsection in place.
+    let cid = new_collection(&app, &user, "Shelf").await;
+    add_to_collection(&app, &user, &cid, "issue", &issues[0]).await;
+    let (s, b) = add_to_collection(&app, &user, &cid, "list", &event.to_string()).await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let (s, xml) = get_text(&app, &format!("/opds/v1/collections/{cid}"), &user).await;
+    assert_eq!(s, StatusCode::OK, "{xml}");
+    let sub = format!("rel=\"subsection\" href=\"/opds/v1/lists/{event}\"");
+    assert!(xml.contains(&sub), "{xml}");
+    let (_, body) = get_json(&app, &format!("/opds/v2/collections/{cid}"), &user).await;
+    let entry_kinds: Vec<_> = body["navigation"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|n| n["properties"]["folio:entryKind"].clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(entry_kinds.contains(&serde_json::json!("list")), "{body}");
+}
+
+fn cbl_xml(name: &str, series: &str, count: usize) -> String {
+    let books: String = (1..=count)
+        .map(|n| format!(r#"<Book Series="{series}" Number="{n}" Volume="2012" Year="2013"/>"#))
+        .collect();
+    format!("<ReadingList><Name>{name}</Name><Books>{books}</Books></ReadingList>")
+}
+
+async fn set_xml(app: &TestApp, list: Uuid, xml: String) {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let row = cbl_list::Entity::find_by_id(list)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: cbl_list::ActiveModel = row.into();
+    am.raw_xml = Set(xml);
+    am.update(&db).await.unwrap();
+}
+
+/// The CBL export is the stored file unless `inline_events=true`, which
+/// writes each placed event's books in after its anchor issue.
+#[tokio::test]
+async fn cbl_export_can_inline_events() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "inline@example.com").await;
+    let (master, issues) = seed_cbl_with_matched_entries(&app, user.user_id, 4).await;
+    let event = make_list(&app, Some(user.user_id), "Event", &issues[0..2]).await;
+    let master_xml = cbl_xml("Master", "Main", 4);
+    set_xml(&app, master, master_xml.clone()).await;
+    set_xml(&app, event, cbl_xml("Event", "Side", 2)).await;
+    link(&app, &user, master, event, Some(1)).await;
+
+    let (s, plain) = get_text(&app, &format!("/api/me/cbl-lists/{master}/export"), &user).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(plain, master_xml, "the stored file, unchanged");
+
+    let (s, xml) = get_text(
+        &app,
+        &format!("/api/me/cbl-lists/{master}/export?inline_events=true"),
+        &user,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{xml}");
+    let parsed = parsers::cbl::parse(xml.as_bytes()).unwrap();
+    let order: Vec<String> = parsed
+        .books
+        .iter()
+        .map(|b| format!("{} {}", b.series, b.number))
+        .collect();
+    assert_eq!(
+        order,
+        ["Main 1", "Main 2", "Side 1", "Side 2", "Main 3", "Main 4"]
+    );
+    assert_eq!(parsed.name, "Master");
+}

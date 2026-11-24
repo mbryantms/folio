@@ -171,6 +171,11 @@ context-aware, in priority order:
    publishers and series (with "Issue 12 of 87 in DC Year One" shown on
    the card). That's the difference between reading a crossover event in
    list order and being dumped back into a series you weren't following.
+   When the list has **events** linked at this point, the card offers them
+   beside the main line ("Or read the event here first"). Finishing an
+   event returns you to the list you came from (else the one you read
+   most recently), and the last issue of a numbered part continues into
+   the next part.
 3. **Series order** — otherwise, the next unread issue in the series.
 4. **Caught up** — a friendly empty state when there's nothing left.
 
@@ -341,6 +346,16 @@ cover dates) and proposes the mappings for you to accept.
   Lists refresh from upstream (manually or on schedule) with a structural
   diff history, manual match overrides survive refreshes, and lists export
   back to `.cbl`.
+- **Linked reading lists** — a master reading order (CBRO's Marvel
+  Master Part #1, #2, …) keeps each crossover event as its own list,
+  linked in at the issue it follows: the event shows as a band in the
+  master with its covers and progress, the master splits into chapters
+  around it, and each part links to the next. **Find events and parts…**
+  reads the catalog's with-events version of the list and proposes every
+  link (importing event lists you don't have yet); it never guesses where
+  an unassigned run of issues belongs. A reading list can also sit inside
+  a collection as a detour. Export a list as-is, or **with events**
+  written into a single `.cbl` for apps that don't know about links.
 - **Shared lists** — an admin can share one of their reading lists with
   every user. Shared lists appear under everyone's Reading Lists and can be
   pinned, but only admins can edit, refresh or delete them.
@@ -487,7 +502,9 @@ Beyond the catalog basics, personal feeds mirror the web app: Continue
 Reading, On Deck, History, New This Month, Want to Read, your CBL lists
 (in list order), collections, saved views, custom pages, browse facets,
 by-creator feeds, character / team / story-arc / publisher feeds, and
-OpenSearch.
+OpenSearch. A reading list's feed links its events, its next part and the
+lists it is part of; a reading list kept in a collection shows up in the
+collection's feed as a sub-feed in its place.
 
 **Progress syncs both ways**, meeting real clients where they are:
 

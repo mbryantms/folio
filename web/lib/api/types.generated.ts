@@ -10587,6 +10587,21 @@ export interface components {
             /** @description `"Annual"` | `"OneShot"` | `"Special"` | `"TPB"`. */
             special_type: string;
         };
+        /**
+         * @description Where a link or break sits in its list. Anchors are keyed by the
+         *     issue, never by an entry id, so they survive a list refresh.
+         */
+        ExportAnchor: {
+            /** Format: int32 */
+            cv_issue_id?: number | null;
+            number?: string | null;
+            /** Format: int32 */
+            position_hint?: number | null;
+            series?: string | null;
+            status: components["schemas"]["AnchorStatus"];
+            volume?: string | null;
+            year?: string | null;
+        };
         ExportCollection: {
             created_at: string;
             custom_tags: string[];
@@ -10603,9 +10618,13 @@ export interface components {
         };
         ExportCollectionEntry: {
             added_at: string;
-            /** @description `"issue"` or `"series"` — exactly one of the refs below is set. */
+            /**
+             * @description `"issue"`, `"series"` or `"list"` — exactly one of the refs
+             *     below is set.
+             */
             entry_kind: string;
             issue?: components["schemas"]["IssueRef"] | null;
+            list?: components["schemas"]["ExportListRef"] | null;
             /** Format: int32 */
             position: number;
             series?: components["schemas"]["SeriesRef"] | null;
@@ -10615,6 +10634,17 @@ export interface components {
             created_at: string;
             issue: components["schemas"]["IssueRef"];
             updated_at: string;
+        };
+        /**
+         * @description A reading list named portably: its id, plus the CBL `<Name>` and
+         *     the catalog path it was imported from (both survive a re-import).
+         */
+        ExportListRef: {
+            catalog_path?: string | null;
+            /** Format: uuid */
+            list_id: string;
+            /** @description `null` when the list no longer exists. */
+            name?: string | null;
         };
         ExportMarker: {
             body?: string | null;
@@ -10726,6 +10756,26 @@ export interface components {
             target_type: string;
             updated_at: string;
         };
+        ExportReadingListBreak: {
+            anchor: components["schemas"]["ExportAnchor"];
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            label?: string | null;
+            list: components["schemas"]["ExportListRef"];
+        };
+        ExportReadingListLink: {
+            anchor?: components["schemas"]["ExportAnchor"] | null;
+            child: components["schemas"]["ExportListRef"];
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["LinkKind"];
+            parent: components["schemas"]["ExportListRef"];
+            placement: components["schemas"]["LinkPlacement"];
+            /** Format: int32 */
+            sort_within_anchor: number;
+        };
         ExportReadingSession: {
             /** Format: int64 */
             active_ms: number;
@@ -10804,6 +10854,14 @@ export interface components {
             progress: components["schemas"]["ExportProgress"][];
             rail_dismissals: components["schemas"]["ExportRailDismissal"][];
             ratings: components["schemas"]["ExportRating"][];
+            /** @description Chapter breaks in the reading lists the user owns. */
+            reading_list_breaks: components["schemas"]["ExportReadingListBreak"][];
+            /**
+             * @description Links between the reading lists the user owns (an event read
+             *     inside a master list, a part that continues another). Each list
+             *     is named by its CBL file name, which survives a re-import.
+             */
+            reading_list_links: components["schemas"]["ExportReadingListLink"][];
             /**
              * @description `reading_sessions` rows. Hidden sessions are included with
              *     `hidden_from_log = true` so the flag survives a restore.
@@ -25390,7 +25448,13 @@ export interface operations {
     };
     cbl_lists_export: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Write each placed event's books in after its anchor issue (a
+                 *     "with events" file). Off by default: the stored file, unchanged.
+                 */
+                inline_events?: boolean;
+            };
             header?: never;
             path: {
                 id: string;

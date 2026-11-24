@@ -847,6 +847,17 @@ function CblViewDetailInner({
           <Download className="size-4" /> Export
         </a>
       </DropdownMenuItem>
+      {linkEvents.length > 0 && (
+        <DropdownMenuItem asChild>
+          <a
+            href={`/api/me/cbl-lists/${list.id}/export?inline_events=true`}
+            download
+            title="Download as .cbl with each event's issues in place"
+          >
+            <Download className="size-4" /> Export with events
+          </a>
+        </DropdownMenuItem>
+      )}
       {missingCount > 0 ? (
         <DropdownMenuItem
           onSelect={(e) => {
