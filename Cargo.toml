@@ -137,7 +137,7 @@ lru = "0.19"
 walkdir = "2.5"
 # File watcher (WP-3.1): inotify on local mounts via the debouncer (which
 # re-exports `notify`); `statfs` mount-type detection via rustix.
-notify-debouncer-full = { version = "0.7", default-features = false }
+notify-debouncer-full = { version = "0.8", default-features = false }
 rustix = { version = "1", default-features = false, features = ["fs", "std"] }
 tempfile = "3"
 natord = "1.0.9"
