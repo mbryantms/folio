@@ -16,6 +16,7 @@ import {
   Loader2,
   Pencil,
   ListTree,
+  MoreHorizontal,
   RefreshCw,
   Search as SearchIcon,
   Sparkles,
@@ -47,7 +48,13 @@ import {
   PageHeaderSkeleton,
 } from "@/components/skeletons/LoadingShapes";
 import { Button } from "@/components/ui/button";
-import { DropdownMenuItem } from "@/components/folio/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/folio/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { PopoverPortalContainer } from "@/components/folio/popover";
 import {
@@ -72,12 +79,15 @@ import {
 } from "@/lib/api/queries";
 import {
   useBulkMarkProgress,
+  useCreateCblBreak,
   useCreateCblLink,
   useCreateSavedViewBatch,
+  useDeleteCblBreak,
   useDeleteCblLink,
   useMarkCblReadThrough,
   useRefreshCblList,
   useSkipCblLink,
+  useUpdateCblBreak,
 } from "@/lib/api/mutations";
 import { EventBand } from "@/components/cbl/links/EventBand";
 import {
@@ -88,12 +98,15 @@ import {
   chapterAnchorId,
 } from "@/components/cbl/links/ChapterParts";
 import {
+  ChapterNameDialog,
   InsertListDialog,
   MarkThroughDialog,
+  RemoveBreakDialog,
   RemoveLinkDialog,
 } from "@/components/cbl/links/LinkDialogs";
 import {
   buildChapterBlocks,
+  chapterStep,
   foldedChapters,
   isChapterDone,
   seekStart,
@@ -103,6 +116,7 @@ import {
   useChapterRailHidden,
   useShowReadChapters,
 } from "@/lib/cbl/use-show-read-chapters";
+import { listShortcutFor } from "@/lib/keyboard/list-shortcuts";
 import type { ReadingListLinkView } from "@/lib/api/types";
 import { skippedEntryIds } from "@/lib/library/bulk-archive-skips";
 import { COVER_GRID_STYLE } from "@/lib/library/cover-size";
@@ -261,6 +275,14 @@ function CblViewDetailInner({
     isFetchingNextPage: entriesFetchingNext,
     fetchNextPage: entriesFetchNext,
   } = entriesQuery;
+  // The first page of the current query (a new start position, search or
+  // filter) is still loading — no page of it is on screen yet.
+  const entriesFirstLoading =
+    entriesQuery.isPending ||
+    (entriesQuery.isFetching &&
+      !entriesQuery.isFetchingNextPage &&
+      !entriesQuery.isFetchingPreviousPage &&
+      entriesQuery.isPlaceholderData);
 
   // Hooks must run unconditionally — keep them above the early
   // returns and use empty arrays for selection-relevant state while
@@ -394,19 +416,89 @@ function CblViewDetailInner({
   } | null>(null);
   const [removeTarget, setRemoveTarget] =
     React.useState<ReadingListLinkView | null>(null);
+  // Chapter breaks (PR 3a): naming a new one / renaming, and removing.
+  const createBreak = useCreateCblBreak(listId);
+  const updateBreak = useUpdateCblBreak(listId);
+  const deleteBreak = useDeleteCblBreak(listId);
+  const [nameTarget, setNameTarget] = React.useState<
+    | { mode: "create"; entryId: string; startsAt: string; label: string }
+    | { mode: "rename"; breakId: string; startsAt: string; label: string }
+    | null
+  >(null);
+  const [removeBreak, setRemoveBreak] = React.useState<{
+    breakId: string;
+    label: string;
+  } | null>(null);
   // The rail asked for a chapter; scroll once its header is in the DOM.
   const [pendingChapter, setPendingChapter] = React.useState<number | null>(
     null,
   );
   React.useEffect(() => {
     if (pendingChapter == null) return;
+    // A rail jump that unfolds a chapter moves the entries query's start;
+    // wait for the new first page so the scroll isn't lost to the reload.
+    if (entriesFirstLoading) return;
     const el = document.getElementById(chapterAnchorId(pendingChapter));
-    if (!el) return;
-    requestAnimationFrame(() => {
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (!el) {
+      // Not loaded yet: walk the pages until its header renders.
+      if (entriesHasNext && !entriesFetchingNext) void entriesFetchNext();
+      return;
+    }
+    const raf = requestAnimationFrame(() => {
+      // Scroll the chapter's section, not its header: the header is
+      // sticky, so once pinned its box no longer says where the chapter
+      // starts. Looked up again here: a fold change can swap elements.
+      const target =
+        document.querySelector(`[data-chapter-index="${pendingChapter}"]`) ??
+        document.getElementById(chapterAnchorId(pendingChapter));
+      if (!target) return;
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
       setPendingChapter(null);
     });
-  });
+    return () => cancelAnimationFrame(raf);
+    // Re-checks after each page lands (fetching flips) and after a fold
+    // override renders the header (pendingChapter set in the same batch).
+  }, [
+    pendingChapter,
+    entriesFirstLoading,
+    entriesHasNext,
+    entriesFetchingNext,
+    entriesFetchNext,
+  ]);
+  // `]` / `[`: next / previous chapter (PR 3a; listed in the `?` sheet
+  // from `LIST_SHORTCUTS`). Positions come from the rendered chapter
+  // sections, measured against the pinned chapter header's line.
+  const chapterCount = chapters.length;
+  React.useEffect(() => {
+    if (chapterCount < 2) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (shouldSkipHotkey(e) || e.metaKey || e.ctrlKey || e.altKey) return;
+      const action = listShortcutFor(e.key);
+      if (!action) return;
+      if (document.querySelector('[role="dialog"][data-state="open"]')) return;
+      const header = document.querySelector<HTMLElement>(
+        '[data-testid="chapter-header"]',
+      );
+      const line = header
+        ? (Number.parseFloat(getComputedStyle(header).top) || 0) +
+          header.offsetHeight
+        : 0;
+      const tops = Array.from({ length: chapterCount }, (_, i) => {
+        const el = document.querySelector(`[data-chapter-index="${i}"]`);
+        return el
+          ? el.getBoundingClientRect().top - line
+          : Number.POSITIVE_INFINITY;
+      });
+      const target = chapterStep(tops, action === "nextChapter" ? 1 : -1);
+      if (target == null) return;
+      e.preventDefault();
+      // No unfolding: a finished chapter stays folded, and its header and
+      // events are where the shortcut stops.
+      setPendingChapter(target);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [chapterCount]);
   // Fetch metadata + Rescan (admin) over the matched selected entries.
   const adminBulk = useAdminSelectionActions(
     { issueIds: selectedIssueIds, seriesIds: [] },
@@ -577,6 +669,13 @@ function CblViewDetailInner({
   };
   const entryLabel = (e: CblEntryHydratedView) =>
     `${e.series_name} #${e.issue_number}`;
+  // Positions where a chapter already starts (the first issue, a break).
+  const firstPosition = chapters[0]?.start_position ?? 0;
+  const breakAt = new Set(
+    (linksQuery.data?.breaks ?? [])
+      .filter((b) => b.anchor.status === "placed")
+      .map((b) => b.anchor.position),
+  );
   const cardActions = (e: CblEntryHydratedView) => [
     {
       label: "Mark read up to here",
@@ -592,7 +691,66 @@ function CblViewDetailInner({
           },
         ]
       : []),
+    ...(canManageLinks && e.position > firstPosition && !breakAt.has(e.position)
+      ? [
+          {
+            label: "Start a chapter here",
+            onSelect: () =>
+              setNameTarget({
+                mode: "create",
+                entryId: e.id,
+                startsAt: entryLabel(e),
+                label: "",
+              }),
+          },
+        ]
+      : []),
   ];
+  const breakById = new Map(
+    (linksQuery.data?.breaks ?? []).map((b) => [b.id, b]),
+  );
+  const chapterActions = (c: (typeof chapters)[number]) => {
+    const b = c.break_id ? breakById.get(c.break_id) : undefined;
+    if (!b || !canManageLinks) return undefined;
+    const startsAt =
+      b.anchor.series && b.anchor.number
+        ? `${b.anchor.series} #${b.anchor.number}`
+        : "this issue";
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={`Actions for chapter ${c.index + 1}`}
+          >
+            <MoreHorizontal className="size-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem
+            onSelect={() =>
+              setNameTarget({
+                mode: "rename",
+                breakId: b.id,
+                startsAt,
+                label: b.label ?? "",
+              })
+            }
+          >
+            Rename chapter…
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            variant="destructive"
+            onSelect={() => setRemoveBreak({ breakId: b.id, label: c.label })}
+          >
+            Remove chapter break
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  };
   const renderCard = (entry: CblEntryHydratedView) => (
     <CblIssueCard
       entry={entry}
@@ -981,16 +1139,18 @@ function CblViewDetailInner({
             {blocks.map((block) => (
               <section
                 key={block.chapter ? `chapter-${block.chapter.index}` : "all"}
+                data-chapter-index={block.chapter?.index}
                 aria-label={
                   block.chapter
                     ? `Chapter ${block.chapter.index + 1}: ${block.chapter.label}`
                     : undefined
                 }
-                className="space-y-4"
+                className="scroll-mt-28 space-y-4"
               >
                 {block.chapter && hasChapters && (
                   <ChapterHeader
                     chapter={block.chapter}
+                    actions={chapterActions(block.chapter)}
                     folded={foldingActive ? block.folded : undefined}
                     onToggle={
                       foldingActive
@@ -1114,7 +1274,7 @@ function CblViewDetailInner({
         />
       )}
       <InsertListDialog
-        key={insertTarget ? (insertTarget.entryId ?? "next-part") : "closed"}
+        key={`insert-${insertTarget ? (insertTarget.entryId ?? "next-part") : "closed"}`}
         open={insertTarget != null}
         onOpenChange={(o) => !o && setInsertTarget(null)}
         parent={list}
@@ -1129,6 +1289,37 @@ function CblViewDetailInner({
             kind,
             after_entry_id: kind === "event" ? (t?.entryId ?? null) : null,
           });
+        }}
+      />
+      <ChapterNameDialog
+        key={`name-${
+          nameTarget
+            ? nameTarget.mode === "create"
+              ? nameTarget.entryId
+              : nameTarget.breakId
+            : "closed"
+        }`}
+        target={nameTarget}
+        onOpenChange={(o) => !o && setNameTarget(null)}
+        isPending={createBreak.isPending || updateBreak.isPending}
+        onSave={(label) => {
+          const t = nameTarget;
+          if (!t) return;
+          const done = { onSuccess: () => setNameTarget(null) };
+          if (t.mode === "create") {
+            createBreak.mutate({ entry_id: t.entryId, label }, done);
+          } else {
+            updateBreak.mutate({ breakId: t.breakId, label }, done);
+          }
+        }}
+      />
+      <RemoveBreakDialog
+        label={removeBreak?.label ?? null}
+        onOpenChange={(o) => !o && setRemoveBreak(null)}
+        onConfirm={() => {
+          const t = removeBreak;
+          setRemoveBreak(null);
+          if (t) deleteBreak.mutate({ breakId: t.breakId });
         }}
       />
       <MarkThroughDialog

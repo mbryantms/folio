@@ -29,9 +29,13 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { countCblReadThrough } from "@/lib/api/mutations";
 import { useCblLists } from "@/lib/api/queries";
@@ -208,6 +212,110 @@ export function RemoveLinkDialog({
           <AlertDialogDescription>
             The list itself and your progress in it stay. Only its place in this
             list is removed.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" onClick={onConfirm}>
+            Remove
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+/** Longest chapter name the server accepts. */
+export const CHAPTER_NAME_MAX = 120;
+
+/**
+ * Name a new chapter (start one at an issue) or rename an existing one.
+ * The name is optional: blank names the chapter after its first issue.
+ */
+export function ChapterNameDialog({
+  target,
+  onOpenChange,
+  onSave,
+  isPending,
+}: {
+  /** `null` = closed. `startsAt` is "Excalibur #12". */
+  target: { mode: "create" | "rename"; startsAt: string; label: string } | null;
+  onOpenChange: (open: boolean) => void;
+  onSave: (label: string | null) => void;
+  isPending: boolean;
+}) {
+  const [value, setValue] = React.useState(target?.label ?? "");
+  const id = React.useId();
+  return (
+    <Dialog open={target != null} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <form
+          className="space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const v = value.trim();
+            onSave(v === "" ? null : v);
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>
+              {target?.mode === "rename"
+                ? "Rename chapter"
+                : "Start a chapter here"}
+            </DialogTitle>
+            <DialogDescription>
+              {target?.mode === "rename"
+                ? `The chapter starting at ${target.startsAt}.`
+                : `A new chapter starts at ${target?.startsAt ?? "this issue"}.`}{" "}
+              Leave the name blank to name it after that issue.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor={id}>Chapter name (optional)</Label>
+            <Input
+              id={id}
+              value={value}
+              maxLength={CHAPTER_NAME_MAX}
+              placeholder="Messiah Complex"
+              onChange={(e) => setValue(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={isPending}>
+              {target?.mode === "rename" ? "Save" : "Start chapter"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function RemoveBreakDialog({
+  label,
+  onOpenChange,
+  onConfirm,
+}: {
+  /** The chapter's label; `null` = closed. */
+  label: string | null;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <AlertDialog open={label != null} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Remove the chapter break?</AlertDialogTitle>
+          <AlertDialogDescription>
+            &ldquo;{label}&rdquo; joins the chapter before it. No issues or
+            progress change.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

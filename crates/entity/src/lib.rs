@@ -65,6 +65,7 @@ pub mod person;
 pub mod progress_record;
 pub mod publisher;
 pub mod rail_dismissal;
+pub mod reading_list_break;
 pub mod reading_list_link;
 pub mod reading_list_link_skip;
 pub mod reading_session;
@@ -160,6 +161,7 @@ pub mod prelude {
     pub use super::progress_record::Entity as ProgressRecord;
     pub use super::publisher::Entity as Publisher;
     pub use super::rail_dismissal::Entity as RailDismissal;
+    pub use super::reading_list_break::Entity as ReadingListBreak;
     pub use super::reading_list_link::Entity as ReadingListLink;
     pub use super::reading_list_link_skip::Entity as ReadingListLinkSkip;
     pub use super::reading_session::Entity as ReadingSession;

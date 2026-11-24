@@ -3245,6 +3245,38 @@ export interface paths {
         patch: operations["cbl_lists_update"];
         trace?: never;
     };
+    "/api/me/cbl-lists/{id}/breaks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["cbl_breaks_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/cbl-lists/{id}/breaks/{break_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["cbl_breaks_delete"];
+        options?: never;
+        head?: never;
+        patch: operations["cbl_breaks_update"];
+        trace?: never;
+    };
     "/api/me/cbl-lists/{id}/check": {
         parameters: {
             query?: never;
@@ -9046,6 +9078,15 @@ export interface components {
              */
             scope?: string | null;
         };
+        CreateBreakReq: {
+            /**
+             * Format: uuid
+             * @description The entry the new chapter starts at.
+             */
+            entry_id: string;
+            /** @description The chapter's name; omitted or blank = named after its first issue. */
+            label?: string | null;
+        };
         CreateCatalogSourceReq: {
             display_name: string;
             github_branch?: string | null;
@@ -14448,8 +14489,24 @@ export interface components {
          * @enum {string}
          */
         ReadingDirection: "ltr" | "rtl";
-        /** @description A stretch of the parent list between two event anchors. */
+        /** @description A chapter break: a new chapter starts at the anchor issue (PR 3a). */
+        ReadingListBreakView: {
+            /** @description The issue the chapter starts at. */
+            anchor: components["schemas"]["LinkAnchorView"];
+            id: string;
+            /** @description The chapter's name; `None` = named after its first issue. */
+            label?: string | null;
+        };
+        /**
+         * @description A stretch of the parent list. Chapters end at event anchors and start
+         *     at chapter breaks.
+         */
         ReadingListChapterView: {
+            /**
+             * @description The chapter break that starts this chapter, if any (for renaming or
+             *     removing it).
+             */
+            break_id?: string | null;
             /**
              * Format: int32
              * @description 0-based, inclusive.
@@ -14513,6 +14570,8 @@ export interface components {
             total: number;
         };
         ReadingListLinksView: {
+            /** @description Chapter breaks in position order. */
+            breaks: components["schemas"]["ReadingListBreakView"][];
             /**
              * @description The parent list split at its event anchors. One chapter covering
              *     the whole list when it has no events; empty when it has no entries.
@@ -17343,6 +17402,10 @@ export interface components {
             week_end: string;
             /** Format: date */
             week_start: string;
+        };
+        UpdateBreakReq: {
+            /** @description The new name; `null` or blank = named after its first issue. */
+            label?: string | null;
         };
         UpdateCatalogSourceReq: {
             display_name?: string | null;
@@ -24869,6 +24932,119 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CblListView"];
                 };
+            };
+        };
+    };
+    cbl_breaks_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateBreakReq"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadingListLinksView"];
+                };
+            };
+            /** @description list not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description a chapter already starts at that issue */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description validation */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cbl_breaks_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                break_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description list or chapter break not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cbl_breaks_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                break_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateBreakReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadingListLinksView"];
+                };
+            };
+            /** @description list or chapter break not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description validation */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

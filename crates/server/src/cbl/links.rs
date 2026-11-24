@@ -17,6 +17,7 @@
 
 use chrono::Utc;
 use entity::cbl_entry;
+use entity::reading_list_break;
 use entity::reading_list_link::{self, AnchorStatus, LinkKind};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult,
@@ -47,6 +48,17 @@ impl AnchorKey {
             volume: link.anchor_volume.clone(),
             year: link.anchor_year.clone(),
         })
+    }
+
+    /// The key of a stored chapter break.
+    pub fn of_break(b: &reading_list_break::Model) -> Self {
+        Self {
+            cv_issue_id: b.anchor_cv_issue_id,
+            series: b.anchor_series.clone(),
+            number: b.anchor_number.clone(),
+            volume: b.anchor_volume.clone(),
+            year: b.anchor_year.clone(),
+        }
     }
 
     /// The key that identifies `entry`: both halves are stored, so a list
@@ -128,13 +140,38 @@ pub fn resolve(entries: &[EntryRef], key: &AnchorKey, hint: Option<i32>) -> Opti
     pick(loose)
 }
 
-/// What [`reresolve_parent`] changed.
+/// What [`reresolve_parent`] changed (event links and chapter breaks).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ReresolveSummary {
-    /// Links whose anchor issue left the list in this pass.
+    /// Links / breaks whose anchor issue left the list in this pass.
     pub lost: i32,
-    /// Lost links whose anchor issue came back in this pass.
+    /// Lost links / breaks whose anchor issue came back in this pass.
     pub restored: i32,
+}
+
+/// The new status + hint for an anchor, and how it moves the summary.
+/// `None` when nothing changed.
+fn reresolved(
+    entries: &[EntryRef],
+    key: &AnchorKey,
+    status: AnchorStatus,
+    hint: Option<i32>,
+    summary: &mut ReresolveSummary,
+) -> Option<(AnchorStatus, Option<i32>)> {
+    let (next, next_hint) = match resolve(entries, key, hint) {
+        Some(p) => (AnchorStatus::Placed, Some(p)),
+        // Keep the last known place so the card stays where it was.
+        None => (AnchorStatus::Lost, hint),
+    };
+    if next == status && next_hint == hint {
+        return None;
+    }
+    match (status, next) {
+        (AnchorStatus::Placed, AnchorStatus::Lost) => summary.lost += 1,
+        (AnchorStatus::Lost, AnchorStatus::Placed) => summary.restored += 1,
+        _ => {}
+    }
+    Some((next, next_hint))
 }
 
 /// The parent's entries as [`EntryRef`]s, in position order.
@@ -159,9 +196,10 @@ pub async fn load_entries(
         .await
 }
 
-/// Re-resolve every event link of `list_id` against its current entries
-/// and write back position hints and status. Call inside the transaction
-/// that rewrote the entries, so a failed refresh leaves links untouched.
+/// Re-resolve every event link and chapter break of `list_id` against its
+/// current entries and write back position hints and status. Call inside
+/// the transaction that rewrote the entries, so a failed refresh leaves
+/// them untouched.
 pub async fn reresolve_parent(
     db: &impl ConnectionTrait,
     list_id: Uuid,
@@ -171,8 +209,12 @@ pub async fn reresolve_parent(
         .filter(reading_list_link::Column::Kind.eq(LinkKind::Event))
         .all(db)
         .await?;
+    let breaks = reading_list_break::Entity::find()
+        .filter(reading_list_break::Column::ListId.eq(list_id))
+        .all(db)
+        .await?;
     let mut summary = ReresolveSummary::default();
-    if links.is_empty() {
+    if links.is_empty() && breaks.is_empty() {
         return Ok(summary);
     }
     let entries = load_entries(db, list_id).await?;
@@ -181,21 +223,33 @@ pub async fn reresolve_parent(
         let Some(key) = AnchorKey::of_link(&link) else {
             continue;
         };
-        let resolved = resolve(&entries, &key, link.anchor_position_hint);
-        let (status, hint) = match resolved {
-            Some(p) => (AnchorStatus::Placed, Some(p)),
-            // Keep the last known place so the card stays where it was.
-            None => (AnchorStatus::Lost, link.anchor_position_hint),
-        };
-        if status == link.anchor_status && hint == link.anchor_position_hint {
+        let Some((status, hint)) = reresolved(
+            &entries,
+            &key,
+            link.anchor_status,
+            link.anchor_position_hint,
+            &mut summary,
+        ) else {
             continue;
-        }
-        match (link.anchor_status, status) {
-            (AnchorStatus::Placed, AnchorStatus::Lost) => summary.lost += 1,
-            (AnchorStatus::Lost, AnchorStatus::Placed) => summary.restored += 1,
-            _ => {}
-        }
+        };
         let mut am: reading_list_link::ActiveModel = link.into();
+        am.anchor_status = Set(status);
+        am.anchor_position_hint = Set(hint);
+        am.updated_at = Set(now);
+        am.update(db).await?;
+    }
+    for b in breaks {
+        let key = AnchorKey::of_break(&b);
+        let Some((status, hint)) = reresolved(
+            &entries,
+            &key,
+            b.anchor_status,
+            b.anchor_position_hint,
+            &mut summary,
+        ) else {
+            continue;
+        };
+        let mut am: reading_list_break::ActiveModel = b.into();
         am.anchor_status = Set(status);
         am.anchor_position_hint = Set(hint);
         am.updated_at = Set(now);

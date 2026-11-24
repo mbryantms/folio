@@ -20,6 +20,9 @@
 //!   created when they have none, so an event band always opens its list.
 //!   Linking an event also gives the linker a view of it.
 //!
+//! Chapter breaks (PR 3a, [`super::cbl_breaks`]) come back in the same
+//! view, and chapters start at them as well as ending at event anchors.
+//!
 //! Writes use the list's own rules ([`super::cbl_lists::ensure_can_manage`]):
 //! the owner of a personal list, an admin for a shared one, audited as
 //! `admin.cbl_list.link.*` when an admin changes a shared list. Two rules
@@ -37,7 +40,7 @@ use axum::{
 };
 use chrono::Utc;
 use entity::reading_list_link::{self, AnchorStatus, LinkKind, LinkPlacement};
-use entity::{cbl_entry, cbl_list, reading_list_link_skip, saved_view};
+use entity::{cbl_entry, cbl_list, reading_list_break, reading_list_link_skip, saved_view};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, DbBackend, EntityTrait, FromQueryResult,
     ModelTrait, PaginatorTrait, QueryFilter, Statement, sea_query::OnConflict, sea_query::Value,
@@ -45,7 +48,7 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 use server_macros::handler;
 use shared::error::{ApiErrorCode, FieldError};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use utoipa_axum::{router::OpenApiRouter, routes};
 use uuid::Uuid;
 
@@ -118,7 +121,18 @@ pub struct ReadingListLinkView {
     pub skipped: bool,
 }
 
-/// A stretch of the parent list between two event anchors.
+/// A chapter break: a new chapter starts at the anchor issue (PR 3a).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ReadingListBreakView {
+    pub id: String,
+    /// The chapter's name; `None` = named after its first issue.
+    pub label: Option<String>,
+    /// The issue the chapter starts at.
+    pub anchor: LinkAnchorView,
+}
+
+/// A stretch of the parent list. Chapters end at event anchors and start
+/// at chapter breaks.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ReadingListChapterView {
     pub index: i32,
@@ -130,6 +144,9 @@ pub struct ReadingListChapterView {
     /// The events read right after this chapter, in order (empty for the
     /// last chapter).
     pub event_link_ids: Vec<String>,
+    /// The chapter break that starts this chapter, if any (for renaming or
+    /// removing it).
+    pub break_id: Option<String>,
     pub total: i64,
     pub in_library: i64,
     pub read: i64,
@@ -142,6 +159,8 @@ pub struct ReadingListLinksView {
     pub events: Vec<ReadingListLinkView>,
     /// The next part, if linked.
     pub continues: Option<ReadingListLinkView>,
+    /// Chapter breaks in position order.
+    pub breaks: Vec<ReadingListBreakView>,
     /// The parent list split at its event anchors. One chapter covering
     /// the whole list when it has no events; empty when it has no entries.
     pub chapters: Vec<ReadingListChapterView>,
@@ -195,11 +214,11 @@ pub struct MarkThroughResp {
 
 // ───── helpers ─────
 
-fn internal() -> Response {
+pub(super) fn internal() -> Response {
     error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
 }
 
-fn field_error(field: &str, message: &str) -> Response {
+pub(super) fn field_error(field: &str, message: &str) -> Response {
     super::respond_with_field_errors(
         StatusCode::UNPROCESSABLE_ENTITY,
         ApiErrorCode::Validation,
@@ -417,8 +436,26 @@ async fn build_view(
         )
     });
 
+    let mut breaks: Vec<ReadingListBreakView> = reading_list_break::Entity::find()
+        .filter(reading_list_break::Column::ListId.eq(parent.id))
+        .all(&app.db)
+        .await?
+        .into_iter()
+        .map(|b| ReadingListBreakView {
+            id: b.id.to_string(),
+            label: b.label,
+            anchor: LinkAnchorView {
+                position: b.anchor_position_hint,
+                status: b.anchor_status,
+                series: b.anchor_series,
+                number: b.anchor_number,
+            },
+        })
+        .collect();
+    breaks.sort_by_key(|b| b.anchor.position.unwrap_or(i32::MAX));
+
     let parent_rows = by_list.get(&parent.id).cloned().unwrap_or_default();
-    let chapters = chapters_of(&parent.parsed_name, &parent_rows, &events);
+    let chapters = chapters_of(&parent.parsed_name, &parent_rows, &events, &breaks);
 
     let linked_from = reading_list_link::Entity::find()
         .filter(reading_list_link::Column::ChildListId.eq(parent.id))
@@ -432,75 +469,98 @@ async fn build_view(
     Ok(ReadingListLinksView {
         events,
         continues,
+        breaks,
         chapters,
         linked_from,
     })
 }
 
-/// Split the parent's entries at each event anchor: a chapter runs from
-/// the entry after the previous anchor through the next anchor, and the
-/// events at that anchor are read right after it.
+/// Split the parent's entries into chapters. A chapter **ends** at an event
+/// anchor (its events are read right after it) and **starts** at a chapter
+/// break. Labels, first match wins: the break's own label, "Up to <first
+/// event at its end>", "After <last event before it>", "From <series>
+/// #<number>" (an unnamed break), the list's name.
 fn chapters_of(
     list_name: &str,
     rows: &[&EntryStatRow],
     events: &[ReadingListLinkView],
+    breaks: &[ReadingListBreakView],
 ) -> Vec<ReadingListChapterView> {
-    let Some(last) = rows.last().map(|r| r.position) else {
+    let (Some(first), Some(last)) = (
+        rows.first().map(|r| r.position),
+        rows.last().map(|r| r.position),
+    ) else {
         return Vec::new();
     };
-    // anchor position → events there, in order.
-    let mut anchors: Vec<(i32, Vec<&ReadingListLinkView>)> = Vec::new();
+    // anchor position → events there, in reading order.
+    let mut ends: BTreeMap<i32, Vec<&ReadingListLinkView>> = BTreeMap::new();
     for ev in events {
-        let Some(pos) = ev.anchor.as_ref().and_then(|a| a.position) else {
-            continue;
-        };
-        let pos = pos.min(last);
-        match anchors.last_mut() {
-            Some((p, list)) if *p == pos => list.push(ev),
-            _ => anchors.push((pos, vec![ev])),
+        if let Some(pos) = ev.anchor.as_ref().and_then(|a| a.position) {
+            ends.entry(pos.clamp(first, last)).or_default().push(ev);
         }
     }
-    let mut chapters = Vec::new();
-    let mut start = rows.first().map(|r| r.position).unwrap_or(0);
-    let mut push = |start: i32, end: i32, label: String, evs: &[&ReadingListLinkView]| {
+    // chapter start → the break that starts it (first one wins).
+    let mut starts: BTreeMap<i32, Option<&ReadingListBreakView>> = BTreeMap::new();
+    starts.insert(first, None);
+    for pos in ends.keys() {
+        if *pos < last {
+            starts.entry(pos + 1).or_insert(None);
+        }
+    }
+    for b in breaks {
+        // A break at the first issue starts nothing new.
+        let Some(pos) = b.anchor.position.filter(|p| *p > first) else {
+            continue;
+        };
+        let slot = starts.entry(pos.min(last)).or_insert(None);
+        if slot.is_none() {
+            *slot = Some(b);
+        }
+    }
+    let starts: Vec<_> = starts.into_iter().collect();
+    let mut chapters = Vec::with_capacity(starts.len());
+    let mut previous_events: &[&ReadingListLinkView] = &[];
+    for (i, (start, brk)) in starts.iter().enumerate() {
+        let end = starts.get(i + 1).map_or(last, |(next, _)| next - 1);
+        let evs: &[&ReadingListLinkView] = ends.get(&end).map_or(&[], Vec::as_slice);
+        let label = brk
+            .and_then(|b| b.label.clone())
+            .or_else(|| evs.first().map(|e| format!("Up to {}", e.child_name)))
+            .or_else(|| {
+                previous_events
+                    .last()
+                    .map(|e| format!("After {}", e.child_name))
+            })
+            .or_else(|| {
+                brk.and_then(|b| match (&b.anchor.series, &b.anchor.number) {
+                    (Some(s), Some(n)) => Some(format!("From {s} #{n}")),
+                    _ => None,
+                })
+            })
+            .unwrap_or_else(|| list_name.to_owned());
         let st = fold_stats(
             rows.iter()
                 .copied()
-                .filter(|r| r.position >= start && r.position <= end),
+                .filter(|r| r.position >= *start && r.position <= end),
         );
         chapters.push(ReadingListChapterView {
-            index: 0,
-            start_position: start,
+            index: i32::try_from(i).unwrap_or(i32::MAX),
+            start_position: *start,
             end_position: end,
             label,
             event_link_ids: evs.iter().map(|e| e.id.clone()).collect(),
+            break_id: brk.map(|b| b.id.clone()),
             total: st.total,
             in_library: st.in_library,
             read: st.read,
         });
-    };
-    for (pos, evs) in &anchors {
-        if *pos < start {
-            continue;
-        }
-        push(start, *pos, format!("Up to {}", evs[0].child_name), evs);
-        start = pos + 1;
-    }
-    if start <= last {
-        let label = match anchors.last() {
-            Some((_, evs)) => format!("After {}", evs[evs.len() - 1].child_name),
-            None => list_name.to_owned(),
-        };
-        push(start, last, label, &[]);
-    }
-    for (i, c) in chapters.iter_mut().enumerate() {
-        c.index = i32::try_from(i).unwrap_or(i32::MAX);
+        previous_events = evs;
     }
     chapters
 }
 
 /// The entry `entry_id` of `list_id` as an anchor key + its position.
-async fn anchor_of_entry(
+pub(super) async fn anchor_of_entry(
     app: &AppState,
     list_id: Uuid,
     entry_id: Uuid,
@@ -600,7 +660,7 @@ async fn fetch_link(
         .ok_or_else(|| error(StatusCode::NOT_FOUND, "not_found", "link not found"))
 }
 
-async fn view_response(
+pub(super) async fn view_response(
     app: &AppState,
     user: &CurrentUser,
     parent: &cbl_list::Model,
