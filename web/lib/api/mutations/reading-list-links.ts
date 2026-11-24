@@ -12,7 +12,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { apiPath } from "../path";
 import { queryKeys } from "../queries";
 import type {
+  ApplyDeriveReq,
+  ApplyDeriveResp,
   CreateBreakReq,
+  DerivePreview,
   CreateLinkReq,
   ListViewRef,
   MarkThroughResp,
@@ -210,6 +213,52 @@ export function useMarkCblReadThrough(listId: string) {
         invalidateRails(qc);
         invalidateSeriesProgress(qc);
         invalidateIssueCards(qc, { refetchActive: true });
+      },
+    },
+  );
+}
+
+/**
+ * PR 3b: ask the server which events (CBRO with-events twin) and parts
+ * this catalog list has. A POST because it reads the catalog; nothing is
+ * written.
+ */
+export function useDeriveCblLinksPreview(listId: string) {
+  return useApiMutation<DerivePreview, void>(() => ({
+    path: apiPath`/me/cbl-lists/${listId}/links/derive`,
+    method: "POST",
+  }));
+}
+
+/** Import + link the proposals the person kept. */
+export function useApplyCblDerive(listId: string) {
+  const qc = useQueryClient();
+  return useApiMutation<ApplyDeriveResp, ApplyDeriveReq>(
+    (body) => ({
+      path: apiPath`/me/cbl-lists/${listId}/links/derive/apply`,
+      method: "POST",
+      body,
+    }),
+    {
+      successMessage: (resp) => {
+        const n = resp?.linked ?? 0;
+        const linked =
+          n === 0
+            ? "Nothing new linked"
+            : `Linked ${n} ${n === 1 ? "list" : "lists"}`;
+        const failed = resp?.failed ?? [];
+        if (failed.length === 0) return linked;
+        const first = failed[0]!;
+        const more = failed.length > 1 ? ` (+${failed.length - 1} more)` : "";
+        return `${linked}. ${first.name}: ${first.message}${more}`;
+      },
+      successVariant: (resp) =>
+        (resp?.failed.length ?? 0) > 0 ? "info" : "success",
+      onSuccess: (resp) => {
+        if (resp) qc.setQueryData(queryKeys.cblListLinks(listId), resp.links);
+        qc.invalidateQueries({ queryKey: queryKeys.cblListLinks(listId) });
+        qc.invalidateQueries({ queryKey: queryKeys.cblLists });
+        invalidateSavedViews(qc);
       },
     },
   );

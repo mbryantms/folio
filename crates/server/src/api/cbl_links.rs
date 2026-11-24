@@ -312,7 +312,7 @@ fn fold_stats<'a>(rows: impl Iterator<Item = &'a EntryStatRow>) -> ListStats {
 
 /// The whole links view of `parent` for `user`. A fixed number of
 /// statements however many links the list has.
-async fn build_view(
+pub(super) async fn build_view(
     app: &AppState,
     user: &CurrentUser,
     parent: &cbl_list::Model,
@@ -583,7 +583,7 @@ pub(super) async fn anchor_of_entry(
 }
 
 /// Next `sort_within_anchor` for a new event at `position`.
-async fn next_sort_at(
+pub(super) async fn next_sort_at(
     app: &AppState,
     parent: Uuid,
     position: i32,
@@ -604,7 +604,7 @@ async fn next_sort_at(
         .unwrap_or(0))
 }
 
-async fn has_events(app: &AppState, list_id: Uuid) -> Result<bool, sea_orm::DbErr> {
+pub(super) async fn has_events(app: &AppState, list_id: Uuid) -> Result<bool, sea_orm::DbErr> {
     Ok(reading_list_link::Entity::find()
         .filter(reading_list_link::Column::ParentListId.eq(list_id))
         .filter(reading_list_link::Column::Kind.eq(LinkKind::Event))
@@ -613,7 +613,7 @@ async fn has_events(app: &AppState, list_id: Uuid) -> Result<bool, sea_orm::DbEr
         > 0)
 }
 
-async fn is_an_event(app: &AppState, list_id: Uuid) -> Result<bool, sea_orm::DbErr> {
+pub(super) async fn is_an_event(app: &AppState, list_id: Uuid) -> Result<bool, sea_orm::DbErr> {
     Ok(reading_list_link::Entity::find()
         .filter(reading_list_link::Column::ChildListId.eq(list_id))
         .filter(reading_list_link::Column::Kind.eq(LinkKind::Event))
@@ -623,7 +623,7 @@ async fn is_an_event(app: &AppState, list_id: Uuid) -> Result<bool, sea_orm::DbE
 }
 
 /// True when following `continues` links from `from` reaches `target`.
-async fn continues_reaches(
+pub(super) async fn continues_reaches(
     app: &AppState,
     from: Uuid,
     target: Uuid,

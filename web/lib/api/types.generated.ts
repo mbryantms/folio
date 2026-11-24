@@ -3402,6 +3402,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/cbl-lists/{id}/links/derive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["cbl_links_derive_preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/cbl-lists/{id}/links/derive/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["cbl_links_derive_apply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/cbl-lists/{id}/links/{link_id}": {
         parameters: {
             query?: never;
@@ -7125,8 +7157,41 @@ export interface components {
         };
         /** @enum {string} */
         ApplyCoverPolicy: "never" | "when_missing" | "always";
+        ApplyDeriveReq: {
+            /** @description In reading order; several at one entry keep this order. */
+            events?: components["schemas"]["ApplyEvent"][];
+            parts?: components["schemas"]["ApplyPart"][];
+        };
+        ApplyDeriveResp: {
+            failed: components["schemas"]["ApplyFailure"][];
+            /**
+             * Format: int32
+             * @description Event lists imported.
+             */
+            imported: number;
+            /**
+             * Format: int32
+             * @description Links created (events + parts).
+             */
+            linked: number;
+            links: components["schemas"]["ReadingListLinksView"];
+        };
+        ApplyEvent: {
+            /** Format: uuid */
+            after_entry_id: string;
+            catalog_path: string;
+        };
+        ApplyFailure: {
+            message: string;
+            name: string;
+        };
         /** @enum {string} */
         ApplyMode: "fill_missing" | "replace_all";
+        ApplyPart: {
+            direction: components["schemas"]["PartDirection"];
+            /** Format: uuid */
+            list_id: string;
+        };
         ApplyRequest: {
             /** @description Pull + write the cover image. Defaults to true. */
             apply_cover?: boolean;
@@ -9927,6 +9992,22 @@ export interface components {
          * @enum {string}
          */
         Density: "comfortable" | "compact";
+        DerivePreview: {
+            events: components["schemas"]["ProposedEventLink"][];
+            /**
+             * Format: int32
+             * @description Proposed event lists the caller doesn't have yet (imported on apply).
+             */
+            imports_needed: number;
+            parts: components["schemas"]["ProposedPartLink"][];
+            /**
+             * @description The list is a CBRO master whose with-events version is in the
+             *     catalog (events can be found).
+             */
+            twin_found: boolean;
+            /** @description Inserted issues no event list covers — shown, never guessed. */
+            unplaced: components["schemas"]["UnplacedRunView"][];
+        };
         DetectAgreement: {
             agree: boolean;
             summary: string;
@@ -13755,6 +13836,8 @@ export interface components {
             slug: string;
             updated_at: string;
         };
+        /** @enum {string} */
+        PartDirection: "next" | "previous";
         PatchWidgetReq: {
             /**
              * @description Replacement config blob. Replaces the entire `config` column
@@ -13943,6 +14026,39 @@ export interface components {
             percent: number;
             /** @description RFC 3339 timestamp of the most recent progress write. */
             updated_at: string;
+        };
+        ProposedEventLink: {
+            after_entry_id: string;
+            after_label: string;
+            /** Format: int32 */
+            after_position: number;
+            /** @description Already linked into this list. */
+            already_linked: boolean;
+            catalog_path: string;
+            /** @description The caller's (or a shared) copy of the event list, if they have one. */
+            existing_list_id?: string | null;
+            /**
+             * Format: int32
+             * @description Of those, inserted at this spot by the with-events version.
+             */
+            issues_here: number;
+            name: string;
+            /**
+             * Format: int32
+             * @description Order among events at the same spot.
+             */
+            order_at_anchor: number;
+            /**
+             * Format: int32
+             * @description Issues in the event list.
+             */
+            total: number;
+        };
+        ProposedPartLink: {
+            already_linked: boolean;
+            direction: components["schemas"]["PartDirection"];
+            list_id: string;
+            name: string;
         };
         ProposedRange: {
             /** Format: int32 */
@@ -17222,6 +17338,14 @@ export interface components {
         UnpinReq: {
             /** Format: uuid */
             page_id?: string | null;
+        };
+        UnplacedRunView: {
+            /** @description The entry the run follows; `None` = before the first entry. */
+            after_label?: string | null;
+            first_label: string;
+            /** Format: int32 */
+            issues: number;
+            last_label: string;
         };
         /** @description The release calendar as the list pass left it. */
         UpcomingCalendarStatusView: {
@@ -25291,6 +25415,94 @@ export interface operations {
             };
             /** @description validation */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cbl_links_derive_preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DerivePreview"];
+                };
+            };
+            /** @description list not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description GitHub rate-limited the catalog */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the catalog could not be read */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cbl_links_derive_apply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplyDeriveReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyDeriveResp"];
+                };
+            };
+            /** @description list not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description validation */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description import quota exceeded */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

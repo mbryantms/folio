@@ -23,6 +23,7 @@ pub mod auth_config;
 pub mod background_work;
 pub mod bookmarks_feed;
 pub mod cbl_breaks;
+pub mod cbl_derive;
 pub mod cbl_links;
 pub mod cbl_lists;
 pub mod characters;
