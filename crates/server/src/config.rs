@@ -540,6 +540,18 @@ pub struct Config {
     /// 30–10080. DB key `integrations.mylar.stale_after_minutes`; live.
     #[serde(default = "default_mylar_stale_after_minutes")]
     pub integrations_mylar_stale_after_minutes: u32,
+
+    /// Standing cap on server-fetched (`url` / `catalog`) reading lists a
+    /// non-admin may own ([`crate::cbl::quota::check_remote_list_cap`]).
+    /// Default [`crate::cbl::quota::DEFAULT_MAX_REMOTE_LISTS_PER_USER`]
+    /// (500), range 1–10000. DB key `cbl.max_remote_lists_per_user`; live
+    /// (read on every import).
+    #[serde(default = "default_cbl_max_remote_lists_per_user")]
+    pub cbl_max_remote_lists_per_user: u32,
+}
+
+fn default_cbl_max_remote_lists_per_user() -> u32 {
+    crate::cbl::quota::DEFAULT_MAX_REMOTE_LISTS_PER_USER
 }
 
 fn default_upcoming_weeks_ahead() -> u32 {
@@ -651,6 +663,10 @@ impl std::fmt::Debug for Config {
             .field(
                 "integrations_mylar_stale_after_minutes",
                 &self.integrations_mylar_stale_after_minutes,
+            )
+            .field(
+                "cbl_max_remote_lists_per_user",
+                &self.cbl_max_remote_lists_per_user,
             )
             .field("scan_worker_count", &self.scan_worker_count)
             .field("scan_folder_concurrency", &self.scan_folder_concurrency)
@@ -1245,6 +1261,12 @@ impl Config {
             self.integrations_mylar_stale_after_minutes,
             30,
             7 * 24 * 60,
+        )?;
+        check_range(
+            "cbl_max_remote_lists_per_user",
+            self.cbl_max_remote_lists_per_user,
+            crate::cbl::quota::MIN_MAX_REMOTE_LISTS_PER_USER,
+            crate::cbl::quota::MAX_MAX_REMOTE_LISTS_PER_USER,
         )?;
         Ok(())
     }
@@ -1879,6 +1901,12 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             }
             None => bad_type(&row.key, "uint", &row.value),
         },
+        // ──── linked-reading-lists PR 0: reading-list cap ────
+        // Unclamped so `Config::validate` rejects an out-of-range PATCH.
+        "cbl.max_remote_lists_per_user" => match row.value.as_u64() {
+            Some(n) => cfg.cbl_max_remote_lists_per_user = u32::try_from(n).unwrap_or(u32::MAX),
+            None => bad_type(&row.key, "uint", &row.value),
+        },
         "metadata.auto_apply_threshold" => match row.value.as_u64() {
             Some(n) => cfg.metadata_auto_apply_threshold = n.min(100) as u32,
             None => bad_type(&row.key, "uint", &row.value),
@@ -2269,6 +2297,7 @@ mod tests {
             upcoming_weeks_ahead: default_upcoming_weeks_ahead(),
             integrations_mylar_enabled: false,
             integrations_mylar_stale_after_minutes: default_mylar_stale_after_minutes(),
+            cbl_max_remote_lists_per_user: default_cbl_max_remote_lists_per_user(),
         }
     }
 
