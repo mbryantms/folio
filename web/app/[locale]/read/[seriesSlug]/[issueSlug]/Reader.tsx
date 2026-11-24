@@ -42,7 +42,6 @@ import {
   type FinishScope,
   seriesFinishProgress,
 } from "@/lib/reader/finish-progress";
-import { ProgressUnavailableBanner } from "./ProgressUnavailableBanner";
 import { useReaderPrefetch } from "@/lib/reader/use-prefetch";
 import { useSeededPage } from "@/lib/reader/use-seeded-page";
 import { pageBytesSrcSet, withContentVersion } from "@/lib/urls";
@@ -125,6 +124,7 @@ import {
   MarkerOverlay,
   PageStrip,
   PageTextPanel,
+  ProgressUnavailableBanner,
   ReaderChrome,
   ReaderFirstRunOverlay,
   WebtoonEndFooter,
