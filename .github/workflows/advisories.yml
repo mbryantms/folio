@@ -51,7 +51,7 @@ jobs:
       # the Docker-based cargo-deny-action: its image is built from
       # `rust:alpine` on docker.io at job start, and Docker Hub's anonymous
       # pull limit on the shared runner IPs 429'd CI on 2026-10-09.
-      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: cargo-deny@0.20.2,cargo-audit
       # `--format json` so the stale-ignore step below can read the
