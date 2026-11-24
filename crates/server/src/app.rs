@@ -203,6 +203,7 @@ pub fn build_openapi_router_with(timeouts: RouteTimeouts) -> OpenApiRouter<AppSt
         .merge(api::saved_views::routes())
         .merge(api::sidebar_layout::routes())
         .merge(api::cbl_lists::routes())
+        .merge(api::cbl_links::routes())
         .merge(api::collections::routes())
         .merge(api::pages::routes())
         .merge(api::view_groups::routes())

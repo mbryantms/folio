@@ -357,6 +357,11 @@ pub struct CblEntryListView {
     /// Count of all entries matching the filter. Returned ONLY on the
     /// first page (cursor absent) — keeps subsequent fetches cheap.
     pub total: Option<i64>,
+    /// Opaque cursor for the page before this one, set when the page was
+    /// reached by `from_position` or `before` and rows precede it. Pass it
+    /// back as `before`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prev_cursor: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -483,6 +488,13 @@ pub struct EntriesQuery {
     pub status: Option<String>,
     #[serde(default)]
     pub q: Option<String>,
+    /// Start the page at this 0-based position instead of the top (a
+    /// chapter jump). The response's `prev_cursor` then walks back up.
+    #[serde(default)]
+    pub from_position: Option<i32>,
+    /// Opaque cursor from `prev_cursor`: the page of rows just *before* it.
+    #[serde(default)]
+    pub before: Option<String>,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -970,7 +982,7 @@ async fn stats_for(
 
 /// Read access: the caller's own lists plus shared (`owner_user_id IS
 /// NULL`) lists, the same visibility set as [`list`].
-async fn ensure_owner(
+pub(crate) async fn ensure_owner(
     list: &cbl_list::Model,
     user: &CurrentUser,
 ) -> Result<(), axum::response::Response> {
@@ -987,7 +999,7 @@ async fn ensure_owner(
 /// list. Shared lists are visible to every user, so letting any reader
 /// rename, re-match, refresh or delete one would let one account change
 /// everybody's reading list (Start Here M2).
-async fn ensure_can_manage(
+pub(crate) async fn ensure_can_manage(
     list: &cbl_list::Model,
     user: &CurrentUser,
 ) -> Result<(), axum::response::Response> {
@@ -1017,7 +1029,7 @@ fn is_admin_write_to_shared(list: &cbl_list::Model, user: &CurrentUser) -> bool 
 /// Audit row for an admin write to a list they do not own (see
 /// [`is_admin_write_to_shared`]); no-op for an owner's own list. `detail`
 /// is merged into the payload next to the list's owner and name.
-async fn audit_admin_list_write(
+pub(crate) async fn audit_admin_list_write(
     app: &AppState,
     ctx: &RequestContext,
     user: &CurrentUser,
@@ -1045,7 +1057,7 @@ async fn audit_admin_list_write(
     );
 }
 
-async fn fetch_list(
+pub(crate) async fn fetch_list(
     db: &sea_orm::DatabaseConnection,
     id: Uuid,
 ) -> Result<cbl_list::Model, axum::response::Response> {
@@ -1216,6 +1228,8 @@ fn parse_entry_cursor(s: &str) -> Result<(i32, Uuid), ()> {
         ("limit" = Option<u64>, Query,),
         ("status" = Option<String>, Query, description = "Comma-separated subset of matched,ambiguous,missing,manual"),
         ("q" = Option<String>, Query, description = "Case-insensitive search over series name, issue number, volume, year, and the matched issue's title; whitespace splits into AND-ed terms"),
+        ("from_position" = Option<i32>, Query, description = "Start at this 0-based position (chapter jump); not with `cursor` or `before`"),
+        ("before" = Option<String>, Query, description = "A `prev_cursor`: return the page just before it"),
     ),
     responses(
         (status = 200, body = CblEntryListView),
@@ -1252,10 +1266,27 @@ pub async fn entries(
     // caller's view of the list: a match they cannot open reads as missing.
     let acl = crate::library::access::for_user(&app, &user).await;
 
-    let mut sel = cbl_entry::Entity::find()
-        .filter(cbl_entry::Column::CblListId.eq(id))
-        .order_by_asc(cbl_entry::Column::Position)
-        .order_by_asc(cbl_entry::Column::Id);
+    let seeks = [
+        q.cursor.is_some(),
+        q.before.is_some(),
+        q.from_position.is_some(),
+    ];
+    if seeks.iter().filter(|b| **b).count() > 1 {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            "use one of cursor, before or from_position",
+        );
+    }
+    if q.from_position.is_some_and(|p| p < 0) {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            "from_position must be 0 or more",
+        );
+    }
+
+    let mut sel = cbl_entry::Entity::find().filter(cbl_entry::Column::CblListId.eq(id));
 
     if let Some(status_str) = q.status.as_deref() {
         let parts = match parse_status_filter(status_str) {
@@ -1274,6 +1305,9 @@ pub async fn entries(
     if let Some(text) = q_text {
         sel = apply_cbl_entry_search(sel, text, &acl);
     }
+    // The filter set without any seek: what `before` / `from_position`
+    // ask "is there anything earlier?" of.
+    let filtered = sel.clone();
 
     if let Some(cursor) = q.cursor.as_deref() {
         let (after_pos, after_id) = match parse_entry_cursor(cursor) {
@@ -1294,25 +1328,92 @@ pub async fn entries(
         );
     }
 
+    if let Some(pos) = q.from_position {
+        sel = sel.filter(cbl_entry::Column::Position.gte(pos));
+    }
+
     use sea_orm::QuerySelect;
-    // Fetch limit+1 to detect "more pages" without a separate count.
-    let rows = match sel.limit(limit + 1).all(&app.db).await {
-        Ok(r) => r,
-        Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
-    };
-    let has_more = rows.len() as u64 > limit;
-    let page_rows: Vec<_> = rows.into_iter().take(limit as usize).collect();
-    let next_cursor = if has_more {
-        page_rows
-            .last()
-            .map(|e| encode_entry_cursor(e.position, &e.id.to_string()))
+    let cursor_of = |e: &cbl_entry::Model| encode_entry_cursor(e.position, &e.id.to_string());
+    let (page_rows, next_cursor, prev_cursor) = if let Some(before) = q.before.as_deref() {
+        // Walk backwards: rows sorting strictly before the cursor, newest
+        // first, then flipped back into position order.
+        let (pos, eid) = match parse_entry_cursor(before) {
+            Ok(c) => c,
+            Err(_) => return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor"),
+        };
+        let rows = match sel
+            .filter(
+                sea_orm::Condition::any()
+                    .add(cbl_entry::Column::Position.lt(pos))
+                    .add(
+                        sea_orm::Condition::all()
+                            .add(cbl_entry::Column::Position.eq(pos))
+                            .add(cbl_entry::Column::Id.lt(eid)),
+                    ),
+            )
+            .order_by_desc(cbl_entry::Column::Position)
+            .order_by_desc(cbl_entry::Column::Id)
+            .limit(limit + 1)
+            .all(&app.db)
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
+        };
+        let has_prev = rows.len() as u64 > limit;
+        let mut page: Vec<_> = rows.into_iter().take(limit as usize).collect();
+        page.reverse();
+        // The page ends right before rows the caller already has.
+        let next = page.last().map(cursor_of);
+        let prev = if has_prev {
+            page.first().map(cursor_of)
+        } else {
+            None
+        };
+        (page, next, prev)
     } else {
-        None
+        // Fetch limit+1 to detect "more pages" without a separate count.
+        let rows = match sel
+            .order_by_asc(cbl_entry::Column::Position)
+            .order_by_asc(cbl_entry::Column::Id)
+            .limit(limit + 1)
+            .all(&app.db)
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
+        };
+        let has_more = rows.len() as u64 > limit;
+        let page: Vec<_> = rows.into_iter().take(limit as usize).collect();
+        let next = if has_more {
+            page.last().map(cursor_of)
+        } else {
+            None
+        };
+        // A chapter jump: say whether anything precedes the first row.
+        let prev = match (q.from_position, page.first()) {
+            (Some(pos), Some(first)) if pos > 0 => {
+                match filtered
+                    .filter(cbl_entry::Column::Position.lt(first.position))
+                    .one(&app.db)
+                    .await
+                {
+                    Ok(Some(_)) => Some(cursor_of(first)),
+                    Ok(None) => None,
+                    Err(_) => {
+                        return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+                    }
+                }
+            }
+            _ => None,
+        };
+        (page, next, prev)
     };
 
     // First-page-only total: a COUNT over the filter set. Skipping
-    // this on subsequent pages keeps "scroll to the end" cheap.
-    let total = if q.cursor.is_none() {
+    // this on subsequent pages keeps "scroll to the end" cheap. A
+    // chapter jump is a first page too.
+    let total = if q.cursor.is_none() && q.before.is_none() {
         let mut count_sel = cbl_entry::Entity::find().filter(cbl_entry::Column::CblListId.eq(id));
         if let Some(status_str) = q.status.as_deref() {
             // Already validated above; re-parsing is fine.
@@ -1455,6 +1556,7 @@ pub async fn entries(
         items,
         next_cursor,
         total,
+        prev_cursor,
     })
     .into_response()
 }

@@ -3354,6 +3354,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/cbl-lists/{id}/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["cbl_links_list"];
+        put?: never;
+        post: operations["cbl_links_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/cbl-lists/{id}/links/{link_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["cbl_links_delete"];
+        options?: never;
+        head?: never;
+        patch: operations["cbl_links_update"];
+        trace?: never;
+    };
+    "/api/me/cbl-lists/{id}/links/{link_id}/skip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["cbl_links_skip"];
+        post?: never;
+        delete: operations["cbl_links_unskip"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/cbl-lists/{id}/progress/through": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["cbl_links_mark_read_through"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/cbl-lists/{id}/refresh": {
         parameters: {
             query?: never;
@@ -6932,6 +6996,8 @@ export interface components {
             /** @description Analyses newly queued. */
             queued: number;
         };
+        /** @enum {string} */
+        AnchorStatus: "placed" | "lost";
         AppPasswordCreatedView: {
             created_at: string;
             /** Format: uuid */
@@ -8101,6 +8167,12 @@ export interface components {
              */
             next_cursor?: string | null;
             /**
+             * @description Opaque cursor for the page before this one, set when the page was
+             *     reached by `from_position` or `before` and rows precede it. Pass it
+             *     back as `before`.
+             */
+            prev_cursor?: string | null;
+            /**
              * Format: int64
              * @description Count of all entries matching the filter. Returned ONLY on the
              *     first page (cursor absent) — keeps subsequent fetches cheap.
@@ -9049,6 +9121,17 @@ export interface components {
              *     Set it here so the `scan_now` scan already benefits. Default false.
              */
             trust_fingerprint_on_first_import?: boolean;
+        };
+        CreateLinkReq: {
+            /**
+             * Format: uuid
+             * @description Required for `event` (the entry it is read after); refused for
+             *     `continues`.
+             */
+            after_entry_id?: string | null;
+            /** Format: uuid */
+            child_list_id: string;
+            kind: components["schemas"]["LinkKind"];
         };
         /**
          * @description Create a marker. Field limits are checked first (422 with per-field
@@ -12029,6 +12112,18 @@ export interface components {
             scoped_scans: number;
             slug: string;
         };
+        /** @description Where an event sits in its parent list. */
+        LinkAnchorView: {
+            number?: string | null;
+            /**
+             * Format: int32
+             * @description 0-based position of the issue it is read after (the last known one
+             *     when `status = lost`).
+             */
+            position?: number | null;
+            series?: string | null;
+            status: components["schemas"]["AnchorStatus"];
+        };
         /** @description A provider series the admin may confirm (medium-confidence search hit). */
         LinkCandidate: {
             external_id: string;
@@ -12051,11 +12146,21 @@ export interface components {
             /** Format: int32 */
             year?: number | null;
         };
+        /** @description Enough of an issue to open it in the reader. */
+        LinkIssueRefView: {
+            issue_id: string;
+            issue_slug: string;
+            series_slug: string;
+        };
+        /** @enum {string} */
+        LinkKind: "event" | "continues";
         /**
          * @description How a provider series id was found.
          * @enum {string}
          */
         LinkMethod: "linked" | "applied" | "bridge" | "search";
+        /** @enum {string} */
+        LinkPlacement: "auto_twin" | "auto_chain" | "manual";
         ListResp: {
             entries: components["schemas"]["DirEntry"][];
             /**
@@ -12312,6 +12417,27 @@ export interface components {
         };
         ManualMatchReq: {
             issue_id: string;
+        };
+        MarkThroughReq: {
+            /** @description Count only; write nothing. */
+            dry_run?: boolean;
+            /**
+             * Format: int32
+             * @description 0-based position: everything at or before it is marked read.
+             */
+            position: number;
+        };
+        MarkThroughResp: {
+            /**
+             * Format: int32
+             * @description Writes that failed.
+             */
+            failed: number;
+            /**
+             * Format: int32
+             * @description Issues marked read (or that would be, on a dry run).
+             */
+            marked: number;
         };
         /**
          * @description Cheap `SELECT COUNT(*)` over the caller's markers. Drives the
@@ -14300,6 +14426,88 @@ export interface components {
          * @enum {string}
          */
         ReadingDirection: "ltr" | "rtl";
+        /** @description A stretch of the parent list between two event anchors. */
+        ReadingListChapterView: {
+            /**
+             * Format: int32
+             * @description 0-based, inclusive.
+             */
+            end_position: number;
+            /**
+             * @description The events read right after this chapter, in order (empty for the
+             *     last chapter).
+             */
+            event_link_ids: string[];
+            /** Format: int64 */
+            in_library: number;
+            /** Format: int32 */
+            index: number;
+            label: string;
+            /** Format: int64 */
+            read: number;
+            /**
+             * Format: int32
+             * @description 0-based, inclusive.
+             */
+            start_position: number;
+            /** Format: int64 */
+            total: number;
+        };
+        ReadingListLinkView: {
+            anchor?: components["schemas"]["LinkAnchorView"] | null;
+            child_list_id: string;
+            child_name: string;
+            /**
+             * @description The caller's saved view of the linked list (their own, else a
+             *     shared one), for opening it and reading in its order. `None` when
+             *     they have no view of it.
+             */
+            child_view_id?: string | null;
+            first_unread?: components["schemas"]["LinkIssueRefView"] | null;
+            id: string;
+            /**
+             * Format: int64
+             * @description Entries the caller has in their library.
+             */
+            in_library: number;
+            kind: components["schemas"]["LinkKind"];
+            placement: components["schemas"]["LinkPlacement"];
+            /**
+             * Format: int64
+             * @description Of those, the ones the caller has finished.
+             */
+            read: number;
+            /** @description The caller chose to skip this event. */
+            skipped: boolean;
+            /**
+             * Format: int32
+             * @description Order among several events at the same anchor.
+             */
+            sort_within_anchor: number;
+            /**
+             * Format: int64
+             * @description Entries in the linked list.
+             */
+            total: number;
+        };
+        ReadingListLinksView: {
+            /**
+             * @description The parent list split at its event anchors. One chapter covering
+             *     the whole list when it has no events; empty when it has no entries.
+             */
+            chapters: components["schemas"]["ReadingListChapterView"][];
+            continues?: components["schemas"]["ReadingListLinkView"] | null;
+            /**
+             * @description Event links in reading order (anchor position, then
+             *     `sort_within_anchor`).
+             */
+            events: components["schemas"]["ReadingListLinkView"][];
+            /**
+             * Format: int64
+             * @description How many lists the caller can see link to this one.
+             */
+            linked_from: number;
+        };
         ReadingLogEventView: {
             /**
              * @description Synthetic stable id: `{kind-prefix}:{underlying-id}`. Same id
@@ -17352,6 +17560,15 @@ export interface components {
              *     accepted but has no effect until then.
              */
             trust_fingerprint_on_first_import?: boolean | null;
+        };
+        UpdateLinkReq: {
+            /**
+             * Format: uuid
+             * @description Move the event after this entry.
+             */
+            after_entry_id?: string | null;
+            /** Format: int32 */
+            sort_within_anchor?: number | null;
         };
         UpdateMarkerReq: {
             /** @description Sending `null` clears the field; omitting leaves it unchanged. */
@@ -24670,6 +24887,10 @@ export interface operations {
                 status?: string;
                 /** @description Case-insensitive search over series name, issue number, volume, year, and the matched issue's title; whitespace splits into AND-ed terms */
                 q?: string;
+                /** @description Start at this 0-based position (chapter jump); not with `cursor` or `before` */
+                from_position?: number;
+                /** @description A `prev_cursor`: return the page just before it */
+                before?: string;
             };
             header?: never;
             path: {
@@ -24795,6 +25016,254 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["IssueListView"];
                 };
+            };
+        };
+    };
+    cbl_links_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadingListLinksView"];
+                };
+            };
+            /** @description list not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cbl_links_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateLinkReq"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadingListLinksView"];
+                };
+            };
+            /** @description shared list, caller is not an admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description list not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description already linked, or the list already has a next part */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description validation */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cbl_links_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                link_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description list or link not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cbl_links_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                link_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateLinkReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadingListLinksView"];
+                };
+            };
+            /** @description list or link not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description validation */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cbl_links_skip: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                link_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description list or link not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description not an event */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cbl_links_unskip: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                link_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description list or link not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cbl_links_mark_read_through: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MarkThroughReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MarkThroughResp"];
+                };
+            };
+            /** @description list not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description validation */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

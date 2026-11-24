@@ -7124,6 +7124,25 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "from_position",
+            "in": "query",
+            "description": "Start at this 0-based position (chapter jump); not with `cursor` or `before`",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "A `prev_cursor`: return the page just before it",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -7256,6 +7275,259 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/me/cbl-lists/{id}/links": {
+      "get": {
+        "operationId": "cbl_links_list",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadingListLinksView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "list not found"
+          }
+        }
+      },
+      "post": {
+        "operationId": "cbl_links_create",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLinkReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadingListLinksView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "shared list, caller is not an admin"
+          },
+          "404": {
+            "description": "list not found"
+          },
+          "409": {
+            "description": "already linked, or the list already has a next part"
+          },
+          "422": {
+            "description": "validation"
+          }
+        }
+      }
+    },
+    "/api/me/cbl-lists/{id}/links/{link_id}": {
+      "delete": {
+        "operationId": "cbl_links_delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "link_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "404": {
+            "description": "list or link not found"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "cbl_links_update",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "link_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLinkReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadingListLinksView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "list or link not found"
+          },
+          "422": {
+            "description": "validation"
+          }
+        }
+      }
+    },
+    "/api/me/cbl-lists/{id}/links/{link_id}/skip": {
+      "put": {
+        "operationId": "cbl_links_skip",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "link_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "404": {
+            "description": "list or link not found"
+          },
+          "422": {
+            "description": "not an event"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "cbl_links_unskip",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "link_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "404": {
+            "description": "list or link not found"
+          }
+        }
+      }
+    },
+    "/api/me/cbl-lists/{id}/progress/through": {
+      "post": {
+        "operationId": "cbl_links_mark_read_through",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkThroughReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarkThroughResp"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "list not found"
+          },
+          "422": {
+            "description": "validation"
           }
         }
       }
@@ -16044,6 +16316,13 @@
           }
         }
       },
+      "AnchorStatus": {
+        "type": "string",
+        "enum": [
+          "placed",
+          "lost"
+        ]
+      },
       "AppPasswordCreatedView": {
         "type": "object",
         "required": [
@@ -18517,6 +18796,13 @@
             ],
             "description": "Opaque cursor for the next page. `None` when this page is the\nlast one for the given filter set."
           },
+          "prev_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque cursor for the page before this one, set when the page was\nreached by `from_position` or `before` and rows precede it. Pass it\nback as `before`."
+          },
           "total": {
             "type": [
               "integer",
@@ -20673,6 +20959,30 @@
           "trust_fingerprint_on_first_import": {
             "type": "boolean",
             "description": "First-import lazy-hash mode (WP-3.2): the initial scan ingests on\nsize+mtime and defers the full-file BLAKE3 to a background job.\nSet it here so the `scan_now` scan already benefits. Default false."
+          }
+        }
+      },
+      "CreateLinkReq": {
+        "type": "object",
+        "required": [
+          "child_list_id",
+          "kind"
+        ],
+        "properties": {
+          "after_entry_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Required for `event` (the entry it is read after); refused for\n`continues`."
+          },
+          "child_list_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/LinkKind"
           }
         }
       },
@@ -28029,6 +28339,38 @@
           }
         }
       },
+      "LinkAnchorView": {
+        "type": "object",
+        "description": "Where an event sits in its parent list.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "number": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "0-based position of the issue it is read after (the last known one\nwhen `status = lost`)."
+          },
+          "series": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/AnchorStatus"
+          }
+        }
+      },
       "LinkCandidate": {
         "type": "object",
         "description": "A provider series the admin may confirm (medium-confidence search hit).",
@@ -28083,6 +28425,33 @@
           }
         }
       },
+      "LinkIssueRefView": {
+        "type": "object",
+        "description": "Enough of an issue to open it in the reader.",
+        "required": [
+          "issue_id",
+          "issue_slug",
+          "series_slug"
+        ],
+        "properties": {
+          "issue_id": {
+            "type": "string"
+          },
+          "issue_slug": {
+            "type": "string"
+          },
+          "series_slug": {
+            "type": "string"
+          }
+        }
+      },
+      "LinkKind": {
+        "type": "string",
+        "enum": [
+          "event",
+          "continues"
+        ]
+      },
       "LinkMethod": {
         "type": "string",
         "description": "How a provider series id was found.",
@@ -28091,6 +28460,14 @@
           "applied",
           "bridge",
           "search"
+        ]
+      },
+      "LinkPlacement": {
+        "type": "string",
+        "enum": [
+          "auto_twin",
+          "auto_chain",
+          "manual"
         ]
       },
       "ListResp": {
@@ -28691,6 +29068,44 @@
         "properties": {
           "issue_id": {
             "type": "string"
+          }
+        }
+      },
+      "MarkThroughReq": {
+        "type": "object",
+        "required": [
+          "position"
+        ],
+        "properties": {
+          "dry_run": {
+            "type": "boolean",
+            "description": "Count only; write nothing."
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32",
+            "description": "0-based position: everything at or before it is marked read."
+          }
+        }
+      },
+      "MarkThroughResp": {
+        "type": "object",
+        "required": [
+          "marked",
+          "failed"
+        ],
+        "properties": {
+          "failed": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Writes that failed.",
+            "minimum": 0
+          },
+          "marked": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Issues marked read (or that would be, on a dry run).",
+            "minimum": 0
           }
         }
       },
@@ -33058,6 +33473,183 @@
           "ltr",
           "rtl"
         ]
+      },
+      "ReadingListChapterView": {
+        "type": "object",
+        "description": "A stretch of the parent list between two event anchors.",
+        "required": [
+          "index",
+          "start_position",
+          "end_position",
+          "label",
+          "event_link_ids",
+          "total",
+          "in_library",
+          "read"
+        ],
+        "properties": {
+          "end_position": {
+            "type": "integer",
+            "format": "int32",
+            "description": "0-based, inclusive."
+          },
+          "event_link_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The events read right after this chapter, in order (empty for the\nlast chapter)."
+          },
+          "in_library": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "index": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "label": {
+            "type": "string"
+          },
+          "read": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "start_position": {
+            "type": "integer",
+            "format": "int32",
+            "description": "0-based, inclusive."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ReadingListLinkView": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "placement",
+          "child_list_id",
+          "child_name",
+          "sort_within_anchor",
+          "total",
+          "in_library",
+          "read",
+          "skipped"
+        ],
+        "properties": {
+          "anchor": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LinkAnchorView",
+                "description": "`None` for a `continues` link."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "child_list_id": {
+            "type": "string"
+          },
+          "child_name": {
+            "type": "string"
+          },
+          "child_view_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The caller's saved view of the linked list (their own, else a\nshared one), for opening it and reading in its order. `None` when\nthey have no view of it."
+          },
+          "first_unread": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LinkIssueRefView",
+                "description": "The first unfinished issue the caller can open, in list order."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "in_library": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Entries the caller has in their library."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/LinkKind"
+          },
+          "placement": {
+            "$ref": "#/components/schemas/LinkPlacement"
+          },
+          "read": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Of those, the ones the caller has finished."
+          },
+          "skipped": {
+            "type": "boolean",
+            "description": "The caller chose to skip this event."
+          },
+          "sort_within_anchor": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Order among several events at the same anchor."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Entries in the linked list."
+          }
+        }
+      },
+      "ReadingListLinksView": {
+        "type": "object",
+        "required": [
+          "events",
+          "chapters",
+          "linked_from"
+        ],
+        "properties": {
+          "chapters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReadingListChapterView"
+            },
+            "description": "The parent list split at its event anchors. One chapter covering\nthe whole list when it has no events; empty when it has no entries."
+          },
+          "continues": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReadingListLinkView",
+                "description": "The next part, if linked."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReadingListLinkView"
+            },
+            "description": "Event links in reading order (anchor position, then\n`sort_within_anchor`)."
+          },
+          "linked_from": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many lists the caller can see link to this one."
+          }
+        }
       },
       "ReadingLogEventView": {
         "type": "object",
@@ -40114,6 +40706,26 @@
               "null"
             ],
             "description": "First-import lazy-hash mode (WP-3.2). Only affects scans while the\nlibrary has never completed a full scan; flipping it afterwards is\naccepted but has no effect until then."
+          }
+        }
+      },
+      "UpdateLinkReq": {
+        "type": "object",
+        "properties": {
+          "after_entry_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Move the event after this entry."
+          },
+          "sort_within_anchor": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
           }
         }
       },
