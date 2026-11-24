@@ -40,6 +40,7 @@ import { Progress } from "@/components/ui/progress";
 import { useCblListEntriesInfinite } from "@/lib/api/queries";
 import type { ReadingListLinkView } from "@/lib/api/types";
 import { readerUrl } from "@/lib/urls";
+import { statusToneText } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
 
 /** How many of the event's covers the band loads (stack + peek row). */
@@ -131,7 +132,7 @@ export function EventBand({
       >
         {state === "finished" ? (
           <CircleCheck
-            className="size-4 shrink-0 text-emerald-500"
+            className={cn("size-4 shrink-0", statusToneText("success"))}
             aria-hidden
           />
         ) : (
@@ -207,7 +208,10 @@ function EventBandFull({
         className="cover-stack-host border-border bg-card rounded-lg border p-3 sm:p-4"
       >
         <div className="text-muted-foreground mb-2 flex items-center gap-2 text-xs">
-          <Zap className="size-3.5 text-amber-500" aria-hidden />
+          <Zap
+            className={cn("size-3.5", statusToneText("warning"))}
+            aria-hidden
+          />
           <span className="truncate">
             Event{afterLabel ? ` · read after ${afterLabel}` : ""}
           </span>

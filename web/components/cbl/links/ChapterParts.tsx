@@ -26,6 +26,7 @@ import type {
   ReadingListChapterView,
   ReadingListLinkView,
 } from "@/lib/api/types";
+import { statusToneDot, statusToneText } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
 
 /** A chapter the reader has finished: everything they own in it is read. */
@@ -80,7 +81,10 @@ export function ChapterHeader({
       )}
       <span className="text-muted-foreground ml-auto flex shrink-0 items-center gap-1 text-xs">
         {done && (
-          <CircleCheck className="size-3.5 text-emerald-500" aria-hidden />
+          <CircleCheck
+            className={cn("size-3.5", statusToneText("success"))}
+            aria-hidden
+          />
         )}
         {chapter.read} / {chapter.total} read
       </span>
@@ -117,7 +121,7 @@ function RailBody({
                   className={cn(
                     "size-2 shrink-0 rounded-full",
                     done
-                      ? "bg-emerald-500"
+                      ? statusToneDot("success")
                       : c.read > 0
                         ? "bg-primary"
                         : "border-muted-foreground border",
@@ -137,7 +141,10 @@ function RailBody({
                     if (!ev) return null;
                     return (
                       <li key={id} className="flex items-center gap-1.5">
-                        <Zap className="size-3 text-amber-500" aria-hidden />
+                        <Zap
+                          className={cn("size-3", statusToneText("warning"))}
+                          aria-hidden
+                        />
                         <span className="truncate">{ev.child_name}</span>
                         <span className="ml-auto shrink-0">
                           {ev.skipped ? "skipped" : `${ev.read}/${ev.total}`}
