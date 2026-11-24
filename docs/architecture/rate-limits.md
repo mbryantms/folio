@@ -132,7 +132,7 @@ It does not turn off any token bucket in the [Buckets](#buckets) table: those ar
 
 Verified against the code at `1c51a486` on 2026-11-10.
 
-Resource cap (not a rate): a non-admin user may own at most 50 server-fetched CBL lists (`source_kind` `url` or `catalog`) — each one is re-fetched by the hourly refresh sweep when it has a schedule. Over the cap, `POST /me/cbl-lists` returns `422 cbl.remote_list_limit`; uploads don't count.
+Resource cap (not a rate): a non-admin user may own at most `cbl.max_remote_lists_per_user` server-fetched CBL lists (default 500, admin-tunable on `/admin/server`, range 1–10000) (`source_kind` `url` or `catalog`) — each one is re-fetched by the hourly refresh sweep when it has a schedule. Over the cap, `POST /me/cbl-lists` returns `422 cbl.remote_list_limit`; uploads don't count.
 
 ## Metrics
 

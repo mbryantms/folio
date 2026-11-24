@@ -11,9 +11,11 @@
 //!    and every manual refresh (`refresh_one`, `refresh_all`). Redis-backed
 //!    (`INCR` + `EXPIRE` on first hit) so a restart can't reset it; denial is
 //!    `429 rate_limited` with `Retry-After` = the window's remaining TTL.
-//! 2. **Standing count** — at most [`MAX_REMOTE_LISTS_PER_USER`] lists that
-//!    the server fetches on the user's behalf (`source_kind` `url` or
-//!    `catalog`). That bounds the recurring-refresh amplification the rate
+//! 2. **Standing count** — at most `cbl.max_remote_lists_per_user` lists
+//!    (default [`DEFAULT_MAX_REMOTE_LISTS_PER_USER`], admin-tunable on
+//!    `/admin/server` within [`MIN_MAX_REMOTE_LISTS_PER_USER`]..=
+//!    [`MAX_MAX_REMOTE_LISTS_PER_USER`]) that the server fetches on the
+//!    user's behalf (`source_kind` `url` or `catalog`). That bounds the recurring-refresh amplification the rate
 //!    window alone can't (20/hour × weeks would otherwise accumulate
 //!    thousands of scheduled fetches). Denial is `422 cbl.remote_list_limit`.
 //!
@@ -69,8 +71,16 @@ use crate::state::AppState;
 pub const IMPORTS_PER_HOUR: i64 = 20;
 /// Length of the fixed quota window.
 pub const WINDOW_SECS: i64 = 60 * 60;
-/// Standing cap on server-fetched (`url` / `catalog`) lists per user.
-pub const MAX_REMOTE_LISTS_PER_USER: u64 = 50;
+/// Default standing cap on server-fetched (`url` / `catalog`) lists per
+/// user (`cbl.max_remote_lists_per_user`). Was a fixed 50 until linked
+/// reading lists: one CBRO master part brings ~6 event lists, and Marvel's
+/// CBRO set alone is ~200 lists.
+pub const DEFAULT_MAX_REMOTE_LISTS_PER_USER: u32 = 500;
+/// Lowest value `cbl.max_remote_lists_per_user` accepts.
+pub const MIN_MAX_REMOTE_LISTS_PER_USER: u32 = 1;
+/// Highest value `cbl.max_remote_lists_per_user` accepts. Bounds the
+/// recurring-refresh amplification the cap exists for.
+pub const MAX_MAX_REMOTE_LISTS_PER_USER: u32 = 10_000;
 
 /// Redis key of a user's hourly import window.
 pub fn window_key(user_id: uuid::Uuid) -> String {
@@ -251,11 +261,12 @@ pub async fn store_continuation(
 }
 
 /// Refuse a new server-fetched list once `user` already owns
-/// [`MAX_REMOTE_LISTS_PER_USER`] of them.
+/// `cbl.max_remote_lists_per_user` of them (read live from the config).
 pub async fn check_remote_list_cap(app: &AppState, user: &CurrentUser) -> Result<(), Response> {
     if is_exempt(user) {
         return Ok(());
     }
+    let limit = u64::from(app.cfg().cbl_max_remote_lists_per_user);
     let count = match cbl_list::Entity::find()
         .filter(cbl_list::Column::OwnerUserId.eq(user.id))
         .filter(cbl_list::Column::SourceKind.is_in(["url", "catalog"]))
@@ -272,13 +283,13 @@ pub async fn check_remote_list_cap(app: &AppState, user: &CurrentUser) -> Result
             ));
         }
     };
-    if count >= MAX_REMOTE_LISTS_PER_USER {
+    if count >= limit {
         return Err(crate::api::error(
             StatusCode::UNPROCESSABLE_ENTITY,
             "cbl.remote_list_limit",
             &format!(
                 "you already have {count} URL/catalog reading lists (limit \
-                 {MAX_REMOTE_LISTS_PER_USER}); delete one or upload the file instead"
+                 {limit}); delete one or upload the file instead"
             ),
         ));
     }
