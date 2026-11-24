@@ -68,6 +68,7 @@ export {
   useSeries,
 } from "./queries-reader";
 import type {
+  ReadingListLinksView,
   HashBackfillView,
   SidecarReemitStatusView,
   ActivityKind,
@@ -388,6 +389,9 @@ export type CblEntriesFilters = {
   status?: string;
   limit?: number;
   q?: string;
+  /** Start at this 0-based position (a chapter) instead of the top.
+   *  Part of the cache key: a different start is a different walk. */
+  fromPosition?: number;
 };
 
 export type SavedViewListFilters = {
@@ -2167,16 +2171,44 @@ export function useCblListEntriesInfinite(
   if (filters.status) params.status = filters.status;
   if (filters.limit != null) params.limit = filters.limit;
   if (filters.q) params.q = filters.q;
+  // The first page of a chapter jump is `from:<position>`; every later
+  // page is the plain opaque cursor, so `cblEntriesNextPage` is unchanged.
+  const initial =
+    filters.fromPosition != null && filters.fromPosition > 0
+      ? `from:${filters.fromPosition}`
+      : undefined;
   return useInfiniteQuery({
     queryKey: queryKeys.cblListEntries(id, filters),
     enabled: !!id,
-    initialPageParam: undefined as string | undefined,
+    initialPageParam: initial as string | undefined,
     queryFn: ({ pageParam }) =>
       jsonFetch<CblEntryListView>(
         apiPath`/me/cbl-lists/${id}/entries` +
-          buildQuery({ ...params, cursor: pageParam }),
+          buildQuery({ ...params, ...cblEntriesPageQuery(pageParam) }),
       ),
     getNextPageParam: cblEntriesNextPage,
+  });
+}
+
+/** Query params for one entries page: the opening `from:<n>` of a
+ *  chapter jump, or an opaque `cursor`. Pure, for tests. */
+export function cblEntriesPageQuery(
+  pageParam: string | undefined,
+): Record<string, string | number | undefined> {
+  if (pageParam?.startsWith("from:")) {
+    return { from_position: Number(pageParam.slice(5)) };
+  }
+  return { cursor: pageParam };
+}
+
+/** A list's linked events, next part and chapters, with the caller's
+ *  progress on each. Bounded server-side (≤ 500 links), not paginated. */
+export function useCblListLinks(id: string) {
+  return useQuery({
+    queryKey: queryKeys.cblListLinks(id),
+    enabled: !!id,
+    queryFn: () =>
+      jsonFetch<ReadingListLinksView>(apiPath`/me/cbl-lists/${id}/links`),
   });
 }
 
