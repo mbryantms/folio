@@ -47,8 +47,10 @@ use crate::library::ignore::{IgnoreRules, is_recognized_archive_ext};
 use crate::state::AppState;
 use chrono::{DateTime, Utc};
 use entity::library;
-use notify_debouncer_full::notify::{self, EventKind, RecursiveMode};
-use notify_debouncer_full::{DebounceEventResult, RecommendedCache, new_debouncer_opt};
+use notify_debouncer_full::notify::{self, EventKind, EventKindMask, RecursiveMode};
+use notify_debouncer_full::{
+    Config as DebounceConfig, DebounceEventResult, RecommendedCache, new_debouncer_opt,
+};
 use sea_orm::EntityTrait;
 use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
@@ -708,14 +710,21 @@ pub async fn start_library_watcher(
         let setup = tokio::task::spawn_blocking(move || {
             // Never follow links below the root (the scanner does not index
             // anything behind one); the root's own path is resolved as-is.
+            // Access events are dropped by the event loop anyway, so the
+            // backend is not asked for them (`EventKindMask::CORE`).
+            let config = DebounceConfig::default()
+                .with_timeout(tick)
+                .with_notify_config(
+                    notify::Config::default()
+                        .with_follow_symlinks(false)
+                        .with_event_kinds(EventKindMask::CORE),
+                );
             let mut debouncer = new_debouncer_opt::<_, notify::RecommendedWatcher, _>(
-                tick,
-                None,
+                config,
                 move |res: DebounceEventResult| {
                     let _ = tx.send(res);
                 },
                 RecommendedCache::new(),
-                notify::Config::default().with_follow_symlinks(false),
             )?;
             debouncer.watch(&root_for_watch, RecursiveMode::Recursive)?;
             Ok::<_, notify::Error>(debouncer)
