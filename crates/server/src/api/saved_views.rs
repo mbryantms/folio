@@ -990,6 +990,63 @@ async fn create_inner(
     (StatusCode::CREATED, Json(to_view(&saved, None, Vec::new()))).into_response()
 }
 
+/// The caller's saved view of reading list `list` — their own first,
+/// else a shared one — creating a personal view (named after the list,
+/// years seeded like [`create_inner`]) when they have none. Returns the
+/// view id and whether it was created. The caller must already have
+/// checked that `user_id` may read the list (linked reading lists: an
+/// event band always opens its list, and the person who links an event
+/// gets its view).
+pub(crate) async fn ensure_cbl_view(
+    db: &sea_orm::DatabaseConnection,
+    user_id: Uuid,
+    list: &cbl_list::Model,
+) -> Result<(Uuid, bool), sea_orm::DbErr> {
+    let existing = saved_view::Entity::find()
+        .filter(saved_view::Column::Kind.eq(KIND_CBL))
+        .filter(saved_view::Column::CblListId.eq(list.id))
+        .filter(
+            sea_orm::Condition::any()
+                .add(saved_view::Column::UserId.eq(user_id))
+                .add(saved_view::Column::UserId.is_null()),
+        )
+        .all(db)
+        .await?;
+    if let Some(v) = existing
+        .iter()
+        .find(|v| v.user_id == Some(user_id))
+        .or_else(|| existing.first())
+    {
+        return Ok((v.id, false));
+    }
+    let (year_start, year_end) = cbl_year_range(db, list.id).await;
+    let now = Utc::now().fixed_offset();
+    let saved = saved_view::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        user_id: Set(Some(user_id)),
+        kind: Set(KIND_CBL),
+        name: Set(list.parsed_name.trim().to_owned()),
+        description: Set(None),
+        custom_year_start: Set(year_start),
+        custom_year_end: Set(year_end),
+        custom_tags: Set(Vec::new()),
+        match_mode: Set(None),
+        conditions: Set(None),
+        sort_field: Set(None),
+        sort_order: Set(None),
+        result_limit: Set(None),
+        cbl_list_id: Set(Some(list.id)),
+        system_key: Set(None),
+        auto_pin: Set(false),
+        created_at: Set(now),
+        updated_at: Set(now),
+        preserve_canonical_order: Set(false),
+    }
+    .insert(db)
+    .await?;
+    Ok((saved.id, true))
+}
+
 fn match_mode_str(m: MatchMode) -> String {
     match m {
         MatchMode::All => "all".to_owned(),

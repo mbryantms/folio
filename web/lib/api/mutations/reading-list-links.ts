@@ -14,6 +14,7 @@ import { queryKeys } from "../queries";
 import type {
   CreateBreakReq,
   CreateLinkReq,
+  ListViewRef,
   MarkThroughResp,
   ReadingListLinksView,
   UpdateBreakReq,
@@ -26,6 +27,12 @@ import {
   invalidateSeriesProgress,
 } from "./rails";
 
+/** A new saved view shows up in the reader's lists and sidebar. */
+function invalidateSavedViews(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ["saved-views"], exact: false });
+  qc.invalidateQueries({ queryKey: queryKeys.sidebarLayout });
+}
+
 function useInvalidateLinks(listId: string) {
   const qc = useQueryClient();
   return () => {
@@ -36,6 +43,7 @@ function useInvalidateLinks(listId: string) {
 /** Link a list into `listId` as an event (after an entry) or as its next
  *  part. */
 export function useCreateCblLink(listId: string) {
+  const qc = useQueryClient();
   const invalidate = useInvalidateLinks(listId);
   return useApiMutation<ReadingListLinksView, CreateLinkReq>(
     (body) => ({
@@ -46,7 +54,11 @@ export function useCreateCblLink(listId: string) {
     {
       successMessage: (_d, input) =>
         input.kind === "continues" ? "Next part linked" : "Event linked",
-      onSuccess: invalidate,
+      onSuccess: (_d, input) => {
+        invalidate();
+        // Linking an event gives the linker a saved view of it.
+        if (input.kind === "event") invalidateSavedViews(qc);
+      },
     },
   );
 }
@@ -131,6 +143,28 @@ export function useSkipCblLink(listId: string) {
       successMessage: (_d, input) =>
         input.skip ? "Event skipped" : "Event back in your reading",
       onSuccess: invalidate,
+    },
+  );
+}
+
+/** The caller's saved view of list `listId`, created when they have none
+ *  (an event band opening a list the reader hasn't saved). Refreshes the
+ *  parent's links view so the band picks up the id, and the reader's
+ *  saved views so the list appears among theirs. */
+export function useOpenCblListView(parentListId: string) {
+  const qc = useQueryClient();
+  return useApiMutation<ListViewRef, { listId: string }>(
+    ({ listId }) => ({
+      path: apiPath`/me/cbl-lists/${listId}/view`,
+      method: "POST",
+    }),
+    {
+      onSuccess: (data) => {
+        qc.invalidateQueries({
+          queryKey: queryKeys.cblListLinks(parentListId),
+        });
+        if (data?.created) invalidateSavedViews(qc);
+      },
     },
   );
 }

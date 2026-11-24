@@ -365,6 +365,7 @@ export type MarkThroughResp = Schemas["MarkThroughResp"];
 export type ReadingListBreakView = Schemas["ReadingListBreakView"];
 export type CreateBreakReq = Schemas["CreateBreakReq"];
 export type UpdateBreakReq = Schemas["UpdateBreakReq"];
+export type ListViewRef = Schemas["ListViewRef"];
 export type CblDetailView = Schemas["CblDetailView"];
 export type CreateCblListReq = Schemas["CreateCblListReq"];
 export type UpdateCblListReq = Schemas["UpdateCblListReq"];

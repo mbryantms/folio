@@ -7711,6 +7711,46 @@
         }
       }
     },
+    "/api/me/cbl-lists/{id}/view": {
+      "post": {
+        "operationId": "cbl_lists_open_view",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the caller's existing view",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListViewRef"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "a view was created for the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListViewRef"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "list not found"
+          }
+        }
+      }
+    },
     "/api/me/cbl-lists/{id}/window": {
       "get": {
         "summary": "`GET /me/cbl-lists/{id}/window` — slice of the CBL anchored on the\nuser's next unfinished matched entry. The window is `before` finished\nentries + the current entry + `after` upcoming entries. Used by the\nhome rail to give a \"where am I in this list\" view instead of always\nstarting from position 0.",
@@ -28633,6 +28673,23 @@
           "root": {
             "type": "string",
             "description": "Canonical absolute path of the configured library root. The\npicker uses this to know when \"up\" should be disabled."
+          }
+        }
+      },
+      "ListViewRef": {
+        "type": "object",
+        "description": "The caller's saved view of a reading list.",
+        "required": [
+          "view_id",
+          "created"
+        ],
+        "properties": {
+          "created": {
+            "type": "boolean",
+            "description": "The view was created by this call."
+          },
+          "view_id": {
+            "type": "string"
           }
         }
       },
