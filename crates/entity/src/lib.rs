@@ -66,6 +66,7 @@ pub mod progress_record;
 pub mod publisher;
 pub mod rail_dismissal;
 pub mod reading_list_link;
+pub mod reading_list_link_skip;
 pub mod reading_session;
 pub mod release_calendar_issue;
 pub mod release_calendar_series;
@@ -160,6 +161,7 @@ pub mod prelude {
     pub use super::publisher::Entity as Publisher;
     pub use super::rail_dismissal::Entity as RailDismissal;
     pub use super::reading_list_link::Entity as ReadingListLink;
+    pub use super::reading_list_link_skip::Entity as ReadingListLinkSkip;
     pub use super::reading_session::Entity as ReadingSession;
     pub use super::release_calendar_issue::Entity as ReleaseCalendarIssue;
     pub use super::release_calendar_series::Entity as ReleaseCalendarSeries;

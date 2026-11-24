@@ -166,6 +166,7 @@ mod m20271121_000001_upcoming_this_week_rail;
 mod m20271122_000001_release_calendar_cover_tone;
 mod m20271123_000001_issue_cover_tone;
 mod m20271124_000001_reading_list_links;
+mod m20271124_000002_reading_list_link_skips;
 
 /// The series-rating migration's frozen ladder and statement, exposed so
 /// the server's tests can check they agree with the runtime derivation.
@@ -347,6 +348,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20271122_000001_release_calendar_cover_tone::Migration),
             Box::new(m20271123_000001_issue_cover_tone::Migration),
             Box::new(m20271124_000001_reading_list_links::Migration),
+            Box::new(m20271124_000002_reading_list_link_skips::Migration),
         ]
     }
 }

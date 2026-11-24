@@ -175,6 +175,13 @@ pub enum Relation {
     Child,
 }
 
+impl Related<super::cbl_list::Entity> for Entity {
+    /// The parent list (the list that holds the link).
+    fn to() -> RelationDef {
+        Relation::Parent.def()
+    }
+}
+
 impl ActiveModelBehavior for ActiveModel {}
 
 #[cfg(test)]
