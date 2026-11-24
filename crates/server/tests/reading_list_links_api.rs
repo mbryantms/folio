@@ -20,7 +20,7 @@ use common::TestApp;
 use entity::{
     audit_log, cbl_entry, cbl_list,
     issue::ActiveModel as IssueAM,
-    library, progress_record,
+    library,
     series::{ActiveModel as SeriesAM, normalize_name},
 };
 use sea_orm::{ActiveModelTrait, ColumnTrait, Database, EntityTrait, QueryFilter, Set};
@@ -488,8 +488,13 @@ async fn event_and_next_part_round_trip_with_progress_and_chapters() {
         ),
         (Some(4), Some(4), Some(0))
     );
-    assert_eq!(ev["first_unread_issue_id"], issues[10].as_str());
+    assert_eq!(ev["first_unread"]["issue_id"], issues[10].as_str());
+    assert!(ev["first_unread"]["series_slug"].is_string());
     assert_eq!(ev["skipped"], false);
+    assert!(
+        ev["child_view_id"].is_null(),
+        "no saved view of the event list yet"
+    );
     let chapters = body["chapters"].as_array().unwrap();
     assert_eq!(chapters.len(), 2, "{chapters:#?}");
     assert_eq!(
@@ -592,7 +597,7 @@ async fn event_and_next_part_round_trip_with_progress_and_chapters() {
     let (_, body) = get_json(&app, &links_uri(master), &user).await;
     assert_eq!(body["events"][0]["read"], 2);
     assert_eq!(
-        body["events"][0]["first_unread_issue_id"],
+        body["events"][0]["first_unread"]["issue_id"],
         issues[12].as_str()
     );
 

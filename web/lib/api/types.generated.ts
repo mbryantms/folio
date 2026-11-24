@@ -12146,6 +12146,12 @@ export interface components {
             /** Format: int32 */
             year?: number | null;
         };
+        /** @description Enough of an issue to open it in the reader. */
+        LinkIssueRefView: {
+            issue_id: string;
+            issue_slug: string;
+            series_slug: string;
+        };
         /** @enum {string} */
         LinkKind: "event" | "continues";
         /**
@@ -14451,8 +14457,13 @@ export interface components {
             anchor?: components["schemas"]["LinkAnchorView"] | null;
             child_list_id: string;
             child_name: string;
-            /** @description The first unfinished issue the caller can open, in list order. */
-            first_unread_issue_id?: string | null;
+            /**
+             * @description The caller's saved view of the linked list (their own, else a
+             *     shared one), for opening it and reading in its order. `None` when
+             *     they have no view of it.
+             */
+            child_view_id?: string | null;
+            first_unread?: components["schemas"]["LinkIssueRefView"] | null;
             id: string;
             /**
              * Format: int64

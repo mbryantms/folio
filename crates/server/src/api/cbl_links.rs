@@ -34,7 +34,7 @@ use axum::{
 };
 use chrono::Utc;
 use entity::reading_list_link::{self, AnchorStatus, LinkKind, LinkPlacement};
-use entity::{cbl_entry, cbl_list, reading_list_link_skip};
+use entity::{cbl_entry, cbl_list, reading_list_link_skip, saved_view};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, DbBackend, EntityTrait, FromQueryResult,
     ModelTrait, PaginatorTrait, QueryFilter, Statement, sea_query::OnConflict, sea_query::Value,
@@ -79,6 +79,14 @@ pub struct LinkAnchorView {
     pub number: Option<String>,
 }
 
+/// Enough of an issue to open it in the reader.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct LinkIssueRefView {
+    pub issue_id: String,
+    pub issue_slug: String,
+    pub series_slug: String,
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ReadingListLinkView {
     pub id: String,
@@ -97,7 +105,11 @@ pub struct ReadingListLinkView {
     /// Of those, the ones the caller has finished.
     pub read: i64,
     /// The first unfinished issue the caller can open, in list order.
-    pub first_unread_issue_id: Option<String>,
+    pub first_unread: Option<LinkIssueRefView>,
+    /// The caller's saved view of the linked list (their own, else a
+    /// shared one), for opening it and reading in its order. `None` when
+    /// they have no view of it.
+    pub child_view_id: Option<String>,
     /// The caller chose to skip this event.
     pub skipped: bool,
 }
@@ -197,6 +209,8 @@ struct EntryStatRow {
     cbl_list_id: Uuid,
     position: i32,
     matched_issue_id: Option<String>,
+    issue_slug: Option<String>,
+    series_slug: Option<String>,
     in_library: bool,
     is_read: bool,
 }
@@ -206,7 +220,7 @@ struct ListStats {
     total: i64,
     in_library: i64,
     read: i64,
-    first_unread: Option<String>,
+    first_unread: Option<LinkIssueRefView>,
 }
 
 /// One row per entry of every list in `list_ids`, in position order, as
@@ -225,10 +239,12 @@ async fn entry_stats(
         format!(
             r#"
             SELECT e.cbl_list_id, e.position, e.matched_issue_id,
+                   i.slug AS issue_slug, s.slug AS series_slug,
                    (i.id IS NOT NULL) AS in_library,
                    (i.id IS NOT NULL AND COALESCE(p.finished, FALSE)) AS is_read
             FROM cbl_entries e
             LEFT JOIN issues i ON i.id = e.matched_issue_id{vis}
+            LEFT JOIN series s ON s.id = i.series_id
             LEFT JOIN progress_records p ON p.issue_id = i.id AND p.user_id = $2
             WHERE e.cbl_list_id = ANY($1)
             ORDER BY e.cbl_list_id, e.position
@@ -248,8 +264,15 @@ fn fold_stats<'a>(rows: impl Iterator<Item = &'a EntryStatRow>) -> ListStats {
             s.in_library += 1;
             if r.is_read {
                 s.read += 1;
-            } else if s.first_unread.is_none() {
-                s.first_unread = r.matched_issue_id.clone();
+            } else if s.first_unread.is_none()
+                && let (Some(id), Some(issue_slug), Some(series_slug)) =
+                    (&r.matched_issue_id, &r.issue_slug, &r.series_slug)
+            {
+                s.first_unread = Some(LinkIssueRefView {
+                    issue_id: id.clone(),
+                    issue_slug: issue_slug.clone(),
+                    series_slug: series_slug.clone(),
+                });
             }
         }
     }
@@ -301,6 +324,32 @@ async fn build_view(
             .collect()
     };
 
+    // The caller's view of each child list: their own first, else shared.
+    let mut views: HashMap<Uuid, Uuid> = HashMap::new();
+    if !children.is_empty() {
+        let rows = saved_view::Entity::find()
+            .filter(saved_view::Column::Kind.eq(saved_view::SavedViewKind::Cbl))
+            .filter(
+                saved_view::Column::CblListId.is_in(children.keys().copied().collect::<Vec<_>>()),
+            )
+            .filter(
+                sea_orm::Condition::any()
+                    .add(saved_view::Column::UserId.eq(user.id))
+                    .add(saved_view::Column::UserId.is_null()),
+            )
+            .all(&app.db)
+            .await?;
+        for v in rows {
+            let Some(list_id) = v.cbl_list_id else {
+                continue;
+            };
+            let own = v.user_id == Some(user.id);
+            if own || !views.contains_key(&list_id) {
+                views.insert(list_id, v.id);
+            }
+        }
+    }
+
     let acl = access::for_user(app, user).await;
     let mut ids = vec![parent.id];
     ids.extend(children.keys().copied());
@@ -337,7 +386,8 @@ async fn build_view(
             total: st.total,
             in_library: st.in_library,
             read: st.read,
-            first_unread_issue_id: st.first_unread,
+            first_unread: st.first_unread,
+            child_view_id: views.get(&child.id).map(Uuid::to_string),
             skipped: skipped.contains(&link.id),
         };
         match link.kind {

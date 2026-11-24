@@ -28425,6 +28425,26 @@
           }
         }
       },
+      "LinkIssueRefView": {
+        "type": "object",
+        "description": "Enough of an issue to open it in the reader.",
+        "required": [
+          "issue_id",
+          "issue_slug",
+          "series_slug"
+        ],
+        "properties": {
+          "issue_id": {
+            "type": "string"
+          },
+          "issue_slug": {
+            "type": "string"
+          },
+          "series_slug": {
+            "type": "string"
+          }
+        }
+      },
       "LinkKind": {
         "type": "string",
         "enum": [
@@ -33538,12 +33558,23 @@
           "child_name": {
             "type": "string"
           },
-          "first_unread_issue_id": {
+          "child_view_id": {
             "type": [
               "string",
               "null"
             ],
-            "description": "The first unfinished issue the caller can open, in list order."
+            "description": "The caller's saved view of the linked list (their own, else a\nshared one), for opening it and reading in its order. `None` when\nthey have no view of it."
+          },
+          "first_unread": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LinkIssueRefView",
+                "description": "The first unfinished issue the caller can open, in list order."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "id": {
             "type": "string"

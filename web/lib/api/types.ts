@@ -357,6 +357,7 @@ export type ReadingListLinksView = Schemas["ReadingListLinksView"];
 export type ReadingListLinkView = Schemas["ReadingListLinkView"];
 export type ReadingListChapterView = Schemas["ReadingListChapterView"];
 export type LinkAnchorView = Schemas["LinkAnchorView"];
+export type LinkIssueRefView = Schemas["LinkIssueRefView"];
 export type CreateLinkReq = Schemas["CreateLinkReq"];
 export type UpdateLinkReq = Schemas["UpdateLinkReq"];
 export type MarkThroughReq = Schemas["MarkThroughReq"];
