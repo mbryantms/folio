@@ -8,9 +8,15 @@
  * States: not started / in progress → full band; finished or skipped →
  * one line (skipped with Undo); a link whose anchor issue a refresh
  * removed → full band with a "placement lost" badge.
+ *
+ * Opening the list (title, "Open list", Start) goes through the reader's
+ * saved view of it. A reader who has none (a shared event they never
+ * saved) gets one on the first click — `POST /me/cbl-lists/{id}/view` —
+ * so the band always opens its list and reads in its order.
  */
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ChevronDown,
   CircleCheck,
@@ -37,6 +43,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/folio/dropdown-menu";
 import { Progress } from "@/components/ui/progress";
+import { useOpenCblListView } from "@/lib/api/mutations";
 import { useCblListEntriesInfinite } from "@/lib/api/queries";
 import type { ReadingListLinkView } from "@/lib/api/types";
 import { readerUrl } from "@/lib/urls";
@@ -62,8 +69,29 @@ export function eventProgressLabel(link: ReadingListLinkView): string {
   return link.first_unread ? `${base} · in progress` : base;
 }
 
+/** Navigate through the reader's view of the event list, creating it
+ *  first when they have none. */
+function useOpenThroughView(parentListId: string, link: ReadingListLinkView) {
+  const router = useRouter();
+  const open = useOpenCblListView(parentListId);
+  return {
+    pending: open.isPending,
+    go: (to: (viewId: string) => string) => {
+      if (link.child_view_id) {
+        router.push(to(link.child_view_id));
+        return;
+      }
+      open.mutate(
+        { listId: link.child_list_id },
+        { onSuccess: (d) => d && router.push(to(d.view_id)) },
+      );
+    },
+  };
+}
+
 export function EventBand({
   link,
+  parentListId,
   afterLabel,
   canManage,
   onSkip,
@@ -71,6 +99,8 @@ export function EventBand({
   onRemove,
 }: {
   link: ReadingListLinkView;
+  /** The master list the band sits in. */
+  parentListId: string;
   /** "Excalibur #12": the issue the event comes after. */
   afterLabel: string | null;
   canManage: boolean;
@@ -79,11 +109,21 @@ export function EventBand({
   onRemove?: () => void;
 }) {
   const state = eventBandState(link);
+  const opener = useOpenThroughView(parentListId, link);
   const viewHref = link.child_view_id ? `/views/${link.child_view_id}` : null;
-  const startHref = link.first_unread
-    ? readerUrl(link.first_unread.series_slug, link.first_unread.issue_slug, {
-        cbl: link.child_view_id,
-      })
+  const first = link.first_unread;
+  const startHref =
+    first && link.child_view_id
+      ? readerUrl(first.series_slug, first.issue_slug, {
+          cbl: link.child_view_id,
+        })
+      : null;
+  const openList = () => opener.go((id) => `/views/${id}`);
+  const start = first
+    ? () =>
+        opener.go((id) =>
+          readerUrl(first.series_slug, first.issue_slug, { cbl: id }),
+        )
     : null;
   const percent = link.total > 0 ? (link.read / link.total) * 100 : 0;
   const lost = link.anchor?.status === "lost";
@@ -100,10 +140,12 @@ export function EventBand({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        {viewHref && (
+        {viewHref ? (
           <DropdownMenuItem asChild>
             <Link href={viewHref}>Open list</Link>
           </DropdownMenuItem>
+        ) : (
+          <DropdownMenuItem onSelect={openList}>Open list</DropdownMenuItem>
         )}
         <DropdownMenuItem onSelect={() => onSkip(!link.skipped)}>
           {link.skipped ? "Stop skipping" : "Skip this event"}
@@ -167,6 +209,9 @@ export function EventBand({
       percent={percent}
       startHref={startHref}
       viewHref={viewHref}
+      onOpenList={openList}
+      onStart={start}
+      opening={opener.pending}
       menu={menu}
     />
   );
@@ -179,14 +224,21 @@ function EventBandFull({
   percent,
   startHref,
   viewHref,
+  onOpenList,
+  onStart,
+  opening,
   menu,
 }: {
   link: ReadingListLinkView;
   afterLabel: string | null;
   lost: boolean;
   percent: number;
+  /** Links when the reader already has a view; else the callbacks. */
   startHref: string | null;
   viewHref: string | null;
+  onOpenList: () => void;
+  onStart: (() => void) | null;
+  opening: boolean;
   menu: React.ReactNode;
 }) {
   const [peekOpen, setPeekOpen] = React.useState(false);
@@ -236,7 +288,14 @@ function EventBandFull({
                   {link.child_name}
                 </Link>
               ) : (
-                link.child_name
+                <button
+                  type="button"
+                  onClick={onOpenList}
+                  disabled={opening}
+                  className="truncate text-left hover:underline"
+                >
+                  {link.child_name}
+                </button>
               )}
             </h3>
             <p className="text-muted-foreground mb-2 text-xs">
@@ -252,11 +311,15 @@ function EventBandFull({
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {startHref && (
+            {startHref ? (
               <Button asChild size="sm">
                 <Link href={startHref}>{started ? "Resume" : "Start"}</Link>
               </Button>
-            )}
+            ) : onStart ? (
+              <Button size="sm" onClick={onStart} disabled={opening}>
+                {started ? "Resume" : "Start"}
+              </Button>
+            ) : null}
             {items.length > 0 && (
               <CollapsibleTrigger asChild>
                 <Button variant="outline" size="sm" aria-expanded={peekOpen}>

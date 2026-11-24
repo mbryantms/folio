@@ -616,6 +616,7 @@ function CblViewDetailInner({
     <EventBand
       key={link.id}
       link={link}
+      parentListId={list.id}
       afterLabel={
         link.anchor?.series
           ? `${link.anchor.series} #${link.anchor.number ?? ""}`
