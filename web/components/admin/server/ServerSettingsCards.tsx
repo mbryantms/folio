@@ -52,6 +52,10 @@ export function ServerSettingsCards() {
   const zipLru = asUint("cache.zip_lru_capacity", 64);
   const purgeMultiplier = asUint("library.hard_purge_multiplier", 2);
   const auditRetentionDays = asUint("audit_log.retention_days", 0);
+  const remoteListCap = asUint(
+    "cbl.max_remote_lists_per_user",
+    REMOTE_LIST_CAP_DEFAULT,
+  );
   const thumbsBudgetMb = asUint("cache.thumbs_budget_mb", 0);
   const watcher = {
     debounce: asUint("scanner.watch_debounce_secs", 30),
@@ -78,6 +82,10 @@ export function ServerSettingsCards() {
       <AuditLogRetentionCard
         key={`audit-retention-${auditRetentionDays}`}
         initial={auditRetentionDays}
+      />
+      <ReadingListCapCard
+        key={`remote-list-cap-${remoteListCap}`}
+        initial={remoteListCap}
       />
       <CachingCard key={`caching-${zipLru}`} initial={zipLru} />
       <ThumbnailBudgetCard
@@ -374,6 +382,72 @@ function AuditLogRetentionCard({ initial }: { initial: number }) {
             the app-data volume, then removes them from the database. Nothing is
             removed unless the export was written. Set to <code>0</code> to keep
             every entry.
+          </p>
+        </div>
+        <div className="flex justify-end">
+          <Button onClick={onSave} disabled={!dirty || update.isPending || bad}>
+            {update.isPending ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export const REMOTE_LIST_CAP_DEFAULT = 500;
+export const REMOTE_LIST_CAP_MIN = 1;
+export const REMOTE_LIST_CAP_MAX = 10000;
+
+/** Why a typed reading-list cap cannot be saved, or `null` when it can.
+ *  Mirrors `Config::validate` (`cbl_max_remote_lists_per_user`). */
+export function remoteListCapProblem(value: string): string | null {
+  if (!/^\d+$/.test(value)) return "Enter a whole number of lists.";
+  const n = Number(value);
+  if (n < REMOTE_LIST_CAP_MIN || n > REMOTE_LIST_CAP_MAX) {
+    return `Must be in [${REMOTE_LIST_CAP_MIN}, ${REMOTE_LIST_CAP_MAX}].`;
+  }
+  return null;
+}
+
+/** Linked reading lists PR 0: how many URL / catalog reading lists a
+ *  non-admin may own. Each can be re-fetched on a schedule, so this bounds
+ *  the server's outbound refresh load. Live — read on every import. */
+function ReadingListCapCard({ initial }: { initial: number }) {
+  const [cap, setCap] = useState(String(initial));
+  const update = useUpdateSettings();
+  const problem = remoteListCapProblem(cap);
+  const bad = cap !== String(initial) && problem !== null;
+  const dirty = Number(cap) !== initial;
+
+  async function onSave() {
+    await update.mutateAsync({ "cbl.max_remote_lists_per_user": Number(cap) });
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-muted-foreground text-sm font-semibold tracking-wide uppercase">
+          Reading lists
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="space-y-2">
+          <Label htmlFor="remote-list-cap">
+            Reading lists per user from a URL or catalog
+          </Label>
+          <Input
+            id="remote-list-cap"
+            inputMode="numeric"
+            value={cap}
+            onChange={(e) => setCap(e.target.value)}
+          />
+          {bad && <p className="text-destructive text-xs">{problem}</p>}
+          <p className="text-muted-foreground text-xs">
+            The most reading lists a user can import from a URL or the catalog.
+            The server fetches these again when they refresh, so this bounds
+            that traffic. Uploaded files don&rsquo;t count, and admins have no
+            limit. A large master reading order with its events can be a few
+            hundred lists.
           </p>
         </div>
         <div className="flex justify-end">

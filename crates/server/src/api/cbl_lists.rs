@@ -269,8 +269,9 @@ pub struct CblBulkItemView {
 
 /// Most ids one `check-all` / `refresh-all` call accepts in `list_ids`.
 ///
-/// A caller can own at most [`crate::cbl::quota::MAX_REMOTE_LISTS_PER_USER`]
-/// (50) lists the server fetches; uploaded lists have no standing cap but
+/// A caller can own at most `cbl.max_remote_lists_per_user` (default
+/// [`crate::cbl::quota::DEFAULT_MAX_REMOTE_LISTS_PER_USER`], 500) lists the
+/// server fetches; uploaded lists have no standing cap but
 /// cost one of the hourly import tokens each, and an admin also sees the
 /// shared lists. 1000 is far above any of those in practice, keeps the
 /// `IN (…)` lookup and the parse small, and a client holding more can
