@@ -57,6 +57,13 @@ pub struct ImportSummary {
     pub removed: i32,
     pub reordered: i32,
     pub rematched: i32,
+    /// Linked lists (events) whose anchor issue this run removed from the
+    /// list. Their links are kept, marked `lost` (linked reading lists).
+    #[serde(default)]
+    pub links_lost: i32,
+    /// Lost links whose anchor issue this run brought back.
+    #[serde(default)]
+    pub links_restored: i32,
 }
 
 /// Apply a freshly-fetched / freshly-parsed CBL to an existing
@@ -259,6 +266,12 @@ pub async fn apply_parsed(
         }
     }
 
+    // Linked lists follow their anchor issue to its new position, or are
+    // marked lost when it left; same transaction as the entry rewrite.
+    let links = super::links::reresolve_parent(db, list_id).await?;
+    summary.links_lost = links.lost;
+    summary.links_restored = links.restored;
+
     // Record the structural diff.
     let prev_blob_sha = match cbl_list::Entity::find_by_id(list_id).one(db).await? {
         Some(m) => m.github_blob_sha.clone(),
@@ -279,6 +292,8 @@ pub async fn apply_parsed(
         "added": added_diffs,
         "removed": removed_diffs,
         "reordered": reordered_diffs,
+        "links_lost": links.lost,
+        "links_restored": links.restored,
     });
     cbl_refresh_log::ActiveModel {
         id: Set(Uuid::now_v7()),

@@ -31,6 +31,7 @@ pub fn too_many_entries_message() -> String {
 pub mod catalog;
 pub mod fetch;
 pub mod import;
+pub mod links;
 pub mod matcher;
 pub mod quota;
 pub mod refresh;
