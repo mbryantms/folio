@@ -46,6 +46,7 @@ import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useAdminSelectionActions } from "@/components/library/useAdminSelectionActions";
 import { useWantToReadSelectionAction } from "@/components/collections/useWantToReadSelectionAction";
 import { SeriesCard } from "@/components/library/SeriesCard";
+import { ReadingListEntryCard } from "@/components/collections/ReadingListEntryCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -628,6 +629,7 @@ export function CollectionViewDetail({
                   <SortableEntry
                     key={entry.id}
                     entry={entry}
+                    collectionId={savedView.id}
                     onRemove={() => remove.mutate({ entryId: entry.id })}
                     dndDisabled={dndDisabled}
                     selectMode={
@@ -803,12 +805,14 @@ function EmptyState({ isWantToRead }: { isWantToRead: boolean }) {
 
 function SortableEntry({
   entry,
+  collectionId,
   onRemove,
   dndDisabled,
   selectMode,
   onEnterSelectMode,
 }: {
   entry: CollectionEntryView;
+  collectionId: string;
   onRemove: () => void;
   /** When true, the item is mounted in the sortable context but
    *  doesn't respond to drag — preserves a stable sensors-array
@@ -878,6 +882,12 @@ function SortableEntry({
           onEnterSelectMode={
             onEnterSelectMode ? () => onEnterSelectMode(entry.id) : undefined
           }
+        />
+      ) : entry.list ? (
+        <ReadingListEntryCard
+          list={entry.list}
+          collectionId={collectionId}
+          onRemove={onRemove}
         />
       ) : (
         <MissingEntry onRemove={onRemove} />

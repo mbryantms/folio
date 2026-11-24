@@ -6904,11 +6904,14 @@ export interface components {
             next_cursor?: string | null;
         };
         AddEntryReq: {
-            /** @description `'series'` or `'issue'`. */
+            /**
+             * @description `'series'`, `'issue'` or `'list'` (single add only; bulk add takes
+             *     series and issues).
+             */
             entry_kind: string;
             /**
-             * @description Series UUID or issue id (TEXT). Validated against the
-             *     declared `entry_kind`.
+             * @description Series UUID, issue id (TEXT) or reading-list UUID. Validated
+             *     against the declared `entry_kind`.
              */
             ref_id: string;
         };
@@ -8587,10 +8590,11 @@ export interface components {
         };
         CollectionEntryView: {
             added_at: string;
-            /** @description `'series'` or `'issue'`. */
+            /** @description `'series'`, `'issue'` or `'list'`. */
             entry_kind: string;
             id: string;
             issue?: components["schemas"]["IssueSummaryView"] | null;
+            list?: components["schemas"]["ReadingListCardView"] | null;
             /** Format: int32 */
             position: number;
             series?: components["schemas"]["SeriesView"] | null;
@@ -13265,10 +13269,19 @@ export interface components {
         };
         /** @description Up Next left the list the reader was in: read the target in this one. */
         NextUpListSwitch: {
-            list_id: string;
+            /**
+             * @description Back to a collection (the list was read as one of its detours):
+             *     read the target with `?collection=<view_id>`.
+             */
+            collection: boolean;
+            /** @description The reading list; `None` when `collection` is set. */
+            list_id?: string | null;
             name: string;
             reason: components["schemas"]["NextUpSwitchReason"];
-            /** @description The reader's view of that list (`None` = they have none yet). */
+            /**
+             * @description The reader's view of that list, or the collection's id (`None` =
+             *     they have no view of the list yet).
+             */
             view_id?: string | null;
         };
         /** @enum {string} */
@@ -14653,6 +14666,24 @@ export interface components {
             id: string;
             /** @description The chapter's name; `None` = named after its first issue. */
             label?: string | null;
+        };
+        /**
+         * @description A reading list as the caller sees it: name, their view, progress and
+         *     where to start. Used for event detours and for a collection's list
+         *     entries.
+         */
+        ReadingListCardView: {
+            first_unread?: components["schemas"]["LinkIssueRefView"] | null;
+            /** Format: int64 */
+            in_library: number;
+            list_id: string;
+            name: string;
+            /** Format: int64 */
+            read: number;
+            /** Format: int64 */
+            total: number;
+            /** @description The caller's view of the list (`None` = they have none yet). */
+            view_id?: string | null;
         };
         /**
          * @description A stretch of the parent list. Chapters end at event anchors and start

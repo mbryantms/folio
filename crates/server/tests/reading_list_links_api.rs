@@ -1497,3 +1497,171 @@ async fn up_next_offers_events_returns_from_them_and_continues_in_the_next_part(
     assert_eq!(body["switch_to"]["view_id"], part2_view);
     let _ = event_b;
 }
+
+// ───── PR 5: reading lists in collections, read as detours ─────
+
+async fn new_collection(app: &TestApp, auth: &Authed, name: &str) -> String {
+    let (status, v) = send(
+        app,
+        Method::POST,
+        "/api/me/collections",
+        auth,
+        Some(serde_json::json!({ "name": name })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    v["id"].as_str().unwrap().to_owned()
+}
+
+async fn add_to_collection(
+    app: &TestApp,
+    auth: &Authed,
+    cid: &str,
+    kind: &str,
+    ref_id: &str,
+) -> (StatusCode, serde_json::Value) {
+    send(
+        app,
+        Method::POST,
+        &format!("/api/me/collections/{cid}/entries"),
+        auth,
+        Some(serde_json::json!({ "entry_kind": kind, "ref_id": ref_id })),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_reading_list_in_a_collection_is_a_detour() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "coll-list@example.com").await;
+    let other = register(&app, "coll-other@example.com").await;
+    let (_, issues) = seed_cbl_with_matched_entries(&app, user.user_id, 8).await;
+    let event = make_list(&app, Some(user.user_id), "Event", &issues[4..6]).await;
+    let others_list = make_list(&app, Some(other.user_id), "Not yours", &issues[6..8]).await;
+    let cid = new_collection(&app, &user, "My run").await;
+    for i in &issues[0..2] {
+        let (s, b) = add_to_collection(&app, &user, &cid, "issue", i).await;
+        assert_eq!(s, StatusCode::CREATED, "{b}");
+    }
+    let (s, b) = add_to_collection(&app, &user, &cid, "list", &event.to_string()).await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    assert_eq!(b["list"]["name"], "Event");
+    assert_eq!(b["list"]["total"], 2);
+    for i in &issues[2..4] {
+        add_to_collection(&app, &user, &cid, "issue", i).await;
+    }
+    // Twice is a conflict; someone else's private list is not found.
+    let (s, _) = add_to_collection(&app, &user, &cid, "list", &event.to_string()).await;
+    assert_eq!(s, StatusCode::CONFLICT);
+    let (s, _) = add_to_collection(&app, &user, &cid, "list", &others_list.to_string()).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    // Listed in its place; the reading order skips it.
+    let (_, page) = get_json(&app, &format!("/api/me/collections/{cid}/entries"), &user).await;
+    let kinds: Vec<_> = page["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["entry_kind"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(kinds, ["issue", "issue", "list", "issue", "issue"]);
+    assert_eq!(page["total"], 5);
+    let ctx = format!("collection={cid}");
+    let body = next_up(&app, &user, &issues[1], &ctx).await;
+    assert_eq!(body["source"], "collection");
+    assert_eq!(body["target"]["id"], issues[2], "{body}");
+    assert_eq!(body["collection_total"], 4, "list entries add no issues");
+    // ...and offered as a detour after the issue before it, only there.
+    assert_eq!(detour_names(&body), ["Event"]);
+    assert_eq!(body["detours"][0]["first_unread"]["issue_id"], issues[4]);
+    let body = next_up(&app, &user, &issues[0], &ctx).await;
+    assert!(detour_names(&body).is_empty());
+
+    // At the list's end, read with `via` = the collection: back to it,
+    // after the list's place.
+    let event_view = view_of(&app, event, &user).await;
+    let body = next_up(
+        &app,
+        &user,
+        &issues[5],
+        &format!("cbl={event_view}&via={cid}"),
+    )
+    .await;
+    assert_eq!(body["source"], "collection", "{body}");
+    assert_eq!(body["target"]["id"], issues[2]);
+    assert_eq!(body["switch_to"]["collection"], true);
+    assert_eq!(body["switch_to"]["view_id"], cid);
+    assert_eq!(body["switch_to"]["reason"], "return");
+
+    // A list the caller can no longer see drops out of the listing.
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let row = cbl_list::Entity::find_by_id(event)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: cbl_list::ActiveModel = row.into();
+    am.owner_user_id = Set(Some(other.user_id));
+    am.update(&db).await.unwrap();
+    let (_, page) = get_json(&app, &format!("/api/me/collections/{cid}/entries"), &user).await;
+    assert_eq!(page["total"], 4);
+    let body = next_up(&app, &user, &issues[1], &ctx).await;
+    assert!(detour_names(&body).is_empty());
+}
+
+#[tokio::test]
+async fn collection_list_entries_obey_the_kind_checks() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "coll-chk@example.com").await;
+    let (_, issues) = seed_cbl_with_matched_entries(&app, user.user_id, 2).await;
+    let list = make_list(&app, Some(user.user_id), "L", &issues[..1]).await;
+    let cid = new_collection(&app, &user, "C").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let bad = |sql: String| {
+        let db = db.clone();
+        async move { db.execute_unprepared(&sql).await.is_err() }
+    };
+    use sea_orm::ConnectionTrait;
+    // A list entry needs the list and nothing else.
+    assert!(
+        bad(format!(
+            "INSERT INTO collection_entries (id, saved_view_id, position, entry_kind) \
+             VALUES (gen_random_uuid(), '{cid}', 0, 'list')"
+        ))
+        .await
+    );
+    assert!(
+        bad(format!(
+            "INSERT INTO collection_entries (id, saved_view_id, position, entry_kind, issue_id, cbl_list_id) \
+             VALUES (gen_random_uuid(), '{cid}', 0, 'list', '{}', '{list}')",
+            issues[0]
+        ))
+        .await
+    );
+    assert!(
+        bad(format!(
+            "INSERT INTO collection_entries (id, saved_view_id, position, entry_kind, issue_id, cbl_list_id) \
+             VALUES (gen_random_uuid(), '{cid}', 0, 'issue', '{}', '{list}')",
+            issues[0]
+        ))
+        .await
+    );
+    assert!(
+        !bad(format!(
+            "INSERT INTO collection_entries (id, saved_view_id, position, entry_kind, cbl_list_id) \
+             VALUES (gen_random_uuid(), '{cid}', 0, 'list', '{list}')"
+        ))
+        .await
+    );
+    // Deleting the list deletes the entry.
+    cbl_list::Entity::delete_by_id(list)
+        .exec(&db)
+        .await
+        .unwrap();
+    let left = entity::collection_entry::Entity::find()
+        .filter(entity::collection_entry::Column::CblListId.eq(list))
+        .count(&db)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
+}

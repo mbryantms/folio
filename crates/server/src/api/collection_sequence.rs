@@ -15,7 +15,10 @@
 //!     in the same order — so reading "all of Invincible" inside a
 //!     collection follows the run and finishes with the extras;
 //!   - an issue that appears twice (directly and via its series) is kept
-//!     at its first position only.
+//!     at its first position only;
+//!   - a **list entry** (a reading list) contributes nothing: it is a
+//!     detour, offered by Up Next after the item before it
+//!     ([`CollectionSequence::lists_after`]).
 //!
 //! Collections are strictly user-owned (no system collections except
 //! Want to Read, which is still per-user), so a view belonging to
@@ -48,6 +51,9 @@ pub(crate) struct CollectionSequence {
     /// Parent series of every item, for the slug / name on the target
     /// view and the series-rating half of the ACL check.
     pub series_by_id: HashMap<Uuid, series::Model>,
+    /// List entries as `(entry id, list id)`, keyed by the index of the
+    /// item they follow (`None` = before the first item), in entry order.
+    pub lists: Vec<(Option<usize>, Uuid, Uuid)>,
 }
 
 impl CollectionSequence {
@@ -55,6 +61,25 @@ impl CollectionSequence {
     /// it (directly or through its series).
     pub(crate) fn index_of(&self, issue_id: &str) -> Option<usize> {
         self.items.iter().position(|i| i.id == issue_id)
+    }
+
+    /// List entries placed right after item `idx` (`None` = at the top),
+    /// as `(entry id, list id)` in entry order.
+    pub(crate) fn lists_after(&self, idx: Option<usize>) -> Vec<(Uuid, Uuid)> {
+        self.lists
+            .iter()
+            .filter(|(at, _, _)| *at == idx)
+            .map(|(_, e, l)| (*e, *l))
+            .collect()
+    }
+
+    /// Where the list entry for `list_id` sits: the index of the item it
+    /// follows (`Some(None)` = at the top); `None` = not in the collection.
+    pub(crate) fn list_anchor(&self, list_id: Uuid) -> Option<Option<usize>> {
+        self.lists
+            .iter()
+            .find(|(_, _, l)| *l == list_id)
+            .map(|(at, _, _)| *at)
     }
 
     /// Number of issues in the sequence, for the "N of M" badge.
@@ -208,8 +233,11 @@ pub(crate) async fn load_for_view(
     // slot so the position badge never counts it twice.
     let mut items: Vec<IssueCardRow> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut lists: Vec<(Option<usize>, Uuid, Uuid)> = Vec::new();
     for entry in &entries {
-        if let Some(sid) = entry.series_id {
+        if let Some(lid) = entry.cbl_list_id {
+            lists.push((items.len().checked_sub(1), entry.id, lid));
+        } else if let Some(sid) = entry.series_id {
             if let Some(rows) = issues_by_series.get(&sid) {
                 for row in rows {
                     if seen.insert(row.id.clone()) {
@@ -248,6 +276,7 @@ pub(crate) async fn load_for_view(
         view,
         items,
         series_by_id,
+        lists,
     })
 }
 

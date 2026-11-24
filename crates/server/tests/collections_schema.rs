@@ -279,6 +279,7 @@ async fn insert_entry(
         entry_kind: Set(entry_kind.into()),
         series_id: Set(series_id),
         issue_id: Set(issue_id),
+        cbl_list_id: Set(None),
         added_at: Set(now),
     }
     .insert(&db)

@@ -547,7 +547,14 @@ export function Reader({
     // Linked reading lists: the target is in the next part, or back in
     // the list an event is part of — read it with that list's view.
     const sw = data.switch_to;
-    if (sw) {
+    if (sw?.collection) {
+      // Back to the collection the list was read from as a detour.
+      const href = readerUrl(target, { collection: sw.view_id });
+      noteReplace(href);
+      router.replace(href);
+      return;
+    }
+    if (sw?.list_id) {
       void ensureListView(sw.list_id, sw.view_id).then((v) => go(v, null));
       return;
     }
@@ -1724,7 +1731,7 @@ export function Reader({
             exitUrl={exitUrl}
             onExit={handleQuitReader}
             wrapUp={wrapUp}
-            viaViewId={cblSavedViewId}
+            viaViewId={cblSavedViewId ?? collectionId}
           />
         ) : viewMode === "double" ? (
           <DoublePageView
@@ -1827,7 +1834,7 @@ export function Reader({
           onDismiss={dismissEndCard}
           wrapUp={wrapUp}
           finished={finishedMoment}
-          viaViewId={cblSavedViewId}
+          viaViewId={cblSavedViewId ?? collectionId}
         />
       ) : null}
     </div>

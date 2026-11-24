@@ -58,6 +58,7 @@ describe("nextUpListSubtitle with a list switch", () => {
         ...base,
         switch_to: {
           reason: "return",
+          collection: false,
           list_id: "m",
           name: "[Marvel] Master Part #07 (WEB-CBRO)",
           view_id: "v",
@@ -71,6 +72,7 @@ describe("nextUpListSubtitle with a list switch", () => {
         ...base,
         switch_to: {
           reason: "continues",
+          collection: false,
           list_id: "p",
           name: "Part 2",
           view_id: null,

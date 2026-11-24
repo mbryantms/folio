@@ -14,8 +14,9 @@ pub struct Model {
     pub id: Uuid,
     pub saved_view_id: Uuid,
     pub position: i32,
-    /// `'series'` or `'issue'`. Caller picks; the XOR check rejects
-    /// rows where the populated FK doesn't match.
+    /// `'series'`, `'issue'` or `'list'` (a reading list, read as a
+    /// detour). Caller picks; the XOR check rejects rows where the
+    /// populated FK doesn't match.
     pub entry_kind: String,
     #[sea_orm(nullable)]
     pub series_id: Option<Uuid>,
@@ -23,6 +24,9 @@ pub struct Model {
     /// schema.
     #[sea_orm(nullable)]
     pub issue_id: Option<String>,
+    /// A reading list (`entry_kind = 'list'`).
+    #[sea_orm(nullable)]
+    pub cbl_list_id: Option<Uuid>,
     pub added_at: DateTimeWithTimeZone,
 }
 
@@ -49,6 +53,13 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     Issue,
+    #[sea_orm(
+        belongs_to = "super::cbl_list::Entity",
+        from = "Column::CblListId",
+        to = "super::cbl_list::Column::Id",
+        on_delete = "Cascade"
+    )]
+    CblList,
 }
 
 impl Related<super::saved_view::Entity> for Entity {

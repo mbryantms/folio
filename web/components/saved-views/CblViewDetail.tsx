@@ -22,9 +22,11 @@ import {
   Search as SearchIcon,
   Sparkles,
   Waypoints,
+  FolderPlus,
 } from "lucide-react";
 import { DeriveLinksDialog } from "@/components/cbl/links/DeriveLinksDialog";
 import { PartOfLink } from "@/components/cbl/links/PartOfLink";
+import { AddToCollectionDialog } from "@/components/collections/AddToCollectionDialog";
 
 import { CblDetail, CblInfoRow } from "@/components/cbl/cbl-detail";
 import { RefreshFailureNotice } from "@/components/cbl/RefreshFailureNotice";
@@ -411,6 +413,7 @@ function CblViewDetailInner({
   const markThrough = useMarkCblReadThrough(listId);
   const [chaptersOpen, setChaptersOpen] = React.useState(false);
   const [deriveOpen, setDeriveOpen] = React.useState(false);
+  const [collectionOpen, setCollectionOpen] = React.useState(false);
   const [insertTarget, setInsertTarget] = React.useState<{
     entryId: string | null;
     label: string | null;
@@ -828,6 +831,9 @@ function CblViewDetailInner({
           <Sparkles className="size-4" /> Fetch metadata for view
         </DropdownMenuItem>
       )}
+      <DropdownMenuItem onSelect={() => setCollectionOpen(true)}>
+        <FolderPlus className="size-4" /> Add to collection…
+      </DropdownMenuItem>
       <DropdownMenuItem onSelect={() => setOfflineOpen(true)}>
         <HardDriveDownload className="size-4" />
         Download for offline…
@@ -1313,6 +1319,15 @@ function CblViewDetailInner({
           onJump={jumpToChapter}
         />
       )}
+      <AddToCollectionDialog
+        open={collectionOpen}
+        onOpenChange={setCollectionOpen}
+        target={{
+          entry_kind: "list",
+          ref_id: list.id,
+          label: list.parsed_name,
+        }}
+      />
       {deriveOpen && (
         <DeriveLinksDialog
           listId={list.id}

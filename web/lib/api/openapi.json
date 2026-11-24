@@ -16119,11 +16119,11 @@
         "properties": {
           "entry_kind": {
             "type": "string",
-            "description": "`'series'` or `'issue'`."
+            "description": "`'series'`, `'issue'` or `'list'` (single add only; bulk add takes\nseries and issues)."
           },
           "ref_id": {
             "type": "string",
-            "description": "Series UUID or issue id (TEXT). Validated against the\ndeclared `entry_kind`."
+            "description": "Series UUID, issue id (TEXT) or reading-list UUID. Validated\nagainst the declared `entry_kind`."
           }
         }
       },
@@ -19814,7 +19814,7 @@
           },
           "entry_kind": {
             "type": "string",
-            "description": "`'series'` or `'issue'`."
+            "description": "`'series'`, `'issue'` or `'list'`."
           },
           "id": {
             "type": "string"
@@ -19824,6 +19824,17 @@
               {
                 "$ref": "#/components/schemas/IssueSummaryView",
                 "description": "Populated when `entry_kind = 'issue'`; same omission rule as\n`series`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "list": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReadingListCardView",
+                "description": "Populated when `entry_kind = 'list'`: a reading list the caller\ncan see (their own or a shared one). It is read as a detour —\noffered at this spot by Up Next, never inlined into the order."
               },
               {
                 "type": "null"
@@ -31075,12 +31086,20 @@
         "description": "Up Next left the list the reader was in: read the target in this one.",
         "required": [
           "reason",
-          "list_id",
+          "collection",
           "name"
         ],
         "properties": {
+          "collection": {
+            "type": "boolean",
+            "description": "Back to a collection (the list was read as one of its detours):\nread the target with `?collection=<view_id>`."
+          },
           "list_id": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The reading list; `None` when `collection` is set."
           },
           "name": {
             "type": "string"
@@ -31093,7 +31112,7 @@
               "string",
               "null"
             ],
-            "description": "The reader's view of that list (`None` = they have none yet)."
+            "description": "The reader's view of that list, or the collection's id (`None` =\nthey have no view of the list yet)."
           }
         }
       },
@@ -34109,6 +34128,55 @@
               "null"
             ],
             "description": "The chapter's name; `None` = named after its first issue."
+          }
+        }
+      },
+      "ReadingListCardView": {
+        "type": "object",
+        "description": "A reading list as the caller sees it: name, their view, progress and\nwhere to start. Used for event detours and for a collection's list\nentries.",
+        "required": [
+          "list_id",
+          "name",
+          "total",
+          "in_library",
+          "read"
+        ],
+        "properties": {
+          "first_unread": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LinkIssueRefView",
+                "description": "The first unfinished issue the caller can open, in list order."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "in_library": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "list_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "read": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "view_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The caller's view of the list (`None` = they have none yet)."
           }
         }
       },

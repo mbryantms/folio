@@ -241,10 +241,20 @@ pub async fn next_up(
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
+    // Detours offered at the current issue even when the list itself has
+    // nothing next (they ride on the series / none answer).
+    let mut linked = LinkedCtx {
+        via: q.via,
+        detours: Vec::new(),
+        via_param_was_stale: false,
+    };
+
     // ───── Collection branch ─────
     let mut collection_param_was_stale = false;
     if let Some(saved_view_id) = q.collection {
-        match resolve_collection_next(&app, user.id, saved_view_id, &current, &acl).await {
+        match resolve_collection_next(&app, user.id, saved_view_id, &current, &acl, &mut linked)
+            .await
+        {
             Ok(CblBranchOutcome::Resolved(view)) => {
                 record_resolved("collection");
                 return Json(view).into_response();
@@ -268,13 +278,6 @@ pub async fn next_up(
 
     // ───── CBL branch ─────
     let mut cbl_param_was_stale = false;
-    // Detours offered at the current issue even when the list itself has
-    // nothing next (they ride on the series / none answer).
-    let mut linked = LinkedCtx {
-        via: q.via,
-        detours: Vec::new(),
-        via_param_was_stale: false,
-    };
     if let Some(saved_view_id) = q.cbl {
         match resolve_cbl_next(&app, user.id, saved_view_id, &current, &acl, &mut linked).await {
             Ok(CblBranchOutcome::Resolved(mut view)) => {
@@ -598,15 +601,30 @@ async fn resolve_cbl_next(
     let (target_list_id, (issue_model, series_slug, series_name, position)) = match next {
         Some(n) => (cbl_list_id, n),
         None => {
-            // The list is done after this issue: its next part, or back
+            // The list is done after this issue: back to the collection
+            // it was read from as a detour, else its next part, or back
             // from an event to the list it is part of.
+            if let Some(via) = linked.via
+                && let Some((mut view, stale)) =
+                    return_to_collection(app, user_id, acl, via, cbl_list_id).await?
+            {
+                if view.target.is_some() {
+                    detours.extend(std::mem::take(&mut view.detours));
+                    view.detours = detours;
+                    return Ok(CblBranchOutcome::Resolved(view));
+                }
+                // The collection has nothing left after the list (or
+                // doesn't hold it): fall through without the `via`.
+                linked.via_param_was_stale = stale;
+                linked.via = None;
+            }
             let from_list = match linked.via {
                 Some(v) => cbl_list_of_view(app, user_id, v).await.map_err(internal)?,
                 None => None,
             };
             let (found, stale) =
                 cbl_link_nav::after_list_end(app, user_id, acl, cbl_list_id, from_list).await?;
-            linked.via_param_was_stale = stale || (linked.via.is_some() && from_list.is_none());
+            linked.via_param_was_stale |= stale || (linked.via.is_some() && from_list.is_none());
             let Some(ln) = found else {
                 linked.detours = detours;
                 return Ok(CblBranchOutcome::NoMatch);
@@ -664,6 +682,7 @@ async fn resolve_collection_next(
     saved_view_id: Uuid,
     current: &issue::Model,
     acl: &access::VisibleLibraries,
+    linked: &mut LinkedCtx,
 ) -> Result<CblBranchOutcome, Response> {
     let Some(seq) = collection_sequence::load(app, user_id, saved_view_id).await? else {
         return Ok(CblBranchOutcome::NoMatch);
@@ -671,20 +690,88 @@ async fn resolve_collection_next(
     let Some(current_idx) = seq.index_of(&current.id) else {
         return Ok(CblBranchOutcome::StaleParam);
     };
+    // Reading lists placed right after this issue: detours (PR 5).
+    let detours = collection_detours(app, user_id, acl, &seq, Some(current_idx), None).await?;
     let progress = collection_sequence::progress_map(app, user_id, &seq).await?;
     let Some(idx) = seq.first_unfinished_after(acl, &progress, Some(current_idx)) else {
+        linked.detours = detours;
         return Ok(CblBranchOutcome::NoMatch);
     };
-    let finished = seq
+    let mut view = collection_view(&seq, idx, Some(finished_count(&seq, &progress)));
+    view.detours = detours;
+    Ok(CblBranchOutcome::Resolved(view))
+}
+
+fn finished_count(
+    seq: &collection_sequence::CollectionSequence,
+    progress: &std::collections::HashMap<String, progress_record::Model>,
+) -> i32 {
+    let n = seq
         .items
         .iter()
         .filter(|i| progress.get(&i.id).is_some_and(|p| p.finished))
         .count();
-    Ok(CblBranchOutcome::Resolved(collection_view(
-        &seq,
-        idx,
-        Some(i32::try_from(finished).unwrap_or(i32::MAX)),
-    )))
+    i32::try_from(n).unwrap_or(i32::MAX)
+}
+
+/// The collection's list entries placed after item `at`, as detours
+/// (`except` leaves out the list being returned from).
+async fn collection_detours(
+    app: &AppState,
+    user_id: Uuid,
+    acl: &access::VisibleLibraries,
+    seq: &collection_sequence::CollectionSequence,
+    at: Option<usize>,
+    except: Option<Uuid>,
+) -> Result<Vec<NextUpDetour>, Response> {
+    let pairs: Vec<(Uuid, Uuid)> = seq
+        .lists_after(at)
+        .into_iter()
+        .filter(|(_, l)| Some(*l) != except)
+        .collect();
+    if pairs.is_empty() {
+        return Ok(Vec::new());
+    }
+    cbl_link_nav::detours_for(app, user_id, acl, &pairs)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "next_up: collection detours failed");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+        })
+}
+
+/// At the end of a list read as a collection's detour (`?via=` names the
+/// collection): back to the collection, at the first unfinished issue
+/// after the list's place. `Ok(None)` when `via` isn't one of the
+/// caller's collections holding this list, or nothing is left after it.
+async fn return_to_collection(
+    app: &AppState,
+    user_id: Uuid,
+    acl: &access::VisibleLibraries,
+    via: Uuid,
+    list_id: Uuid,
+) -> Result<Option<(NextUpView, bool)>, Response> {
+    let Some(seq) = collection_sequence::load(app, user_id, via).await? else {
+        return Ok(None);
+    };
+    let Some(at) = seq.list_anchor(list_id) else {
+        // A collection, but this list isn't in it: a stale `via`.
+        return Ok(Some((none_view(false, false), true)));
+    };
+    let progress = collection_sequence::progress_map(app, user_id, &seq).await?;
+    let Some(idx) = seq.first_unfinished_after(acl, &progress, at) else {
+        return Ok(Some((none_view(false, false), false)));
+    };
+    let mut view = collection_view(&seq, idx, Some(finished_count(&seq, &progress)));
+    view.detours = collection_detours(app, user_id, acl, &seq, at, Some(list_id)).await?;
+    view.switch_to = Some(NextUpListSwitch {
+        reason: cbl_link_nav::NextUpSwitchReason::Return,
+        list_id: None,
+        collection: true,
+        name: seq.view.name.clone(),
+        view_id: Some(seq.view.id.to_string()),
+    });
+    Ok(Some((view, false)))
 }
 
 /// Collection branch of the prev-up resolver: the closest openable issue

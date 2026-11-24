@@ -168,6 +168,7 @@ mod m20271123_000001_issue_cover_tone;
 mod m20271124_000001_reading_list_links;
 mod m20271124_000002_reading_list_link_skips;
 mod m20271124_000003_reading_list_breaks;
+mod m20271124_000004_collection_list_entries;
 
 /// The series-rating migration's frozen ladder and statement, exposed so
 /// the server's tests can check they agree with the runtime derivation.
@@ -351,6 +352,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20271124_000001_reading_list_links::Migration),
             Box::new(m20271124_000002_reading_list_link_skips::Migration),
             Box::new(m20271124_000003_reading_list_breaks::Migration),
+            Box::new(m20271124_000004_collection_list_entries::Migration),
         ]
     }
 }

@@ -59,9 +59,14 @@ pub enum NextUpSwitchReason {
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct NextUpListSwitch {
     pub reason: NextUpSwitchReason,
-    pub list_id: String,
+    /// The reading list; `None` when `collection` is set.
+    pub list_id: Option<String>,
+    /// Back to a collection (the list was read as one of its detours):
+    /// read the target with `?collection=<view_id>`.
+    pub collection: bool,
     pub name: String,
-    /// The reader's view of that list (`None` = they have none yet).
+    /// The reader's view of that list, or the collection's id (`None` =
+    /// they have no view of the list yet).
     pub view_id: Option<String>,
 }
 
@@ -195,41 +200,95 @@ pub(crate) async fn detours_at(
         .map(|s| s.link_id)
         .collect();
     links.retain(|l| !skipped.contains(&l.id));
-    if links.is_empty() {
-        return Ok(Vec::new());
+    let pairs: Vec<(Uuid, Uuid)> = links.iter().map(|l| (l.id, l.child_list_id)).collect();
+    detours_for(app, user_id, acl, &pairs).await
+}
+
+/// A reading list as the caller sees it: name, their view, progress and
+/// where to start. Used for event detours and for a collection's list
+/// entries.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct ReadingListCardView {
+    pub list_id: String,
+    pub name: String,
+    /// The caller's view of the list (`None` = they have none yet).
+    pub view_id: Option<String>,
+    pub total: i64,
+    pub in_library: i64,
+    pub read: i64,
+    /// The first unfinished issue the caller can open, in list order.
+    pub first_unread: Option<LinkIssueRefView>,
+}
+
+/// Cards for the lists in `list_ids` the caller can see (own or shared);
+/// others are absent. A fixed number of statements.
+pub(crate) async fn list_cards(
+    app: &AppState,
+    user_id: Uuid,
+    acl: &VisibleLibraries,
+    list_ids: &[Uuid],
+) -> Result<HashMap<Uuid, ReadingListCardView>, sea_orm::DbErr> {
+    if list_ids.is_empty() {
+        return Ok(HashMap::new());
     }
-    let child_ids: Vec<Uuid> = links.iter().map(|l| l.child_list_id).collect();
-    let children: HashMap<Uuid, cbl_list::Model> = cbl_list::Entity::find()
-        .filter(cbl_list::Column::Id.is_in(child_ids.clone()))
+    let lists: Vec<cbl_list::Model> = cbl_list::Entity::find()
+        .filter(cbl_list::Column::Id.is_in(list_ids.to_vec()))
         .all(&app.db)
         .await?
         .into_iter()
         .filter(|c| visible(c, user_id))
-        .map(|c| (c.id, c))
         .collect();
-    let views = caller_views(app, user_id, &child_ids).await?;
-    let rows = entry_stats(app, acl, user_id, &child_ids).await?;
-    let mut out = Vec::new();
-    for l in &links {
-        let Some(child) = children.get(&l.child_list_id) else {
-            continue;
-        };
-        let st = fold_stats(rows.iter().filter(|r| r.cbl_list_id == child.id));
-        let Some(first_unread) = st.first_unread else {
-            continue;
-        };
-        out.push(NextUpDetour {
-            link_id: l.id.to_string(),
-            list_id: child.id.to_string(),
-            name: child.parsed_name.clone(),
-            view_id: views.get(&child.id).map(Uuid::to_string),
-            total: st.total,
-            in_library: st.in_library,
-            read: st.read,
-            first_unread,
-        });
-    }
-    Ok(out)
+    let ids: Vec<Uuid> = lists.iter().map(|l| l.id).collect();
+    let views = caller_views(app, user_id, &ids).await?;
+    let rows = entry_stats(app, acl, user_id, &ids).await?;
+    Ok(lists
+        .into_iter()
+        .map(|l| {
+            let st = fold_stats(rows.iter().filter(|r| r.cbl_list_id == l.id));
+            (
+                l.id,
+                ReadingListCardView {
+                    list_id: l.id.to_string(),
+                    name: l.parsed_name,
+                    view_id: views.get(&l.id).map(Uuid::to_string),
+                    total: st.total,
+                    in_library: st.in_library,
+                    read: st.read,
+                    first_unread: st.first_unread,
+                },
+            )
+        })
+        .collect())
+}
+
+/// Detours for `(id, list)` pairs in order: lists the caller can see and
+/// has an unread issue in. `id` is the event link's (or collection
+/// entry's) id.
+pub(crate) async fn detours_for(
+    app: &AppState,
+    user_id: Uuid,
+    acl: &VisibleLibraries,
+    pairs: &[(Uuid, Uuid)],
+) -> Result<Vec<NextUpDetour>, sea_orm::DbErr> {
+    let ids: Vec<Uuid> = pairs.iter().map(|(_, l)| *l).collect();
+    let cards = list_cards(app, user_id, acl, &ids).await?;
+    Ok(pairs
+        .iter()
+        .filter_map(|(id, list)| {
+            let c = cards.get(list)?;
+            let first_unread = c.first_unread.clone()?;
+            Some(NextUpDetour {
+                link_id: id.to_string(),
+                list_id: c.list_id.clone(),
+                name: c.name.clone(),
+                view_id: c.view_id.clone(),
+                total: c.total,
+                in_library: c.in_library,
+                read: c.read,
+                first_unread,
+            })
+        })
+        .collect())
 }
 
 /// Where Up Next goes when `list_id` has nothing unread left after the
@@ -292,7 +351,8 @@ pub(crate) async fn after_list_end(
                 position,
                 switch: NextUpListSwitch {
                     reason: NextUpSwitchReason::Continues,
-                    list_id: part.id.to_string(),
+                    list_id: Some(part.id.to_string()),
+                    collection: false,
                     name: part.parsed_name,
                     view_id: view.get(&part.id).map(Uuid::to_string),
                 },
@@ -340,7 +400,8 @@ pub(crate) async fn after_list_end(
                 position,
                 switch: NextUpListSwitch {
                     reason: NextUpSwitchReason::Return,
-                    list_id: p.list_id,
+                    list_id: Some(p.list_id),
+                    collection: false,
                     name: p.name,
                     view_id: p.view_id,
                 },
