@@ -647,6 +647,10 @@ async fn unconstrained_id_columns_are_accounted_for() {
         "cbl_entries.cv_series_id",
         "cbl_entries.metron_issue_id",
         "cbl_entries.metron_series_id",
+        // A linked list's anchor names its issue by ComicVine id (the
+        // anchor is issue identity, not a local row; see cbl::links).
+        "reading_list_links.anchor_cv_issue_id",
+        "reading_list_breaks.anchor_cv_issue_id",
         "series_provider_range.provider_series_id",
         "series_external_relationship.provider_series_id",
         // The release calendar holds Metron's rows, keyed by Metron's own
