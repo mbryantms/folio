@@ -1884,7 +1884,7 @@ async fn create_from_catalog(
     .await
 }
 
-enum SourceMeta {
+pub(crate) enum SourceMeta {
     Upload {
         // Reserved for the future "rename on import" path.
         #[allow(dead_code)]
@@ -1916,12 +1916,38 @@ async fn create_list_from_parsed(
     xml: &str,
     source: SourceMeta,
 ) -> axum::response::Response {
+    let row = match insert_list_from_parsed(app, Some(user.id), parsed, xml, source).await {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
+    // `stats_for`, not the import summary, so the create response counts
+    // exactly what every later read counts: live matches the importer can
+    // open (a match into a library hidden from them reads as missing).
+    let acl = crate::library::access::for_user(app, user).await;
+    let stats = stats_for(&app.db, row.id, user.id, &acl)
+        .await
+        .unwrap_or_default();
+    (StatusCode::CREATED, Json(list_to_view(&row, stats))).into_response()
+}
+
+/// The insert half of [`create_list_from_parsed`]: the list row, its
+/// entries and the first refresh-log row in one transaction, owned by
+/// `owner` (`None` = a shared list; linked reading lists import a shared
+/// master's events shared). Quota checks are the caller's.
+pub(crate) async fn insert_list_from_parsed(
+    app: &AppState,
+    owner: Option<Uuid>,
+    parsed: &parsers::cbl::ParsedCbl,
+    xml: &str,
+    source: SourceMeta,
+) -> Result<cbl_list::Model, axum::response::Response> {
+    let internal = || error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     let now = Utc::now().fixed_offset();
     let id = Uuid::now_v7();
     let raw_sha = import::sha256_of(xml.as_bytes());
     let mut am = cbl_list::ActiveModel {
         id: Set(id),
-        owner_user_id: Set(Some(user.id)),
+        owner_user_id: Set(owner),
         source_kind: Set("upload".into()),
         source_url: Set(None),
         catalog_source_id: Set(None),
@@ -1989,36 +2015,27 @@ async fn create_list_from_parsed(
         Ok(t) => t,
         Err(e) => {
             tracing::error!(error = %e, "cbl_lists: begin failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            return Err(internal());
         }
     };
     if let Err(e) = am.insert(&txn).await {
         tracing::error!(error = %e, "cbl_lists: insert failed");
-        return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        return Err(internal());
     }
     if let Err(e) = import::apply_parsed(&txn, id, parsed, xml, None, RefreshTrigger::Manual).await
     {
         tracing::error!(error = %e, "cbl_lists: apply_parsed failed");
-        return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        return Err(internal());
     }
     if let Err(e) = txn.commit().await {
         tracing::error!(error = %e, "cbl_lists: commit failed");
-        return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        return Err(internal());
     }
-    // Re-read the freshly-written row + stats so the response shape
-    // mirrors the regular GET.
-    let row = match cbl_list::Entity::find_by_id(id).one(&app.db).await {
-        Ok(Some(r)) => r,
-        _ => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
-    };
-    // `stats_for`, not the import summary, so the create response counts
-    // exactly what every later read counts: live matches the importer can
-    // open (a match into a library hidden from them reads as missing).
-    let acl = crate::library::access::for_user(app, user).await;
-    let stats = stats_for(&app.db, id, user.id, &acl)
-        .await
-        .unwrap_or_default();
-    (StatusCode::CREATED, Json(list_to_view(&row, stats))).into_response()
+    // Re-read the freshly-written row so the caller sees what a GET would.
+    match cbl_list::Entity::find_by_id(id).one(&app.db).await {
+        Ok(Some(r)) => Ok(r),
+        _ => Err(internal()),
+    }
 }
 
 #[utoipa::path(

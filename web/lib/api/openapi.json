@@ -7476,6 +7476,86 @@
         }
       }
     },
+    "/api/me/cbl-lists/{id}/links/derive": {
+      "post": {
+        "operationId": "cbl_links_derive_preview",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DerivePreview"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "list not found"
+          },
+          "429": {
+            "description": "GitHub rate-limited the catalog"
+          },
+          "502": {
+            "description": "the catalog could not be read"
+          }
+        }
+      }
+    },
+    "/api/me/cbl-lists/{id}/links/derive/apply": {
+      "post": {
+        "operationId": "cbl_links_derive_apply",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyDeriveReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyDeriveResp"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "list not found"
+          },
+          "422": {
+            "description": "validation"
+          },
+          "429": {
+            "description": "import quota exceeded"
+          }
+        }
+      }
+    },
     "/api/me/cbl-lists/{id}/links/{link_id}": {
       "delete": {
         "operationId": "cbl_links_delete",
@@ -16667,12 +16747,107 @@
           "always"
         ]
       },
+      "ApplyDeriveReq": {
+        "type": "object",
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApplyEvent"
+            },
+            "description": "In reading order; several at one entry keep this order."
+          },
+          "parts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApplyPart"
+            }
+          }
+        }
+      },
+      "ApplyDeriveResp": {
+        "type": "object",
+        "required": [
+          "imported",
+          "linked",
+          "failed",
+          "links"
+        ],
+        "properties": {
+          "failed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApplyFailure"
+            }
+          },
+          "imported": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Event lists imported."
+          },
+          "linked": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Links created (events + parts)."
+          },
+          "links": {
+            "$ref": "#/components/schemas/ReadingListLinksView"
+          }
+        }
+      },
+      "ApplyEvent": {
+        "type": "object",
+        "required": [
+          "catalog_path",
+          "after_entry_id"
+        ],
+        "properties": {
+          "after_entry_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "catalog_path": {
+            "type": "string"
+          }
+        }
+      },
+      "ApplyFailure": {
+        "type": "object",
+        "required": [
+          "name",
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "ApplyMode": {
         "type": "string",
         "enum": [
           "fill_missing",
           "replace_all"
         ]
+      },
+      "ApplyPart": {
+        "type": "object",
+        "required": [
+          "direction",
+          "list_id"
+        ],
+        "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/PartDirection"
+          },
+          "list_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
       },
       "ApplyRequest": {
         "type": "object",
@@ -23086,6 +23261,46 @@
           "comfortable",
           "compact"
         ]
+      },
+      "DerivePreview": {
+        "type": "object",
+        "required": [
+          "twin_found",
+          "events",
+          "unplaced",
+          "parts",
+          "imports_needed"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProposedEventLink"
+            }
+          },
+          "imports_needed": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Proposed event lists the caller doesn't have yet (imported on apply)."
+          },
+          "parts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProposedPartLink"
+            }
+          },
+          "twin_found": {
+            "type": "boolean",
+            "description": "The list is a CBRO master whose with-events version is in the\ncatalog (events can be found)."
+          },
+          "unplaced": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnplacedRunView"
+            },
+            "description": "Inserted issues no event list covers — shown, never guessed."
+          }
+        }
       },
       "DetectAgreement": {
         "type": "object",
@@ -31961,6 +32176,13 @@
           }
         }
       },
+      "PartDirection": {
+        "type": "string",
+        "enum": [
+          "next",
+          "previous"
+        ]
+      },
       "PatchWidgetReq": {
         "type": "object",
         "required": [
@@ -32410,6 +32632,87 @@
           "updated_at": {
             "type": "string",
             "description": "RFC 3339 timestamp of the most recent progress write."
+          }
+        }
+      },
+      "ProposedEventLink": {
+        "type": "object",
+        "required": [
+          "catalog_path",
+          "name",
+          "total",
+          "issues_here",
+          "after_entry_id",
+          "after_position",
+          "after_label",
+          "order_at_anchor",
+          "already_linked"
+        ],
+        "properties": {
+          "after_entry_id": {
+            "type": "string"
+          },
+          "after_label": {
+            "type": "string"
+          },
+          "after_position": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "already_linked": {
+            "type": "boolean",
+            "description": "Already linked into this list."
+          },
+          "catalog_path": {
+            "type": "string"
+          },
+          "existing_list_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The caller's (or a shared) copy of the event list, if they have one."
+          },
+          "issues_here": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Of those, inserted at this spot by the with-events version."
+          },
+          "name": {
+            "type": "string"
+          },
+          "order_at_anchor": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Order among events at the same spot."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Issues in the event list."
+          }
+        }
+      },
+      "ProposedPartLink": {
+        "type": "object",
+        "required": [
+          "direction",
+          "list_id",
+          "name",
+          "already_linked"
+        ],
+        "properties": {
+          "already_linked": {
+            "type": "boolean"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/PartDirection"
+          },
+          "list_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
           }
         }
       },
@@ -40000,6 +40303,33 @@
               "null"
             ],
             "format": "uuid"
+          }
+        }
+      },
+      "UnplacedRunView": {
+        "type": "object",
+        "required": [
+          "issues",
+          "first_label",
+          "last_label"
+        ],
+        "properties": {
+          "after_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The entry the run follows; `None` = before the first entry."
+          },
+          "first_label": {
+            "type": "string"
+          },
+          "issues": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "last_label": {
+            "type": "string"
           }
         }
       },

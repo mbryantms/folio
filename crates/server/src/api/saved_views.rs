@@ -1002,19 +1002,41 @@ pub(crate) async fn ensure_cbl_view(
     user_id: Uuid,
     list: &cbl_list::Model,
 ) -> Result<(Uuid, bool), sea_orm::DbErr> {
+    ensure_view_of(db, Some(user_id), list).await
+}
+
+/// A **shared** view of a shared list (`user_id` NULL, the shape
+/// `shared_lists::share` produces), created when the list has none — for
+/// event lists a shared master imports (linked reading lists, PR 3b).
+pub(crate) async fn ensure_shared_cbl_view(
+    db: &sea_orm::DatabaseConnection,
+    list: &cbl_list::Model,
+) -> Result<(Uuid, bool), sea_orm::DbErr> {
+    ensure_view_of(db, None, list).await
+}
+
+async fn ensure_view_of(
+    db: &sea_orm::DatabaseConnection,
+    owner: Option<Uuid>,
+    list: &cbl_list::Model,
+) -> Result<(Uuid, bool), sea_orm::DbErr> {
     let existing = saved_view::Entity::find()
         .filter(saved_view::Column::Kind.eq(KIND_CBL))
         .filter(saved_view::Column::CblListId.eq(list.id))
-        .filter(
-            sea_orm::Condition::any()
-                .add(saved_view::Column::UserId.eq(user_id))
-                .add(saved_view::Column::UserId.is_null()),
-        )
+        .filter({
+            let shared = saved_view::Column::UserId.is_null();
+            match owner {
+                Some(id) => sea_orm::Condition::any()
+                    .add(saved_view::Column::UserId.eq(id))
+                    .add(shared),
+                None => sea_orm::Condition::all().add(shared),
+            }
+        })
         .all(db)
         .await?;
     if let Some(v) = existing
         .iter()
-        .find(|v| v.user_id == Some(user_id))
+        .find(|v| owner.is_some() && v.user_id == owner)
         .or_else(|| existing.first())
     {
         return Ok((v.id, false));
@@ -1023,7 +1045,7 @@ pub(crate) async fn ensure_cbl_view(
     let now = Utc::now().fixed_offset();
     let saved = saved_view::ActiveModel {
         id: Set(Uuid::now_v7()),
-        user_id: Set(Some(user_id)),
+        user_id: Set(owner),
         kind: Set(KIND_CBL),
         name: Set(list.parsed_name.trim().to_owned()),
         description: Set(None),

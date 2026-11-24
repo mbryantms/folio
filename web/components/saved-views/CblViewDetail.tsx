@@ -20,7 +20,9 @@ import {
   RefreshCw,
   Search as SearchIcon,
   Sparkles,
+  Waypoints,
 } from "lucide-react";
+import { DeriveLinksDialog } from "@/components/cbl/links/DeriveLinksDialog";
 
 import { CblDetail, CblInfoRow } from "@/components/cbl/cbl-detail";
 import { RefreshFailureNotice } from "@/components/cbl/RefreshFailureNotice";
@@ -406,6 +408,7 @@ function CblViewDetailInner({
   const skipLink = useSkipCblLink(listId);
   const markThrough = useMarkCblReadThrough(listId);
   const [chaptersOpen, setChaptersOpen] = React.useState(false);
+  const [deriveOpen, setDeriveOpen] = React.useState(false);
   const [insertTarget, setInsertTarget] = React.useState<{
     entryId: string | null;
     label: string | null;
@@ -845,6 +848,11 @@ function CblViewDetailInner({
           {showReadChapters ? "Showing read chapters" : "Show read chapters"}
         </DropdownMenuItem>
       ) : null}
+      {canManageLinks && list.catalog_source_id ? (
+        <DropdownMenuItem onSelect={() => setDeriveOpen(true)}>
+          <Waypoints className="size-4" /> Find events and parts…
+        </DropdownMenuItem>
+      ) : null}
       {canManageLinks && !nextPart ? (
         <DropdownMenuItem
           onSelect={() => setInsertTarget({ entryId: null, label: null })}
@@ -1271,6 +1279,13 @@ function CblViewDetailInner({
           events={linkEvents}
           next={nextPart}
           onJump={jumpToChapter}
+        />
+      )}
+      {deriveOpen && (
+        <DeriveLinksDialog
+          listId={list.id}
+          open={deriveOpen}
+          onOpenChange={setDeriveOpen}
         />
       )}
       <InsertListDialog

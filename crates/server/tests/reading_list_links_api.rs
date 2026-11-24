@@ -1127,3 +1127,181 @@ async fn entries_seek_by_position_and_walk_back() {
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+// ───── PR 3b: find events and parts from the catalog ─────
+
+const PART1: &str = "Marvel/Master Reading Order/CBRO/Marvel Master Part #1.cbl";
+const PART2: &str = "Marvel/Master Reading Order/CBRO/Marvel Master Part #2.cbl";
+const PART3: &str = "Marvel/Master Reading Order/CBRO/Marvel Master Part #3.cbl";
+const EVENT: &str = "Marvel/Events/CBRO/2004-2006 - Part 7/House of M.cbl";
+
+/// A catalog source whose cached index is fresh (so nothing asks GitHub)
+/// and lists `paths`. None has a with-events twin, so a preview never
+/// downloads anything.
+async fn seed_catalog(app: &TestApp, paths: &[&str]) -> Uuid {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let now = Utc::now().fixed_offset();
+    let id = Uuid::now_v7();
+    let entries: Vec<_> = paths
+        .iter()
+        .map(|p| {
+            serde_json::json!({
+                "path": p, "name": p, "publisher": "Marvel",
+                "sha": "0123456789abcdef0123456789abcdef01234567", "size": 100,
+            })
+        })
+        .collect();
+    entity::catalog_source::ActiveModel {
+        id: Set(id),
+        display_name: Set("Test catalog".into()),
+        github_owner: Set(format!("folio-test-owner-{id}")),
+        github_repo: Set("no-such-repository".into()),
+        github_branch: Set("main".into()),
+        enabled: Set(true),
+        last_indexed_at: Set(Some(now)),
+        index_etag: Set(None),
+        index_json: Set(Some(serde_json::json!({ "entries": entries }))),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+    id
+}
+
+/// Make `list` look imported from `source` at `path`.
+async fn from_catalog(app: &TestApp, list: Uuid, source: Uuid, path: &str) {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let row = cbl_list::Entity::find_by_id(list)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: cbl_list::ActiveModel = row.into();
+    am.source_kind = Set("catalog".into());
+    am.catalog_source_id = Set(Some(source));
+    am.catalog_path = Set(Some(path.into()));
+    am.update(&db).await.unwrap();
+}
+
+fn derive_uri(list: Uuid) -> String {
+    format!("/api/me/cbl-lists/{list}/links/derive")
+}
+
+#[tokio::test]
+async fn derive_chains_parts_and_links_imported_events() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "derive-user@example.com").await;
+    let other = register(&app, "derive-other@example.com").await;
+    let (_, issues) = seed_cbl_with_matched_entries(&app, user.user_id, 8).await;
+    let source = seed_catalog(&app, &[PART1, PART2, PART3, EVENT]).await;
+    let part1 = make_list(&app, Some(user.user_id), "Part 1", &issues[..3]).await;
+    let part2 = make_list(&app, Some(user.user_id), "Part 2", &issues[3..5]).await;
+    let event = make_list(&app, Some(user.user_id), "House of M", &issues[5..]).await;
+    // Someone else's copy of part 3 is never proposed.
+    let others = make_list(&app, Some(other.user_id), "Part 3", &issues[..1]).await;
+    from_catalog(&app, part2, source, PART2).await;
+    from_catalog(&app, part1, source, PART1).await;
+    from_catalog(&app, event, source, EVENT).await;
+    from_catalog(&app, others, source, PART3).await;
+
+    // Part 2's neighbours: part 1 (previous), and no next of the user's.
+    let (status, preview) = send(&app, Method::POST, &derive_uri(part2), &user, None).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["twin_found"], false);
+    assert_eq!(preview["events"].as_array().unwrap().len(), 0);
+    let parts = preview["parts"].as_array().unwrap();
+    assert_eq!(parts.len(), 1, "{preview}");
+    assert_eq!(parts[0]["direction"], "previous");
+    assert_eq!(parts[0]["list_id"], part1.to_string());
+    assert_eq!(parts[0]["already_linked"], false);
+
+    // Someone else can't preview the user's list.
+    let (status, _) = send(&app, Method::POST, &derive_uri(part2), &other, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Apply: chain part 1 → part 2, and place the event after part 2's
+    // first issue (the event list is already the user's, so no import).
+    let after = entry_at(&app, part2, 0).await;
+    let body = serde_json::json!({
+        "events": [
+            {"catalog_path": EVENT, "after_entry_id": after},
+            {"catalog_path": "Marvel/Events/CBRO/Nowhere.cbl", "after_entry_id": after},
+        ],
+        "parts": [{"direction": "previous", "list_id": part1}],
+    });
+    let (status, resp) = send(
+        &app,
+        Method::POST,
+        &format!("{}/apply", derive_uri(part2)),
+        &user,
+        Some(body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(resp["imported"], 0);
+    assert_eq!(resp["linked"], 2);
+    let failed = resp["failed"].as_array().unwrap();
+    assert_eq!(failed.len(), 1, "{resp}");
+    assert_eq!(failed[0]["message"], "not in the catalog");
+    let events = resp["links"]["events"].as_array().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["child_list_id"], event.to_string());
+
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let links = entity::reading_list_link::Entity::find()
+        .all(&db)
+        .await
+        .unwrap();
+    use entity::reading_list_link::{LinkKind, LinkPlacement};
+    let ev = links.iter().find(|l| l.kind == LinkKind::Event).unwrap();
+    assert_eq!(ev.parent_list_id, part2);
+    assert_eq!(ev.placement, LinkPlacement::AutoTwin);
+    let chain = links
+        .iter()
+        .find(|l| l.kind == LinkKind::Continues)
+        .unwrap();
+    assert_eq!((chain.parent_list_id, chain.child_list_id), (part1, part2));
+    assert_eq!(chain.placement, LinkPlacement::AutoChain);
+
+    // Again: everything is already linked, nothing new.
+    let (_, preview) = send(&app, Method::POST, &derive_uri(part2), &user, None).await;
+    assert_eq!(preview["parts"][0]["already_linked"], true);
+    let (status, resp) = send(
+        &app,
+        Method::POST,
+        &format!("{}/apply", derive_uri(part2)),
+        &user,
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(resp["linked"], 0);
+}
+
+#[tokio::test]
+async fn derive_needs_a_catalog_list() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "derive-upload@example.com").await;
+    let (_, issues) = seed_cbl_with_matched_entries(&app, user.user_id, 4).await;
+    let uploaded = make_list(&app, Some(user.user_id), "Uploaded", &issues[..2]).await;
+
+    let (status, preview) = send(&app, Method::POST, &derive_uri(uploaded), &user, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(preview["twin_found"], false);
+    assert!(preview["parts"].as_array().unwrap().is_empty());
+
+    let after = entry_at(&app, uploaded, 0).await;
+    let (status, resp) = send(
+        &app,
+        Method::POST,
+        &format!("{}/apply", derive_uri(uploaded)),
+        &user,
+        Some(serde_json::json!({
+            "events": [{"catalog_path": EVENT, "after_entry_id": after}],
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{resp}");
+}
