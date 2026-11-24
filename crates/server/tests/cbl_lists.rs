@@ -1547,9 +1547,113 @@ async fn remote_list_cap_rejects_new_url_import_without_fetching() {
     let app = TestApp::spawn().await;
     let _admin = register(&app, "cap-admin@example.com").await;
     let user = register(&app, "cap-user@example.com").await;
+    // The cap is `cbl.max_remote_lists_per_user`; a small value keeps the
+    // fixture cheap and proves the live config (not a constant) is read.
+    let cap = 3u32;
+    let mut cfg = (*app.state().cfg()).clone();
+    cfg.cbl_max_remote_lists_per_user = cap;
+    app.state().replace_cfg(cfg);
+    insert_url_lists(&app, &user, cap).await;
+    // `.invalid` never resolves, so a 422 (not a 400 invalid_url / 502) proves
+    // the cap fires before any outbound fetch is attempted.
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists",
+        Some(&user),
+        Some(serde_json::json!({"kind": "url", "url": "https://example.invalid/new.cbl"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body:#?}");
+    assert_eq!(body["error"]["code"], "cbl.remote_list_limit");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("limit 3"),
+        "names the configured limit: {body:#?}"
+    );
+    // Uploads aren't server-fetched, so they don't count against the cap.
+    let (status, body) = upload_cbl(&app, &user, "probe.cbl", TINY_CBL.as_bytes()).await;
+    assert_eq!(status, StatusCode::CREATED, "{body:#?}");
+}
+
+/// Linked reading lists PR 0: the cap is the admin setting
+/// `cbl.max_remote_lists_per_user` — default 500, PATCH-able within
+/// [1, 10000], and a raise takes effect on the next import without a restart.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_list_cap_is_an_admin_setting() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "cap-setting-admin@example.com").await;
+    let user = register(&app, "cap-setting-user@example.com").await;
+    assert_eq!(server::cbl::quota::DEFAULT_MAX_REMOTE_LISTS_PER_USER, 500);
+
+    for bad in [0u64, 10_001] {
+        let (status, body) = http(
+            &app,
+            Method::PATCH,
+            "/api/admin/settings",
+            Some(&admin),
+            Some(serde_json::json!({"cbl.max_remote_lists_per_user": bad})),
+        )
+        .await;
+        assert!(
+            status.is_client_error(),
+            "{bad} must be refused, got {status}: {body:#?}"
+        );
+    }
+
+    let (status, body) = http(
+        &app,
+        Method::PATCH,
+        "/api/admin/settings",
+        Some(&admin),
+        Some(serde_json::json!({"cbl.max_remote_lists_per_user": 2})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:#?}");
+    assert_eq!(app.state().cfg().cbl_max_remote_lists_per_user, 2);
+    insert_url_lists(&app, &user, 2).await;
+    let new_url = serde_json::json!({"kind": "url", "url": "https://example.invalid/next.cbl"});
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists",
+        Some(&user),
+        Some(new_url.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "at the cap");
+
+    let (status, body) = http(
+        &app,
+        Method::PATCH,
+        "/api/admin/settings",
+        Some(&admin),
+        Some(serde_json::json!({"cbl.max_remote_lists_per_user": 3})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:#?}");
+    // Past the cap now, so the request reaches the fetch: `.invalid` fails
+    // there, never with the cap's code.
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists",
+        Some(&user),
+        Some(new_url),
+    )
+    .await;
+    assert_ne!(
+        body["error"]["code"], "cbl.remote_list_limit",
+        "raised cap admits the import ({status}): {body:#?}"
+    );
+}
+
+async fn insert_url_lists(app: &TestApp, user: &Authed, n: u32) {
     let db = Database::connect(&app.db_url).await.unwrap();
     let now = chrono::Utc::now().fixed_offset();
-    for i in 0..server::cbl::quota::MAX_REMOTE_LISTS_PER_USER {
+    for i in 0..n {
         entity::cbl_list::ActiveModel {
             id: Set(Uuid::now_v7()),
             owner_user_id: Set(Some(user.user_id)),
@@ -1579,21 +1683,6 @@ async fn remote_list_cap_rejects_new_url_import_without_fetching() {
         .await
         .unwrap();
     }
-    // `.invalid` never resolves, so a 422 (not a 400 invalid_url / 502) proves
-    // the cap fires before any outbound fetch is attempted.
-    let (status, body) = http(
-        &app,
-        Method::POST,
-        "/api/me/cbl-lists",
-        Some(&user),
-        Some(serde_json::json!({"kind": "url", "url": "https://example.invalid/new.cbl"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body:#?}");
-    assert_eq!(body["error"]["code"], "cbl.remote_list_limit");
-    // Uploads aren't server-fetched, so they don't count against the cap.
-    let (status, body) = upload_cbl(&app, &user, "probe.cbl", TINY_CBL.as_bytes()).await;
-    assert_eq!(status, StatusCode::CREATED, "{body:#?}");
 }
 
 /// N-O2 + E7: a matched issue that was soft-removed reads as **missing**
