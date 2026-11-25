@@ -1249,6 +1249,47 @@ async fn cbl_list_acq(
     if let Some(up_next) = up_next_full.as_ref() {
         links.push(up_next_link_json(&up_next.id));
     }
+    // Linked reading lists (PR 6): `related` links to the events (in
+    // reading order), the next part and the lists this one is part of,
+    // plus an "Events in this list" navigation group.
+    let feed_links = crate::api::cbl_link_nav::feed_links(&app, user.id, id)
+        .await
+        .unwrap_or_default();
+    let related = |l: &crate::api::cbl_link_nav::FeedListLink, role: &str| {
+        let mut props = serde_json::Map::new();
+        props.insert("folio:link".into(), Value::from(role));
+        if let Some((p, label)) = &l.after {
+            props.insert("folio:afterPosition".into(), Value::from(p + 1));
+            props.insert("folio:afterIssue".into(), Value::from(label.clone()));
+        }
+        json!({
+            "rel": "related",
+            "href": format!("/opds/v2/lists/{}", l.list_id),
+            "type": NAV_CT,
+            "title": l.title(role),
+            "properties": Value::Object(props),
+        })
+    };
+    for e in &feed_links.events {
+        links.push(related(e, "event"));
+    }
+    if let Some(c) = &feed_links.continues {
+        links.push(related(c, "continues"));
+    }
+    for p in &feed_links.parents {
+        links.push(related(p, "parent"));
+    }
+    let event_nav: Vec<Value> = feed_links
+        .events
+        .iter()
+        .map(|e| {
+            json!({
+                "title": e.title("event"),
+                "href": format!("/opds/v2/lists/{}", e.list_id),
+                "type": NAV_CT,
+            })
+        })
+        .collect();
 
     // M6: bidirectional CBL progress — feed-root lastReadDate +
     // numberOfRead / numberOfFinished. Shares the v1 helper so the
@@ -1267,11 +1308,17 @@ async fn cbl_list_acq(
         metadata.insert("lastReadDate".into(), Value::from(ts.to_rfc3339()));
     }
 
-    let body = json!({
+    let mut body = json!({
         "metadata": Value::Object(metadata),
         "links": links,
         "publications": publications,
     });
+    if !event_nav.is_empty() {
+        body["groups"] = json!([{
+            "metadata": { "title": "Events in this list", "numberOfItems": event_nav.len() },
+            "navigation": event_nav,
+        }]);
+    }
     json_response(body)
 }
 
@@ -2099,6 +2146,21 @@ async fn render_collection_acq_v2(
         .cloned()
         .map(|i| (i.id.clone(), i))
         .collect();
+    // Reading lists kept in the collection (own or shared).
+    let list_ids: Vec<Uuid> = rows.iter().filter_map(|r| r.cbl_list_id).collect();
+    let list_by_id: HashMap<Uuid, cbl_list::Model> = if list_ids.is_empty() {
+        HashMap::new()
+    } else {
+        cbl_list::Entity::find()
+            .filter(cbl_list::Column::Id.is_in(list_ids))
+            .all(&app.db)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|l| l.owner_user_id.is_none_or(|o| o == user.id))
+            .map(|l| (l.id, l))
+            .collect()
+    };
     // Drop entries whose target did not hydrate before picking Up Next.
     rows.retain(|r| {
         r.series_id
@@ -2106,6 +2168,7 @@ async fn render_collection_acq_v2(
             || r.issue_id
                 .as_deref()
                 .is_some_and(|iid| issue_by_id.contains_key(iid))
+            || r.cbl_list_id.is_some_and(|l| list_by_id.contains_key(&l))
     });
     let up_next_id = if reorder {
         let up_next = opds::pick_next_in_collection(&app.db, user.id, &rows).await;
@@ -2139,6 +2202,15 @@ async fn render_collection_acq_v2(
             && let Some(i) = issue_by_id.get(iid)
         {
             publication_models.push(i.clone());
+        } else if let Some(l) = row.cbl_list_id.and_then(|l| list_by_id.get(&l)) {
+            // A reading list kept here: read as a detour, so a link to
+            // its own feed, in place among the navigation entries.
+            navigation.push(json!({
+                "title": l.parsed_name,
+                "href": format!("/opds/v2/lists/{}", l.id),
+                "type": NAV_CT,
+                "properties": { "folio:entryKind": "list" },
+            }));
         }
     }
     let publications =

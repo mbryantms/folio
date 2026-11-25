@@ -2285,6 +2285,61 @@ fn render_pse_stream_link(
 /// can't open) once per feed render. `None` means the series has no
 /// active issue the caller can see — emit the entry without image links and let
 /// the client render its placeholder.
+/// Linked reading lists (PR 6): feed-level `<link rel="related">` per
+/// event in the list (in reading order, titled with the issue it is read
+/// after), its next part, and the lists it is part of. Only lists the
+/// caller can see.
+pub(crate) async fn render_list_related_links(
+    app: &AppState,
+    user_id: Uuid,
+    list_id: Uuid,
+) -> String {
+    let links = match crate::api::cbl_link_nav::feed_links(app, user_id, list_id).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::warn!(error = %e, "opds: linked lists lookup failed");
+            return String::new();
+        }
+    };
+    let mut out = String::new();
+    let mut push = |l: &crate::api::cbl_link_nav::FeedListLink, role: &str| {
+        out.push_str(&format!(
+            "  <link rel=\"related\" href=\"/opds/v1/lists/{id}\" type=\"{acq}\" title=\"{title}\"/>\n",
+            id = l.list_id,
+            acq = ACQ_CT,
+            title = xml_escape(&l.title(role)),
+        ));
+    };
+    for e in &links.events {
+        push(e, "event");
+    }
+    if let Some(c) = &links.continues {
+        push(c, "continues");
+    }
+    for p in &links.parents {
+        push(p, "parent");
+    }
+    out
+}
+
+/// A reading list kept in a collection (PR 5): a navigation entry at its
+/// place, opening the list's own feed (it is a detour, not inlined).
+fn render_list_subsection_entry(l: &cbl_list::Model) -> String {
+    format!(
+        r#"  <entry>
+    <id>urn:cbl:{id}</id>
+    <title>{name}</title>
+    <updated>{updated}</updated>
+    <link rel="subsection" href="/opds/v1/lists/{id}" type="{acq}"/>
+  </entry>
+"#,
+        id = l.id,
+        name = xml_escape(&l.parsed_name),
+        updated = l.updated_at.to_rfc3339(),
+        acq = ACQ_CT,
+    )
+}
+
 fn render_series_subsection_entry(
     s: &series::Model,
     cover_issue_id: Option<&str>,
@@ -3043,6 +3098,9 @@ async fn cbl_list_acq(
     let cbl_summary = compute_cbl_progress_summary(&app.db, user.id, id, &visible).await;
     let feed_id_str = format!("urn:cbl:{id}");
     let title_str = format!("Reading list — {}", list.parsed_name);
+    // Linked reading lists: events, next part and parents as feed-level
+    // links (the slot sits with the other feed links, before entries).
+    let related = render_list_related_links(&app, user.id, id).await;
     let body = build_acquisition_feed(
         &app,
         AcquisitionFeedArgs {
@@ -3050,7 +3108,7 @@ async fn cbl_list_acq(
             title: &title_str,
             self_href: &self_href,
             issues: &issues,
-            pagination: "",
+            pagination: &related,
             user_id: user.id,
             sequential_nav: true,
             up_next_issue_id: up_next_id.as_deref(),
@@ -3569,6 +3627,21 @@ async fn render_collection_acq(
             .map(|i| (i.id.clone(), i))
             .collect()
     };
+    // Reading lists kept in the collection (own or shared).
+    let list_ids: Vec<Uuid> = rows.iter().filter_map(|r| r.cbl_list_id).collect();
+    let list_by_id: HashMap<Uuid, cbl_list::Model> = if list_ids.is_empty() {
+        HashMap::new()
+    } else {
+        cbl_list::Entity::find()
+            .filter(cbl_list::Column::Id.is_in(list_ids))
+            .all(&app.db)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|l| l.owner_user_id.is_none_or(|o| o == user.id))
+            .map(|l| (l.id, l))
+            .collect()
+    };
     // Drop entries whose target did not hydrate before picking Up Next, so
     // an invisible issue can neither be promoted nor shift the order.
     rows.retain(|r| {
@@ -3577,6 +3650,7 @@ async fn render_collection_acq(
             || r.issue_id
                 .as_deref()
                 .is_some_and(|iid| issue_by_id.contains_key(iid))
+            || r.cbl_list_id.is_some_and(|l| list_by_id.contains_key(&l))
     });
 
     let up_next_id = if reorder {
@@ -3621,6 +3695,8 @@ async fn render_collection_acq(
                 position: None,
                 komga_compat: app.cfg().is_komga_compat(),
             }));
+        } else if let Some(l) = row.cbl_list_id.and_then(|l| list_by_id.get(&l)) {
+            entries.push_str(&render_list_subsection_entry(l));
         }
     }
 

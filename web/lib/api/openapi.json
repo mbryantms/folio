@@ -7349,6 +7349,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "inline_events",
+            "in": "query",
+            "description": "Write each placed event's books in after its anchor issue (a\n\"with events\" file). Off by default: the stored file, unchanged.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -24865,6 +24874,56 @@
           }
         }
       },
+      "ExportAnchor": {
+        "type": "object",
+        "description": "Where a link or break sits in its list. Anchors are keyed by the\nissue, never by an entry id, so they survive a list refresh.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "cv_issue_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "number": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "position_hint": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "series": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/AnchorStatus"
+          },
+          "volume": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "year": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "ExportCollection": {
         "type": "object",
         "required": [
@@ -24934,12 +24993,23 @@
           },
           "entry_kind": {
             "type": "string",
-            "description": "`\"issue\"` or `\"series\"` — exactly one of the refs below is set."
+            "description": "`\"issue\"`, `\"series\"` or `\"list\"` — exactly one of the refs\nbelow is set."
           },
           "issue": {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/IssueRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "list": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExportListRef",
+                "description": "A reading list kept in the collection (read as a detour)."
               },
               {
                 "type": "null"
@@ -24982,6 +25052,32 @@
           },
           "updated_at": {
             "type": "string"
+          }
+        }
+      },
+      "ExportListRef": {
+        "type": "object",
+        "description": "A reading list named portably: its id, plus the CBL `<Name>` and\nthe catalog path it was imported from (both survive a re-import).",
+        "required": [
+          "list_id"
+        ],
+        "properties": {
+          "catalog_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "list_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` when the list no longer exists."
           }
         }
       },
@@ -25361,6 +25457,84 @@
           }
         }
       },
+      "ExportReadingListBreak": {
+        "type": "object",
+        "required": [
+          "id",
+          "list",
+          "anchor",
+          "created_at"
+        ],
+        "properties": {
+          "anchor": {
+            "$ref": "#/components/schemas/ExportAnchor"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "list": {
+            "$ref": "#/components/schemas/ExportListRef"
+          }
+        }
+      },
+      "ExportReadingListLink": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "parent",
+          "child",
+          "placement",
+          "sort_within_anchor",
+          "created_at"
+        ],
+        "properties": {
+          "anchor": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExportAnchor",
+                "description": "`null` for a `continues` link (it sits at the parent's end)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "child": {
+            "$ref": "#/components/schemas/ExportListRef"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/LinkKind"
+          },
+          "parent": {
+            "$ref": "#/components/schemas/ExportListRef"
+          },
+          "placement": {
+            "$ref": "#/components/schemas/LinkPlacement"
+          },
+          "sort_within_anchor": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "ExportReadingSession": {
         "type": "object",
         "required": [
@@ -25554,7 +25728,9 @@
           "sidebar",
           "rail_dismissals",
           "reading_log",
-          "preferences"
+          "preferences",
+          "reading_list_links",
+          "reading_list_breaks"
         ],
         "properties": {
           "collections": {
@@ -25605,6 +25781,20 @@
             "items": {
               "$ref": "#/components/schemas/ExportRating"
             }
+          },
+          "reading_list_breaks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportReadingListBreak"
+            },
+            "description": "Chapter breaks in the reading lists the user owns."
+          },
+          "reading_list_links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportReadingListLink"
+            },
+            "description": "Links between the reading lists the user owns (an event read\ninside a master list, a part that continues another). Each list\nis named by its CBL file name, which survives a re-import."
           },
           "reading_log": {
             "type": "array",

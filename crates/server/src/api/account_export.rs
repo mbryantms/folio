@@ -34,12 +34,13 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
 
+use entity::reading_list_link::{AnchorStatus, LinkKind, LinkPlacement};
 use entity::saved_view::SavedViewKind;
 use entity::user_sidebar_entry::SidebarEntryKind;
 use entity::{
-    collection_entry, issue, library, marker, progress_record, rail_dismissal, reading_session,
-    saved_view, series, user, user_issue_note, user_page, user_rating, user_sidebar_entry,
-    user_view_pin,
+    cbl_list, collection_entry, issue, library, marker, progress_record, rail_dismissal,
+    reading_list_break, reading_list_link, reading_session, saved_view, series, user,
+    user_issue_note, user_page, user_rating, user_sidebar_entry, user_view_pin,
 };
 
 use crate::api::respond;
@@ -120,6 +121,57 @@ pub struct ExportSections {
     /// Per-user preferences from the `users` row, including reader
     /// `keybinds`.
     pub preferences: ExportPreferences,
+    /// Links between the reading lists the user owns (an event read
+    /// inside a master list, a part that continues another). Each list
+    /// is named by its CBL file name, which survives a re-import.
+    pub reading_list_links: Vec<ExportReadingListLink>,
+    /// Chapter breaks in the reading lists the user owns.
+    pub reading_list_breaks: Vec<ExportReadingListBreak>,
+}
+
+/// A reading list named portably: its id, plus the CBL `<Name>` and
+/// the catalog path it was imported from (both survive a re-import).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ExportListRef {
+    pub list_id: Uuid,
+    /// `null` when the list no longer exists.
+    pub name: Option<String>,
+    pub catalog_path: Option<String>,
+}
+
+/// Where a link or break sits in its list. Anchors are keyed by the
+/// issue, never by an entry id, so they survive a list refresh.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ExportAnchor {
+    pub cv_issue_id: Option<i32>,
+    pub series: Option<String>,
+    pub number: Option<String>,
+    pub volume: Option<String>,
+    pub year: Option<String>,
+    pub position_hint: Option<i32>,
+    pub status: AnchorStatus,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ExportReadingListLink {
+    pub id: Uuid,
+    pub kind: LinkKind,
+    pub parent: ExportListRef,
+    pub child: ExportListRef,
+    /// `null` for a `continues` link (it sits at the parent's end).
+    pub anchor: Option<ExportAnchor>,
+    pub placement: LinkPlacement,
+    pub sort_within_anchor: i32,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ExportReadingListBreak {
+    pub id: Uuid,
+    pub list: ExportListRef,
+    pub label: Option<String>,
+    pub anchor: ExportAnchor,
+    pub created_at: String,
 }
 
 /// Portable identity for an issue. `issue_id` is Folio's BLAKE3 id;
@@ -206,10 +258,13 @@ pub struct ExportCollection {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ExportCollectionEntry {
     pub position: i32,
-    /// `"issue"` or `"series"` — exactly one of the refs below is set.
+    /// `"issue"`, `"series"` or `"list"` — exactly one of the refs
+    /// below is set.
     pub entry_kind: String,
     pub issue: Option<IssueRef>,
     pub series: Option<SeriesRef>,
+    /// A reading list kept in the collection (read as a detour).
+    pub list: Option<ExportListRef>,
     pub added_at: String,
 }
 
@@ -476,6 +531,55 @@ async fn build_export(
             .await?
     };
 
+    // Reading lists: links and breaks on the lists the user owns, and
+    // the names of every list the export points at.
+    let owned_lists: Vec<Uuid> = cbl_list::Entity::find()
+        .select_only()
+        .column(cbl_list::Column::Id)
+        .filter(cbl_list::Column::OwnerUserId.eq(user_id))
+        .into_tuple::<Uuid>()
+        .all(db)
+        .await?;
+    let (link_rows, break_rows) = if owned_lists.is_empty() {
+        (Vec::new(), Vec::new())
+    } else {
+        let links = reading_list_link::Entity::find()
+            .filter(reading_list_link::Column::ParentListId.is_in(owned_lists.clone()))
+            .order_by_asc(reading_list_link::Column::ParentListId)
+            .order_by_asc(reading_list_link::Column::AnchorPositionHint)
+            .order_by_asc(reading_list_link::Column::SortWithinAnchor)
+            .all(db)
+            .await?;
+        let breaks = reading_list_break::Entity::find()
+            .filter(reading_list_break::Column::ListId.is_in(owned_lists.clone()))
+            .order_by_asc(reading_list_break::Column::ListId)
+            .order_by_asc(reading_list_break::Column::AnchorPositionHint)
+            .all(db)
+            .await?;
+        (links, breaks)
+    };
+    let named: Vec<Uuid> = owned_lists
+        .iter()
+        .copied()
+        .chain(link_rows.iter().map(|l| l.child_list_id))
+        .chain(entry_rows.iter().filter_map(|e| e.cbl_list_id))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let mut list_names: ListNames = HashMap::new();
+    for chunk in named.chunks(HYDRATE_CHUNK) {
+        let rows = cbl_list::Entity::find()
+            .select_only()
+            .column(cbl_list::Column::Id)
+            .column(cbl_list::Column::ParsedName)
+            .column(cbl_list::Column::CatalogPath)
+            .filter(cbl_list::Column::Id.is_in(chunk.to_vec()))
+            .into_tuple::<(Uuid, String, Option<String>)>()
+            .all(db)
+            .await?;
+        list_names.extend(rows.into_iter().map(|(id, n, p)| (id, (n, p))));
+    }
+
     // Pinned views may be system rails the user doesn't own — hydrate
     // their kind/name/system_key so the pin is meaningful after a rebuild.
     let pinned_view_ids: Vec<Uuid> = pin_rows
@@ -580,6 +684,7 @@ async fn build_export(
                 entry_kind: e.entry_kind,
                 issue: e.issue_id.as_deref().map(|id| refs.issue(id)),
                 series: e.series_id.map(|id| refs.series(id)),
+                list: e.cbl_list_id.map(|id| list_ref(&list_names, id)),
                 added_at: e.added_at.to_rfc3339(),
             });
     }
@@ -759,6 +864,46 @@ async fn build_export(
         max_rails_per_page: user_row.max_rails_per_page,
     };
 
+    let reading_list_links = link_rows
+        .into_iter()
+        .map(|l| ExportReadingListLink {
+            id: l.id,
+            kind: l.kind,
+            parent: list_ref(&list_names, l.parent_list_id),
+            child: list_ref(&list_names, l.child_list_id),
+            anchor: (l.kind == LinkKind::Event).then_some(ExportAnchor {
+                cv_issue_id: l.anchor_cv_issue_id,
+                series: l.anchor_series,
+                number: l.anchor_number,
+                volume: l.anchor_volume,
+                year: l.anchor_year,
+                position_hint: l.anchor_position_hint,
+                status: l.anchor_status,
+            }),
+            placement: l.placement,
+            sort_within_anchor: l.sort_within_anchor,
+            created_at: l.created_at.to_rfc3339(),
+        })
+        .collect();
+    let reading_list_breaks = break_rows
+        .into_iter()
+        .map(|b| ExportReadingListBreak {
+            id: b.id,
+            list: list_ref(&list_names, b.list_id),
+            label: b.label,
+            anchor: ExportAnchor {
+                cv_issue_id: b.anchor_cv_issue_id,
+                series: b.anchor_series,
+                number: b.anchor_number,
+                volume: b.anchor_volume,
+                year: b.anchor_year,
+                position_hint: b.anchor_position_hint,
+                status: b.anchor_status,
+            },
+            created_at: b.created_at.to_rfc3339(),
+        })
+        .collect();
+
     Ok(UserExport {
         format: EXPORT_FORMAT.to_string(),
         version: EXPORT_VERSION,
@@ -781,8 +926,24 @@ async fn build_export(
             rail_dismissals,
             reading_log,
             preferences,
+            reading_list_links,
+            reading_list_breaks,
         },
     })
+}
+
+type ListNames = HashMap<Uuid, (String, Option<String>)>;
+
+fn list_ref(names: &ListNames, id: Uuid) -> ExportListRef {
+    let (name, catalog_path) = match names.get(&id) {
+        Some((n, p)) => (Some(n.clone()), p.clone()),
+        None => (None, None),
+    };
+    ExportListRef {
+        list_id: id,
+        name,
+        catalog_path,
+    }
 }
 
 /// One marker in the shared export shape. The notes export

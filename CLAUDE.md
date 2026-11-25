@@ -686,6 +686,26 @@ Default admin (first registered user becomes admin):
     (`.into_partial_model::<IssueCardRow>()`), never the full model
     (WP-3.6; plans in `docs/dev/load-testing.md`).
 
+- **Linked reading lists** (linked-reading-lists 1.0): a master list
+  links each event list at the issue it is read after (`kind = event`)
+  and its next part at its end (`continues`); events stay separate lists
+  with their own progress. See
+  [`docs/dev/reading-list-links.md`](docs/dev/reading-list-links.md).
+  - **Anchors are keyed by issue, never by `cbl_entries.id`.** A refresh
+    rewrites every entry row; `cbl::links::reresolve_parent` moves
+    `anchor_position_hint` to follow the issue (CV issue id, else series
+    / number / volume / year) or marks it `lost`. Same for chapter
+    breaks.
+  - **Derivation never guesses.** `cbl::derive` places an event only where
+    a candidate event list holds the inserted run; an uncovered run is
+    reported as unplaced, never assigned. The inline-events CBL export
+    likewise leaves lost anchors out.
+  - **One resolver**: Up Next detours / return / continues, the back
+    link, collection list entries and the OPDS related links all go
+    through `api::cbl_link_nav` — don't re-derive "which parent" ad hoc.
+    A reading list in a collection is a detour, never inlined into the
+    collection's order (`collection_sequence` skips it).
+
 - **Upcoming releases are view-only** (upcoming-releases 1.0): `/upcoming`
   shows Metron's release calendar reconciled with a snapshot of a Mylar
   install. **Folio never calls Mylar.** The only link between the two is
