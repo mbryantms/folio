@@ -500,6 +500,14 @@ pub const REGISTRY: &[SettingDef] = &[
         kind: SettingKind::Uint,
         is_secret: false,
     },
+    // ───────── Reading lists (linked-reading-lists PR 0) ─────────
+    SettingDef {
+        // Standing cap on url/catalog reading lists per non-admin user.
+        // Default 500, range 1–10000 (`Config::validate`).
+        key: "cbl.max_remote_lists_per_user",
+        kind: SettingKind::Uint,
+        is_secret: false,
+    },
 ];
 
 pub fn registry() -> &'static [SettingDef] {

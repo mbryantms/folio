@@ -56,6 +56,17 @@ neither are lazy `next/dynamic` chunks.
 | 2026-11-10, deferred drag-turn motion + peek, health toast, mutations-barrel import | 148.58 KB | 16 | 152 KB | 120 KB |
 | 2026-11-11, session refresh retries an unanswered refresh inside the grace window | 152.19 KB | 17 | 153 KB | 120 KB |
 | 2026-11-11, first load off the queries barrel, lazy sheet swipe, standalone check sharded | 139.95 KB | 17 | 143 KB | 120 KB |
+| 2026-11-24, linked reading lists Up Next (detour / return / continue switches, `?via=`) paid for by a lazy progress-unavailable banner | 142.39 KB (local) | 18 | 143 KB | 120 KB |
+
+The 2026-11-24 row: `main` measured 142.24 KB locally (about 142.7 KB in
+CI) before it. The linked-reading-lists Up Next work added about 0.5 KB of
+first-load code in `Reader.tsx` (following `switch_to` into another list or
+back to a collection, scrubbing a stale `?via=`); its end-card buttons and
+the view-ensuring call already load on use. To stay under the ceiling,
+`ProgressUnavailableBanner`, shown only when the server could not read the
+saved position, became a `lazy.tsx` surface (about 0.4 KB); if its chunk
+fails the reader starts without the notice, as it did before the notice
+existed.
 
 The ceiling is measured + 10% (117.45 × 1.1 = 129.2 → 130 KB; 130.13 × 1.1 =
 143.1 → 145 KB). Going over the ceiling fails CI; going over the target only
