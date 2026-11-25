@@ -376,6 +376,7 @@ export type NextUpDetour = Schemas["NextUpDetour"];
 export type NextUpListSwitch = Schemas["NextUpListSwitch"];
 export type NextUpSwitchReason = Schemas["NextUpSwitchReason"];
 export type ReadingListParentView = Schemas["ReadingListParentView"];
+export type ReadingListCardView = Schemas["ReadingListCardView"];
 export type UpdateBreakReq = Schemas["UpdateBreakReq"];
 export type ListViewRef = Schemas["ListViewRef"];
 export type CblDetailView = Schemas["CblDetailView"];
@@ -901,7 +902,7 @@ export type ImportSummary = {
   rematched: number;
 };
 
-export type CollectionEntryKind = "series" | "issue";
+export type CollectionEntryKind = "series" | "issue" | "list";
 
 export type MarkerKind = Schemas["MarkerKind"];
 

@@ -86,7 +86,11 @@ export function AddToCollectionDialog({
   // Always show Want to Read first; the rest land alpha by name (server
   // already sorts that way, but re-sort defensively in case future
   // changes alter the order).
-  const wantToRead = all.find((c) => c.system_key === WANT_TO_READ_KEY);
+  // Want to Read holds things to read, not reading lists.
+  const wantToRead =
+    target.entry_kind === "list"
+      ? undefined
+      : all.find((c) => c.system_key === WANT_TO_READ_KEY);
   const others = all.filter((c) => c.system_key !== WANT_TO_READ_KEY);
   const needle = search.trim().toLowerCase();
   const filtered = needle

@@ -379,6 +379,7 @@ async fn seed_collection_entry(
         entry_kind: Set(kind.into()),
         series_id: Set(series_id),
         issue_id: Set(issue_id.map(str::to_owned)),
+        cbl_list_id: Set(None),
         added_at: Set(now),
     }
     .insert(db)

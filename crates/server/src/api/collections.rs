@@ -55,6 +55,8 @@ const MIN_ENTRIES_LIMIT: u64 = 1;
 const DEFAULT_ENTRIES_LIMIT: u64 = 60;
 const ENTRY_KIND_SERIES: &str = "series";
 const ENTRY_KIND_ISSUE: &str = "issue";
+/// A reading list, read as a detour (linked reading lists, PR 5).
+const ENTRY_KIND_LIST: &str = "list";
 
 pub fn routes() -> OpenApiRouter<AppState> {
     // Per-user buckets (E3, audit N-A5): every write shares
@@ -89,7 +91,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
 pub struct CollectionEntryView {
     pub id: String,
     pub position: i32,
-    /// `'series'` or `'issue'`.
+    /// `'series'`, `'issue'` or `'list'`.
     pub entry_kind: String,
     pub added_at: String,
     /// Populated when `entry_kind = 'series'`. Hydrated to the full
@@ -106,6 +108,11 @@ pub struct CollectionEntryView {
     /// `series`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issue: Option<IssueSummaryView>,
+    /// Populated when `entry_kind = 'list'`: a reading list the caller
+    /// can see (their own or a shared one). It is read as a detour —
+    /// offered at this spot by Up Next, never inlined into the order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list: Option<super::cbl_link_nav::ReadingListCardView>,
 }
 
 /// One page of a collection's entries. Only entries whose target the
@@ -231,10 +238,11 @@ fn collection_name(value: &str, _: &()) -> garde::Result {
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct AddEntryReq {
-    /// `'series'` or `'issue'`.
+    /// `'series'`, `'issue'` or `'list'` (single add only; bulk add takes
+    /// series and issues).
     pub entry_kind: String,
-    /// Series UUID or issue id (TEXT). Validated against the
-    /// declared `entry_kind`.
+    /// Series UUID, issue id (TEXT) or reading-list UUID. Validated
+    /// against the declared `entry_kind`.
     pub ref_id: String,
 }
 
@@ -734,7 +742,7 @@ pub async fn list_entries(
     // never short or empty while a `next_cursor` says more follows, and
     // so `total` counts exactly what a full walk returns.
     let acl = access::for_user(&app, &user).await;
-    let visible = visible_entry_condition(&acl);
+    let visible = visible_entry_condition(&acl, user.id);
 
     let mut select = collection_entry::Entity::find()
         .filter(collection_entry::Column::SavedViewId.eq(id))
@@ -939,9 +947,9 @@ pub async fn add_entry(
         return resp;
     }
 
-    let (series_id, issue_id) = match req.entry_kind.as_str() {
+    let (series_id, issue_id, cbl_list_id) = match req.entry_kind.as_str() {
         ENTRY_KIND_SERIES => match Uuid::parse_str(&req.ref_id) {
-            Ok(uid) => (Some(uid), None),
+            Ok(uid) => (Some(uid), None, None),
             Err(_) => {
                 return error(
                     StatusCode::UNPROCESSABLE_ENTITY,
@@ -960,13 +968,23 @@ pub async fn add_entry(
                     "ref_id invalid",
                 );
             }
-            (None, Some(req.ref_id.clone()))
+            (None, Some(req.ref_id.clone()), None)
         }
+        ENTRY_KIND_LIST => match Uuid::parse_str(&req.ref_id) {
+            Ok(uid) => (None, None, Some(uid)),
+            Err(_) => {
+                return error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "validation",
+                    "ref_id must be a UUID for entry_kind='list'",
+                );
+            }
+        },
         _ => {
             return error(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
-                "entry_kind must be 'series' or 'issue'",
+                "entry_kind must be 'series', 'issue' or 'list'",
             );
         }
     };
@@ -986,6 +1004,18 @@ pub async fn add_entry(
             .unwrap_or(0);
         if exists == 0 {
             return error(StatusCode::NOT_FOUND, "not_found", "series not found");
+        }
+    }
+    if let Some(lid) = cbl_list_id {
+        // Own or shared, like every other reading-list surface.
+        let visible = entity::cbl_list::Entity::find_by_id(lid)
+            .one(&app.db)
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|l| l.owner_user_id.is_none_or(|o| o == user.id));
+        if !visible {
+            return error(StatusCode::NOT_FOUND, "not_found", "reading list not found");
         }
     }
     if let Some(iid) = issue_id.as_deref() {
@@ -1028,6 +1058,7 @@ pub async fn add_entry(
         entry_kind: Set(req.entry_kind.clone()),
         series_id: Set(series_id),
         issue_id: Set(issue_id.clone()),
+        cbl_list_id: Set(cbl_list_id),
         added_at: Set(now),
     }
     .insert(&txn)
@@ -1040,6 +1071,7 @@ pub async fn add_entry(
             let msg = e.to_string();
             if msg.contains("collection_entries_series_uniq")
                 || msg.contains("collection_entries_issue_uniq")
+                || msg.contains("collection_entries_list_uniq")
             {
                 return error(
                     StatusCode::CONFLICT,
@@ -1067,6 +1099,7 @@ pub async fn add_entry(
         added_at: now.to_rfc3339(),
         series: None,
         issue: None,
+        list: None,
     });
     (StatusCode::CREATED, Json(first)).into_response()
 }
@@ -1517,7 +1550,7 @@ pub async fn reorder_entries(
     let acl = access::for_user(&app, &user).await;
     let visible_ids: Vec<Uuid> = match collection_entry::Entity::find()
         .filter(collection_entry::Column::SavedViewId.eq(id))
-        .filter(visible_entry_condition(&acl))
+        .filter(visible_entry_condition(&acl, user.id))
         .select_only()
         .column(collection_entry::Column::Id)
         .into_tuple()
@@ -1606,7 +1639,7 @@ pub(crate) fn visible_issues_select(
 /// rather than `IN (SELECT id …)`, which Postgres cannot turn into a
 /// semi-join under an `OR` and would otherwise hash every visible issue
 /// and series on each page.
-fn visible_entry_condition(acl: &access::VisibleLibraries) -> Condition {
+fn visible_entry_condition(acl: &access::VisibleLibraries, user_id: Uuid) -> Condition {
     // Scoped: at module level `ExprTrait::max` shadows `Ord::max` on ints.
     use sea_orm::sea_query::ExprTrait;
     let series_hit = visible_series_select(acl)
@@ -1625,9 +1658,26 @@ fn visible_entry_condition(acl: &access::VisibleLibraries) -> Condition {
                 .equals((collection_entry::Entity, collection_entry::Column::IssueId)),
         )
         .into_query();
+    // A list entry: a reading list the caller can see (own or shared).
+    let list_hit = entity::cbl_list::Entity::find()
+        .select_only()
+        .column(entity::cbl_list::Column::Id)
+        .filter(
+            Expr::col((entity::cbl_list::Entity, entity::cbl_list::Column::Id)).equals((
+                collection_entry::Entity,
+                collection_entry::Column::CblListId,
+            )),
+        )
+        .filter(
+            Condition::any()
+                .add(entity::cbl_list::Column::OwnerUserId.is_null())
+                .add(entity::cbl_list::Column::OwnerUserId.eq(user_id)),
+        )
+        .into_query();
     Condition::any()
         .add(Expr::exists(series_hit))
         .add(Expr::exists(issue_hit))
+        .add(Expr::exists(list_hit))
 }
 
 // ───── hydration + cursor helpers ─────
@@ -1696,6 +1746,10 @@ async fn hydrate_entries(
     };
     let issue_by_id: HashMap<String, IssueCardRow> =
         issue_rows.into_iter().map(|i| (i.id.clone(), i)).collect();
+    let list_ids: Vec<Uuid> = rows.iter().filter_map(|r| r.cbl_list_id).collect();
+    let list_by_id = super::cbl_link_nav::list_cards(app, viewer, acl, &list_ids)
+        .await
+        .unwrap_or_default();
 
     let mut entries: Vec<CollectionEntryView> = rows
         .into_iter()
@@ -1715,9 +1769,10 @@ async fn hydrate_entries(
                     }
                 })
             });
+            let list = r.cbl_list_id.and_then(|lid| list_by_id.get(&lid).cloned());
             // No card, no entry: the target is removed, revoked, capped
             // or gone, and the row waits for it to come back.
-            if series.is_none() && issue.is_none() {
+            if series.is_none() && issue.is_none() && list.is_none() {
                 return None;
             }
             Some(CollectionEntryView {
@@ -1727,6 +1782,7 @@ async fn hydrate_entries(
                 added_at: r.added_at.to_rfc3339(),
                 series,
                 issue,
+                list,
             })
         })
         .collect();

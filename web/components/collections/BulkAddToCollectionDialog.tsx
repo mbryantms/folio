@@ -38,7 +38,8 @@ import type { CollectionEntryKind, SavedViewView } from "@/lib/api/types";
 const WANT_TO_READ_KEY = "want_to_read";
 
 export type BulkAddTarget = {
-  entry_kind: CollectionEntryKind;
+  /** Bulk add takes series and issues; a reading list is added on its own. */
+  entry_kind: Exclude<CollectionEntryKind, "list">;
   ref_id: string;
 };
 

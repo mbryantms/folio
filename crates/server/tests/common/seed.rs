@@ -665,6 +665,7 @@ pub async fn seed_collection_entry_issue<C: ConnectionTrait>(
         entry_kind: Set("issue".into()),
         series_id: Set(None),
         issue_id: Set(Some(issue_id.into())),
+        cbl_list_id: Set(None),
         added_at: Set(now),
     }
     .insert(db)
