@@ -13,6 +13,28 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.87.0](https://github.com/mbryantms/folio/compare/v0.86.2...v0.87.0) (2026-11-25)
+
+
+### Added
+
+* **cbl:** a reading list in a collection, read as a detour ([#1767](https://github.com/mbryantms/folio/issues/1767)) ([1d5f8b1](https://github.com/mbryantms/folio/commit/1d5f8b169c6735c7f3382f7d035a0d278957348d))
+* **cbl:** chapter breaks and next/previous chapter shortcuts ([#1764](https://github.com/mbryantms/folio/issues/1764)) ([ae177c4](https://github.com/mbryantms/folio/commit/ae177c4f61596a5550bf68b260069af318b43f35))
+* **cbl:** find a CBRO master's events and parts from the catalog ([#1765](https://github.com/mbryantms/folio/issues/1765)) ([41ed8f9](https://github.com/mbryantms/folio/commit/41ed8f94a6a5a0fa04197b05dca51ec0948cc4de))
+* **cbl:** linked lists in OPDS feeds, exports and docs ([#1768](https://github.com/mbryantms/folio/issues/1768)) ([5744a7e](https://github.com/mbryantms/folio/commit/5744a7e2a567e70b01780a6fa463d9ffbf68b85f))
+* **cbl:** links API, per-reader skip, mark read through, entries seek ([#1762](https://github.com/mbryantms/folio/issues/1762)) ([929b313](https://github.com/mbryantms/folio/commit/929b31318d5403b3bb25fc827dfaf0b480ffda3e))
+* **cbl:** list page draws linked events as bands between chapters ([#1763](https://github.com/mbryantms/folio/issues/1763)) ([18ecc67](https://github.com/mbryantms/folio/commit/18ecc677db550ba735b1397b25382db2d056fb46))
+* **cbl:** make the per-user reading-list cap an admin setting ([#1760](https://github.com/mbryantms/folio/issues/1760)) ([bd3aa07](https://github.com/mbryantms/folio/commit/bd3aa07920b2028387d110325320f4d51b42c7fe))
+* **cbl:** reading-list links table and anchor resolver ([#1761](https://github.com/mbryantms/folio/issues/1761)) ([6c36bad](https://github.com/mbryantms/folio/commit/6c36badf6e22a7cb9f2b3ad6ad054a891b74753e))
+* **cbl:** Up Next detours into events, returns, next parts, back links ([#1766](https://github.com/mbryantms/folio/issues/1766)) ([8c78506](https://github.com/mbryantms/folio/commit/8c78506cfa70603db3e748058338880efb57089f))
+
+
+### Dependencies
+
+* update node.js to 3fcc460 ([#1758](https://github.com/mbryantms/folio/issues/1758)) ([0def4f3](https://github.com/mbryantms/folio/commit/0def4f36ddc58eefda3504ab63dccd13bf9b7e19))
+* update notify-debouncer-full to 0.8, notify to 9 ([#1769](https://github.com/mbryantms/folio/issues/1769)) ([1f2a210](https://github.com/mbryantms/folio/commit/1f2a210c56c3b1b4ad7501bda952b4843fd5b0d2))
+* update taiki-e/install-action digest to fe3acb5 ([#1770](https://github.com/mbryantms/folio/issues/1770)) ([29ec112](https://github.com/mbryantms/folio/commit/29ec11234d67ab1df6c16da69bf0644c5e798b3e))
+
 ## [0.86.2](https://github.com/mbryantms/folio/compare/v0.86.1...v0.86.2) (2026-11-23)
 
 
