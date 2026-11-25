@@ -1,0 +1,353 @@
+//! Linked reading lists, PR 4: where reading goes next across linked lists.
+//!
+//! - **Detours** (D2): at an issue an event is anchored after, Up Next
+//!   still points at the main line and also offers each event there the
+//!   reader hasn't skipped and has something unread in, in
+//!   `sort_within_anchor` order.
+//! - **Continues**: at the end of a list with a next part, Up Next moves
+//!   into the next part's first unread issue.
+//! - **Return** (D3): at the end of an event, Up Next goes back to the
+//!   parent — the one the reader came from (`?via=` on the reader), else
+//!   the one with the most recent reading on its own issues — at the first
+//!   unread issue after the event's anchor, offering that anchor's other
+//!   unread events as detours.
+//!
+//! [`parents_of`] is the one "which lists is this one part of, most
+//! recently read first" resolver: the reader's return and the event list
+//! page's back link both use it.
+
+use chrono::{DateTime, FixedOffset};
+use entity::reading_list_link::{self, AnchorStatus, LinkKind};
+use entity::{cbl_list, issue, reading_list_link_skip};
+use sea_orm::{
+    ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter, Statement, Value,
+};
+use serde::Serialize;
+use std::collections::{HashMap, HashSet};
+use uuid::Uuid;
+
+use super::cbl_links::{LinkIssueRefView, caller_views, entry_stats, fold_stats};
+use crate::library::access::VisibleLibraries;
+use crate::state::AppState;
+
+/// An event the reader can read now, offered beside the main line.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct NextUpDetour {
+    pub link_id: String,
+    pub list_id: String,
+    pub name: String,
+    /// The reader's view of the event list (`None` = they have none yet;
+    /// `POST /me/cbl-lists/{list_id}/view` makes one).
+    pub view_id: Option<String>,
+    pub total: i64,
+    pub in_library: i64,
+    pub read: i64,
+    /// Where to start: the first unread issue the reader can open.
+    pub first_unread: LinkIssueRefView,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NextUpSwitchReason {
+    /// The list ended; its next part continues it.
+    Continues,
+    /// The event ended; back to the list it is part of.
+    Return,
+}
+
+/// Up Next left the list the reader was in: read the target in this one.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct NextUpListSwitch {
+    pub reason: NextUpSwitchReason,
+    pub list_id: String,
+    pub name: String,
+    /// The reader's view of that list (`None` = they have none yet).
+    pub view_id: Option<String>,
+}
+
+/// A list the given one is linked into.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct ReadingListParentView {
+    pub link_id: String,
+    pub kind: LinkKind,
+    pub list_id: String,
+    pub name: String,
+    /// The caller's view of the parent list.
+    pub view_id: Option<String>,
+    /// For an event: 0-based position of the issue it is read after.
+    pub anchor_position: Option<i32>,
+    /// For an event: "Excalibur #12".
+    pub anchor_label: Option<String>,
+    /// The caller's latest reading on the parent's own issues.
+    pub last_read_at: Option<DateTime<FixedOffset>>,
+}
+
+fn visible(list: &cbl_list::Model, user_id: Uuid) -> bool {
+    list.owner_user_id.is_none_or(|o| o == user_id)
+}
+
+#[derive(Debug, FromQueryResult)]
+struct LastRead {
+    cbl_list_id: Uuid,
+    last_read_at: Option<DateTime<FixedOffset>>,
+}
+
+/// Lists `list_id` is linked into that the caller can see, most recently
+/// read first (then oldest link first). Three statements.
+pub(crate) async fn parents_of(
+    app: &AppState,
+    user_id: Uuid,
+    list_id: Uuid,
+) -> Result<Vec<ReadingListParentView>, sea_orm::DbErr> {
+    let rows: Vec<_> = reading_list_link::Entity::find()
+        .filter(reading_list_link::Column::ChildListId.eq(list_id))
+        .find_also_related(cbl_list::Entity)
+        .all(&app.db)
+        .await?
+        .into_iter()
+        .filter_map(|(l, p)| p.filter(|p| visible(p, user_id)).map(|p| (l, p)))
+        .collect();
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids: Vec<Uuid> = rows.iter().map(|(_, p)| p.id).collect();
+    let views = caller_views(app, user_id, &ids).await?;
+    let last: HashMap<Uuid, Option<DateTime<FixedOffset>>> =
+        LastRead::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            SELECT e.cbl_list_id, MAX(p.updated_at) AS last_read_at
+            FROM cbl_entries e
+            JOIN progress_records p ON p.issue_id = e.matched_issue_id AND p.user_id = $2
+            WHERE e.cbl_list_id = ANY($1)
+            GROUP BY e.cbl_list_id
+            "#,
+            [Value::from(ids), Value::from(user_id)],
+        ))
+        .all(&app.db)
+        .await?
+        .into_iter()
+        .map(|r| (r.cbl_list_id, r.last_read_at))
+        .collect();
+    let mut out: Vec<(DateTime<FixedOffset>, ReadingListParentView)> = rows
+        .into_iter()
+        .map(|(l, p)| {
+            let anchored = l.kind == LinkKind::Event;
+            let label = match (&l.anchor_series, &l.anchor_number) {
+                (Some(s), Some(n)) if anchored => Some(format!("{s} #{n}")),
+                _ => None,
+            };
+            (
+                l.created_at,
+                ReadingListParentView {
+                    link_id: l.id.to_string(),
+                    kind: l.kind,
+                    list_id: p.id.to_string(),
+                    name: p.parsed_name,
+                    view_id: views.get(&p.id).map(Uuid::to_string),
+                    anchor_position: if anchored {
+                        l.anchor_position_hint
+                    } else {
+                        None
+                    },
+                    anchor_label: label,
+                    last_read_at: last.get(&p.id).copied().flatten(),
+                },
+            )
+        })
+        .collect();
+    out.sort_by(|(ca, a), (cb, b)| b.last_read_at.cmp(&a.last_read_at).then_with(|| ca.cmp(cb)));
+    Ok(out.into_iter().map(|(_, v)| v).collect())
+}
+
+/// Events anchored right after `position` in `list_id` that the reader
+/// can see, hasn't skipped and has an unread issue in, in reading order.
+/// `except` leaves out one list (the event being returned from).
+pub(crate) async fn detours_at(
+    app: &AppState,
+    user_id: Uuid,
+    acl: &VisibleLibraries,
+    list_id: Uuid,
+    position: i32,
+    except: Option<Uuid>,
+) -> Result<Vec<NextUpDetour>, sea_orm::DbErr> {
+    let mut links = reading_list_link::Entity::find()
+        .filter(reading_list_link::Column::ParentListId.eq(list_id))
+        .filter(reading_list_link::Column::Kind.eq(LinkKind::Event))
+        .filter(reading_list_link::Column::AnchorStatus.eq(AnchorStatus::Placed))
+        .filter(reading_list_link::Column::AnchorPositionHint.eq(position))
+        .all(&app.db)
+        .await?;
+    links.retain(|l| Some(l.child_list_id) != except);
+    if links.is_empty() {
+        return Ok(Vec::new());
+    }
+    links.sort_by_key(|l| (l.sort_within_anchor, l.created_at));
+    let skipped: HashSet<Uuid> = reading_list_link_skip::Entity::find()
+        .filter(reading_list_link_skip::Column::UserId.eq(user_id))
+        .filter(
+            reading_list_link_skip::Column::LinkId
+                .is_in(links.iter().map(|l| l.id).collect::<Vec<_>>()),
+        )
+        .all(&app.db)
+        .await?
+        .into_iter()
+        .map(|s| s.link_id)
+        .collect();
+    links.retain(|l| !skipped.contains(&l.id));
+    if links.is_empty() {
+        return Ok(Vec::new());
+    }
+    let child_ids: Vec<Uuid> = links.iter().map(|l| l.child_list_id).collect();
+    let children: HashMap<Uuid, cbl_list::Model> = cbl_list::Entity::find()
+        .filter(cbl_list::Column::Id.is_in(child_ids.clone()))
+        .all(&app.db)
+        .await?
+        .into_iter()
+        .filter(|c| visible(c, user_id))
+        .map(|c| (c.id, c))
+        .collect();
+    let views = caller_views(app, user_id, &child_ids).await?;
+    let rows = entry_stats(app, acl, user_id, &child_ids).await?;
+    let mut out = Vec::new();
+    for l in &links {
+        let Some(child) = children.get(&l.child_list_id) else {
+            continue;
+        };
+        let st = fold_stats(rows.iter().filter(|r| r.cbl_list_id == child.id));
+        let Some(first_unread) = st.first_unread else {
+            continue;
+        };
+        out.push(NextUpDetour {
+            link_id: l.id.to_string(),
+            list_id: child.id.to_string(),
+            name: child.parsed_name.clone(),
+            view_id: views.get(&child.id).map(Uuid::to_string),
+            total: st.total,
+            in_library: st.in_library,
+            read: st.read,
+            first_unread,
+        });
+    }
+    Ok(out)
+}
+
+/// Where Up Next goes when `list_id` has nothing unread left after the
+/// current issue: its next part, else (for an event) back to a parent.
+pub(crate) struct LinkedNext {
+    pub list_id: Uuid,
+    pub issue: issue::Model,
+    pub series_slug: String,
+    pub series_name: String,
+    pub position: i32,
+    pub switch: NextUpListSwitch,
+    pub detours: Vec<NextUpDetour>,
+}
+
+/// `from_list` is the parent the reader came from (`?via=`, resolved to
+/// a list id). The bool is `true` when `from_list` was given but isn't a
+/// parent of `list_id` the caller can see (a stale param).
+pub(crate) async fn after_list_end(
+    app: &AppState,
+    user_id: Uuid,
+    acl: &VisibleLibraries,
+    list_id: Uuid,
+    from_list: Option<Uuid>,
+) -> Result<(Option<LinkedNext>, bool), axum::response::Response> {
+    let db_err = |e: sea_orm::DbErr| {
+        tracing::error!(error = %e, "next_up: linked lists lookup failed");
+        super::cbl_links::internal()
+    };
+
+    // The next part.
+    let next_link = reading_list_link::Entity::find()
+        .filter(reading_list_link::Column::ParentListId.eq(list_id))
+        .filter(reading_list_link::Column::Kind.eq(LinkKind::Continues))
+        .one(&app.db)
+        .await
+        .map_err(db_err)?;
+    let next_part = match next_link {
+        // `find_also_related` would follow the parent relation; the child
+        // is the next part.
+        Some(l) => cbl_list::Entity::find_by_id(l.child_list_id)
+            .one(&app.db)
+            .await
+            .map_err(db_err)?,
+        None => None,
+    };
+    if let Some(part) = next_part
+        && visible(&part, user_id)
+        && let Some((issue, series_slug, series_name, position)) =
+            super::next_up::pick_next_in_cbl(app, user_id, part.id, acl, None).await?
+    {
+        let view = caller_views(app, user_id, &[part.id])
+            .await
+            .map_err(db_err)?;
+        return Ok((
+            Some(LinkedNext {
+                list_id: part.id,
+                issue,
+                series_slug,
+                series_name,
+                position,
+                switch: NextUpListSwitch {
+                    reason: NextUpSwitchReason::Continues,
+                    list_id: part.id.to_string(),
+                    name: part.parsed_name,
+                    view_id: view.get(&part.id).map(Uuid::to_string),
+                },
+                detours: Vec::new(),
+            }),
+            false,
+        ));
+    }
+
+    // Back to a parent this list is an event in.
+    let mut parents: Vec<ReadingListParentView> = parents_of(app, user_id, list_id)
+        .await
+        .map_err(db_err)?
+        .into_iter()
+        .filter(|p| p.kind == LinkKind::Event && p.anchor_position.is_some())
+        .collect();
+    let from = from_list.map(|f| f.to_string());
+    let stale = from
+        .as_ref()
+        .is_some_and(|f| !parents.iter().any(|p| &p.list_id == f));
+    if let Some(f) = &from
+        && let Some(i) = parents.iter().position(|p| &p.list_id == f)
+    {
+        let p = parents.remove(i);
+        parents.insert(0, p);
+    }
+    for p in parents {
+        let (Ok(parent_id), Some(anchor)) = (Uuid::parse_str(&p.list_id), p.anchor_position) else {
+            continue;
+        };
+        let Some((issue, series_slug, series_name, position)) =
+            super::next_up::pick_next_in_cbl(app, user_id, parent_id, acl, Some(anchor)).await?
+        else {
+            continue;
+        };
+        let detours = detours_at(app, user_id, acl, parent_id, anchor, Some(list_id))
+            .await
+            .map_err(db_err)?;
+        return Ok((
+            Some(LinkedNext {
+                list_id: parent_id,
+                issue,
+                series_slug,
+                series_name,
+                position,
+                switch: NextUpListSwitch {
+                    reason: NextUpSwitchReason::Return,
+                    list_id: p.list_id,
+                    name: p.name,
+                    view_id: p.view_id,
+                },
+                detours,
+            }),
+            stale,
+        ));
+    }
+    Ok((None, stale))
+}

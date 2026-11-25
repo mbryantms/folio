@@ -52,6 +52,7 @@ use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
+use crate::api::cbl_link_nav::{self, NextUpDetour, NextUpListSwitch};
 use crate::api::collection_sequence;
 use crate::api::issue_card::IssueCardRow;
 use crate::api::rails::OnDeckCard;
@@ -155,6 +156,22 @@ pub struct NextUpView {
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     #[serde(default)]
     pub collection_param_was_stale: bool,
+    /// Linked reading lists (D2): events anchored right after the current
+    /// issue in the `?cbl=` list that the reader can start now. `target`
+    /// stays the main line; these are offered beside it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
+    pub detours: Vec<NextUpDetour>,
+    /// Set when `target` is in a different reading list than `?cbl=`: the
+    /// next part (`continues`) or, at an event's end, the list it is part
+    /// of (`return`). Read the target with that list's view as `?cbl=`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub switch_to: Option<NextUpListSwitch>,
+    /// `true` when `?via=` named a list the event isn't part of (or the
+    /// caller can't use); the web drops it from the URL.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default)]
+    pub via_param_was_stale: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -166,6 +183,11 @@ pub struct NextUpQuery {
     /// reading through. Optional; takes precedence over `cbl` when both
     /// are sent. Invalid or stale values fall through like `cbl`.
     pub collection: Option<Uuid>,
+    /// Saved-view id of the list the reader came from into an event read
+    /// through `?cbl=` (named `via`: the reader's `?from=` is taken). At
+    /// the event's end Up Next returns there (else to the most recently
+    /// read list the event is part of).
+    pub via: Option<Uuid>,
 }
 
 // ───── Handler ─────
@@ -179,7 +201,8 @@ pub struct NextUpQuery {
     params(
         ("issue_id" = String, Path, description = "Current issue id"),
         ("cbl" = Option<String>, Query, description = "Saved-view id (kind='cbl') the caller is reading through"),
-        ("collection" = Option<String>, Query, description = "Saved-view id (kind='collection') the caller is reading through; wins over `cbl`")
+        ("collection" = Option<String>, Query, description = "Saved-view id (kind='collection') the caller is reading through; wins over `cbl`"),
+        ("via" = Option<String>, Query, description = "Saved-view id of the list the reader came from into the `cbl` event; the event's end returns there")
     ),
     responses(
         (status = 200, body = NextUpView),
@@ -245,8 +268,15 @@ pub async fn next_up(
 
     // ───── CBL branch ─────
     let mut cbl_param_was_stale = false;
+    // Detours offered at the current issue even when the list itself has
+    // nothing next (they ride on the series / none answer).
+    let mut linked = LinkedCtx {
+        via: q.via,
+        detours: Vec::new(),
+        via_param_was_stale: false,
+    };
     if let Some(saved_view_id) = q.cbl {
-        match resolve_cbl_next(&app, user.id, saved_view_id, &current, &acl).await {
+        match resolve_cbl_next(&app, user.id, saved_view_id, &current, &acl, &mut linked).await {
             Ok(CblBranchOutcome::Resolved(mut view)) => {
                 view.cbl_param_was_stale = false;
                 record_resolved("cbl");
@@ -315,6 +345,9 @@ pub async fn next_up(
                 collection_total: None,
                 collection_finished: None,
                 collection_param_was_stale,
+                detours: linked.detours,
+                switch_to: None,
+                via_param_was_stale: linked.via_param_was_stale,
             })
             .into_response()
         }
@@ -323,7 +356,7 @@ pub async fn next_up(
             // top On Deck card (D-6) so the end-of-issue card has
             // something to render in its caught-up state.
             record_resolved("none");
-            let view = none_view_with_fallback(
+            let mut view = none_view_with_fallback(
                 &app,
                 user.id,
                 &acl,
@@ -332,6 +365,8 @@ pub async fn next_up(
                 collection_param_was_stale,
             )
             .await;
+            view.detours = linked.detours;
+            view.via_param_was_stale = linked.via_param_was_stale;
             Json(view).into_response()
         }
         Err(resp) => resp,
@@ -385,6 +420,9 @@ fn none_view(cbl_param_was_stale: bool, collection_param_was_stale: bool) -> Nex
         collection_total: None,
         collection_finished: None,
         collection_param_was_stale,
+        detours: Vec::new(),
+        switch_to: None,
+        via_param_was_stale: false,
     }
 }
 
@@ -439,12 +477,38 @@ enum CblBranchOutcome {
 /// (current issue not in this list — drives the self-healing URL
 /// scrub) from `NoMatch` (any other miss) via [`CblBranchOutcome`].
 /// `Err` is reserved for genuine DB failures.
+/// Linked-list state the CBL branch hands back to the handler.
+struct LinkedCtx {
+    /// `?via=`: the saved view the reader came from into an event.
+    via: Option<Uuid>,
+    /// Detours at the current issue, for an answer the CBL branch didn't
+    /// resolve itself.
+    detours: Vec<NextUpDetour>,
+    via_param_was_stale: bool,
+}
+
+/// The list `view_id` reads, when it is a CBL view the caller may use.
+async fn cbl_list_of_view(
+    app: &AppState,
+    user_id: Uuid,
+    view_id: Uuid,
+) -> Result<Option<Uuid>, sea_orm::DbErr> {
+    let Some(sv) = saved_view::Entity::find_by_id(view_id).one(&app.db).await? else {
+        return Ok(None);
+    };
+    if sv.kind != KIND_CBL || sv.user_id.is_some_and(|o| o != user_id) {
+        return Ok(None);
+    }
+    crate::api::saved_views::usable_cbl_list_id(&app.db, &sv, user_id).await
+}
+
 async fn resolve_cbl_next(
     app: &AppState,
     user_id: Uuid,
     saved_view_id: Uuid,
     current: &issue::Model,
     acl: &access::VisibleLibraries,
+    linked: &mut LinkedCtx,
 ) -> Result<CblBranchOutcome, Response> {
     let sv = match saved_view::Entity::find_by_id(saved_view_id)
         .one(&app.db)
@@ -515,15 +579,47 @@ async fn resolve_cbl_next(
         return Ok(CblBranchOutcome::StaleParam);
     };
 
+    let internal = |e: sea_orm::DbErr| {
+        tracing::error!(error = %e, "next_up: linked lists lookup failed");
+        error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+    };
+    let mut detours =
+        cbl_link_nav::detours_at(app, user_id, acl, cbl_list_id, current_entry.position, None)
+            .await
+            .map_err(internal)?;
+
     let next = match pick_next_in_cbl(app, user_id, cbl_list_id, acl, Some(current_entry.position))
         .await
     {
         Ok(opt) => opt,
         Err(resp) => return Err(resp),
     };
-    let Some((issue_model, series_slug, series_name, position)) = next else {
-        return Ok(CblBranchOutcome::NoMatch);
+    let mut switch_to = None;
+    let (target_list_id, (issue_model, series_slug, series_name, position)) = match next {
+        Some(n) => (cbl_list_id, n),
+        None => {
+            // The list is done after this issue: its next part, or back
+            // from an event to the list it is part of.
+            let from_list = match linked.via {
+                Some(v) => cbl_list_of_view(app, user_id, v).await.map_err(internal)?,
+                None => None,
+            };
+            let (found, stale) =
+                cbl_link_nav::after_list_end(app, user_id, acl, cbl_list_id, from_list).await?;
+            linked.via_param_was_stale = stale || (linked.via.is_some() && from_list.is_none());
+            let Some(ln) = found else {
+                linked.detours = detours;
+                return Ok(CblBranchOutcome::NoMatch);
+            };
+            detours.extend(ln.detours);
+            switch_to = Some(ln.switch);
+            (
+                ln.list_id,
+                (ln.issue, ln.series_slug, ln.series_name, ln.position),
+            )
+        }
     };
+    let cbl_list_id = target_list_id;
 
     // Fetch the list once for its display name + total matched count.
     let list_row = match cbl_list::Entity::find_by_id(cbl_list_id).one(&app.db).await {
@@ -549,6 +645,9 @@ async fn resolve_cbl_next(
         collection_total: None,
         collection_finished: None,
         collection_param_was_stale: false,
+        detours,
+        switch_to,
+        via_param_was_stale: linked.via_param_was_stale,
     }))
 }
 
@@ -639,6 +738,9 @@ fn collection_view(
         collection_total: Some(seq.total()),
         collection_finished: finished,
         collection_param_was_stale: false,
+        detours: Vec::new(),
+        switch_to: None,
+        via_param_was_stale: false,
     }
 }
 
@@ -1333,6 +1435,9 @@ pub async fn prev_up(
                 collection_total: None,
                 collection_finished: None,
                 collection_param_was_stale,
+                detours: Vec::new(),
+                switch_to: None,
+                via_param_was_stale: false,
             })
             .into_response()
         }
@@ -1453,6 +1558,9 @@ async fn resolve_cbl_prev(
         collection_total: None,
         collection_finished: None,
         collection_param_was_stale: false,
+        detours: Vec::new(),
+        switch_to: None,
+        via_param_was_stale: false,
     }))
 }
 

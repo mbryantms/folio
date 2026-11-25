@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import dynamic from "next/dynamic";
+import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import {
   BookOpen,
@@ -23,6 +24,7 @@ import {
   Waypoints,
 } from "lucide-react";
 import { DeriveLinksDialog } from "@/components/cbl/links/DeriveLinksDialog";
+import { PartOfLink } from "@/components/cbl/links/PartOfLink";
 
 import { CblDetail, CblInfoRow } from "@/components/cbl/cbl-detail";
 import { RefreshFailureNotice } from "@/components/cbl/RefreshFailureNotice";
@@ -436,12 +438,32 @@ function CblViewDetailInner({
   const [pendingChapter, setPendingChapter] = React.useState<number | null>(
     null,
   );
+  // `?event=<link id>` (an event page's "Part of" link): open at that
+  // event's band, its chapter unfolded. Once, when the links are known.
+  const searchParams = useSearchParams();
+  const eventParam = searchParams.get("event");
+  const [pendingEvent, setPendingEvent] = React.useState<string | null>(null);
+  const [eventHandled, setEventHandled] = React.useState(false);
+  if (!eventHandled && eventParam != null && chapters.length > 0) {
+    setEventHandled(true);
+    const i = chapters.findIndex((c) => c.event_link_ids.includes(eventParam));
+    if (i >= 0) {
+      setFoldOverrides((o) => ({ ...o, [i]: false }));
+      setPendingEvent(eventParam);
+      setPendingChapter(i);
+    }
+  }
   React.useEffect(() => {
     if (pendingChapter == null) return;
     // A rail jump that unfolds a chapter moves the entries query's start;
     // wait for the new first page so the scroll isn't lost to the reload.
     if (entriesFirstLoading) return;
-    const el = document.getElementById(chapterAnchorId(pendingChapter));
+    const eventSel = pendingEvent
+      ? `[data-event-link="${CSS.escape(pendingEvent)}"]`
+      : null;
+    const el = eventSel
+      ? document.querySelector(eventSel)
+      : document.getElementById(chapterAnchorId(pendingChapter));
     if (!el) {
       // Not loaded yet: walk the pages until its header renders.
       if (entriesHasNext && !entriesFetchingNext) void entriesFetchNext();
@@ -452,17 +474,20 @@ function CblViewDetailInner({
       // sticky, so once pinned its box no longer says where the chapter
       // starts. Looked up again here: a fold change can swap elements.
       const target =
-        document.querySelector(`[data-chapter-index="${pendingChapter}"]`) ??
+        (eventSel && document.querySelector(eventSel)) ||
+        document.querySelector(`[data-chapter-index="${pendingChapter}"]`) ||
         document.getElementById(chapterAnchorId(pendingChapter));
       if (!target) return;
       target.scrollIntoView({ behavior: "smooth", block: "start" });
       setPendingChapter(null);
+      setPendingEvent(null);
     });
     return () => cancelAnimationFrame(raf);
     // Re-checks after each page lands (fetching flips) and after a fold
     // override renders the header (pendingChapter set in the same batch).
   }, [
     pendingChapter,
+    pendingEvent,
     entriesFirstLoading,
     entriesHasNext,
     entriesFetchingNext,
@@ -778,6 +803,7 @@ function CblViewDetailInner({
       key={link.id}
       link={link}
       parentListId={list.id}
+      parentViewId={savedView.id}
       afterLabel={
         link.anchor?.series
           ? `${link.anchor.series} #${link.anchor.number ?? ""}`
@@ -1061,6 +1087,12 @@ function CblViewDetailInner({
       <div className="hidden md:block">
         <CblInfoRow list={list} />
       </div>
+      {/* Linked into other lists: the way back (PR 4). */}
+      <PartOfLink
+        listId={list.id}
+        parents={linksQuery.data?.parents ?? []}
+        viaViewId={searchParams.get("via")}
+      />
       {/* A failing refresh shows at every width: it is the one thing
        *  here the reader cannot learn elsewhere on the page. */}
       <RefreshFailureNotice

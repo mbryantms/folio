@@ -1305,3 +1305,195 @@ async fn derive_needs_a_catalog_list() {
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{resp}");
 }
+
+// ───── PR 4: Up Next across linked lists ─────
+
+async fn finish(app: &TestApp, user_id: Uuid, issue_id: &str, ago_secs: i64) {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let at = (Utc::now() - chrono::Duration::seconds(ago_secs)).fixed_offset();
+    entity::progress_record::ActiveModel {
+        user_id: Set(user_id),
+        issue_id: Set(issue_id.into()),
+        last_page: Set(19),
+        percent: Set(1.0),
+        finished: Set(true),
+        finished_at: Set(Some(at)),
+        updated_at: Set(at),
+        device: Set(None),
+        is_backfill: Set(false),
+        run: Set(0),
+        page_hash: Set(None),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+}
+
+async fn view_of(app: &TestApp, list: Uuid, auth: &Authed) -> String {
+    let (status, body) = send(
+        app,
+        Method::POST,
+        &format!("/api/me/cbl-lists/{list}/view"),
+        auth,
+        None,
+    )
+    .await;
+    assert!(status.is_success(), "{body}");
+    body["view_id"].as_str().unwrap().to_owned()
+}
+
+async fn link(
+    app: &TestApp,
+    auth: &Authed,
+    parent: Uuid,
+    child: Uuid,
+    after: Option<i32>,
+) -> String {
+    let after_entry_id = match after {
+        Some(p) => Some(entry_at(app, parent, p).await),
+        None => None,
+    };
+    let kind = if after.is_some() {
+        "event"
+    } else {
+        "continues"
+    };
+    let (status, body) = send(
+        app,
+        Method::POST,
+        &links_uri(parent),
+        auth,
+        Some(serde_json::json!({"child_list_id": child, "kind": kind, "after_entry_id": after_entry_id})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let all = body["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(body["continues"].as_object().map(|_| &body["continues"]));
+    all.into_iter()
+        .find(|l| l["child_list_id"] == child.to_string())
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+async fn next_up(app: &TestApp, auth: &Authed, issue: &str, query: &str) -> serde_json::Value {
+    let (status, body) = get_json(app, &format!("/api/issues/{issue}/next-up?{query}"), auth).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body
+}
+
+fn detour_names(body: &serde_json::Value) -> Vec<String> {
+    body["detours"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|d| d["name"].as_str().unwrap().to_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn up_next_offers_events_returns_from_them_and_continues_in_the_next_part() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "upnext-user@example.com").await;
+    let (_, issues) = seed_cbl_with_matched_entries(&app, user.user_id, 12).await;
+    let master = make_list(&app, Some(user.user_id), "Master", &issues[0..4]).await;
+    let event_a = make_list(&app, Some(user.user_id), "Event A", &issues[4..6]).await;
+    let event_b = make_list(&app, Some(user.user_id), "Event B", &issues[6..8]).await;
+    let part2 = make_list(&app, Some(user.user_id), "Part 2", &issues[8..10]).await;
+    let other = make_list(&app, Some(user.user_id), "Other master", &issues[10..12]).await;
+    let _a = link(&app, &user, master, event_a, Some(1)).await;
+    let b = link(&app, &user, master, event_b, Some(1)).await;
+    link(&app, &user, master, part2, None).await;
+    let master_view = view_of(&app, master, &user).await;
+    let a_view = view_of(&app, event_a, &user).await;
+    let part2_view = view_of(&app, part2, &user).await;
+    let cbl = |v: &str| format!("cbl={v}");
+
+    // At the anchor: the main line is next, both events are offered in
+    // their order, each starting at its first unread issue.
+    let body = next_up(&app, &user, &issues[1], &cbl(&master_view)).await;
+    assert_eq!(body["source"], "cbl");
+    assert_eq!(body["target"]["id"], issues[2]);
+    assert!(body.get("switch_to").is_none());
+    assert_eq!(detour_names(&body), ["Event A", "Event B"]);
+    assert_eq!(body["detours"][0]["first_unread"]["issue_id"], issues[4]);
+    assert_eq!(body["detours"][0]["view_id"], a_view);
+    // Elsewhere: none.
+    let body = next_up(&app, &user, &issues[0], &cbl(&master_view)).await;
+    assert!(detour_names(&body).is_empty());
+
+    // A skipped event isn't offered; a read one isn't either.
+    let skip = format!("{}/{b}/skip", links_uri(master));
+    assert_eq!(
+        send(&app, Method::PUT, &skip, &user, None).await.0,
+        StatusCode::NO_CONTENT
+    );
+    let body = next_up(&app, &user, &issues[1], &cbl(&master_view)).await;
+    assert_eq!(detour_names(&body), ["Event A"]);
+    finish(&app, user.user_id, &issues[4], 60).await;
+    finish(&app, user.user_id, &issues[5], 50).await;
+    let body = next_up(&app, &user, &issues[1], &cbl(&master_view)).await;
+    assert!(detour_names(&body).is_empty(), "{body}");
+    assert_eq!(
+        send(&app, Method::DELETE, &skip, &user, None).await.0,
+        StatusCode::NO_CONTENT
+    );
+
+    // At an event's end: back to the master, at the first unread issue
+    // after the anchor, offering the anchor's other unread event.
+    let from = format!("{}&via={master_view}", cbl(&a_view));
+    let body = next_up(&app, &user, &issues[5], &from).await;
+    assert_eq!(body["source"], "cbl");
+    assert_eq!(body["target"]["id"], issues[2]);
+    assert_eq!(body["cbl_list_id"], master.to_string());
+    assert_eq!(body["switch_to"]["reason"], "return");
+    assert_eq!(body["switch_to"]["view_id"], master_view);
+    assert_eq!(detour_names(&body), ["Event B"]);
+
+    // Two parents: without `via`, the most recently read one wins.
+    link(&app, &user, other, event_a, Some(0)).await;
+    let other_view = view_of(&app, other, &user).await;
+    finish(&app, user.user_id, &issues[10], 5).await;
+    let body = next_up(&app, &user, &issues[5], &cbl(&a_view)).await;
+    assert_eq!(body["switch_to"]["list_id"], other.to_string(), "{body}");
+    assert_eq!(body["target"]["id"], issues[11]);
+    // `via` picks the parent the reader came from.
+    let body = next_up(&app, &user, &issues[5], &from).await;
+    assert_eq!(body["switch_to"]["list_id"], master.to_string());
+    // A `via` that isn't a parent is stale; the fallback still applies.
+    let body = next_up(
+        &app,
+        &user,
+        &issues[5],
+        &format!("{}&via={part2_view}", cbl(&a_view)),
+    )
+    .await;
+    assert_eq!(body["via_param_was_stale"], true);
+    assert_eq!(body["switch_to"]["view_id"], other_view);
+
+    // The event list page lists its parents, most recently read first.
+    let (_, links) = get_json(&app, &links_uri(event_a), &user).await;
+    assert_eq!(links["linked_from"], 2);
+    let parents: Vec<_> = links["parents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["name"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(parents, ["Other master", "Master"]);
+    assert_eq!(links["parents"][1]["anchor_position"], 1);
+    assert_eq!(links["parents"][1]["view_id"], master_view);
+
+    // At the master's end: into the next part.
+    let body = next_up(&app, &user, &issues[3], &cbl(&master_view)).await;
+    assert_eq!(body["target"]["id"], issues[8], "{body:#}");
+    assert_eq!(body["switch_to"]["reason"], "continues");
+    assert_eq!(body["switch_to"]["view_id"], part2_view);
+    let _ = event_b;
+}

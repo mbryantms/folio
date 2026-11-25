@@ -5267,6 +5267,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "via",
+            "in": "query",
+            "description": "Saved-view id of the list the reader came from into the `cbl` event; the event's end returns there",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -31014,6 +31023,80 @@
           }
         }
       },
+      "NextUpDetour": {
+        "type": "object",
+        "description": "An event the reader can read now, offered beside the main line.",
+        "required": [
+          "link_id",
+          "list_id",
+          "name",
+          "total",
+          "in_library",
+          "read",
+          "first_unread"
+        ],
+        "properties": {
+          "first_unread": {
+            "$ref": "#/components/schemas/LinkIssueRefView",
+            "description": "Where to start: the first unread issue the reader can open."
+          },
+          "in_library": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "link_id": {
+            "type": "string"
+          },
+          "list_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "read": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "view_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The reader's view of the event list (`None` = they have none yet;\n`POST /me/cbl-lists/{list_id}/view` makes one)."
+          }
+        }
+      },
+      "NextUpListSwitch": {
+        "type": "object",
+        "description": "Up Next left the list the reader was in: read the target in this one.",
+        "required": [
+          "reason",
+          "list_id",
+          "name"
+        ],
+        "properties": {
+          "list_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/NextUpSwitchReason"
+          },
+          "view_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The reader's view of that list (`None` = they have none yet)."
+          }
+        }
+      },
       "NextUpSource": {
         "type": "string",
         "enum": [
@@ -31021,6 +31104,13 @@
           "cbl",
           "series",
           "none"
+        ]
+      },
+      "NextUpSwitchReason": {
+        "type": "string",
+        "enum": [
+          "continues",
+          "return"
         ]
       },
       "NextUpView": {
@@ -31105,6 +31195,13 @@
             "format": "int32",
             "description": "Set when `source == \"collection\"`. Number of issues in the\ncollection's reading order (series entries expanded)."
           },
+          "detours": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NextUpDetour"
+            },
+            "description": "Linked reading lists (D2): events anchored right after the current\nissue in the `?cbl=` list that the reader can start now. `target`\nstays the main line; these are offered beside it."
+          },
           "fallback_suggestion": {
             "oneOf": [
               {
@@ -31119,6 +31216,17 @@
           "source": {
             "$ref": "#/components/schemas/NextUpSource"
           },
+          "switch_to": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NextUpListSwitch",
+                "description": "Set when `target` is in a different reading list than `?cbl=`: the\nnext part (`continues`) or, at an event's end, the list it is part\nof (`return`). Read the target with that list's view as `?cbl=`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "target": {
             "oneOf": [
               {
@@ -31129,6 +31237,10 @@
                 "type": "null"
               }
             ]
+          },
+          "via_param_was_stale": {
+            "type": "boolean",
+            "description": "`true` when `?via=` named a list the event isn't part of (or the\ncaller can't use); the web drops it from the URL."
           }
         }
       },
@@ -34150,7 +34262,8 @@
           "events",
           "breaks",
           "chapters",
-          "linked_from"
+          "linked_from",
+          "parents"
         ],
         "properties": {
           "breaks": {
@@ -34189,6 +34302,67 @@
             "type": "integer",
             "format": "int64",
             "description": "How many lists the caller can see link to this one."
+          },
+          "parents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReadingListParentView"
+            },
+            "description": "Those lists, most recently read first (the event page's \"Part of\"\nback link picks the one the reader came from, else the first)."
+          }
+        }
+      },
+      "ReadingListParentView": {
+        "type": "object",
+        "description": "A list the given one is linked into.",
+        "required": [
+          "link_id",
+          "kind",
+          "list_id",
+          "name"
+        ],
+        "properties": {
+          "anchor_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For an event: \"Excalibur #12\"."
+          },
+          "anchor_position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "For an event: 0-based position of the issue it is read after."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/LinkKind"
+          },
+          "last_read_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The caller's latest reading on the parent's own issues."
+          },
+          "link_id": {
+            "type": "string"
+          },
+          "list_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "view_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The caller's view of the parent list."
           }
         }
       },

@@ -166,6 +166,9 @@ pub struct ReadingListLinksView {
     pub chapters: Vec<ReadingListChapterView>,
     /// How many lists the caller can see link to this one.
     pub linked_from: i64,
+    /// Those lists, most recently read first (the event page's "Part of"
+    /// back link picks the one the reader came from, else the first).
+    pub parents: Vec<super::cbl_link_nav::ReadingListParentView>,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -236,8 +239,8 @@ fn visible_to(list: &cbl_list::Model, user: &CurrentUser) -> bool {
 }
 
 #[derive(Debug, FromQueryResult)]
-struct EntryStatRow {
-    cbl_list_id: Uuid,
+pub(super) struct EntryStatRow {
+    pub cbl_list_id: Uuid,
     position: i32,
     matched_issue_id: Option<String>,
     issue_slug: Option<String>,
@@ -247,17 +250,17 @@ struct EntryStatRow {
 }
 
 #[derive(Debug, Default, Clone)]
-struct ListStats {
-    total: i64,
-    in_library: i64,
-    read: i64,
-    first_unread: Option<LinkIssueRefView>,
+pub(super) struct ListStats {
+    pub total: i64,
+    pub in_library: i64,
+    pub read: i64,
+    pub first_unread: Option<LinkIssueRefView>,
 }
 
 /// One row per entry of every list in `list_ids`, in position order, as
 /// the caller sees it: `in_library` only for an issue they can open,
 /// `is_read` only for one of those they finished. One statement.
-async fn entry_stats(
+pub(super) async fn entry_stats(
     app: &AppState,
     acl: &VisibleLibraries,
     user_id: Uuid,
@@ -287,7 +290,7 @@ async fn entry_stats(
     .await
 }
 
-fn fold_stats<'a>(rows: impl Iterator<Item = &'a EntryStatRow>) -> ListStats {
+pub(super) fn fold_stats<'a>(rows: impl Iterator<Item = &'a EntryStatRow>) -> ListStats {
     let mut s = ListStats::default();
     for r in rows {
         s.total += 1;
@@ -308,6 +311,39 @@ fn fold_stats<'a>(rows: impl Iterator<Item = &'a EntryStatRow>) -> ListStats {
         }
     }
     s
+}
+
+/// The caller's saved view of each list in `list_ids`: their own first,
+/// else a shared one. Lists they have no view of are absent.
+pub(super) async fn caller_views(
+    app: &AppState,
+    user_id: Uuid,
+    list_ids: &[Uuid],
+) -> Result<HashMap<Uuid, Uuid>, sea_orm::DbErr> {
+    let mut views: HashMap<Uuid, Uuid> = HashMap::new();
+    if list_ids.is_empty() {
+        return Ok(views);
+    }
+    let rows = saved_view::Entity::find()
+        .filter(saved_view::Column::Kind.eq(saved_view::SavedViewKind::Cbl))
+        .filter(saved_view::Column::CblListId.is_in(list_ids.to_vec()))
+        .filter(
+            sea_orm::Condition::any()
+                .add(saved_view::Column::UserId.eq(user_id))
+                .add(saved_view::Column::UserId.is_null()),
+        )
+        .all(&app.db)
+        .await?;
+    for v in rows {
+        let Some(list_id) = v.cbl_list_id else {
+            continue;
+        };
+        let own = v.user_id == Some(user_id);
+        if own || !views.contains_key(&list_id) {
+            views.insert(list_id, v.id);
+        }
+    }
+    Ok(views)
 }
 
 /// The whole links view of `parent` for `user`. A fixed number of
@@ -356,30 +392,7 @@ pub(super) async fn build_view(
     };
 
     // The caller's view of each child list: their own first, else shared.
-    let mut views: HashMap<Uuid, Uuid> = HashMap::new();
-    if !children.is_empty() {
-        let rows = saved_view::Entity::find()
-            .filter(saved_view::Column::Kind.eq(saved_view::SavedViewKind::Cbl))
-            .filter(
-                saved_view::Column::CblListId.is_in(children.keys().copied().collect::<Vec<_>>()),
-            )
-            .filter(
-                sea_orm::Condition::any()
-                    .add(saved_view::Column::UserId.eq(user.id))
-                    .add(saved_view::Column::UserId.is_null()),
-            )
-            .all(&app.db)
-            .await?;
-        for v in rows {
-            let Some(list_id) = v.cbl_list_id else {
-                continue;
-            };
-            let own = v.user_id == Some(user.id);
-            if own || !views.contains_key(&list_id) {
-                views.insert(list_id, v.id);
-            }
-        }
-    }
+    let views = caller_views(app, user.id, &children.keys().copied().collect::<Vec<_>>()).await?;
 
     let acl = access::for_user(app, user).await;
     let mut ids = vec![parent.id];
@@ -457,14 +470,8 @@ pub(super) async fn build_view(
     let parent_rows = by_list.get(&parent.id).cloned().unwrap_or_default();
     let chapters = chapters_of(&parent.parsed_name, &parent_rows, &events, &breaks);
 
-    let linked_from = reading_list_link::Entity::find()
-        .filter(reading_list_link::Column::ChildListId.eq(parent.id))
-        .find_also_related(cbl_list::Entity)
-        .all(&app.db)
-        .await?
-        .into_iter()
-        .filter(|(_, p)| p.as_ref().is_some_and(|p| visible_to(p, user)))
-        .count() as i64;
+    let parents = super::cbl_link_nav::parents_of(app, user.id, parent.id).await?;
+    let linked_from = parents.len() as i64;
 
     Ok(ReadingListLinksView {
         events,
@@ -472,6 +479,7 @@ pub(super) async fn build_view(
         breaks,
         chapters,
         linked_from,
+        parents,
     })
 }
 

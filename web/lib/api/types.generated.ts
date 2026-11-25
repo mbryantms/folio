@@ -13244,8 +13244,37 @@ export interface components {
         NextInSeriesView: {
             items: components["schemas"]["IssueSummaryView"][];
         };
+        /** @description An event the reader can read now, offered beside the main line. */
+        NextUpDetour: {
+            /** @description Where to start: the first unread issue the reader can open. */
+            first_unread: components["schemas"]["LinkIssueRefView"];
+            /** Format: int64 */
+            in_library: number;
+            link_id: string;
+            list_id: string;
+            name: string;
+            /** Format: int64 */
+            read: number;
+            /** Format: int64 */
+            total: number;
+            /**
+             * @description The reader's view of the event list (`None` = they have none yet;
+             *     `POST /me/cbl-lists/{list_id}/view` makes one).
+             */
+            view_id?: string | null;
+        };
+        /** @description Up Next left the list the reader was in: read the target in this one. */
+        NextUpListSwitch: {
+            list_id: string;
+            name: string;
+            reason: components["schemas"]["NextUpSwitchReason"];
+            /** @description The reader's view of that list (`None` = they have none yet). */
+            view_id?: string | null;
+        };
         /** @enum {string} */
         NextUpSource: "collection" | "cbl" | "series" | "none";
+        /** @enum {string} */
+        NextUpSwitchReason: "continues" | "return";
         NextUpView: {
             /**
              * @description Set when `source == "cbl"`. The id of the CBL list (NOT the
@@ -13313,9 +13342,21 @@ export interface components {
              *     collection's reading order (series entries expanded).
              */
             collection_total?: number | null;
+            /**
+             * @description Linked reading lists (D2): events anchored right after the current
+             *     issue in the `?cbl=` list that the reader can start now. `target`
+             *     stays the main line; these are offered beside it.
+             */
+            detours?: components["schemas"]["NextUpDetour"][];
             fallback_suggestion?: components["schemas"]["OnDeckCard"] | null;
             source: components["schemas"]["NextUpSource"];
+            switch_to?: components["schemas"]["NextUpListSwitch"] | null;
             target?: components["schemas"]["IssueSummaryView"] | null;
+            /**
+             * @description `true` when `?via=` named a list the event isn't part of (or the
+             *     caller can't use); the web drops it from the URL.
+             */
+            via_param_was_stale?: boolean;
         };
         NotesExport: {
             /**
@@ -14704,6 +14745,32 @@ export interface components {
              * @description How many lists the caller can see link to this one.
              */
             linked_from: number;
+            /**
+             * @description Those lists, most recently read first (the event page's "Part of"
+             *     back link picks the one the reader came from, else the first).
+             */
+            parents: components["schemas"]["ReadingListParentView"][];
+        };
+        /** @description A list the given one is linked into. */
+        ReadingListParentView: {
+            /** @description For an event: "Excalibur #12". */
+            anchor_label?: string | null;
+            /**
+             * Format: int32
+             * @description For an event: 0-based position of the issue it is read after.
+             */
+            anchor_position?: number | null;
+            kind: components["schemas"]["LinkKind"];
+            /**
+             * Format: date-time
+             * @description The caller's latest reading on the parent's own issues.
+             */
+            last_read_at?: string | null;
+            link_id: string;
+            list_id: string;
+            name: string;
+            /** @description The caller's view of the parent list. */
+            view_id?: string | null;
         };
         ReadingLogEventView: {
             /**
@@ -23361,6 +23428,8 @@ export interface operations {
                 cbl?: string;
                 /** @description Saved-view id (kind='collection') the caller is reading through; wins over `cbl` */
                 collection?: string;
+                /** @description Saved-view id of the list the reader came from into the `cbl` event; the event's end returns there */
+                via?: string;
             };
             header?: never;
             path: {

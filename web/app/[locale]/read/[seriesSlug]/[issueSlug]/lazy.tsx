@@ -67,6 +67,21 @@ function NoDragTurnPeek() {
   return null;
 }
 
+/** "Couldn't load your saved position" notice. Rendered only when the
+ *  server-side position fetch failed, so it is fetched only then; until it
+ *  arrives (or if its chunk fails too) the reader simply starts without
+ *  it, as it would before the notice existed. */
+export const ProgressUnavailableBanner = dynamic(
+  () =>
+    import("./ProgressUnavailableBanner")
+      .then((m) => m.ProgressUnavailableBanner)
+      .catch(() => NoProgressUnavailableBanner),
+  { ssr: false },
+);
+function NoProgressUnavailableBanner() {
+  return null;
+}
+
 /** One-time "this file has known problems" toast (effect-only, renders
  *  nothing). Its health query starts once the chunk lands, just after
  *  hydration; the toast was never part of the first paint. */
