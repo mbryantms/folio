@@ -24,10 +24,12 @@ ${books}
 </Books></ReadingList>
 `;
 
+// Two Step has no ComicInfo: its numbers come from the file names
+// ("Two Step 001.cbz"), and the matcher compares numbers as written.
 const MASTER_CBL = cbl(
   MASTER,
-  `<Book Series="Two Step" Number="1" Volume="2018" Year="2018" />
-<Book Series="Two Step" Number="2" Volume="2018" Year="2018" />`,
+  `<Book Series="Two Step" Number="001" Volume="2018" Year="2018" />
+<Book Series="Two Step" Number="002" Volume="2018" Year="2018" />`,
 );
 const EVENT_CBL = cbl(
   EVENT,
