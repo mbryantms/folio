@@ -3083,9 +3083,20 @@ async fn cbl_list_acq(
     let up_next_full = crate::api::next_up::pick_next_in_cbl(&app, user.id, id, &visible, None)
         .await
         .ok()
-        .flatten()
-        .map(|(iss, _slug, _name, _pos)| iss);
-    let up_next_id = up_next_full.as_ref().map(|i| i.id.clone());
+        .flatten();
+    // Linked reading lists: an event due before the list's next issue is
+    // read first, so the up-next rel points into it (same rule as the
+    // web app's Up Next and the On Deck card).
+    let due_event = match up_next_full.as_ref() {
+        Some((_, _, _, pos)) => {
+            crate::api::cbl_link_nav::due_event_issue(&app, user.id, &visible, id, *pos)
+                .await
+                .ok()
+                .flatten()
+        }
+        None => None,
+    };
+    let up_next_id = due_event.or_else(|| up_next_full.as_ref().map(|(i, ..)| i.id.clone()));
     // M2 of opds-sync-cleanup: default reorder. Move the up-next issue
     // to position 0 unless the list owner opted into strict canonical
     // order (curated reading orders like "DC Year-One").

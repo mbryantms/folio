@@ -53,6 +53,13 @@ back). The refresh log records `links_lost` / `links_restored`.
 - **Link writes are serialized** (`cbl_links::link_write_lock`, a
   transaction-scoped advisory lock, also taken by derive): the one-level
   and no-loop rules are read-then-write.
+- **Any chapter can be named.** A chapter break carries the name. The
+  first chapter and the one after an event exist without a break, so
+  `POST …/breaks` takes `position` (the chapter's start) in place of
+  `entry_id`, and a named break at the first issue is allowed; removing
+  such a break removes the name, not the chapter.
+- **Error text stands alone.** `cbl_links::field_error` puts the field in
+  `error.details`, not in front of the message.
 - **Re-resolution never guesses.** `cbl::links::candidates`: ComicVine id,
   then the exact key, then series + number alone only when exactly one
   entry matches and it doesn't differ in both volume and year. An anchor
@@ -90,6 +97,10 @@ thread. An apply imports only catalog files that are event candidates of
 this master, fails an event whose anchor entry is gone **before**
 importing its list, takes its import token after the catalog answered,
 and gives imported events the master's refresh schedule.
+
+A link derive placed (`auto_twin`) that a refresh could no longer place
+is offered again and moved back by an apply (`relinkable`); a link a
+person placed or moved stays lost until they place it.
 
 Lookups of "which lists are these" go through `cbl_link_nav::lists_lite`
 (id, owner, name): a `cbl_lists` row also carries its whole source file.
@@ -163,6 +174,9 @@ link, collections and OPDS all go through it.
   to its events ("Event after #N label: name"), its next part
   ("Continues in: …") and its parents ("Part of: …"). A collection feed
   renders a list entry as a `subsection` entry in its place.
+- **Up next**: both list feeds point their up-next rel at the first
+  unread issue of an event due before the list's next issue
+  (`cbl_link_nav::due_event_issue`, the same range rule as On Deck).
 - **OPDS 2.0**: the same `related` links with `folio:link` /
   `folio:afterPosition` / `folio:afterIssue` properties, plus a
   `groups: [{metadata: {title: "Events in this list"}, navigation}]`

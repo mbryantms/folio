@@ -477,12 +477,14 @@ function CblViewDetailInner({
   const deleteBreak = useDeleteCblBreak(listId);
   const [nameTarget, setNameTarget] = React.useState<
     | { mode: "create"; entryId: string; startsAt: string; label: string }
+    | { mode: "name"; position: number; startsAt: string; label: string }
     | { mode: "rename"; breakId: string; startsAt: string; label: string }
     | null
   >(null);
   const [removeBreak, setRemoveBreak] = React.useState<{
     breakId: string;
     label: string;
+    nameOnly?: boolean;
   } | null>(null);
   // The rail asked for a chapter; scroll once its header is in the DOM.
   const [pendingChapter, setPendingChapter] = React.useState<number | null>(
@@ -829,8 +831,42 @@ function CblViewDetailInner({
     (linksQuery.data?.breaks ?? []).map((b) => [b.id, b]),
   );
   const chapterActions = (c: (typeof chapters)[number]) => {
+    if (!canManageLinks) return undefined;
     const b = c.break_id ? breakById.get(c.break_id) : undefined;
-    if (!b || !canManageLinks) return undefined;
+    // The first chapter and the one after an event exist without a break:
+    // a break there only carries the name.
+    const standsAlone =
+      c.index === 0 || (chapters[c.index - 1]?.event_link_ids.length ?? 0) > 0;
+    if (!b) {
+      if (!standsAlone) return undefined;
+      return (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={`Actions for chapter ${c.index + 1}`}
+            >
+              <MoreHorizontal className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              onSelect={() =>
+                setNameTarget({
+                  mode: "name",
+                  position: c.start_position,
+                  startsAt: c.label,
+                  label: "",
+                })
+              }
+            >
+              Name chapter…
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      );
+    }
     const startsAt =
       b.anchor.series && b.anchor.number
         ? `${b.anchor.series} #${b.anchor.number}`
@@ -862,9 +898,15 @@ function CblViewDetailInner({
           <DropdownMenuSeparator />
           <DropdownMenuItem
             variant="destructive"
-            onSelect={() => setRemoveBreak({ breakId: b.id, label: c.label })}
+            onSelect={() =>
+              setRemoveBreak({
+                breakId: b.id,
+                label: c.label,
+                nameOnly: standsAlone,
+              })
+            }
           >
-            Remove chapter break
+            {standsAlone ? "Remove chapter name" : "Remove chapter break"}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -1582,7 +1624,9 @@ function CblViewDetailInner({
           nameTarget
             ? nameTarget.mode === "create"
               ? nameTarget.entryId
-              : nameTarget.breakId
+              : nameTarget.mode === "name"
+                ? `at-${nameTarget.position}`
+                : nameTarget.breakId
             : "closed"
         }`}
         target={nameTarget}
@@ -1594,6 +1638,8 @@ function CblViewDetailInner({
           const done = { onSuccess: () => setNameTarget(null) };
           if (t.mode === "create") {
             createBreak.mutate({ entry_id: t.entryId, label }, done);
+          } else if (t.mode === "name") {
+            createBreak.mutate({ position: t.position, label }, done);
           } else {
             updateBreak.mutate({ breakId: t.breakId, label }, done);
           }
@@ -1601,11 +1647,14 @@ function CblViewDetailInner({
       />
       <RemoveBreakDialog
         label={removeBreak?.label ?? null}
+        nameOnly={removeBreak?.nameOnly}
         onOpenChange={(o) => !o && setRemoveBreak(null)}
         onConfirm={() => {
           const t = removeBreak;
           setRemoveBreak(null);
-          if (t) deleteBreak.mutate({ breakId: t.breakId });
+          if (t) {
+            deleteBreak.mutate({ breakId: t.breakId, nameOnly: t.nameOnly });
+          }
         }}
       />
       <MarkThroughDialog

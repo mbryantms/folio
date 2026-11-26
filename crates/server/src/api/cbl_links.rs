@@ -243,12 +243,22 @@ pub(super) fn field_error(field: &str, message: &str) -> Response {
     super::respond_with_field_errors(
         StatusCode::UNPROCESSABLE_ENTITY,
         ApiErrorCode::Validation,
-        format!("{field}: {message}"),
+        sentence(message),
         vec![FieldError {
             field: field.to_owned(),
             message: message.to_owned(),
         }],
     )
+}
+
+/// `message` as a sentence a toast can show on its own: the field name is
+/// in `details`, not in front of the text.
+fn sentence(message: &str) -> String {
+    let mut chars = message.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
 }
 
 /// The caller can read `list` (their own, or shared).
@@ -524,8 +534,9 @@ fn chapters_of(
         }
     }
     for b in breaks {
-        // A break at the first issue starts nothing new.
-        let Some(pos) = b.anchor.position.filter(|p| *p > first) else {
+        // A break at the first issue starts nothing new; it names the
+        // first chapter.
+        let Some(pos) = b.anchor.position.filter(|p| *p >= first) else {
             continue;
         };
         let slot = starts.entry(pos.min(last)).or_insert(None);

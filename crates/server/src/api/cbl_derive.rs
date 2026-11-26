@@ -549,7 +549,13 @@ pub async fn preview(
         .all(&app.db)
         .await
     {
-        Ok(rows) => rows.into_iter().map(|l| l.child_list_id).collect(),
+        // A derived link that lost its place counts as not linked: applying
+        // the proposal puts it back (`link_event`).
+        Ok(rows) => rows
+            .into_iter()
+            .filter(|l| !relinkable(l))
+            .map(|l| l.child_list_id)
+            .collect(),
         Err(_) => return internal(),
     };
     for p in &d.placements {
@@ -870,7 +876,14 @@ pub async fn apply(
     .into_response()
 }
 
+/// A link Find events placed that a refresh could no longer place: derive
+/// may put it back. A link a person placed or moved is theirs to repair.
+fn relinkable(link: &reading_list_link::Model) -> bool {
+    link.anchor_status == AnchorStatus::Lost && link.placement == LinkPlacement::AutoTwin
+}
+
 /// Link `child` as an event after `entry_id`; `Ok(false)` = already linked.
+/// A derived link that lost its place is moved there instead.
 async fn link_event(
     app: &AppState,
     user: &CurrentUser,
@@ -885,11 +898,38 @@ async fn link_event(
     if child.id == parent.id {
         return Err("a list can't link to itself".into());
     }
-    if link_exists(app, parent.id, child.id, LinkKind::Event)
+    let present = reading_list_link::Entity::find()
+        .filter(reading_list_link::Column::ParentListId.eq(parent.id))
+        .filter(reading_list_link::Column::ChildListId.eq(child.id))
+        .filter(reading_list_link::Column::Kind.eq(LinkKind::Event))
+        .one(&app.db)
         .await
-        .map_err(db_err)?
-    {
-        return Ok(false);
+        .map_err(db_err)?;
+    if let Some(lost) = present {
+        if !relinkable(&lost) {
+            return Ok(false);
+        }
+        let Some((key, position)) = anchor_of_entry(app, parent.id, entry_id)
+            .await
+            .map_err(db_err)?
+        else {
+            return Err("its place is no longer in this list".into());
+        };
+        let sort = next_sort_at(app, parent.id, position, Some(lost.id))
+            .await
+            .map_err(db_err)?;
+        let mut am: reading_list_link::ActiveModel = lost.into();
+        am.anchor_cv_issue_id = Set(key.cv_issue_id);
+        am.anchor_series = Set(key.series);
+        am.anchor_number = Set(key.number);
+        am.anchor_volume = Set(key.volume);
+        am.anchor_year = Set(key.year);
+        am.anchor_position_hint = Set(Some(position));
+        am.anchor_status = Set(AnchorStatus::Placed);
+        am.sort_within_anchor = Set(sort);
+        am.updated_at = Set(Utc::now().fixed_offset());
+        am.update(&app.db).await.map_err(db_err)?;
+        return Ok(true);
     }
     if has_events(app, child.id).await.map_err(db_err)? {
         return Err("it has events of its own".into());

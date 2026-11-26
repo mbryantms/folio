@@ -9209,11 +9209,18 @@ export interface components {
         CreateBreakReq: {
             /**
              * Format: uuid
-             * @description The entry the new chapter starts at.
+             * @description The entry the new chapter starts at. Give this or `position`.
              */
-            entry_id: string;
+            entry_id?: string | null;
             /** @description The chapter's name; omitted or blank = named after its first issue. */
             label?: string | null;
+            /**
+             * Format: int32
+             * @description The 0-based position the chapter starts at, for naming a chapter
+             *     that already exists (the list's first, or the one after an event)
+             *     without knowing its first entry's id.
+             */
+            position?: number | null;
         };
         CreateCatalogSourceReq: {
             display_name: string;
@@ -11430,6 +11437,12 @@ export interface components {
         ImportOrderResp: {
             failed: components["schemas"]["ApplyFailure"][];
             /**
+             * @description The reading-lists group (named after the order) the parts were
+             *     filed into, when this call imported or chained any. A part the
+             *     caller already keeps in a group of their own stays there.
+             */
+            group_id?: string | null;
+            /**
              * Format: int32
              * @description Lists this call imported.
              */
@@ -13427,6 +13440,12 @@ export interface components {
             link_id: string;
             list_id: string;
             name: string;
+            /**
+             * @description The list the event is linked into, for the reader's own "skip
+             *     this event" (`PUT /me/cbl-lists/{parent}/links/{link_id}/skip`).
+             *     `None` for a collection's list entry, which can't be skipped.
+             */
+            parent_list_id?: string | null;
             /** Format: int64 */
             read: number;
             /** Format: int64 */

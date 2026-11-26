@@ -21215,14 +21215,14 @@
       },
       "CreateBreakReq": {
         "type": "object",
-        "required": [
-          "entry_id"
-        ],
         "properties": {
           "entry_id": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "uuid",
-            "description": "The entry the new chapter starts at."
+            "description": "The entry the new chapter starts at. Give this or `position`."
           },
           "label": {
             "type": [
@@ -21230,6 +21230,14 @@
               "null"
             ],
             "description": "The chapter's name; omitted or blank = named after its first issue."
+          },
+          "position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The 0-based position the chapter starts at, for naming a chapter\nthat already exists (the list's first, or the one after an event)\nwithout knowing its first entry's id."
           }
         }
       },
@@ -27161,6 +27169,13 @@
               "$ref": "#/components/schemas/ApplyFailure"
             }
           },
+          "group_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The reading-lists group (named after the order) the parts were\nfiled into, when this call imported or chained any. A part the\ncaller already keeps in a group of their own stays there."
+          },
           "imported": {
             "type": "integer",
             "format": "int32",
@@ -31482,6 +31497,13 @@
           },
           "name": {
             "type": "string"
+          },
+          "parent_list_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The list the event is linked into, for the reader's own \"skip\nthis event\" (`PUT /me/cbl-lists/{parent}/links/{link_id}/skip`).\n`None` for a collection's list entry, which can't be skipped."
           },
           "read": {
             "type": "integer",

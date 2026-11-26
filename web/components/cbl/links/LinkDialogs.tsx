@@ -276,13 +276,20 @@ export function ChapterNameDialog({
   isPending,
 }: {
   /** `null` = closed. `startsAt` is "Excalibur #12". */
-  target: { mode: "create" | "rename"; startsAt: string; label: string } | null;
+  target: {
+    mode: "create" | "rename" | "name";
+    startsAt: string;
+    label: string;
+  } | null;
   onOpenChange: (open: boolean) => void;
   onSave: (label: string | null) => void;
   isPending: boolean;
 }) {
   const [value, setValue] = React.useState(target?.label ?? "");
   const id = React.useId();
+  // "name": the chapter exists already (the first, or the one after an
+  // event), so the name is the whole point and can't be blank.
+  const naming = target?.mode === "name";
   return (
     <Dialog open={target != null} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
@@ -296,19 +303,24 @@ export function ChapterNameDialog({
         >
           <DialogHeader>
             <DialogTitle>
-              {target?.mode === "rename"
-                ? "Rename chapter"
-                : "Start a chapter here"}
+              {naming
+                ? "Name chapter"
+                : target?.mode === "rename"
+                  ? "Rename chapter"
+                  : "Start a chapter here"}
             </DialogTitle>
             <DialogDescription>
-              {target?.mode === "rename"
-                ? `The chapter starting at ${target.startsAt}.`
-                : `A new chapter starts at ${target?.startsAt ?? "this issue"}.`}{" "}
-              Leave the name blank to name it after that issue.
+              {naming
+                ? `The chapter now shown as “${target.startsAt}”.`
+                : target?.mode === "rename"
+                  ? `The chapter starting at ${target.startsAt}. Leave the name blank to name it after that issue.`
+                  : `A new chapter starts at ${target?.startsAt ?? "this issue"}. Leave the name blank to name it after that issue.`}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
-            <Label htmlFor={id}>Chapter name (optional)</Label>
+            <Label htmlFor={id}>
+              {naming ? "Chapter name" : "Chapter name (optional)"}
+            </Label>
             <Input
               id={id}
               value={value}
@@ -325,8 +337,11 @@ export function ChapterNameDialog({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={isPending}>
-              {target?.mode === "rename" ? "Save" : "Start chapter"}
+            <Button
+              type="submit"
+              disabled={isPending || (naming && value.trim() === "")}
+            >
+              {target?.mode === "create" ? "Start chapter" : "Save"}
             </Button>
           </DialogFooter>
         </form>
@@ -337,11 +352,15 @@ export function ChapterNameDialog({
 
 export function RemoveBreakDialog({
   label,
+  nameOnly,
   onOpenChange,
   onConfirm,
 }: {
   /** The chapter's label; `null` = closed. */
   label: string | null;
+  /** The chapter stays (the first one, or the one after an event): only
+   *  its name goes. */
+  nameOnly?: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
 }) {
@@ -349,10 +368,23 @@ export function RemoveBreakDialog({
     <AlertDialog open={label != null} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Remove the chapter break?</AlertDialogTitle>
+          <AlertDialogTitle>
+            {nameOnly
+              ? "Remove the chapter name?"
+              : "Remove the chapter break?"}
+          </AlertDialogTitle>
           <AlertDialogDescription>
-            &ldquo;{label}&rdquo; joins the chapter before it. No issues or
-            progress change.
+            {nameOnly ? (
+              <>
+                &ldquo;{label}&rdquo; goes back to its automatic name. The
+                chapter stays where it is.
+              </>
+            ) : (
+              <>
+                &ldquo;{label}&rdquo; joins the chapter before it. No issues or
+                progress change.
+              </>
+            )}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

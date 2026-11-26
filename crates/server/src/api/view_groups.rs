@@ -516,6 +516,110 @@ async fn write_members<C: ConnectionTrait>(
     Ok(())
 }
 
+/// File `view_ids` (in order) into the caller's top-level group named
+/// `name` in `scope`, making the group if they have none by that name.
+/// A view the reader already put in a group stays there. `None` when the
+/// group would be one too many: the views stay ungrouped.
+///
+/// For imports that bring in several lists at once (a whole reading
+/// order); calling it again after a resumed import adds the new parts to
+/// the same group.
+pub(crate) async fn file_into_group(
+    app: &AppState,
+    user_id: Uuid,
+    scope: &str,
+    name: &str,
+    view_ids: &[Uuid],
+) -> Result<Option<Uuid>, sea_orm::DbErr> {
+    let name: String = name.trim().chars().take(MAX_NAME_LEN).collect();
+    if name.is_empty() || view_ids.is_empty() {
+        return Ok(None);
+    }
+    let txn = app.db.begin().await?;
+    txn.execute_raw(Statement::from_sql_and_values(
+        txn.get_database_backend(),
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        [format!("saved_view_groups:{user_id}:{scope}").into()],
+    ))
+    .await?;
+    let existing = groups_in_scope(&txn, user_id, scope).await?;
+    let group_id = match existing
+        .iter()
+        .find(|g| g.parent_id.is_none() && g.name == name)
+    {
+        Some(g) => g.id,
+        None if existing.len() as u64 >= MAX_GROUPS_PER_SCOPE => return Ok(None),
+        None => {
+            let position = existing
+                .iter()
+                .filter(|g| g.parent_id.is_none())
+                .map(|g| g.position + 1)
+                .max()
+                .unwrap_or(0);
+            saved_view_group::ActiveModel {
+                id: Set(Uuid::now_v7()),
+                user_id: Set(user_id),
+                scope: Set(scope.to_owned()),
+                name: Set(name),
+                parent_id: Set(None),
+                position: Set(position),
+                collapsed: Set(false),
+                created_at: NotSet,
+                updated_at: NotSet,
+            }
+            .insert(&txn)
+            .await?
+            .id
+        }
+    };
+    let placed = saved_view_group_item::Entity::find()
+        .filter(saved_view_group_item::Column::UserId.eq(user_id))
+        .filter(saved_view_group_item::Column::ViewId.is_in(view_ids.iter().copied()))
+        .all(&txn)
+        .await?;
+    let grouped: HashSet<Uuid> = placed
+        .iter()
+        .filter(|r| r.group_id.is_some())
+        .map(|r| r.view_id)
+        .collect();
+    let add: Vec<Uuid> = view_ids
+        .iter()
+        .copied()
+        .filter(|v| !grouped.contains(v))
+        .collect();
+    if !add.is_empty() {
+        // Their hand-arranged place in the ungrouped section, if any.
+        saved_view_group_item::Entity::delete_many()
+            .filter(saved_view_group_item::Column::UserId.eq(user_id))
+            .filter(saved_view_group_item::Column::ViewId.is_in(add.iter().copied()))
+            .exec(&txn)
+            .await?;
+        let next = saved_view_group_item::Entity::find()
+            .filter(saved_view_group_item::Column::UserId.eq(user_id))
+            .filter(saved_view_group_item::Column::GroupId.eq(group_id))
+            .order_by_desc(saved_view_group_item::Column::Position)
+            .one(&txn)
+            .await?
+            .map_or(0, |r| r.position + 1);
+        let rows: Vec<saved_view_group_item::ActiveModel> = add
+            .iter()
+            .enumerate()
+            .map(|(i, v)| saved_view_group_item::ActiveModel {
+                user_id: Set(user_id),
+                view_id: Set(*v),
+                scope: Set(scope.to_owned()),
+                group_id: Set(Some(group_id)),
+                position: Set(next + i as i32),
+            })
+            .collect();
+        saved_view_group_item::Entity::insert_many(rows)
+            .exec(&txn)
+            .await?;
+    }
+    txn.commit().await?;
+    Ok(Some(group_id))
+}
+
 // ───── handlers ─────
 
 #[utoipa::path(

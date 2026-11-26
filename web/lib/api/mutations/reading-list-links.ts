@@ -167,12 +167,18 @@ export function useUpdateCblBreak(listId: string) {
 
 export function useDeleteCblBreak(listId: string) {
   const invalidate = useInvalidateLinks();
-  return useApiMutation<null, { breakId: string }>(
+  // `nameOnly`: the chapter stays (the first one, or the one after an
+  // event) and only loses its name.
+  return useApiMutation<null, { breakId: string; nameOnly?: boolean }>(
     ({ breakId }) => ({
       path: apiPath`/me/cbl-lists/${listId}/breaks/${breakId}`,
       method: "DELETE",
     }),
-    { successMessage: "Chapter break removed", onSuccess: invalidate },
+    {
+      successMessage: (_d, input) =>
+        input.nameOnly ? "Chapter name removed" : "Chapter break removed",
+      onSuccess: invalidate,
+    },
   );
 }
 
