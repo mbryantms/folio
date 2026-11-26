@@ -13,6 +13,20 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.92.0](https://github.com/mbryantms/folio/compare/v0.91.0...v0.92.0) (2026-11-26)
+
+
+### Added
+
+* **pages:** move, remove and rearrange a page's rails on the page itself ([#1806](https://github.com/mbryantms/folio/issues/1806)) ([99ee217](https://github.com/mbryantms/folio/commit/99ee217c26bc86b042f3fb223994d7a3de9971d2))
+* **sidebar:** edit the sidebar in place ([#1807](https://github.com/mbryantms/folio/issues/1807)) ([e34327b](https://github.com/mbryantms/folio/commit/e34327be3eeb5ddc2738b97978a7fc839b1f3c86))
+* **upcoming:** add an untracked series to Mylar from a release ([#1805](https://github.com/mbryantms/folio/issues/1805)) ([6ef0f14](https://github.com/mbryantms/folio/commit/6ef0f14a8a417998c3a7514e112586d9669da5b0))
+
+
+### Dependencies
+
+* update rust crate hyper to v1.13.0 ([#1803](https://github.com/mbryantms/folio/issues/1803)) ([be6a4f7](https://github.com/mbryantms/folio/commit/be6a4f7a7c797997183b14aaba1bc2701afe07d9))
+
 ## [0.91.0](https://github.com/mbryantms/folio/compare/v0.90.0...v0.91.0) (2026-11-26)
 
 
