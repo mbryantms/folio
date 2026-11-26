@@ -534,6 +534,43 @@ pub struct CatalogEntryView {
     pub publisher: String,
     pub sha: String,
     pub size: u64,
+    /// Who published the file (CBRO, CMRO, Marvel Guides, …).
+    pub source: crate::cbl::sources::CatalogSourceKind,
+    /// The same for every part of one order; absent for a standalone
+    /// list. Files sharing it can be imported together
+    /// (`POST /me/cbl-lists/import-order`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub order_key: Option<String>,
+    /// The order's name (its files' shared prefix), with `order_key`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub order_name: Option<String>,
+    /// The part's number within its order; parts sort by it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub part: Option<f64>,
+    /// CMRO: `Essential`, `Core`, `Main` or `Expanded`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depth: Option<String>,
+    /// For a with-events file: the path of the plain file it is the twin
+    /// of. Import the plain one to link events as separate lists.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plain_twin: Option<String>,
+}
+
+fn catalog_entry_view(e: catalog::CatalogEntry) -> CatalogEntryView {
+    let p = crate::cbl::sources::profile(&e.path);
+    CatalogEntryView {
+        source: p.source,
+        order_name: crate::cbl::sources::order_name(&e.path),
+        order_key: p.order_key,
+        part: p.part,
+        depth: p.depth,
+        plain_twin: p.plain_twin,
+        path: e.path,
+        name: e.name,
+        publisher: e.publisher,
+        sha: e.sha,
+        size: e.size,
+    }
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -3032,17 +3069,7 @@ pub async fn list_catalog_entries(
             return error(StatusCode::BAD_GATEWAY, "fetch_failed", &e.public_message());
         }
     };
-    let items = index
-        .entries
-        .into_iter()
-        .map(|e| CatalogEntryView {
-            path: e.path,
-            name: e.name,
-            publisher: e.publisher,
-            sha: e.sha,
-            size: e.size,
-        })
-        .collect();
+    let items = index.entries.into_iter().map(catalog_entry_view).collect();
     Json(CatalogEntriesView {
         source_id: id.to_string(),
         items,
@@ -3074,17 +3101,7 @@ pub async fn refresh_catalog_index(
             return error(StatusCode::BAD_GATEWAY, "fetch_failed", &e.public_message());
         }
     };
-    let items = index
-        .entries
-        .into_iter()
-        .map(|e| CatalogEntryView {
-            path: e.path,
-            name: e.name,
-            publisher: e.publisher,
-            sha: e.sha,
-            size: e.size,
-        })
-        .collect();
+    let items = index.entries.into_iter().map(catalog_entry_view).collect();
     Json(CatalogEntriesView {
         source_id: id.to_string(),
         items,

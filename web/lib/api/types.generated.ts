@@ -3190,6 +3190,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/cbl-lists/import-order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["cbl_lists_import_order"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/cbl-lists/refresh-all": {
         parameters: {
             query?: never;
@@ -8171,13 +8187,40 @@ export interface components {
             source_id: string;
         };
         CatalogEntryView: {
+            /** @description CMRO: `Essential`, `Core`, `Main` or `Expanded`. */
+            depth?: string | null;
             name: string;
+            /**
+             * @description The same for every part of one order; absent for a standalone
+             *     list. Files sharing it can be imported together
+             *     (`POST /me/cbl-lists/import-order`).
+             */
+            order_key?: string | null;
+            /** @description The order's name (its files' shared prefix), with `order_key`. */
+            order_name?: string | null;
+            /**
+             * Format: double
+             * @description The part's number within its order; parts sort by it.
+             */
+            part?: number | null;
             path: string;
+            /**
+             * @description For a with-events file: the path of the plain file it is the twin
+             *     of. Import the plain one to link events as separate lists.
+             */
+            plain_twin?: string | null;
             publisher: string;
             sha: string;
             /** Format: int64 */
             size: number;
+            /** @description Who published the file (CBRO, CMRO, Marvel Guides, …). */
+            source: components["schemas"]["CatalogSourceKind"];
         };
+        /**
+         * @description Who published a catalog file.
+         * @enum {string}
+         */
+        CatalogSourceKind: "cbro" | "cbro_with_events" | "cmro" | "marvel_guides" | "uxro" | "locg" | "official" | "other";
         CatalogSourceListView: {
             items: components["schemas"]["CatalogSourceView"][];
         };
@@ -11350,6 +11393,41 @@ export interface components {
             /** Format: int64 */
             series_with_id: number;
             source: string;
+        };
+        ImportOrderReq: {
+            /** @description Any one file of the order. */
+            catalog_path: string;
+            /** Format: uuid */
+            catalog_source_id: string;
+        };
+        ImportOrderResp: {
+            failed: components["schemas"]["ApplyFailure"][];
+            /**
+             * Format: int32
+             * @description Lists this call imported.
+             */
+            imported: number;
+            /**
+             * Format: int32
+             * @description `continues` links this call made between adjacent parts.
+             */
+            linked: number;
+            /** @description The caller's lists for the order's parts, in reading order. */
+            list_ids: string[];
+            /** @description The order's name: its files' shared prefix. */
+            order_name: string;
+            /**
+             * Format: int32
+             * @description Parts still to import. Call again while this is above zero and
+             *     `imported` was (nothing imported and nothing failed means the
+             *     budget ran out before the first one: also worth one more call).
+             */
+            remaining: number;
+            /**
+             * Format: int32
+             * @description Files in the order.
+             */
+            total_parts: number;
         };
         /**
          * @description The caller's own reading progress on one issue card
@@ -25097,6 +25175,57 @@ export interface operations {
             };
             /** @description per-user CBL import quota exceeded */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cbl_lists_import_order: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportOrderReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportOrderResp"];
+                };
+            };
+            /** @description catalog source not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the file is not one part of an order */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description import limit reached */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the catalog could not be read */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -2107,3 +2107,99 @@ async fn on_deck_names_an_event_due_before_the_next_issue() {
     let c = card(&body).expect("still on deck");
     assert!(c.get("pending_events").is_none(), "{c}");
 }
+
+/// 2.0 PR 8: importing a whole order chains the parts the caller has, in
+/// reading order (CMRO's "-Part 01" numbering), reuses lists on a second
+/// call, and refuses a file that is not one part of an order. The catalog
+/// listing says which source and order each file belongs to.
+#[tokio::test]
+async fn import_order_chains_the_parts_of_a_catalog_order() {
+    const CORE: &str = "Marvel/Master Reading Order/CMRO/Core";
+    let p = |n: u8| format!("{CORE}/[Marvel] CMRO Core Reading Order-Part {n:02}.cbl");
+    let (p1, p2, p3) = (p(1), p(2), p(3));
+    const EVENT: &str = "Marvel/Events/CBRO/[Marvel] Age of Ultron (WEB-CBRO).cbl";
+    let app = TestApp::spawn().await;
+    let user = register(&app, "order@example.com").await;
+    let (_, issues) = seed_cbl_with_matched_entries(&app, user.user_id, 6).await;
+    let source = seed_catalog(&app, &[&p3, &p1, EVENT, &p2]).await;
+    // The caller already has all three parts (imported one by one).
+    let mut ids = Vec::new();
+    for (i, path) in [&p1, &p2, &p3].into_iter().enumerate() {
+        let l = make_list(
+            &app,
+            Some(user.user_id),
+            &format!("Core {}", i + 1),
+            &issues[i * 2..i * 2 + 2],
+        )
+        .await;
+        from_catalog(&app, l, source, path).await;
+        ids.push(l);
+    }
+
+    // Asked from the middle part: the whole order, chained 1 → 2 → 3.
+    let body = serde_json::json!({ "catalog_source_id": source, "catalog_path": p2 });
+    let (status, resp) = send(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists/import-order",
+        &user,
+        Some(body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(resp["order_name"], "[Marvel] CMRO Core Reading Order");
+    assert_eq!(resp["total_parts"], 3);
+    assert_eq!(resp["imported"], 0);
+    assert_eq!(resp["linked"], 2);
+    assert_eq!(resp["remaining"], 0);
+    assert!(resp["failed"].as_array().unwrap().is_empty(), "{resp}");
+    let got: Vec<String> = resp["list_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(got, ids.iter().map(Uuid::to_string).collect::<Vec<_>>());
+    let (_, links) = get_json(&app, &links_uri(ids[0]), &user).await;
+    assert_eq!(links["continues"]["child_list_id"], ids[1].to_string());
+    let (_, links) = get_json(&app, &links_uri(ids[1]), &user).await;
+    assert_eq!(links["continues"]["child_list_id"], ids[2].to_string());
+
+    // Again: nothing left to do.
+    let (_, resp) = send(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists/import-order",
+        &user,
+        Some(body),
+    )
+    .await;
+    assert_eq!(resp["linked"], 0, "{resp}");
+    assert_eq!(resp["remaining"], 0);
+
+    // A standalone list is not part of an order.
+    let (status, resp) = send(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists/import-order",
+        &user,
+        Some(serde_json::json!({ "catalog_source_id": source, "catalog_path": EVENT })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{resp}");
+    assert_eq!(resp["error"]["details"][0]["field"], "catalog_path");
+
+    // The catalog listing carries each file's source and order.
+    let (status, listing) =
+        get_json(&app, &format!("/api/catalog/sources/{source}/lists"), &user).await;
+    assert_eq!(status, StatusCode::OK, "{listing}");
+    let items = listing["items"].as_array().unwrap();
+    let of = |path: &str| items.iter().find(|i| i["path"] == path).unwrap().clone();
+    let (a, b, ev) = (of(&p1), of(&p2), of(EVENT));
+    assert_eq!(a["source"], "cmro");
+    assert_eq!(a["depth"], "Core");
+    assert_eq!(a["part"], 1.0);
+    assert_eq!(a["order_key"], b["order_key"]);
+    assert_eq!(ev["source"], "cbro");
+    assert!(ev.get("order_key").is_none(), "{ev}");
+}

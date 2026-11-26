@@ -42,6 +42,7 @@ import { collectServerErrors } from "@/lib/api/form-errors";
 import { useCatalogEntries, useCatalogSources } from "@/lib/api/queries";
 import {
   useCreateCblList,
+  useImportCblOrder,
   useCreateSavedView,
   uploadCblFile,
 } from "@/lib/api/mutations";
@@ -304,6 +305,25 @@ function CatalogList({
   const [pathSegments, setPathSegments] = React.useState<string[]>([]);
   const create = useCreateCblList();
   const [pendingPath, setPendingPath] = React.useState<string | null>(null);
+  // Importing a whole order: which one, and how far along.
+  const importOrder = useImportCblOrder();
+  const [orderProgress, setOrderProgress] = React.useState<{
+    key: string;
+    done: number;
+    total: number;
+  } | null>(null);
+  const importWholeOrder = (order: CatalogOrder) => {
+    setOrderProgress({ key: order.key, done: 0, total: order.parts.length });
+    importOrder.mutate(
+      {
+        catalog_source_id: sourceId,
+        catalog_path: order.parts[0]!.path,
+        onProgress: (done, total) =>
+          setOrderProgress({ key: order.key, done, total }),
+      },
+      { onSettled: () => setOrderProgress(null) },
+    );
+  };
 
   const tree = React.useMemo(
     () => (entries.data ? buildTree(entries.data.items) : null),
@@ -403,6 +423,8 @@ function CatalogList({
             }
             onImport={importEntry}
             isImporting={(path) => create.isPending && pendingPath === path}
+            onImportOrder={importWholeOrder}
+            orderProgress={orderProgress}
           />
         )}
       </div>
@@ -449,18 +471,96 @@ function Breadcrumbs({
   );
 }
 
+/** A reading order published as several files in one folder. */
+export type CatalogOrder = {
+  key: string;
+  name: string;
+  /** In reading order. */
+  parts: CatalogEntryView[];
+};
+
+/** The orders among a folder's files: files that share an `order_key`,
+ *  two or more, sorted by part. Pure, for tests. */
+export function catalogOrders(
+  files: readonly CatalogEntryView[],
+): CatalogOrder[] {
+  const byKey = new Map<string, CatalogEntryView[]>();
+  for (const f of files) {
+    if (!f.order_key || f.part == null) continue;
+    const list = byKey.get(f.order_key);
+    if (list) list.push(f);
+    else byKey.set(f.order_key, [f]);
+  }
+  return [...byKey.entries()]
+    .filter(([, parts]) => parts.length > 1)
+    .map(([key, parts]) => ({
+      key,
+      name: parts[0]!.order_name ?? parts[0]!.name,
+      parts: [...parts].sort((a, b) => (a.part ?? 0) - (b.part ?? 0)),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** A short label for who published a list, and what that means. */
+export function sourceLabel(
+  source: CatalogEntryView["source"],
+  depth?: string | null,
+): { label: string; title: string } | null {
+  switch (source) {
+    case "cbro":
+      return {
+        label: "CBRO",
+        title:
+          "Comic Book Reading Orders. Events are separate lists you can link in.",
+      };
+    case "cbro_with_events":
+      return {
+        label: "CBRO · with events",
+        title:
+          "Every event\u2019s issues are already inline. To keep events as separate, linked lists, import the plain version instead.",
+      };
+    case "cmro":
+      return {
+        label: depth ? `CMRO · ${depth}` : "CMRO",
+        title:
+          "The Complete Marvel Reading Order, cut into 1,000-issue parts. Essential is the shortest set, Expanded the longest. Events are inline.",
+      };
+    case "marvel_guides":
+      return {
+        label: "Marvel Guides",
+        title: "An era in named sub-chapters, read in part order.",
+      };
+    case "uxro":
+      return { label: "UXRO", title: "The Ultimate X-Men Reading Order." };
+    case "locg":
+      return { label: "LoCG", title: "League of Comic Geeks." };
+    case "official":
+      return {
+        label: "Official",
+        title: "The publisher\u2019s own checklist.",
+      };
+    default:
+      return null;
+  }
+}
+
 function FolderView({
   node,
   onOpenFolder,
   onImport,
   isImporting,
+  onImportOrder,
+  orderProgress,
 }: {
   node: FolderNode;
   onOpenFolder: (folder: FolderNode) => void;
   onImport: (entry: CatalogEntryView) => void;
   isImporting: (path: string) => boolean;
+  onImportOrder: (order: CatalogOrder) => void;
+  orderProgress: { key: string; done: number; total: number } | null;
 }) {
   const folders = Array.from(node.folders.values());
+  const orders = catalogOrders(node.files);
   if (folders.length === 0 && node.files.length === 0) {
     return (
       <div className="text-muted-foreground py-6 text-center text-sm">
@@ -492,6 +592,48 @@ function FolderView({
           </button>
         </li>
       ))}
+      {orders.map((order) => {
+        const running = orderProgress?.key === order.key;
+        return (
+          <li
+            key={order.key}
+            className="bg-muted/40 flex items-center justify-between gap-3 px-3 py-2"
+            data-testid="catalog-order"
+          >
+            <div className="min-w-0">
+              <div
+                className="line-clamp-2 text-sm font-medium"
+                title={order.name}
+              >
+                {order.name}
+              </div>
+              <div className="text-muted-foreground text-xs">
+                {order.parts.length} parts, read in order.
+                {running
+                  ? ` Importing ${orderProgress.done} of ${orderProgress.total}\u2026`
+                  : " Imports the parts you don\u2019t have and links each to the next."}
+              </div>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => onImportOrder(order)}
+              disabled={orderProgress != null}
+              aria-label={`Import all ${order.parts.length} parts of ${order.name}`}
+            >
+              {running ? (
+                <>
+                  <Loader2 className="mr-1 size-3 animate-spin" />
+                  Importing…
+                </>
+              ) : (
+                `Import all ${order.parts.length} parts`
+              )}
+            </Button>
+          </li>
+        );
+      })}
       {node.files.map((entry) => (
         <li key={entry.path}>
           <FileRow
@@ -548,6 +690,7 @@ function FileRow({
   isImporting: boolean;
   showPath?: boolean;
 }) {
+  const source = sourceLabel(entry.source, entry.depth);
   return (
     <div className="flex items-center justify-between gap-3 px-3 py-2">
       <div className="flex min-w-0 items-center gap-2">
@@ -556,6 +699,17 @@ function FileRow({
           <div className="truncate text-sm font-medium" title={entry.name}>
             {entry.name}
           </div>
+          {source ? (
+            <div
+              className="text-muted-foreground truncate text-xs"
+              title={source.title}
+            >
+              {source.label}
+              {entry.source === "cbro_with_events"
+                ? " · import the plain version to link events separately"
+                : ""}
+            </div>
+          ) : null}
           {showPath ? (
             <div
               className="text-muted-foreground truncate text-xs"

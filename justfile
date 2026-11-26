@@ -817,3 +817,11 @@ check:
 # Releases are cut by release-please: merge PRs with conventional-commit titles,
 # then merge the auto-maintained "Release PR" — that tags vX.Y.Z and publishes.
 # See docs/dev/release-guide.md.
+
+# Refresh the catalog path snapshot the source-rule audit runs over
+# (crates/server/tests/catalog_sources_snapshot.rs). Needs `gh`.
+catalog-snapshot:
+    gh api "repos/DieselTech/CBL-ReadingLists/git/trees/main?recursive=1" \
+        -q '.tree[] | select(.type == "blob") | .path | select(endswith(".cbl"))' \
+        | LC_ALL=C sort > crates/server/tests/fixtures/catalog-paths.txt
+    cargo test -p server --test catalog_sources_snapshot

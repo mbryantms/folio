@@ -6915,6 +6915,44 @@
         }
       }
     },
+    "/api/me/cbl-lists/import-order": {
+      "post": {
+        "operationId": "cbl_lists_import_order",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportOrderReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportOrderResp"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "catalog source not found"
+          },
+          "422": {
+            "description": "the file is not one part of an order"
+          },
+          "429": {
+            "description": "import limit reached"
+          },
+          "502": {
+            "description": "the catalog could not be read"
+          }
+        }
+      }
+    },
     "/api/me/cbl-lists/refresh-all": {
       "post": {
         "operationId": "cbl_lists_refresh_all",
@@ -18919,14 +18957,51 @@
           "name",
           "publisher",
           "sha",
-          "size"
+          "size",
+          "source"
         ],
         "properties": {
+          "depth": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "CMRO: `Essential`, `Core`, `Main` or `Expanded`."
+          },
           "name": {
             "type": "string"
           },
+          "order_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The same for every part of one order; absent for a standalone\nlist. Files sharing it can be imported together\n(`POST /me/cbl-lists/import-order`)."
+          },
+          "order_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The order's name (its files' shared prefix), with `order_key`."
+          },
+          "part": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The part's number within its order; parts sort by it."
+          },
           "path": {
             "type": "string"
+          },
+          "plain_twin": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a with-events file: the path of the plain file it is the twin\nof. Import the plain one to link events as separate lists."
           },
           "publisher": {
             "type": "string"
@@ -18938,8 +19013,26 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          },
+          "source": {
+            "$ref": "#/components/schemas/CatalogSourceKind",
+            "description": "Who published the file (CBRO, CMRO, Marvel Guides, …)."
           }
         }
+      },
+      "CatalogSourceKind": {
+        "type": "string",
+        "description": "Who published a catalog file.",
+        "enum": [
+          "cbro",
+          "cbro_with_events",
+          "cmro",
+          "marvel_guides",
+          "uxro",
+          "locg",
+          "official",
+          "other"
+        ]
       },
       "CatalogSourceListView": {
         "type": "object",
@@ -26966,6 +27059,74 @@
           },
           "source": {
             "type": "string"
+          }
+        }
+      },
+      "ImportOrderReq": {
+        "type": "object",
+        "required": [
+          "catalog_source_id",
+          "catalog_path"
+        ],
+        "properties": {
+          "catalog_path": {
+            "type": "string",
+            "description": "Any one file of the order."
+          },
+          "catalog_source_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ImportOrderResp": {
+        "type": "object",
+        "required": [
+          "order_name",
+          "total_parts",
+          "imported",
+          "linked",
+          "remaining",
+          "failed",
+          "list_ids"
+        ],
+        "properties": {
+          "failed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApplyFailure"
+            }
+          },
+          "imported": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Lists this call imported."
+          },
+          "linked": {
+            "type": "integer",
+            "format": "int32",
+            "description": "`continues` links this call made between adjacent parts."
+          },
+          "list_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The caller's lists for the order's parts, in reading order."
+          },
+          "order_name": {
+            "type": "string",
+            "description": "The order's name: its files' shared prefix."
+          },
+          "remaining": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Parts still to import. Call again while this is above zero and\n`imported` was (nothing imported and nothing failed means the\nbudget ran out before the first one: also worth one more call)."
+          },
+          "total_parts": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Files in the order."
           }
         }
       },

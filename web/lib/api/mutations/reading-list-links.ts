@@ -12,6 +12,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { apiPath } from "../path";
 import { queryKeys } from "../queries";
 import type {
+  ImportOrderReq,
+  ImportOrderResp,
   ApplyDeriveReq,
   ApplyDeriveResp,
   CreateBreakReq,
@@ -298,6 +300,67 @@ export function useApplyCblDerive(listId: string) {
         if (resp) qc.setQueryData(queryKeys.cblListLinks(listId), resp.links);
         qc.invalidateQueries({ queryKey: queryKeys.cblListLinks(listId) });
         qc.invalidateQueries({ queryKey: queryKeys.cblLists });
+        invalidateSavedViews(qc);
+      },
+    },
+  );
+}
+
+/** How many `import-order` calls one whole-order import makes at most
+ *  (each imports as many parts as fit in its time budget). */
+const IMPORT_ORDER_MAX_CALLS = 40;
+
+/**
+ * Import every part of a catalog reading order and chain them. One call
+ * imports as many parts as fit in the server's time budget and says how
+ * many remain, so this calls again until none do (or a call makes no
+ * progress), reporting through `onProgress`. Resolves to the totals.
+ */
+export function useImportCblOrder() {
+  const qc = useQueryClient();
+  return useApiRunMutation<
+    ImportOrderResp,
+    ImportOrderReq & { onProgress?: (done: number, total: number) => void }
+  >(
+    async ({ onProgress, ...body }) => {
+      let total: ImportOrderResp | null = null;
+      for (let call = 0; call < IMPORT_ORDER_MAX_CALLS; call++) {
+        const resp = await apiMutate<ImportOrderResp>({
+          path: "/me/cbl-lists/import-order",
+          method: "POST",
+          body,
+        });
+        if (!resp) break;
+        total = total
+          ? {
+              ...resp,
+              imported: total.imported + resp.imported,
+              linked: total.linked + resp.linked,
+              failed: resp.failed,
+            }
+          : resp;
+        onProgress?.(resp.total_parts - resp.remaining, resp.total_parts);
+        // Done, or stuck (a call that imported nothing won't do better).
+        if (resp.remaining === 0 || resp.imported === 0) break;
+      }
+      return total;
+    },
+    {
+      successMessage: (r) => {
+        if (!r) return "Nothing imported";
+        const have = r.total_parts - r.remaining;
+        const base =
+          r.remaining === 0
+            ? `All ${r.total_parts} parts are in your lists, linked in order`
+            : `${have} of ${r.total_parts} parts imported`;
+        const first = r.failed[0];
+        return first ? `${base}. ${first.name}: ${first.message}` : base;
+      },
+      successVariant: (r) =>
+        r && r.remaining === 0 && r.failed.length === 0 ? "success" : "info",
+      onSettled: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.cblLists });
+        qc.invalidateQueries({ queryKey: CBL_LINKS_PREFIX });
         invalidateSavedViews(qc);
       },
     },
