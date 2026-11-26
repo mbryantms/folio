@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.89.0](https://github.com/mbryantms/folio/compare/v0.88.0...v0.89.0) (2026-11-26)
+
+
+### Added
+
+* **cbl:** event card as a cover hero; chapters sheet no longer pans sideways ([#1790](https://github.com/mbryantms/folio/issues/1790)) ([1b04fdf](https://github.com/mbryantms/folio/commit/1b04fdf0a7e76e14271b364f8de81ccc56a1ec3d))
+
 ## [0.88.0](https://github.com/mbryantms/folio/compare/v0.87.0...v0.88.0) (2026-11-26)
 
 
