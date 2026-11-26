@@ -25,6 +25,10 @@ vi.mock("@/lib/visual-effects", () => ({
   useVisualEffect: () => false,
   useReducedMotion: () => true,
 }));
+// The release dialog's "Add series to Mylar" (never offered from the rail).
+vi.mock("@/lib/api/mutations", () => ({
+  useAddSeriesToMylar: () => ({ mutate: vi.fn(), isPending: false }),
+}));
 vi.mock("@/lib/api/queries", () => ({
   useUpcomingThisWeek: (today: string, opts?: { enabled?: boolean }) => {
     state.railCalls.push({ today, enabled: opts?.enabled });

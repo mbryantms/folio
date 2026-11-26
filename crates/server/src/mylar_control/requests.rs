@@ -178,6 +178,41 @@ pub async fn create<C: ConnectionTrait>(
     Ok(summary)
 }
 
+/// Queue one series by its ComicVine volume id (the Upcoming page: a
+/// release whose series Mylar is not tracking). Same rules as [`create`]:
+/// nothing is queued for a series the snapshot shows on the watchlist, or
+/// one with a request waiting or just accepted.
+pub async fn create_series<C: ConnectionTrait>(
+    db: &C,
+    actor: Uuid,
+    cv_series_id: i64,
+    series_name: &str,
+) -> Result<AddSummary, DbErr> {
+    let mut summary = AddSummary::default();
+    if !watched(db, &[cv_series_id]).await?.is_empty() {
+        summary.series_in_mylar = 1;
+        return Ok(summary);
+    }
+    let now = Utc::now().fixed_offset();
+    let row = mylar_add_request::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        cv_series_id: Set(cv_series_id),
+        cv_issue_id: Set(None),
+        series_name: Set(series_name.to_owned()),
+        issue_number: Set(None),
+        status: Set(status::PENDING.to_owned()),
+        attempts: Set(0),
+        last_error: Set(None),
+        next_attempt_at: Set(now),
+        requested_by: Set(Some(actor)),
+        created_at: Set(now),
+        updated_at: Set(now),
+    };
+    summary.series_requested = upsert(db, vec![row]).await?;
+    summary.already_requested = 1 - summary.series_requested;
+    Ok(summary)
+}
+
 /// Insert the rows. A target whose row failed is reset to pending, and so
 /// is one Mylar accepted more than [`REDO_DONE_AFTER`] ago (the series may
 /// have been removed from Mylar since). A row still pending, or accepted

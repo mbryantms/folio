@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 /**
- * /upcoming (upcoming-releases 1.0). The page is view-only and never
- * narrows a list in memory, so the tests pin:
+ * /upcoming (upcoming-releases 1.0). The page never narrows a list in
+ * memory, so the tests pin:
  *  - every filter reaches the list hook as a server param;
  *  - a viewer who may not see Mylar data gets no Mylar control;
- *  - the detail dialog offers links only, never an action on Mylar.
+ *  - the detail dialog offers links only, except "Add series to Mylar"
+ *    for an admin with add-to-Mylar set up, on an untracked series.
  */
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -26,6 +27,10 @@ const state = vi.hoisted(() => ({
 
 vi.mock("@/lib/api/queries-me", () => ({
   useMe: () => ({ data: { role: state.role } }),
+}));
+const addSeries = vi.fn();
+vi.mock("@/lib/api/mutations", () => ({
+  useAddSeriesToMylar: () => ({ mutate: addSeries, isPending: false }),
 }));
 vi.mock("@/lib/api/queries", () => ({
   useUpcomingSummary: () => ({
@@ -70,6 +75,7 @@ function summary(over: Partial<UpcomingSummaryView> = {}): UpcomingSummaryView {
     mylar: { received_at: "2026-11-14T12:00:00Z", freshness: "fresh" },
     publishers: ["DC Comics", "Image"],
     all_releases_available: true,
+    can_add_to_mylar: false,
     ...over,
   };
 }
@@ -216,6 +222,45 @@ describe("UpcomingView content", () => {
     expect(dialog.getAllByRole("button").map((b) => b.textContent)).toEqual([
       "Close",
     ]);
+  });
+
+  it("offers Add series to Mylar only when allowed, known and untracked", () => {
+    const untracked = entry({ cv_series_id: 4242 });
+    const open = () => {
+      fireEvent.click(document.querySelector("[data-card]") as HTMLElement);
+      return within(screen.getByRole("dialog"));
+    };
+    const offered = (d: ReturnType<typeof open>) =>
+      d.queryByRole("button", { name: "Add series to Mylar" }) !== null;
+
+    // Not allowed (not an admin, or no Mylar address and key stored).
+    state.weeks = [week([untracked])];
+    const first = render(<UpcomingView />);
+    expect(offered(open())).toBe(false);
+    first.unmount();
+
+    state.summary = summary({ can_add_to_mylar: true });
+    // Already tracked, or no ComicVine id to send.
+    for (const e of [
+      entry({ cv_series_id: 4242, tracked: true, stage: "tracked" }),
+      entry({ cv_series_id: null }),
+    ]) {
+      state.weeks = [week([e])];
+      const r = render(<UpcomingView />);
+      expect(offered(open())).toBe(false);
+      r.unmount();
+    }
+
+    state.weeks = [week([untracked])];
+    render(<UpcomingView />);
+    const dialog = open();
+    fireEvent.click(
+      dialog.getByRole("button", { name: "Add series to Mylar" }),
+    );
+    expect(addSeries.mock.calls[0]![0]).toEqual({
+      cv_series_id: 4242,
+      series_name: "Action Comics",
+    });
   });
 
   it("renders the same releases as rows in the list layout", () => {

@@ -85,6 +85,21 @@ cv_issue_id)`): asking again resets a `failed` row to `pending`, and a
 the series in Mylar; if not, it was probably removed there). A `pending`
 or freshly `done` row is left alone and counted as already requested.
 
+## Adding from the Upcoming page
+
+`POST /api/admin/integrations/mylar/series` `{cv_series_id, series_name}`
+queues one series (`requests::create_series`) under the same rules as a
+reading-list add: nothing for a series the snapshot shows on the
+watchlist, or one with a request waiting or just accepted. The sweep
+carries it out. It adds the series only; which issues Mylar then fetches
+is Mylar's own setting.
+
+The Upcoming release dialog shows **Add series to Mylar** when
+`UpcomingSummaryView.can_add_to_mylar` (an admin, with the address and
+key stored), the entry has a `cv_series_id`, and it is not `tracked`. An
+entry Metron has not linked to ComicVine says so instead. It is the only
+control on the Upcoming page that acts on Mylar.
+
 ## Wanted-list actions
 
 Each is one admin click and makes its one or two Mylar calls inline.

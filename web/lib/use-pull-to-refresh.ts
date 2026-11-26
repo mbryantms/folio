@@ -88,6 +88,31 @@ export function computePullDistance(
   return threshold + room * (1 - 1 / (1 + overshoot / room));
 }
 
+/** Layers that sit over the page: a touch that starts inside one belongs
+ *  to that layer, not to the page behind it. */
+const OVERLAY_SELECTOR =
+  '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-radix-popper-content-wrapper]';
+
+/**
+ * Whether a touch that starts on `target` may begin a pull. Exposed for
+ * unit testing.
+ *
+ * A touch inside an open sheet, dialog, menu or popover never pulls the
+ * page behind it (2026-11-27: dragging in the phone nav sheet, whose
+ * first row is "Back to library", pulled and could refresh the settings
+ * page under it while the tap was meant for the link). Neither does a
+ * touch inside a scrolled container: that gesture is scrolling it back
+ * to its top.
+ */
+export function canStartPull(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return true;
+  if (target.closest(OVERLAY_SELECTOR)) return false;
+  for (let el: Element | null = target; el; el = el.parentElement) {
+    if (el.scrollTop > 0) return false;
+  }
+  return true;
+}
+
 /**
  * Pure layout for the indicator + page content at a given pull
  * distance. Exposed for unit testing.
@@ -180,6 +205,7 @@ export function usePullToRefresh(
       if (stateRef.current === "refreshing") return;
       if (window.scrollY > 0) return;
       if (e.touches.length !== 1) return;
+      if (!canStartPull(e.target)) return;
       startYRef.current = e.touches[0]?.clientY ?? null;
     };
 

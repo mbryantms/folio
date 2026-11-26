@@ -767,12 +767,16 @@ Default admin (first registered user becomes admin):
     `mylar_control::client` (nothing that deletes, pauses, refreshes or
     restarts); or any route under `/integrations/mylar` beyond the
     snapshot POST, the token's create / revoke, the read-only activity
-    GET, and add-to-Mylar's routes (`requests`, `test`, `wanted-check`,
-    `search`, `series/{id}/recheck|refresh`, `issues/{id}/unwant`).
+    GET, and add-to-Mylar's routes (`requests`, `series`, `test`,
+    `wanted-check`, `search`, `series/{id}/recheck|refresh`,
+    `issues/{id}/unwant`).
     `crates/server/tests/upcoming_view_only.rs` pins all of these.
   - Add a control that acts on Mylar anywhere but the reading list
-    Resolution tab and the admin "Mylar tools" card (both admin-only).
-    The Upcoming page and the admin activity card stay badges and text.
+    Resolution tab, the admin "Mylar tools" card, and "Add series to
+    Mylar" in the Upcoming release dialog (all admin-only; the last is
+    shown only when `UpcomingSummaryView.can_add_to_mylar`). Everything
+    else on the Upcoming page and the admin activity card stays badges
+    and text: no search, retry, un-want or delete there.
   - Call Mylar in a loop from a handler, on a timer, or on page load
     (bulk work goes through the sweep; the wanted check runs on click),
     or return or log the Mylar API key.

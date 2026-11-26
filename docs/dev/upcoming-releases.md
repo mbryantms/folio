@@ -20,8 +20,10 @@ Folio never controls anything outside itself through this feature.
   all-or-nothing (it can delete series and restart Mylar), and many
   installs run Mylar with its login off behind a firewall. Mylar data
   reaches Folio only by push.
-- The admin page and the Upcoming page show state. No button there
-  orders, downloads, searches or marks anything in another system.
+- The admin page and the Upcoming page show state. The one exception is
+  "Add series to Mylar" in a release's dialog, for an admin with
+  add-to-Mylar set up; nothing else there orders, downloads, searches or
+  marks anything in another system.
 - The one place Folio does call Mylar is the separate, opt-in
   [add-to-Mylar](add-to-mylar.md) action on a reading list's missing
   entries. It has its own module (`crate::mylar_control`), its own two

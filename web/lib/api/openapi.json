@@ -642,6 +642,42 @@
         }
       }
     },
+    "/api/admin/integrations/mylar/series": {
+      "post": {
+        "operationId": "admin_mylar_add_series",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MylarAddSeriesReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "queued (or already in Mylar / already requested: see the counts)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddSummary"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "409": {
+            "description": "no Mylar address or key stored"
+          },
+          "422": {
+            "description": "validation failed"
+          }
+        }
+      }
+    },
     "/api/admin/integrations/mylar/series/{cv_series_id}/recheck": {
       "post": {
         "operationId": "admin_mylar_recheck_series",
@@ -31495,6 +31531,24 @@
           }
         }
       },
+      "MylarAddSeriesReq": {
+        "type": "object",
+        "required": [
+          "cv_series_id",
+          "series_name"
+        ],
+        "properties": {
+          "cv_series_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "ComicVine volume id."
+          },
+          "series_name": {
+            "type": "string",
+            "description": "Shown in Folio's record of the request; Mylar is sent only the id."
+          }
+        }
+      },
       "MylarFreshness": {
         "type": "string",
         "description": "How far a snapshot can be trusted, by when Folio received it.",
@@ -41914,6 +41968,14 @@
             ],
             "description": "Cover on Metron's CDN, when Metron lists the release."
           },
+          "cv_series_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The series' ComicVine volume id, when the calendar knows it. What\n\"Add to Mylar\" sends."
+          },
           "first_issue": {
             "type": "boolean",
             "description": "A #1."
@@ -42092,7 +42154,8 @@
           "this_week",
           "next_week",
           "publishers",
-          "all_releases_available"
+          "all_releases_available",
+          "can_add_to_mylar"
         ],
         "properties": {
           "all_releases_available": {
@@ -42106,6 +42169,10 @@
             ],
             "format": "date-time",
             "description": "When the calendar last finished a full Metron pass."
+          },
+          "can_add_to_mylar": {
+            "type": "boolean",
+            "description": "The caller is an admin and a Mylar address and key are stored: a\nrelease's series can be added to Mylar's watchlist."
           },
           "enabled": {
             "type": "boolean",

@@ -14,6 +14,8 @@
 //!   re-queues it;
 //! - Mylar being down records nothing against any request;
 //! - the list status reports each target's state;
+//! - one series can be queued by its ComicVine id (the Upcoming page),
+//!   once, and not when the snapshot already shows it in Mylar;
 //! - the wanted check finds issues Mylar wants that the library holds,
 //!   and counts reading-list issues Mylar is not looking for;
 //! - search now, recheck, refresh and un-want are admin-only, audited,
@@ -769,4 +771,43 @@ async fn un_want_only_touches_an_issue_mylar_has_as_wanted() {
         .filter(|q| q.contains("cmd=unqueueIssue"))
         .collect();
     assert_eq!(unqueued.len(), 1, "{unqueued:?}");
+}
+
+#[tokio::test]
+async fn one_series_is_queued_by_id_once_and_not_when_already_in_mylar() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let reader = register(&app, "reader@example.com").await;
+    const SERIES: &str = "/api/admin/integrations/mylar/series";
+    let body = json!({ "cv_series_id": 4242, "series_name": "Absolute Batman" });
+
+    let (status, _) = call(&app, Method::POST, SERIES, &reader, Some(body.clone())).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = call(&app, Method::POST, SERIES, &admin, Some(body.clone())).await;
+    assert_eq!(status, StatusCode::CONFLICT, "not configured");
+    configure(&app);
+    let bad = json!({ "cv_series_id": 0, "series_name": "" });
+    let (status, resp) = call(&app, Method::POST, SERIES, &admin, Some(bad)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{resp}");
+
+    let (status, resp) = call(&app, Method::POST, SERIES, &admin, Some(body.clone())).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{resp}");
+    assert_eq!(resp["series_requested"], 1);
+    let queued = row(&app, 4242, None).await;
+    assert_eq!(queued.series_name, "Absolute Batman");
+    let (_, resp) = call(&app, Method::POST, SERIES, &admin, Some(body)).await;
+    assert_eq!(
+        (
+            resp["series_requested"].as_u64(),
+            resp["already_requested"].as_u64()
+        ),
+        (Some(0), Some(1))
+    );
+
+    watch(&app, 200).await;
+    let tracked = json!({ "cv_series_id": 200, "series_name": "Beta" });
+    let (status, resp) = call(&app, Method::POST, SERIES, &admin, Some(tracked)).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(resp["series_in_mylar"], 1);
+    assert_eq!(rows(&app).await.len(), 1);
 }
