@@ -13,6 +13,36 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.88.0](https://github.com/mbryantms/folio/compare/v0.87.0...v0.88.0) (2026-11-26)
+
+
+### Added
+
+* **cbl:** chapter highlight, plain list view and list page fixes ([#1777](https://github.com/mbryantms/folio/issues/1777)) ([8e611e5](https://github.com/mbryantms/folio/commit/8e611e520ac4a1b70ffe59cfb181f372e51a93c1))
+* **cbl:** events reach On Deck, offline downloads and the pages you arrive from ([#1783](https://github.com/mbryantms/folio/issues/1783)) ([904958f](https://github.com/mbryantms/folio/commit/904958f1a7cbce39b013777367ad3fff12ee28e8))
+* **cbl:** find event chapters in lists that read events inline ([#1785](https://github.com/mbryantms/folio/issues/1785)) ([ff41b4e](https://github.com/mbryantms/folio/commit/ff41b4e168942cc98bc8a9b7ae885b6d3aacde72))
+* **cbl:** finish the linking flows on the list page ([#1781](https://github.com/mbryantms/folio/issues/1781)) ([fa26192](https://github.com/mbryantms/folio/commit/fa2619208f9198cfd52e0e11274cc99119128c8f))
+* **cbl:** move and reorder events, repair lost placements ([#1780](https://github.com/mbryantms/folio/issues/1780)) ([5380814](https://github.com/mbryantms/folio/commit/5380814f24dc54591dfee90b78a4d3ad5a37aed5))
+* **cbl:** name any chapter, skip an event from the end card, and follow-ups ([#1787](https://github.com/mbryantms/folio/issues/1787)) ([fe50068](https://github.com/mbryantms/folio/commit/fe500681307afc6f6695e6272905db4775930fa9))
+* **cbl:** save a collection as a reading list, copy a shared list ([#1788](https://github.com/mbryantms/folio/issues/1788)) ([e8a887e](https://github.com/mbryantms/folio/commit/e8a887e0627b7f71e3ad14a080126b8c23a40b9b))
+* **cbl:** source profiles and whole-order import from the catalog ([#1784](https://github.com/mbryantms/folio/issues/1784)) ([f49a97c](https://github.com/mbryantms/folio/commit/f49a97c7503186b7f5654008fdfc8d2ae76d75be))
+
+
+### Fixed
+
+* **cbl:** bound and harden Find events, trim list lookups ([#1782](https://github.com/mbryantms/folio/issues/1782)) ([c8bd7b0](https://github.com/mbryantms/folio/commit/c8bd7b09f799bdfa1e3892e27cab05aa4b4c220e))
+* **cbl:** share linked lists with a master, stop guessing anchors ([#1779](https://github.com/mbryantms/folio/issues/1779)) ([ec4014d](https://github.com/mbryantms/folio/commit/ec4014db4b9ac190bf4fbbab06f569efab7ac34b))
+* **cbl:** Up Next offers events across skipped issues and ends cleanly ([#1778](https://github.com/mbryantms/folio/issues/1778)) ([ef08a29](https://github.com/mbryantms/folio/commit/ef08a2981f2f28e7a5668c71207b319954ddaf1f))
+
+
+### Dependencies
+
+* update dependency @scalar/api-reference-react to v0.9.96 ([#1776](https://github.com/mbryantms/folio/issues/1776)) ([f7b259f](https://github.com/mbryantms/folio/commit/f7b259f17f499b5101b88c0b7447ead1b7bc9302))
+* update dependency @tanstack/react-query to v5.108.3 ([#1775](https://github.com/mbryantms/folio/issues/1775)) ([a941416](https://github.com/mbryantms/folio/commit/a941416bbe5248432174d4fcbb3f574aa16d3eb9))
+* update dependency @tanstack/react-virtual to v3.14.28 ([#1774](https://github.com/mbryantms/folio/issues/1774)) ([6b4fb0e](https://github.com/mbryantms/folio/commit/6b4fb0e49a2a232559cfa825af7107228dada96f))
+* update dependency lucide-react to v1.78.0 ([#1786](https://github.com/mbryantms/folio/issues/1786)) ([b2f2cc6](https://github.com/mbryantms/folio/commit/b2f2cc62bca91e2ff78bc6514aa2950a96261013))
+* update dependency pnpm to v12.23.0 ([#1772](https://github.com/mbryantms/folio/issues/1772)) ([f59d4e3](https://github.com/mbryantms/folio/commit/f59d4e35de1d59bea8aba4d274fb98899e0785c4))
+
 ## [0.87.0](https://github.com/mbryantms/folio/compare/v0.86.2...v0.87.0) (2026-11-25)
 
 
