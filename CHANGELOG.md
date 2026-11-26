@@ -13,6 +13,26 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.90.0](https://github.com/mbryantms/folio/compare/v0.89.0...v0.90.0) (2026-11-26)
+
+
+### Added
+
+* **cbl:** select reading lists and delete them together ([#1796](https://github.com/mbryantms/folio/issues/1796)) ([44d5238](https://github.com/mbryantms/folio/commit/44d523811f1dfec4c82e9f1b5aa4d842b1a8d077))
+
+
+### Fixed
+
+* **web:** menu icons with a doubled gap (reading list Refresh, reader More menu) ([#1794](https://github.com/mbryantms/folio/issues/1794)) ([e4b6054](https://github.com/mbryantms/folio/commit/e4b605403ff473652adb4a83bbf3a49f74182f02))
+
+
+### Dependencies
+
+* update dependency brace-expansion@&gt;=5.0.0 &lt;5.0.9 to v5.1.0 ([#1795](https://github.com/mbryantms/folio/issues/1795)) ([0d095c5](https://github.com/mbryantms/folio/commit/0d095c56755f95470b8dc10a6366a38cfa6f4f95))
+* update dependency cronstrue to v3.44.0 ([#1792](https://github.com/mbryantms/folio/issues/1792)) ([9e7275e](https://github.com/mbryantms/folio/commit/9e7275e238442831596ec15a992eed31f26bf1ff))
+* update dependency next-intl to v4.16.0 ([#1798](https://github.com/mbryantms/folio/issues/1798)) ([2333dc5](https://github.com/mbryantms/folio/commit/2333dc5fd001d35cc08bf339c0e4efd9ae580f88))
+* update postgres:19-alpine docker digest to cac45fb ([#1797](https://github.com/mbryantms/folio/issues/1797)) ([f009f29](https://github.com/mbryantms/folio/commit/f009f296a2a77dcff742f6400828830378244c62))
+
 ## [0.89.0](https://github.com/mbryantms/folio/compare/v0.88.0...v0.89.0) (2026-11-26)
 
 
