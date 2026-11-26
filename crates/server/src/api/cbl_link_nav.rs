@@ -104,6 +104,20 @@ pub(crate) async fn parents_of(
     user_id: Uuid,
     list_id: Uuid,
 ) -> Result<Vec<ReadingListParentView>, sea_orm::DbErr> {
+    Ok(parents_with_status(app, user_id, list_id)
+        .await?
+        .into_iter()
+        .map(|(p, _)| p)
+        .collect())
+}
+
+/// [`parents_of`] with each link's anchor status: Up Next only returns
+/// into a parent whose anchor is still placed.
+async fn parents_with_status(
+    app: &AppState,
+    user_id: Uuid,
+    list_id: Uuid,
+) -> Result<Vec<(ReadingListParentView, AnchorStatus)>, sea_orm::DbErr> {
     let rows: Vec<_> = reading_list_link::Entity::find()
         .filter(reading_list_link::Column::ChildListId.eq(list_id))
         .find_also_related(cbl_list::Entity)
@@ -134,7 +148,7 @@ pub(crate) async fn parents_of(
         .into_iter()
         .map(|r| (r.cbl_list_id, r.last_read_at))
         .collect();
-    let mut out: Vec<(DateTime<FixedOffset>, ReadingListParentView)> = rows
+    let mut out: Vec<(DateTime<FixedOffset>, AnchorStatus, ReadingListParentView)> = rows
         .into_iter()
         .map(|(l, p)| {
             let anchored = l.kind == LinkKind::Event;
@@ -144,6 +158,7 @@ pub(crate) async fn parents_of(
             };
             (
                 l.created_at,
+                l.anchor_status,
                 ReadingListParentView {
                     link_id: l.id.to_string(),
                     kind: l.kind,
@@ -161,33 +176,58 @@ pub(crate) async fn parents_of(
             )
         })
         .collect();
-    out.sort_by(|(ca, a), (cb, b)| b.last_read_at.cmp(&a.last_read_at).then_with(|| ca.cmp(cb)));
-    Ok(out.into_iter().map(|(_, v)| v).collect())
+    out.sort_by(|(ca, _, a), (cb, _, b)| {
+        b.last_read_at
+            .cmp(&a.last_read_at)
+            .then_with(|| ca.cmp(cb))
+            .then_with(|| a.link_id.cmp(&b.link_id))
+    });
+    Ok(out.into_iter().map(|(_, st, v)| (v, st)).collect())
 }
 
-/// Events anchored right after `position` in `list_id` that the reader
-/// can see, hasn't skipped and has an unread issue in, in reading order.
-/// `except` leaves out one list (the event being returned from).
-pub(crate) async fn detours_at(
+/// The one order events are read in, everywhere they are listed: by the
+/// issue they follow, then their order at that issue, then age, then id
+/// (so a tie never depends on the order rows came back in).
+pub(crate) fn event_order(l: &reading_list_link::Model) -> (i32, i32, DateTime<FixedOffset>, Uuid) {
+    (
+        l.anchor_position_hint.unwrap_or(i32::MAX),
+        l.sort_within_anchor,
+        l.created_at,
+        l.id,
+    )
+}
+
+/// Events of `list_id` anchored at a position in `from..to` (`to = None`:
+/// to the end of the list) that the reader can see, hasn't skipped and
+/// has an unread issue in, in reading order. `except` leaves out one list
+/// (the event being returned from).
+///
+/// A range, not one position: Up Next steps over entries that are
+/// finished, not in the library or hidden, and an event anchored after
+/// one of those is still due before the next issue the reader opens.
+pub(crate) async fn detours_between(
     app: &AppState,
     user_id: Uuid,
     acl: &VisibleLibraries,
     list_id: Uuid,
-    position: i32,
+    from: i32,
+    to: Option<i32>,
     except: Option<Uuid>,
 ) -> Result<Vec<NextUpDetour>, sea_orm::DbErr> {
-    let mut links = reading_list_link::Entity::find()
+    let mut q = reading_list_link::Entity::find()
         .filter(reading_list_link::Column::ParentListId.eq(list_id))
         .filter(reading_list_link::Column::Kind.eq(LinkKind::Event))
         .filter(reading_list_link::Column::AnchorStatus.eq(AnchorStatus::Placed))
-        .filter(reading_list_link::Column::AnchorPositionHint.eq(position))
-        .all(&app.db)
-        .await?;
+        .filter(reading_list_link::Column::AnchorPositionHint.gte(from));
+    if let Some(to) = to {
+        q = q.filter(reading_list_link::Column::AnchorPositionHint.lt(to));
+    }
+    let mut links = q.all(&app.db).await?;
     links.retain(|l| Some(l.child_list_id) != except);
     if links.is_empty() {
         return Ok(Vec::new());
     }
-    links.sort_by_key(|l| (l.sort_within_anchor, l.created_at));
+    links.sort_by_key(event_order);
     let skipped: HashSet<Uuid> = reading_list_link_skip::Entity::find()
         .filter(reading_list_link_skip::Column::UserId.eq(user_id))
         .filter(
@@ -303,114 +343,212 @@ pub(crate) struct LinkedNext {
     pub detours: Vec<NextUpDetour>,
 }
 
+/// What [`after_list_end`] found.
+pub(crate) enum AfterListEnd {
+    /// Reading goes on in another list.
+    Next(Box<LinkedNext>),
+    /// The list was an event and its parent has nothing left to read
+    /// (nor do the parts after it): the reading order ends here. The
+    /// switch names the parent to go back to, with no issue to open.
+    BackTo(NextUpListSwitch),
+    /// The list is not linked to anything the reader would go on to.
+    Nothing,
+}
+
+/// How many `continues` hops Up Next follows past parts with nothing to
+/// read. A bound on top of the seen-set; real chains are tens of parts.
+const MAX_CONTINUES_HOPS: usize = 64;
+
+type CblPick = (issue::Model, String, String, i32);
+
+/// The first part after `list_id` (following `continues`, past parts
+/// that are finished, empty or not in the library) with something to
+/// read, and that pick.
+async fn next_part_with_unread(
+    app: &AppState,
+    user_id: Uuid,
+    acl: &VisibleLibraries,
+    list_id: Uuid,
+) -> Result<Option<(cbl_list::Model, CblPick)>, axum::response::Response> {
+    let db_err = |e: sea_orm::DbErr| {
+        tracing::error!(error = %e, "next_up: next part lookup failed");
+        super::cbl_links::internal()
+    };
+    let mut seen: HashSet<Uuid> = HashSet::from([list_id]);
+    let mut at = list_id;
+    for _ in 0..MAX_CONTINUES_HOPS {
+        let Some(link) = reading_list_link::Entity::find()
+            .filter(reading_list_link::Column::ParentListId.eq(at))
+            .filter(reading_list_link::Column::Kind.eq(LinkKind::Continues))
+            .one(&app.db)
+            .await
+            .map_err(db_err)?
+        else {
+            return Ok(None);
+        };
+        // `find_also_related` would follow the parent relation; the child
+        // is the next part.
+        let Some(part) = cbl_list::Entity::find_by_id(link.child_list_id)
+            .one(&app.db)
+            .await
+            .map_err(db_err)?
+        else {
+            return Ok(None);
+        };
+        if !visible(&part, user_id) || !seen.insert(part.id) {
+            return Ok(None);
+        }
+        if let Some(pick) =
+            super::next_up::pick_next_in_cbl(app, user_id, part.id, acl, None).await?
+        {
+            return Ok(Some((part, pick)));
+        }
+        at = part.id;
+    }
+    Ok(None)
+}
+
 /// `from_list` is the parent the reader came from (`?via=`, resolved to
 /// a list id). The bool is `true` when `from_list` was given but isn't a
 /// parent of `list_id` the caller can see (a stale param).
+///
+/// Order: the list's own next part; else, for an event, back into a
+/// parent after the event's place; else that parent's next part; else
+/// [`AfterListEnd::BackTo`] the parent. A parent is eligible when it is
+/// the one the reader came from, or one they have read something in
+/// (finishing an event opened on its own doesn't jump into a master the
+/// reader never opened), and only while the event's anchor is placed.
 pub(crate) async fn after_list_end(
     app: &AppState,
     user_id: Uuid,
     acl: &VisibleLibraries,
     list_id: Uuid,
     from_list: Option<Uuid>,
-) -> Result<(Option<LinkedNext>, bool), axum::response::Response> {
+) -> Result<(AfterListEnd, bool), axum::response::Response> {
     let db_err = |e: sea_orm::DbErr| {
         tracing::error!(error = %e, "next_up: linked lists lookup failed");
         super::cbl_links::internal()
     };
+    let continues = |part: cbl_list::Model, pick: CblPick, view: Option<String>| LinkedNext {
+        list_id: part.id,
+        issue: pick.0,
+        series_slug: pick.1,
+        series_name: pick.2,
+        position: pick.3,
+        switch: NextUpListSwitch {
+            reason: NextUpSwitchReason::Continues,
+            list_id: Some(part.id.to_string()),
+            collection: false,
+            name: part.parsed_name,
+            view_id: view,
+        },
+        detours: Vec::new(),
+    };
 
     // The next part.
-    let next_link = reading_list_link::Entity::find()
-        .filter(reading_list_link::Column::ParentListId.eq(list_id))
-        .filter(reading_list_link::Column::Kind.eq(LinkKind::Continues))
-        .one(&app.db)
-        .await
-        .map_err(db_err)?;
-    let next_part = match next_link {
-        // `find_also_related` would follow the parent relation; the child
-        // is the next part.
-        Some(l) => cbl_list::Entity::find_by_id(l.child_list_id)
-            .one(&app.db)
-            .await
-            .map_err(db_err)?,
-        None => None,
-    };
-    if let Some(part) = next_part
-        && visible(&part, user_id)
-        && let Some((issue, series_slug, series_name, position)) =
-            super::next_up::pick_next_in_cbl(app, user_id, part.id, acl, None).await?
-    {
+    if let Some((part, pick)) = next_part_with_unread(app, user_id, acl, list_id).await? {
         let view = caller_views(app, user_id, &[part.id])
             .await
             .map_err(db_err)?;
+        let view_id = view.get(&part.id).map(Uuid::to_string);
         return Ok((
-            Some(LinkedNext {
-                list_id: part.id,
-                issue,
-                series_slug,
-                series_name,
-                position,
-                switch: NextUpListSwitch {
-                    reason: NextUpSwitchReason::Continues,
-                    list_id: Some(part.id.to_string()),
-                    collection: false,
-                    name: part.parsed_name,
-                    view_id: view.get(&part.id).map(Uuid::to_string),
-                },
-                detours: Vec::new(),
-            }),
+            AfterListEnd::Next(Box::new(continues(part, pick, view_id))),
             false,
         ));
     }
 
     // Back to a parent this list is an event in.
-    let mut parents: Vec<ReadingListParentView> = parents_of(app, user_id, list_id)
-        .await
-        .map_err(db_err)?
-        .into_iter()
-        .filter(|p| p.kind == LinkKind::Event && p.anchor_position.is_some())
-        .collect();
     let from = from_list.map(|f| f.to_string());
+    let all = parents_with_status(app, user_id, list_id)
+        .await
+        .map_err(db_err)?;
     let stale = from
         .as_ref()
-        .is_some_and(|f| !parents.iter().any(|p| &p.list_id == f));
+        .is_some_and(|f| !all.iter().any(|(p, _)| &p.list_id == f));
+    let mut parents: Vec<ReadingListParentView> = all
+        .into_iter()
+        .filter(|(p, status)| {
+            p.kind == LinkKind::Event
+                && p.anchor_position.is_some()
+                && *status == AnchorStatus::Placed
+                && (from.as_ref() == Some(&p.list_id) || p.last_read_at.is_some())
+        })
+        .map(|(p, _)| p)
+        .collect();
     if let Some(f) = &from
         && let Some(i) = parents.iter().position(|p| &p.list_id == f)
     {
         let p = parents.remove(i);
         parents.insert(0, p);
     }
+    let home = parents.first().cloned();
     for p in parents {
         let (Ok(parent_id), Some(anchor)) = (Uuid::parse_str(&p.list_id), p.anchor_position) else {
             continue;
         };
-        let Some((issue, series_slug, series_name, position)) =
+        if let Some((issue, series_slug, series_name, position)) =
             super::next_up::pick_next_in_cbl(app, user_id, parent_id, acl, Some(anchor)).await?
-        else {
-            continue;
-        };
-        let detours = detours_at(app, user_id, acl, parent_id, anchor, Some(list_id))
+        {
+            // Other events due between this one's place and that issue.
+            let detours = detours_between(
+                app,
+                user_id,
+                acl,
+                parent_id,
+                anchor,
+                // `position` is the pick's 1-based badge.
+                Some(position - 1),
+                Some(list_id),
+            )
             .await
             .map_err(db_err)?;
-        return Ok((
-            Some(LinkedNext {
-                list_id: parent_id,
-                issue,
-                series_slug,
-                series_name,
-                position,
-                switch: NextUpListSwitch {
-                    reason: NextUpSwitchReason::Return,
-                    list_id: Some(p.list_id),
-                    collection: false,
-                    name: p.name,
-                    view_id: p.view_id,
-                },
-                detours,
-            }),
-            stale,
-        ));
+            return Ok((
+                AfterListEnd::Next(Box::new(LinkedNext {
+                    list_id: parent_id,
+                    issue,
+                    series_slug,
+                    series_name,
+                    position,
+                    switch: NextUpListSwitch {
+                        reason: NextUpSwitchReason::Return,
+                        list_id: Some(p.list_id),
+                        collection: false,
+                        name: p.name,
+                        view_id: p.view_id,
+                    },
+                    detours,
+                })),
+                stale,
+            ));
+        }
+        // Nothing left in the parent after the event: its next part.
+        if let Some((part, pick)) = next_part_with_unread(app, user_id, acl, parent_id).await? {
+            let view = caller_views(app, user_id, &[part.id])
+                .await
+                .map_err(db_err)?;
+            let view_id = view.get(&part.id).map(Uuid::to_string);
+            let mut next = continues(part, pick, view_id);
+            // Events still due at the end of the parent.
+            next.detours =
+                detours_between(app, user_id, acl, parent_id, anchor, None, Some(list_id))
+                    .await
+                    .map_err(db_err)?;
+            return Ok((AfterListEnd::Next(Box::new(next)), stale));
+        }
     }
-    Ok((None, stale))
+    Ok((
+        match home {
+            Some(p) => AfterListEnd::BackTo(NextUpListSwitch {
+                reason: NextUpSwitchReason::Return,
+                list_id: Some(p.list_id),
+                collection: false,
+                name: p.name,
+                view_id: p.view_id,
+            }),
+            None => AfterListEnd::Nothing,
+        },
+        stale,
+    ))
 }
 
 /// A linked list as an OPDS feed links to it.
@@ -457,13 +595,7 @@ pub(crate) async fn feed_links(
             .map(|c| (c.id, c))
             .collect()
     };
-    links.sort_by_key(|l| {
-        (
-            l.anchor_position_hint.unwrap_or(i32::MAX),
-            l.sort_within_anchor,
-            l.created_at,
-        )
-    });
+    links.sort_by_key(event_order);
     let mut out = FeedLinks::default();
     for l in links {
         let Some(child) = children.get(&l.child_list_id) else {
@@ -553,7 +685,7 @@ pub(crate) async fn inline_events_xml(
         .filter(|c| visible(c, user_id))
         .map(|c| (c.id, c))
         .collect();
-    links.sort_by_key(|l| (l.anchor_position_hint, l.sort_within_anchor, l.created_at));
+    links.sort_by_key(event_order);
     let mut after: HashMap<usize, Vec<parsers::cbl::ParsedCblBook>> = HashMap::new();
     for l in &links {
         let Some(child) = children.get(&l.child_list_id) else {

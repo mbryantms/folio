@@ -42,6 +42,7 @@ import { issueLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import { DetourButtons } from "./DetourButtons";
+import { ListEndNotice, listEndTarget } from "./ListEndNotice";
 import { FinishedMoment } from "./FinishedMoment";
 import { WrapUpBody, WrapUpStrip } from "./WrapUp";
 
@@ -104,6 +105,7 @@ export function EndOfIssueCard({
   // up", which is only true for a confirmed empty resolver result.
   const failed = isError && !data;
   const listSubtitle = nextUpListSubtitle(data);
+  const listEnd = listEndTarget(data);
   const detours = (
     <DetourButtons
       detours={data?.detours}
@@ -424,6 +426,8 @@ export function EndOfIssueCard({
                         <div className="bg-muted h-3 w-1/2 animate-pulse rounded" />
                       </div>
                     </div>
+                  ) : listEnd ? (
+                    <ListEndNotice target={listEnd} onNavigate={onDismiss} />
                   ) : (
                     <>
                       <h2 className="mt-0.5 text-base leading-snug font-semibold">

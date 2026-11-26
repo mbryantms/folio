@@ -30,6 +30,7 @@ import type { WrapUpProps } from "@/lib/reader/wrap-up";
 
 import { WrapUpBody, WrapUpStrip } from "./WrapUp";
 import { DetourButtons } from "./DetourButtons";
+import { ListEndNotice, listEndTarget } from "./ListEndNotice";
 
 export function WebtoonEndFooter({
   data,
@@ -64,6 +65,7 @@ export function WebtoonEndFooter({
   const failed = isError && !data;
   const heading = target ? issueLabel(target) : "";
   const listSubtitle = nextUpListSubtitle(data);
+  const listEnd = listEndTarget(data);
   // A plain click on an exit link leaves the reader through `onExit`
   // instead of pushing `exitUrl` (audit U-02).
   const onExitNavigate = onExit
@@ -129,6 +131,8 @@ export function WebtoonEndFooter({
           <div className="bg-muted mx-auto h-4 w-24 animate-pulse rounded" />
           <div className="bg-muted mx-auto aspect-[2/3] w-40 animate-pulse rounded-md" />
         </div>
+      ) : listEnd ? (
+        <ListEndNotice target={listEnd} />
       ) : (
         <>
           <p className="text-base leading-snug font-semibold">
