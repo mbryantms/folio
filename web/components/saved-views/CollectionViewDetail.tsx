@@ -30,6 +30,7 @@ import {
   GripVertical,
   HardDriveDownload,
   ListChecks,
+  ListOrdered,
   Pencil,
   Play,
   Trash2,
@@ -86,6 +87,7 @@ import {
 } from "@/lib/api/mutations";
 import { skippedEntryIds } from "@/lib/library/bulk-archive-skips";
 import { invalidateCollectionEntries } from "@/lib/api/mutations";
+import { useSaveCollectionAsReadingList } from "@/lib/api/mutations/reading-list-links";
 import { apiMutate } from "@/lib/api/mutations/_core";
 import {
   entryToMember,
@@ -148,6 +150,7 @@ export function CollectionViewDetail({
   savedView: SavedViewView;
 }) {
   const router = useRouter();
+  const saveAsList = useSaveCollectionAsReadingList(savedView.id);
   const isWantToRead = savedView.system_key === WANT_TO_READ_KEY;
   // Auto-walk every page. Reorder semantics require the full list of
   // entry ids — sending a half-loaded view to `useReorderCollectionEntries`
@@ -471,6 +474,15 @@ export function CollectionViewDetail({
               >
                 <Download className="size-4" /> Export CBL
               </a>
+            </DropdownMenuItem>
+            {/* A reading list has chapters, linked events and Up Next in
+             *  its own order; the collection is left as it is. */}
+            <DropdownMenuItem
+              disabled={total === 0 || saveAsList.isPending}
+              onSelect={() => saveAsList.mutate()}
+            >
+              <ListOrdered className="size-4" />
+              Save as reading list
             </DropdownMenuItem>
           </>
         }

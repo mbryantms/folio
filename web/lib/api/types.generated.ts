@@ -3325,6 +3325,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/cbl-lists/{id}/copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["cbl_lists_copy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/cbl-lists/{id}/entries": {
         parameters: {
             query?: never;
@@ -3785,6 +3801,30 @@ export interface paths {
         get: operations["collections_next_up"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/collections/{id}/reading-list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /me/collections/{id}/reading-list` — save the collection as a
+         *     reading list of the caller's: the same books, in the same order, as
+         *     the CBL export (series entries expanded, reading-list entries written
+         *     in place). The collection is left as it is; the two do not stay in
+         *     sync. A reading list has what a collection lacks: chapters, linked
+         *     events, a next part, and Up Next that follows its order.
+         */
+        post: operations["collections_save_as_reading_list"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9026,6 +9066,22 @@ export interface components {
              */
             total?: number | null;
         };
+        CopiedListRef: {
+            /**
+             * Format: int32
+             * @description Chapter breaks carried over.
+             */
+            chapters: number;
+            /**
+             * Format: int32
+             * @description Event and next-part links carried over.
+             */
+            links: number;
+            list_id: string;
+            name: string;
+            /** @description The caller's view of the copy (`/views/{view_id}`). */
+            view_id?: string | null;
+        };
         /**
          * @description `sharp` | `default` | `round` — the `--radius` token every corner in
          *     the UI derives from (shadcn plan PR 6).
@@ -10860,6 +10916,12 @@ export interface components {
             /** Format: int32 */
             sort_within_anchor: number;
         };
+        /** @description "Skip this event": the event `child` linked into `parent`. */
+        ExportReadingListSkip: {
+            child: components["schemas"]["ExportListRef"];
+            parent: components["schemas"]["ExportListRef"];
+            skipped_at: string;
+        };
         ExportReadingSession: {
             /** Format: int64 */
             active_ms: number;
@@ -10946,6 +11008,11 @@ export interface components {
              *     is named by its CBL file name, which survives a re-import.
              */
             reading_list_links: components["schemas"]["ExportReadingListLink"][];
+            /**
+             * @description Events the user chose to skip, in their own lists and in shared
+             *     ones. A skip is the reader's, not the list's.
+             */
+            reading_list_skips: components["schemas"]["ExportReadingListSkip"][];
             /**
              * @description `reading_sessions` rows. Hidden sessions are included with
              *     `hidden_from_log = true` so the flag survives a restore.
@@ -15808,6 +15875,18 @@ export interface components {
             series: components["schemas"]["SeriesView"];
             /** @description What is shared (universes first, then series groups; by name). */
             shared: components["schemas"]["SharedUniverse"][];
+        };
+        /** @description The reading list a collection was saved as. */
+        SavedReadingListRef: {
+            list_id: string;
+            name: string;
+            /**
+             * Format: int32
+             * @description Books written to the list.
+             */
+            total: number;
+            /** @description The caller's view of the new list (`/views/{view_id}`). */
+            view_id?: string | null;
         };
         /** @description Request for the saved-view batch endpoint. */
         SavedViewBatchReq: {
@@ -25646,6 +25725,48 @@ export interface operations {
             };
         };
     };
+    cbl_lists_copy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CopiedListRef"];
+                };
+            };
+            /** @description list not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the per-user list limit is reached */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description per-user CBL import quota exceeded */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     cbl_lists_entries: {
         parameters: {
             query?: {
@@ -26636,6 +26757,48 @@ export interface operations {
             };
             /** @description collection not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    collections_save_as_reading_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedReadingListRef"];
+                };
+            };
+            /** @description collection not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the collection has nothing to save, or too many issues */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description per-user CBL import quota exceeded */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -71,6 +71,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(remove_entry))
         .routes(routes!(bulk_add_members))
         .routes(routes!(bulk_remove_members))
+        .routes(routes!(save_as_reading_list))
         .route_layer(rate_limit::COLLECTION_WRITE.build_per_user());
     let reorder = OpenApiRouter::new()
         .routes(routes!(reorder_entries))
@@ -1841,7 +1842,7 @@ pub async fn export(
         Err(resp) => return resp,
     };
 
-    let cbl = match build_collection_cbl(&app, &collection).await {
+    let cbl = match build_collection_cbl(&app, &user, &collection).await {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "collections: export build failed");
@@ -1890,11 +1891,153 @@ pub async fn export(
         .into_response()
 }
 
+/// The reading list a collection was saved as.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SavedReadingListRef {
+    pub list_id: String,
+    /// The caller's view of the new list (`/views/{view_id}`).
+    pub view_id: Option<String>,
+    pub name: String,
+    /// Books written to the list.
+    pub total: i32,
+}
+
+/// `POST /me/collections/{id}/reading-list` — save the collection as a
+/// reading list of the caller's: the same books, in the same order, as
+/// the CBL export (series entries expanded, reading-list entries written
+/// in place). The collection is left as it is; the two do not stay in
+/// sync. A reading list has what a collection lacks: chapters, linked
+/// events, a next part, and Up Next that follows its order.
+#[utoipa::path(
+    operation_id = "collections_save_as_reading_list",
+    post,
+    path = "/me/collections/{id}/reading-list",
+    params(("id" = String, Path,)),
+    responses(
+        (status = 201, body = SavedReadingListRef),
+        (status = 404, description = "collection not found"),
+        (status = 422, description = "the collection has nothing to save, or too many issues"),
+        (status = 429, description = "per-user CBL import quota exceeded"),
+    )
+)]
+#[handler]
+pub async fn save_as_reading_list(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    AxPath(id): AxPath<Uuid>,
+) -> axum::response::Response {
+    let internal = || error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+    let collection = match fetch_owned(&app.db, user.id, id).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let cbl = match build_collection_cbl(&app, &user, &collection).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "collections: reading-list build failed");
+            return internal();
+        }
+    };
+    if cbl.books.is_empty() {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            "This collection has no issues to save",
+        );
+    }
+    if cbl.books.len() > crate::cbl::MAX_BOOKS_PER_LIST {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "too_many_entries",
+            &format!("The collection {}", crate::cbl::too_many_entries_message()),
+        );
+    }
+    let xml = match parsers::cbl::to_xml(&cbl) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, "collections: cbl serialize failed");
+            return internal();
+        }
+    };
+    if let Err(resp) = crate::cbl::quota::consume_import(&app, &user).await {
+        return resp;
+    }
+    let list = match super::cbl_lists::insert_list_from_parsed(
+        &app,
+        Some(user.id),
+        &cbl,
+        &xml,
+        super::cbl_lists::SourceMeta::Upload {
+            name_override: None,
+            description: Some(format!("Saved from the collection “{}”.", collection.name)),
+        },
+    )
+    .await
+    {
+        Ok(l) => l,
+        Err(resp) => return resp,
+    };
+    let view_id = match super::saved_views::ensure_cbl_view(&app.db, user.id, &list).await {
+        Ok((v, _)) => Some(v.to_string()),
+        Err(e) => {
+            tracing::warn!(error = %e, "collections: couldn't create the saved list's view");
+            None
+        }
+    };
+    (
+        StatusCode::CREATED,
+        Json(SavedReadingListRef {
+            list_id: list.id.to_string(),
+            view_id,
+            name: list.parsed_name,
+            total: i32::try_from(cbl.books.len()).unwrap_or(i32::MAX),
+        }),
+    )
+        .into_response()
+}
+
+/// One slot of the collection's reading order while it is being built.
+#[derive(Clone)]
+enum OrderedBook {
+    /// A library issue (an issue entry, or one issue of a series entry).
+    Issue(IssueCardRow),
+    /// A reading-list entry's book, matched to a library issue.
+    ListedIssue(IssueCardRow),
+    /// A book of a reading-list entry, as that list's file has it.
+    Listed(parsers::cbl::ParsedCblBook),
+}
+
+/// What makes two `<Book>`s the same issue: the ComicVine issue id when
+/// both carry one, else series + number + volume + year.
+fn book_key(b: &parsers::cbl::ParsedCblBook) -> String {
+    if let Some(cv) = b
+        .databases
+        .iter()
+        .find(|d| d.name.eq_ignore_ascii_case("cv"))
+        .and_then(|d| d.issue.as_deref())
+    {
+        return format!("cv:{cv}");
+    }
+    format!(
+        "{}|{}|{}|{}",
+        b.series.trim().to_lowercase(),
+        b.number.trim().to_lowercase(),
+        b.volume.as_deref().unwrap_or_default(),
+        b.year.as_deref().unwrap_or_default()
+    )
+}
+
 /// Build the CBL model for a collection: issue entries → one book each;
-/// series entries → one book per active issue (expanded in place). CV /
+/// series entries → one book per active issue (expanded in place); a
+/// reading-list entry → that list's books in its place, when `user` can
+/// see the list: a book matched to an issue the caller can open is
+/// written as that issue (so a match made by hand survives), any other
+/// as the list's file has it; a book already written is not written
+/// twice. CV /
 /// Metron ids are batch-fetched for the involved issues + their series.
 async fn build_collection_cbl(
     app: &AppState,
+    user: &CurrentUser,
     collection: &saved_view::Model,
 ) -> Result<parsers::cbl::ParsedCbl, sea_orm::DbErr> {
     use parsers::cbl::{ParsedCbl, ParsedCblBook, ParsedCblDatabase};
@@ -1955,27 +2098,114 @@ async fn build_collection_cbl(
         }
     }
 
-    // Walk entries in order, expanding series entries in place.
-    let mut ordered_issues: Vec<IssueCardRow> = Vec::new();
+    // Reading-list entries: the books of each list the caller can see
+    // (their own, or shared), in list order.
+    let list_entry_ids: Vec<Uuid> = entries
+        .iter()
+        .filter(|e| e.entry_kind == ENTRY_KIND_LIST)
+        .filter_map(|e| e.cbl_list_id)
+        .collect();
+    let mut list_books: HashMap<Uuid, Vec<OrderedBook>> = HashMap::new();
+    if !list_entry_ids.is_empty() {
+        let visible: Vec<Uuid> = crate::api::cbl_link_nav::lists_lite(&app.db, &list_entry_ids)
+            .await?
+            .into_iter()
+            .filter(|l| l.visible_to(user.id))
+            .map(|l| l.id)
+            .collect();
+        let rows = entity::cbl_entry::Entity::find()
+            .filter(entity::cbl_entry::Column::CblListId.is_in(visible))
+            .order_by_asc(entity::cbl_entry::Column::Position)
+            .all(&app.db)
+            .await?;
+        let matched_ids: Vec<String> = rows
+            .iter()
+            .filter_map(|r| r.matched_issue_id.clone())
+            .collect();
+        let matched: HashMap<String, IssueCardRow> = if matched_ids.is_empty() {
+            HashMap::new()
+        } else {
+            let acl = access::for_user(app, user).await;
+            access::visible_issues_select(&acl)
+                .filter(issue::Column::Id.is_in(matched_ids))
+                .into_partial_model::<IssueCardRow>()
+                .all(&app.db)
+                .await?
+                .into_iter()
+                .map(|i| (i.id.clone(), i))
+                .collect()
+        };
+        for r in rows {
+            if let Some(i) = r.matched_issue_id.as_ref().and_then(|id| matched.get(id)) {
+                list_books
+                    .entry(r.cbl_list_id)
+                    .or_default()
+                    .push(OrderedBook::ListedIssue(i.clone()));
+                continue;
+            }
+            let mut databases = Vec::new();
+            if r.cv_series_id.is_some() || r.cv_issue_id.is_some() {
+                databases.push(ParsedCblDatabase {
+                    name: "cv".into(),
+                    series: r.cv_series_id.map(|v| v.to_string()),
+                    issue: r.cv_issue_id.map(|v| v.to_string()),
+                });
+            }
+            if r.metron_series_id.is_some() || r.metron_issue_id.is_some() {
+                databases.push(ParsedCblDatabase {
+                    name: "metron".into(),
+                    series: r.metron_series_id.map(|v| v.to_string()),
+                    issue: r.metron_issue_id.map(|v| v.to_string()),
+                });
+            }
+            list_books
+                .entry(r.cbl_list_id)
+                .or_default()
+                .push(OrderedBook::Listed(ParsedCblBook {
+                    series: r.series_name,
+                    number: r.issue_number,
+                    volume: r.volume,
+                    year: r.year,
+                    databases,
+                }));
+        }
+    }
+
+    // Walk entries in order, expanding series and list entries in place.
+    let mut ordered: Vec<OrderedBook> = Vec::new();
     for e in &entries {
         match e.entry_kind.as_str() {
             ENTRY_KIND_ISSUE => {
                 if let Some(iid) = &e.issue_id
                     && let Some(i) = direct_issues.get(iid)
                 {
-                    ordered_issues.push(i.clone());
+                    ordered.push(OrderedBook::Issue(i.clone()));
                 }
             }
             ENTRY_KIND_SERIES => {
                 if let Some(sid) = e.series_id
                     && let Some(list) = series_issues.get(&sid)
                 {
-                    ordered_issues.extend(list.iter().cloned());
+                    ordered.extend(list.iter().cloned().map(OrderedBook::Issue));
+                }
+            }
+            ENTRY_KIND_LIST => {
+                if let Some(lid) = e.cbl_list_id
+                    && let Some(books) = list_books.get(&lid)
+                {
+                    ordered.extend(books.iter().cloned());
                 }
             }
             _ => {}
         }
     }
+    let ordered_issues: Vec<&IssueCardRow> = ordered
+        .iter()
+        .filter_map(|b| match b {
+            OrderedBook::Issue(i) | OrderedBook::ListedIssue(i) => Some(i),
+            OrderedBook::Listed(_) => None,
+        })
+        .collect();
 
     // Series rows for name / volume / year.
     let series_ids: Vec<Uuid> = ordered_issues
@@ -2012,8 +2242,19 @@ async fn build_collection_cbl(
     )
     .await?;
 
-    let mut books = Vec::with_capacity(ordered_issues.len());
-    for i in &ordered_issues {
+    let mut books: Vec<ParsedCblBook> = Vec::with_capacity(ordered.len());
+    let mut written: HashSet<String> = HashSet::new();
+    for slot in &ordered {
+        let (i, from_list) = match slot {
+            OrderedBook::Issue(i) => (i, false),
+            OrderedBook::ListedIssue(i) => (i, true),
+            OrderedBook::Listed(b) => {
+                if written.insert(book_key(b)) {
+                    books.push(b.clone());
+                }
+                continue;
+            }
+        };
         let series = series_by_id.get(&i.series_id);
         let (icv, imet) = issue_ext.get(&i.id).cloned().unwrap_or((None, None));
         let (scv, smet) = series_ext
@@ -2035,13 +2276,21 @@ async fn build_collection_cbl(
                 issue: imet,
             });
         }
-        books.push(ParsedCblBook {
+        let book = ParsedCblBook {
             series: series.map(|s| s.name.clone()).unwrap_or_default(),
             number: i.number_raw.clone().unwrap_or_default(),
             volume: series.and_then(|s| s.volume).map(|v| v.to_string()),
             year: series.and_then(|s| s.year).map(|y| y.to_string()),
             databases,
-        });
+        };
+        // Hand-picked entries are written as picked (an issue entry and
+        // its series entry both write it, as before). A list's book is
+        // left out when the collection already wrote that issue, and
+        // keeps a later copy of itself from being written again.
+        let fresh = written.insert(format!("issue:{}", i.id)) & written.insert(book_key(&book));
+        if fresh || !from_list {
+            books.push(book);
+        }
     }
 
     Ok(ParsedCbl {

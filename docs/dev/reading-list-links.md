@@ -53,6 +53,13 @@ back). The refresh log records `links_lost` / `links_restored`.
 - **Link writes are serialized** (`cbl_links::link_write_lock`, a
   transaction-scoped advisory lock, also taken by derive): the one-level
   and no-loop rules are read-then-write.
+- **A personal copy** (`api::cbl_copy`, `POST /me/cbl-lists/{id}/copy`):
+  a shared list is the admin's to arrange, so a reader who wants events
+  or chapters of their own copies it. The copy carries the entries (the
+  stored file re-matched, matches made by hand copied), its source unless
+  the caller already has a list from the same place, the chapter breaks
+  and the links to lists the caller can see. It does not follow the
+  original afterwards.
 - **Any chapter can be named.** A chapter break carries the name. The
   first chapter and the one after an event exist without a break, so
   `POST …/breaks` takes `position` (the chapter's start) in place of
@@ -186,6 +193,13 @@ link, collections and OPDS all go through it.
   file unchanged. `?inline_events=true` rebuilds it with each **placed**
   event's books after its anchor book, the caller's visible events only;
   lost anchors are left out rather than guessed into place.
+- **Collection export** (`GET /me/collections/{id}/export`) writes a
+  reading-list entry's books in its place (a list the caller can see; a
+  book matched to an issue they can open is written as that issue, so a
+  hand-made match survives; a list's copy of an issue the collection
+  already wrote is left out). `POST /me/collections/{id}/reading-list`
+  saves the same books as a reading list of the caller's. The two do not
+  stay in sync.
 - **Account export** (`GET /me/export`): `reading_list_links` and
   `reading_list_breaks` sections (the caller's own lists; each list named
   by id, CBL name and catalog path; anchors by issue key), and

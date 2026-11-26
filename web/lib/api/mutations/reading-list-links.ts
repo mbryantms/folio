@@ -15,6 +15,8 @@ import type {
   DetectChaptersPreview,
   ImportOrderReq,
   ImportOrderResp,
+  SavedReadingListRef,
+  CopiedListRef,
   ApplyDeriveReq,
   ApplyDeriveResp,
   CreateBreakReq,
@@ -323,6 +325,54 @@ const IMPORT_ORDER_MAX_CALLS = 40;
  * many remain, so this calls again until none do (or a call makes no
  * progress), reporting through `onProgress`. Resolves to the totals.
  */
+/**
+ * Save a collection as a reading list of the caller's: the same issues in
+ * the same order (series expanded, reading-list entries in place). The
+ * collection stays as it is. The toast links to the new list.
+ */
+export function useSaveCollectionAsReadingList(collectionId: string) {
+  const qc = useQueryClient();
+  return useApiMutation<SavedReadingListRef, void>(
+    () => ({
+      path: apiPath`/me/collections/${collectionId}/reading-list`,
+      method: "POST",
+    }),
+    {
+      successMessage: (r) =>
+        r
+          ? `Saved as a reading list of ${r.total} issue${r.total === 1 ? "" : "s"}`
+          : "Saved as a reading list",
+      successAction: (r) =>
+        r?.view_id ? { label: "Open", href: `/views/${r.view_id}` } : undefined,
+      onSuccess: () => invalidateSavedViews(qc),
+    },
+  );
+}
+
+/**
+ * A personal copy of a list the caller can see (a shared one, usually):
+ * its entries, chapters and links to events and the next part. The copy
+ * is theirs to arrange; it does not follow the original afterwards.
+ */
+export function useCopyCblList(listId: string) {
+  const qc = useQueryClient();
+  return useApiMutation<CopiedListRef, void>(
+    () => ({
+      path: apiPath`/me/cbl-lists/${listId}/copy`,
+      method: "POST",
+    }),
+    {
+      successMessage: "Copied to your lists",
+      successAction: (r) =>
+        r?.view_id ? { label: "Open", href: `/views/${r.view_id}` } : undefined,
+      onSuccess: () => {
+        invalidateSavedViews(qc);
+        qc.invalidateQueries({ queryKey: CBL_LINKS_PREFIX });
+      },
+    },
+  );
+}
+
 export function useImportCblOrder() {
   const qc = useQueryClient();
   return useApiRunMutation<

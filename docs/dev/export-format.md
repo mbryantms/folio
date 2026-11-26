@@ -312,6 +312,16 @@ Links on the reading lists the user owns (see
 | `anchor` | `Anchor` |
 | `created_at` | timestamp |
 
+### `reading_list_skips` — `reading_list_link_skips`
+
+The events the user chose to skip, in their own lists and in shared ones.
+
+| Field | Type |
+|---|---|
+| `parent` | `ListRef` — the list the event is read in |
+| `child` | `ListRef` — the event |
+| `skipped_at` | timestamp |
+
 `ListRef`: `{list_id, name, catalog_path}`. `name` is the CBL `<Name>`
 (`null` when the list is gone); `catalog_path` is set for catalog imports.
 Both survive a re-import, the id does not.
@@ -514,3 +524,5 @@ the extension. The headers shown above carry both parameters.
 - **v1, additive** (2026-11-24, linked reading lists) — `reading_list_links`
   and `reading_list_breaks` sections; `entry_kind = list` collection
   entries with a `list` ref. No version bump.
+- **v1, additive** (2026-11-25, linked reading lists 2.0) —
+  `reading_list_skips` section. No version bump.
