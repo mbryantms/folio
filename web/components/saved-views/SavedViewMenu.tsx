@@ -26,9 +26,14 @@ import {
 import { DropdownMenuResponsiveSub } from "@/components/folio/dropdown-menu-responsive-sub";
 import { useViewBoardActions } from "@/components/saved-views/GroupedViewsBoard";
 import { MultiPinDialog } from "@/components/saved-views/MultiPinDialog";
+import { CblListsContext } from "@/components/cbl/cbl-lists-context";
+import {
+  DeleteListsDialog,
+  deleteTakesList,
+} from "@/components/cbl/ReadingListsSelection";
 import { useDeleteCollection, useSidebarSavedView } from "@/lib/api/mutations";
 import { apiMutate, useApiMutation } from "@/lib/api/mutations/_core";
-import { queryKeys } from "@/lib/api/queries";
+import { queryKeys, useMe } from "@/lib/api/queries";
 import type {
   Condition,
   CreateSavedViewReq,
@@ -102,6 +107,10 @@ export function SavedViewMenu({
   const board = useViewBoardActions();
   const [pinOpen, setPinOpen] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
+  const [confirmListOpen, setConfirmListOpen] = React.useState(false);
+  const cblLists = React.useContext(CblListsContext);
+  const me = useMe();
+  const views = React.useMemo(() => [view], [view]);
 
   const isBuiltIn = isBuiltInView(view, isCollection);
   const pinnedCount = (view.pinned_on_pages ?? []).length;
@@ -109,9 +118,15 @@ export function SavedViewMenu({
 
   async function handleDelete() {
     if (deleting) return;
+    if (!isCollection && deleteTakesList(view, cblLists, me.data?.id)) {
+      // The reader's own reading list goes with its view, and nothing
+      // here can bring it back: ask first, no Undo.
+      setConfirmListOpen(true);
+      return;
+    }
     if (!isCollection) {
-      // Filter / CBL views: the view row is all that goes (a CBL view's
-      // underlying list stays), so Undo re-creates it from its definition.
+      // Filter views, and a view of a list someone else shares: the view
+      // row is all that goes, so Undo re-creates it from its definition.
       const snapshot = view;
       delSaved.mutate(undefined, {
         onSuccess: () =>
@@ -279,6 +294,11 @@ export function SavedViewMenu({
         </DropdownMenuContent>
       </DropdownMenu>
       <MultiPinDialog view={view} open={pinOpen} onOpenChange={setPinOpen} />
+      <DeleteListsDialog
+        open={confirmListOpen}
+        onOpenChange={setConfirmListOpen}
+        views={views}
+      />
     </>
   );
 }
@@ -288,8 +308,10 @@ export function SavedViewMenu({
  *  (`lib/collections/recreate.ts`) it restores the *definition*, not the
  *  row: the new view gets a fresh id, so pins, sidebar placement, group
  *  membership and the icon override are not carried over. A CBL view
- *  points back at the same `cbl_list_id`, which a plain view delete
- *  leaves in place. Exported for tests. */
+ *  points back at the same `cbl_list_id`: that works only for a view of
+ *  a list someone else shares, since deleting the view of one's own list
+ *  deletes the list too (`deleteTakesList`; that path confirms instead).
+ *  Exported for tests. */
 export async function recreateSavedView(
   view: SavedViewView,
 ): Promise<SavedViewView | null> {

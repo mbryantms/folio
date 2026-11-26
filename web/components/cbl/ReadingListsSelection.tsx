@@ -36,6 +36,24 @@ export function canDeleteList(view: SavedViewView): boolean {
   return view.kind === "cbl" && !view.is_system;
 }
 
+/**
+ * Whether deleting this view also deletes its reading list: the server
+ * does that when the reader owns the list (`saved_views::delete_one`).
+ * Their own view of a list someone else shares is only the view row, and
+ * that one can be re-created. A list not loaded yet counts as owned, so
+ * the caller asks first instead of offering an Undo that cannot work.
+ */
+export function deleteTakesList(
+  view: SavedViewView,
+  lists: ReadonlyMap<string, { owner_user_id?: string | null }> | null,
+  meId: string | null | undefined,
+): boolean {
+  if (view.kind !== "cbl" || !view.cbl_list_id) return false;
+  const list = lists?.get(view.cbl_list_id);
+  if (!list || !meId) return true;
+  return list.owner_user_id === meId;
+}
+
 /** "Delete 3 reading lists?" / "Delete "Infinity"?" */
 export function bulkDeleteTitle(views: readonly SavedViewView[]): string {
   return views.length === 1
@@ -181,7 +199,7 @@ export function ListSelectionBar({ views }: { views: SavedViewView[] }) {
           </Button>
         </div>
       </div>
-      <BulkDeleteListsDialog
+      <DeleteListsDialog
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
         views={chosen}
@@ -196,7 +214,9 @@ export function ListSelectionBar({ views }: { views: SavedViewView[] }) {
 
 const NAMES_SHOWN = 6;
 
-function BulkDeleteListsDialog({
+/** The confirmation for deleting reading lists, one or many; it runs
+ *  the deletes itself. Also the single Delete in a list's ⋯ menu. */
+export function DeleteListsDialog({
   open,
   onOpenChange,
   views,
@@ -206,7 +226,7 @@ function BulkDeleteListsDialog({
   onOpenChange: (open: boolean) => void;
   views: SavedViewView[];
   /** The ids that went, and whether that was all of them. */
-  onDeleted: (ids: ReadonlySet<string>, allGone: boolean) => void;
+  onDeleted?: (ids: ReadonlySet<string>, allGone: boolean) => void;
 }) {
   const qc = useQueryClient();
   const [progress, setProgress] = React.useState<number | null>(null);
@@ -240,7 +260,7 @@ function BulkDeleteListsDialog({
     if (result.ok) toast.success(result.message);
     else toast.error(result.message);
     onOpenChange(false);
-    onDeleted(gone, gone.size === targets.length);
+    onDeleted?.(gone, gone.size === targets.length);
   }
 
   const extra = views.length - NAMES_SHOWN;
