@@ -6,7 +6,7 @@
  * more cell, so it reads as a detour off the main line.
  *
  * States: not started / in progress → full band; finished or skipped →
- * one line (skipped with Undo); a link whose anchor issue a refresh
+ * one line (skipped with Unskip); a link whose anchor issue a refresh
  * removed → full band with a "placement lost" badge.
  *
  * Opening the list (title, "Open list", Start) goes through the reader's
@@ -161,7 +161,7 @@ export function EventBand({
           <DropdownMenuItem onSelect={openList}>Open list</DropdownMenuItem>
         )}
         <DropdownMenuItem onSelect={() => onSkip(!link.skipped)}>
-          {link.skipped ? "Stop skipping" : "Skip this event"}
+          {link.skipped ? "Unskip event" : "Skip event"}
         </DropdownMenuItem>
         {canManage && onMove && (
           <DropdownMenuItem onSelect={onMove}>
@@ -182,7 +182,7 @@ export function EventBand({
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onSelect={onRemove}>
-              Remove from this list
+              Unlink from this list…
             </DropdownMenuItem>
           </>
         )}
@@ -218,8 +218,13 @@ export function EventBand({
         {lost && <LostBadge />}
         <span className="ml-auto flex shrink-0 items-center gap-1">
           {state === "skipped" && (
-            <Button variant="ghost" size="sm" onClick={() => onSkip(false)}>
-              Undo
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onSkip(false)}
+              aria-label={`Unskip ${link.child_name}`}
+            >
+              Unskip
             </Button>
           )}
           {menu}
@@ -368,7 +373,12 @@ function EventBandFull({
             ) : null}
             {items.length > 0 && (
               <CollapsibleTrigger asChild>
-                <Button variant="outline" size="sm" aria-expanded={peekOpen}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  aria-expanded={peekOpen}
+                  aria-label={`Peek at ${link.child_name}`}
+                >
                   <ChevronDown
                     className={cn(
                       "size-4 transition-transform",

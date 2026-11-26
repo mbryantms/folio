@@ -129,7 +129,7 @@ export function useDeleteCblLink(listId: string) {
       path: apiPath`/me/cbl-lists/${listId}/links/${linkId}`,
       method: "DELETE",
     }),
-    { successMessage: "Link removed", onSuccess: invalidate },
+    { successMessage: "List unlinked", onSuccess: invalidate },
   );
 }
 
@@ -184,7 +184,7 @@ export function useSkipCblLink(listId: string) {
     }),
     {
       successMessage: (_d, input) =>
-        input.skip ? "Event skipped" : "Event back in your reading",
+        input.skip ? "Event skipped" : "Event unskipped",
       onSuccess: invalidate,
     },
   );

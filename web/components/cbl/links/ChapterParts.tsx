@@ -28,6 +28,7 @@ import type {
   ReadingListLinkView,
 } from "@/lib/api/types";
 import { statusToneDot, statusToneText } from "@/lib/ui/status-tone";
+import { displayListName } from "@/lib/reader/list-context";
 import { useCurrentChapter } from "./use-current-chapter";
 import { cn } from "@/lib/utils";
 
@@ -61,29 +62,32 @@ export function ChapterHeader({
       data-testid="chapter-header"
       className="bg-background/95 supports-[backdrop-filter]:bg-background/80 border-border/60 sticky top-[calc(var(--topbar-h)+var(--pinned-controls-h,0px))] z-10 flex items-center gap-2 border-b py-2 backdrop-blur"
     >
-      {onToggle ? (
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={!folded}
-          className="hover:text-foreground flex min-h-11 min-w-0 items-center gap-2 text-left"
-        >
-          <ChevronRight
-            className={cn(
-              "size-4 shrink-0 transition-transform",
-              !folded && "rotate-90",
-            )}
-            aria-hidden
-          />
-          <span className="truncate text-sm font-semibold">
+      {/* A heading, so chapters are reachable by heading navigation. */}
+      <h2 className="flex min-w-0 text-sm font-semibold">
+        {onToggle ? (
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={!folded}
+            className="hover:text-foreground flex min-h-11 min-w-0 items-center gap-2 text-left"
+          >
+            <ChevronRight
+              className={cn(
+                "size-4 shrink-0 transition-transform motion-reduce:transition-none",
+                !folded && "rotate-90",
+              )}
+              aria-hidden
+            />
+            <span className="truncate">
+              Chapter {chapter.index + 1} · {chapter.label}
+            </span>
+          </button>
+        ) : (
+          <span className="truncate">
             Chapter {chapter.index + 1} · {chapter.label}
           </span>
-        </button>
-      ) : (
-        <span className="truncate text-sm font-semibold">
-          Chapter {chapter.index + 1} · {chapter.label}
-        </span>
-      )}
+        )}
+      </h2>
       <span className="text-muted-foreground ml-auto flex shrink-0 items-center gap-1 text-xs">
         {done && (
           <CircleCheck
@@ -111,6 +115,7 @@ export function ChapterRailList({
   next,
   current,
   onJump,
+  onJumpEvent,
 }: {
   chapters: ReadingListChapterView[];
   events: ReadingListLinkView[];
@@ -118,6 +123,8 @@ export function ChapterRailList({
   /** The chapter in view (`useCurrentChapter`). */
   current: number;
   onJump: (index: number) => void;
+  /** Jump to an event's band (in the chapter it is listed under). */
+  onJumpEvent?: (linkId: string, chapterIndex: number) => void;
 }) {
   const byId = new Map(events.map((e) => [e.id, e]));
   const listRef = React.useRef<HTMLDivElement>(null);
@@ -176,7 +183,7 @@ export function ChapterRailList({
                   aria-current={isCurrent ? "location" : undefined}
                   onClick={() => onJump(c.index)}
                   className={cn(
-                    "hover:bg-accent flex min-h-9 w-full items-center gap-2 rounded-md px-2 text-left transition-colors motion-reduce:transition-none",
+                    "folio-tap hover:bg-accent flex min-h-9 w-full items-center gap-2 rounded-md px-2 text-left transition-colors motion-reduce:transition-none",
                     isCurrent && "bg-muted text-foreground font-medium",
                   )}
                 >
@@ -203,16 +210,40 @@ export function ChapterRailList({
                     {c.event_link_ids.map((id) => {
                       const ev = byId.get(id);
                       if (!ev) return null;
-                      return (
-                        <li key={id} className="flex items-center gap-1.5">
+                      const name = displayListName(ev.child_name);
+                      const body = (
+                        <>
                           <Zap
-                            className={cn("size-3", statusToneText("warning"))}
+                            className={cn(
+                              "size-3 shrink-0",
+                              statusToneText("warning"),
+                            )}
                             aria-hidden
                           />
-                          <span className="truncate">{ev.child_name}</span>
+                          <span className="truncate" title={ev.child_name}>
+                            {name}
+                          </span>
                           <span className="ml-auto shrink-0">
                             {ev.skipped ? "skipped" : `${ev.read}/${ev.total}`}
                           </span>
+                        </>
+                      );
+                      return (
+                        <li key={id}>
+                          {onJumpEvent ? (
+                            <button
+                              type="button"
+                              onClick={() => onJumpEvent(id, c.index)}
+                              aria-label={`Go to event ${name}`}
+                              className="hover:bg-accent hover:text-foreground flex min-h-7 w-full items-center gap-1.5 rounded px-1 text-left"
+                            >
+                              {body}
+                            </button>
+                          ) : (
+                            <span className="flex items-center gap-1.5 px-1">
+                              {body}
+                            </span>
+                          )}
                         </li>
                       );
                     })}
@@ -225,7 +256,7 @@ export function ChapterRailList({
       </div>
       {next && (
         <p className="text-muted-foreground mt-3 px-2 text-xs">
-          Continues in {next.child_name} →
+          Continues in {displayListName(next.child_name)} →
         </p>
       )}
     </nav>
@@ -257,6 +288,7 @@ export function ChapterRail({
   /** The chapter a jump is heading for, while it is under way. */
   jumpTarget: number | null;
   onJump: (index: number) => void;
+  onJumpEvent?: (linkId: string, chapterIndex: number) => void;
   onHide: () => void;
 }) {
   return (
@@ -301,6 +333,7 @@ export function ChapterRailSheet({
   next: ReadingListLinkView | null;
   jumpTarget: number | null;
   onJump: (index: number) => void;
+  onJumpEvent?: (linkId: string, chapterIndex: number) => void;
 }) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -323,6 +356,14 @@ export function ChapterRailSheet({
               onOpenChange(false);
               props.onJump(i);
             }}
+            onJumpEvent={
+              props.onJumpEvent
+                ? (id, i) => {
+                    onOpenChange(false);
+                    props.onJumpEvent?.(id, i);
+                  }
+                : undefined
+            }
           />
           {onShowRail && (
             <Button
