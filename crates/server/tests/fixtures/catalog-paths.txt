@@ -1,0 +1,1713 @@
+Archie Comics/Sonic the Hedgehog/Sonic the Hedgehog (Archie)(TKP Full).cbl
+Archie Comics/Sonic the Hedgehog/Sonic the Hedgehog (Archie)(TKP No-Optionals).cbl
+Archie Comics/Sonic the Hedgehog/Sonic the Hedgehog (Archie)(cobysev).cbl
+Avatar Press/Characters/RoboCop/[Avatar Press] RoboCop [2003-2005] [Publication Order].cbl
+Boom/Characters/Hellraiser/[Boom Studios] Clive Barker's Hellraiser 1st Run (2011-2014).cbl
+Boom/Characters/RoboCop/[Boom Studios] RoboCop (2013-2018) (Publication Order).cbl
+Boom/Events/LOCG/[LOCG] [2019-2020] Buffy The Vampire Slayer - Hellmouth.cbl
+Boom/Farscape/[Boom!] Farscape.cbl
+Boom/Power Rangers/BOOM! Power Rangers (LOCG).cbl
+Boom/Power Rangers/BOOM! Power Rangers Simplified 1a.cbl
+Boom/Power Rangers/BOOM! Power Rangers Simplified 1b.cbl
+Boom/Zombie Tales Publication Order.cbl
+Boom/[Boom!] Klaus.cbl
+Boom/[Boom!] Slaughterverse (WEB-LOCG).cbl
+Chaos Comics/Chaos! Universe 1993 - 2002.cbl
+DC/Characters/Aquaman/[DC Comics] Aquaman no events (WEB-CBRO).cbl
+DC/Characters/Aquaman/[DC Comics] Aquaman with events (WEB-CBRO).cbl
+DC/Characters/Batman/Batman - Modern Age/[DC] Batman Modern Age - Part 01 Year One [1987-2009].cbl
+DC/Characters/Batman/Batman - Modern Age/[DC] Batman Modern Age - Part 02 Year Two The Long Halloween [1990-2007].cbl
+DC/Characters/Batman/Batman - Modern Age/[DC] Batman Modern Age - Part 03 Bat-Family Year One [1992-2012].cbl
+DC/Characters/Batman/Batman - Modern Age/[DC] Batman Modern Age - Part 04 Deaths in the Family[1988-2010].cbl
+DC/Characters/Batman/Batman - Modern Age/[DC] Batman Modern Age - Part 05 Knightfall [1991-2019].cbl
+DC/Characters/Batman/Batman - Modern Age/[DC] Batman Modern Age - Part 06 Legacy [1995-2008].cbl
+DC/Characters/Batman/Batman - Modern Age/[DC] Batman Modern Age - Part 07 No Man's Land [1996-2011].cbl
+DC/Characters/Batman/Batman - Modern Age/[DC] Batman Modern Age - Part 08 New Gotham [2000-2016].cbl
+DC/Characters/Batman/Batman - Modern Age/[DC] Batman Modern Age - Part 09 Bruce Wayne, Fugitive [1999-2006].cbl
+DC/Characters/Batman/Batman - Modern Age/[DC] Batman Modern Age - Part 10 Hush [2002-2006].cbl
+DC/Characters/Batman/Batman - Modern Age/[DC] Batman Modern Age - Part 11 Drums of War [2003-2011].cbl
+DC/Characters/Batman/Batman - Modern Age/[DC] Batman Modern Age - Part 12 INTERLUDE Infinite Crisis [2005-2006].cbl
+DC/Characters/Batman/Batman - Modern Age/[DC] Batman Modern Age - Part 12 One Year Later [2006-2007].cbl
+DC/Characters/Batman/Batman - Modern Age/[DC] Batman Modern Age - Part 13 Countdown[2006-2011].cbl
+DC/Characters/Batman/Batman - Modern Age/[DC] Batman Modern Age - Part 14 INTERLUDE Final Crisis [2005-2009].cbl
+DC/Characters/Batman/Batman - Modern Age/[DC] Batman Modern Age - Part 15 Batman Reborn [1989-2012].cbl
+DC/Characters/Batman/Batman - Modern Age/[DC] Batman Modern Age - Part 16 Batman Incorporated [2010-2018].cbl
+DC/Characters/Batman/Batman - Modern Age/[DC] Batman Modern Age - Part 17 INTERLUDE Flashpoint [2009-2011].cbl
+DC/Characters/Batman/[DC Comics] Batman no events (WEB-CBRO).cbl
+DC/Characters/Batman/[DC Comics] Batman with events (WEB-CBRO).cbl
+DC/Characters/Batman/[DC] Batman - Golden Age [1939-1955].cbl
+DC/Characters/Batman/[DC] Batman - New 52 [2010-2016].cbl
+DC/Characters/Batman/[DC] Batman - Post-Crisis  [1986-2011].cbl
+DC/Characters/Batman/[DC] Batman - Silver Age [1954-2004].cbl
+DC/Characters/Dick Grayson/[DC Comics] Dick Grayson no events (WEB-CBRO).cbl
+DC/Characters/Dick Grayson/[DC Comics] Dick Grayson with events (WEB-CBRO).cbl
+DC/Characters/Green Arrow/[DC Comics] Green Arrow no events (WEB-CBRO).cbl
+DC/Characters/Green Arrow/[DC Comics] Green Arrow with events (WEB-CBRO).cbl
+DC/Characters/Green Lantern/CBRO/[DC Comics] Green Lantern no events (WEB-CBRO).cbl
+DC/Characters/Green Lantern/CBRO/[DC Comics] Green Lantern with events (WEB-CBRO).cbl
+DC/Characters/Green Lantern/CBT/Green Lantern [2023-2024] Dawn of DC (CBT).cbl
+DC/Characters/Green Lantern/Kyle Rayner/[DC] [1994-2026] Kyle Rayner.cbl
+DC/Characters/Green Lantern/Modern Green Lantern/[DC] [2004-2011] Modern Green Lantern 01 - Geoff Johns Era.cbl
+DC/Characters/Green Lantern/Modern Green Lantern/[DC] [2004-2026] Modern Green Lantern 00 - Complete.cbl
+DC/Characters/Green Lantern/Modern Green Lantern/[DC] [2011-2016] Modern Green Lantern 02 - New 52.cbl
+DC/Characters/Green Lantern/Modern Green Lantern/[DC] [2011-2026] Modern Green Lantern XX - Out of Continuity.cbl
+DC/Characters/Green Lantern/Modern Green Lantern/[DC] [2016-2019] Modern Green Lantern 03 - Rebirth.cbl
+DC/Characters/Green Lantern/Modern Green Lantern/[DC] [2019-2023] Modern Green Lantern 04 - Morrison & Thorne.cbl
+DC/Characters/Green Lantern/Modern Green Lantern/[DC] [2022-2026] Modern Green Lantern 05 - Dawn of DC & All In.cbl
+DC/Characters/Green Lantern/Reddit/Green Lantern 01 - Silver Age.cbl
+DC/Characters/Green Lantern/Reddit/Green Lantern 02 - Bronze Age.cbl
+DC/Characters/Green Lantern/Reddit/Green Lantern 03 - Copper Age.cbl
+DC/Characters/Green Lantern/Reddit/Green Lantern 04 - Kyle Rayner Era.cbl
+DC/Characters/Green Lantern/Reddit/Green Lantern 05 - Geoff Johns Era.cbl
+DC/Characters/Green Lantern/Reddit/Green Lantern 06 - New 52.cbl
+DC/Characters/Green Lantern/Reddit/Green Lantern 07 - DC Rebirth.cbl
+DC/Characters/Green Lantern/Reddit/Green Lantern 08 - Infinite Frontier.cbl
+DC/Characters/Green Lantern/Reddit/Green Lantern XX - Non-Canon.cbl
+DC/Characters/John Constantine/[DC Comics] John Constantine no events (WEB-CBRO).cbl
+DC/Characters/John Constantine/[DC Comics] John Constantine with events (WEB-CBRO).cbl
+DC/Characters/Superman/[DC Comics] Superman no events (WEB-CBRO).cbl
+DC/Characters/Superman/[DC Comics] Superman with events (WEB-CBRO).cbl
+DC/Characters/Swamp Thing/[DC] Swamp Thing no events (WEB-CBRO).cbl
+DC/Characters/Swamp Thing/[DC] Swamp Thing with events (WEB-CBRO).cbl
+DC/Characters/The Flash/[DC Comics] The Flash no events (WEB-CBRO).cbl
+DC/Characters/The Flash/[DC Comics] The Flash with events (WEB-CBRO).cbl
+DC/Characters/The Flash/[DC Comics] Wally West no events (WEB-CBRO).cbl
+DC/Characters/The Flash/[DC Comics] Wally West with events (WEB-CBRO).cbl
+DC/Characters/unsorted/Aquaman/Aquaman 001 - Golden Age.cbl
+DC/Characters/unsorted/Aquaman/Aquaman 002 - Silver_Bronze.cbl
+DC/Characters/unsorted/Aquaman/Aquaman 003 - Post Crisis.cbl
+DC/Characters/unsorted/Aquaman/Aquaman 004 - New 52_Rebirth.cbl
+DC/Characters/unsorted/Azrael/Azrael.cbl
+DC/Characters/unsorted/Batgirl/Batgirl 001 (Pre-Crisis).cbl
+DC/Characters/unsorted/Batgirl/Batgirl 002 (Post-Crisis).cbl
+DC/Characters/unsorted/Batgirl/Batgirl 003 (New52_Rebirth).cbl
+DC/Characters/unsorted/Batman Beyond/Batman Beyond 001.cbl
+DC/Characters/unsorted/Batman/Batman - Non-Canon Stories.cbl
+DC/Characters/unsorted/Batman/Batman 001 - Golden Age.cbl
+DC/Characters/unsorted/Batman/Batman 002 - Golden_Silver.cbl
+DC/Characters/unsorted/Batman/Batman 003 - Silver Age.cbl
+DC/Characters/unsorted/Batman/Batman 004 - Bronze Age.cbl
+DC/Characters/unsorted/Batman/Batman 005 - Bronze Age.cbl
+DC/Characters/unsorted/Batman/Essential Batman 001 (Pre-Crisis).cbl
+DC/Characters/unsorted/Batman/Essential Batman 002 (Post-Crisis).cbl
+DC/Characters/unsorted/Batman/Essential Batman 003 (Post-Crisis).cbl
+DC/Characters/unsorted/Batman/Essential Batman 004 (New 52).cbl
+DC/Characters/unsorted/Batman/Essential Batman 005 (Rebirth).cbl
+DC/Characters/unsorted/Batwoman/Batwoman.cbl
+DC/Characters/unsorted/Birds of Prey/Birds of Prey 001 (Post-Crisis).cbl
+DC/Characters/unsorted/Birds of Prey/Birds of Prey 002 (New52_Rebirth).cbl
+DC/Characters/unsorted/Black Lightning/Black Lightning.cbl
+DC/Characters/unsorted/Blue Beetle/Blue Beetle 001 - Pre-Crisis.cbl
+DC/Characters/unsorted/Blue Beetle/Blue Beetle 002 - Post Crisis.cbl
+DC/Characters/unsorted/Blue Beetle/Blue Beetle 003 - New52_Rebirth.cbl
+DC/Characters/unsorted/Catwoman/Catwoman 001 - Pre-Crisis.cbl
+DC/Characters/unsorted/Catwoman/Catwoman 002 - Post Crisis.cbl
+DC/Characters/unsorted/Catwoman/Catwoman 003 - New 52_Rebirth.cbl
+DC/Characters/unsorted/Constantine/Constantine 001.cbl
+DC/Characters/unsorted/Constantine/Constantine 002 - New 52_Rebirth.cbl
+DC/Characters/unsorted/Cyborg/Cyborg - New52_Rebirth.cbl
+DC/Characters/unsorted/Deathstroke/Deathstroke 001.cbl
+DC/Characters/unsorted/Deathstroke/Deathstroke 002 (New 52_Rebirth).cbl
+DC/Characters/unsorted/Doom Patrol/Doom Patrol 1.cbl
+DC/Characters/unsorted/Firestorm/Firestorm 001.cbl
+DC/Characters/unsorted/Firestorm/Firestorm 002 - New52_Rebirth.cbl
+DC/Characters/unsorted/Flash/Flash 001 - Jay Garrick Years.cbl
+DC/Characters/unsorted/Flash/Flash 002 - Barry Allen Years.cbl
+DC/Characters/unsorted/Flash/Flash 003 - Post Crisis Wally West.cbl
+DC/Characters/unsorted/Flash/Flash 004 .cbl
+DC/Characters/unsorted/Flash/Flash 005 - New52_Rebirth.cbl
+DC/Characters/unsorted/Green Arrow/Green Arrow (CBRO).cbl
+DC/Characters/unsorted/Green Arrow/Green Arrow 001 - Essential Pre-Crisis.cbl
+DC/Characters/unsorted/Green Arrow/Green Arrow 002 - Post Crisis.cbl
+DC/Characters/unsorted/Green Arrow/Green Arrow 003 - New52_Rebirth.cbl
+DC/Characters/unsorted/Green Lantern/Green Lantern 001 (Golden Age).cbl
+DC/Characters/unsorted/Green Lantern/Green Lantern 003 (Post Crisis).cbl
+DC/Characters/unsorted/Green Lantern/Green Lantern 004 (Post Crisis).cbl
+DC/Characters/unsorted/Green Lantern/Green Lantern 005 (Post Crisis).cbl
+DC/Characters/unsorted/Green Lantern/Green Lantern 006 (New 52).cbl
+DC/Characters/unsorted/Green Lantern/Green Lantern 007 (Rebirth).cbl
+DC/Characters/unsorted/Harley Quinn/Harley Quinn (New52_Rebirth).cbl
+DC/Characters/unsorted/Hawkman/Hawkman 002.cbl
+DC/Characters/unsorted/Hawkman/Hawkman 003 (New 52_Rebirth).cbl
+DC/Characters/unsorted/Huntress/Huntress (Post-Crisis).cbl
+DC/Characters/unsorted/New Gods/The New Gods 001.cbl
+DC/Characters/unsorted/New Gods/The New Gods 002 (New 52).cbl
+DC/Characters/unsorted/Nightwing/Nightwing 001 (Post Crisis).cbl
+DC/Characters/unsorted/Nightwing/Nightwing 002 (New 52_Rebirth).cbl
+DC/Characters/unsorted/Outsiders/Outsiders 001.cbl
+DC/Characters/unsorted/Outsiders/Outsiders 002 - Post Rebirth.cbl
+DC/Characters/unsorted/Robin/Robin - Jason Todd (Post Crisis).cbl
+DC/Characters/unsorted/Robin/Robin - Tim Drake (Post Crisis).cbl
+DC/Characters/unsorted/Shazam!/Shazam! 002 - Post Crisis.cbl
+DC/Characters/unsorted/Shazam!/Shazam! 003 - New52_Rebirth.cbl
+DC/Characters/unsorted/Superboy/Superboy 001 - Pre-Crisis.cbl
+DC/Characters/unsorted/Superboy/Superboy 002 - Pre-Crisis.cbl
+DC/Characters/unsorted/Superboy/Superboy 003 - Conner Kent (Post-Crisis).cbl
+DC/Characters/unsorted/Superboy/Superboy 004 - New52.cbl
+DC/Characters/unsorted/Supergirl/Supergirl 001 (Pre-Crisis).cbl
+DC/Characters/unsorted/Supergirl/Supergirl 002 (Pre-Crisis).cbl
+DC/Characters/unsorted/Supergirl/Supergirl 003 (Post Crisis Matrix).cbl
+DC/Characters/unsorted/Supergirl/Supergirl 004 (Post-Crisis Kara Zor-El).cbl
+DC/Characters/unsorted/Supergirl/Supergirl 005 (New52_Rebirth).cbl
+DC/Characters/unsorted/Superman/Essential Superman 001 (Post-Crisis 1).cbl
+DC/Characters/unsorted/Superman/Essential Superman 002 (Post-Crisis 2).cbl
+DC/Characters/unsorted/Superman/Essential Superman 003 (New 52).cbl
+DC/Characters/unsorted/Superman/Essential Superman 004 (Rebirth).cbl
+DC/Characters/unsorted/Superman/Superman 001 (Golden Age 1).cbl
+DC/Characters/unsorted/Superman/Superman 002 (Golden Age 2).cbl
+DC/Characters/unsorted/Superman/Superman 003 (Pre-Crisis 1).cbl
+DC/Characters/unsorted/Superman/Superman 004 (Pre-Crisis 2).cbl
+DC/Characters/unsorted/Superman/Superman 005 (Pre-Crisis 3).cbl
+DC/Characters/unsorted/Superman/Superman 006 (Pre-Crisis 4).cbl
+DC/Characters/unsorted/Superman/Superman 007 (Pre-Crisis 5).cbl
+DC/Characters/unsorted/Titans/Hawk and Dove.cbl
+DC/Characters/unsorted/Titans/Titans 001 - Teen Titans.cbl
+DC/Characters/unsorted/Titans/Titans 002 - New Teen Titans.cbl
+DC/Characters/unsorted/Titans/Titans 003 - New Titans.cbl
+DC/Characters/unsorted/Titans/Titans 004 - Titans_Young Justice.cbl
+DC/Characters/unsorted/Titans/Titans 005 - (2003-2011).cbl
+DC/Characters/unsorted/Titans/Titans 006 - New 52.cbl
+DC/Characters/unsorted/Titans/Titans 007 - Rebirth.cbl
+DC/Characters/unsorted/Wonder Woman/Wonder Woman - Elseworlds.cbl
+DC/Characters/unsorted/Wonder Woman/Wonder Woman 001 - Golden Age.cbl
+DC/Characters/unsorted/Wonder Woman/Wonder Woman 002 - Silver Age.cbl
+DC/Characters/unsorted/Wonder Woman/Wonder Woman 003 - Post Crisis 1.cbl
+DC/Characters/unsorted/Wonder Woman/Wonder Woman 004 - Post Crisis 2.cbl
+DC/Characters/unsorted/Wonder Woman/Wonder Woman 005 - New 52.cbl
+DC/Characters/unsorted/Wonder Woman/Wonder Woman 006 - Rebirth.cbl
+DC/Creator Runs/[DC] [1970-1985] The Fourth World by Jack Kirby.cbl
+DC/Creator Runs/[DC] [1984-1987] Swamp Thing by Alan Moore.cbl
+DC/Creator Runs/[DC] [1987-1993] Green Arrow by Mike Grell.cbl
+DC/Creator Runs/[DC] [1988-1990] Animal Man by Grant Morrison.cbl
+DC/Creator Runs/[DC] [1989-1993] Doom Patrol by Grant Morrison.cbl
+DC/Creator Runs/[DC] [1990-2000] The Flash by Mark Waid.cbl
+DC/Creator Runs/[DC] [1993-1995] Doom Patrol by Rachel Pollack.cbl
+DC/Creator Runs/[DC] [1993-2005] Batman by Loeb and Sale.cbl
+DC/Creator Runs/[DC] [1996-1997] The Flash by Grant Morrison.cbl
+DC/Creator Runs/[DC] [1996-1998] StormWatch by Warren Ellis.cbl
+DC/Creator Runs/[DC] [1998-2009] Planetary by Ellis & Cassaday.cbl
+DC/Creator Runs/[DC] [1999-2009] JSA by Geoff Johns.cbl
+DC/Creator Runs/[DC] [2000-2006] Lucifer by Mike Carey.cbl
+DC/Creator Runs/[DC] [2000-2011] Flash by Geoff Johns.cbl
+DC/Creator Runs/[DC] [2004-2013] Green Lantern by Geoff Johns.cbl
+DC/Creator Runs/[DC] [2006-2008] All-Star Superman by Grant Morrison.cbl
+DC/Creator Runs/[DC] [2006-2013] Batman by Grant Morrison.cbl
+DC/Creator Runs/[DC] [2008-2009] Final Crisis by Grant Morrison.cbl
+DC/Creator Runs/[DC] [2008-2009] Nightwing by Peter J Tomsai.cbl
+DC/Creator Runs/[DC] [2011-2021] Batman by Scott Snyder.cbl
+DC/Creator Runs/[DC] [2016-2017] Flintstones by Russell and Pugh.cbl
+DC/Creator Runs/[DC] [2016-2020] Batman by Tom King (Rebirth).cbl
+DC/Creator Runs/[DC] [2017-2019] Mister Miracle by Tom King.cbl
+DC/Creator Runs/[DC] [2021-2022] Supergirl_ Woman of Tomorrow by Tom King.cbl
+DC/Creator Runs/[DC] [2022-2023] WildC.A.T.s by Rosenberg.cbl
+DC/Creator Runs/[DC] [2022-2025] Batman by Chip Zdarsky.cbl
+DC/Creator Runs/[DC] [2022-2026] Green Lantern by Jeremy Adams.cbl
+DC/Creator Runs/[DC] [2023] Superman Lost by Priest & Pagulayan.cbl
+DC/Events/CBH/[DC Comics] [2024-2026] Absolute Universe (CBH).cbl
+DC/Events/CBRO/1938-1986 - Part 1/[DC Comics] Aquaman- Death of a Prince (WEB-CBRO).cbl
+DC/Events/CBRO/1938-1986 - Part 1/[DC Comics] Crisis on Infinite Earths (WEB-CBRO).cbl
+DC/Events/CBRO/1938-1986 - Part 1/[DC Comics] Jack Kirby's Fourth World (WEB-CBRO).cbl
+DC/Events/CBRO/1938-1986 - Part 1/[DC Comics] Zatanna's Search (WEB-CBRO).cbl
+DC/Events/CBRO/1987-1990 - Part 2/[DC Comics] Batman- A Lonely Place of Dying (WEB-CBRO).cbl
+DC/Events/CBRO/1987-1990 - Part 2/[DC Comics] Invasion! (WEB-CBRO).cbl
+DC/Events/CBRO/1987-1990 - Part 2/[DC Comics] Janus Directive (WEB-CBRO).cbl
+DC/Events/CBRO/1987-1990 - Part 2/[DC Comics] Legends (WEB-CBRO).cbl
+DC/Events/CBRO/1987-1990 - Part 2/[DC Comics] Millennium (WEB-CBRO).cbl
+DC/Events/CBRO/1987-1990 - Part 2/[DC Comics] Superman- Exile (WEB-CBRO).cbl
+DC/Events/CBRO/1987-1990 - Part 2/[DC Comics] War of the Gods (WEB-CBRO).cbl
+DC/Events/CBRO/1991-1997 - Part 3/[DC Comics] Armageddon 2001 (WEB-CBRO).cbl
+DC/Events/CBRO/1991-1997 - Part 3/[DC Comics] Batman- Contagion (WEB-CBRO).cbl
+DC/Events/CBRO/1991-1997 - Part 3/[DC Comics] Batman- Legacy (WEB-CBRO).cbl
+DC/Events/CBRO/1991-1997 - Part 3/[DC Comics] Batman- Prodigal (WEB-CBRO).cbl
+DC/Events/CBRO/1991-1997 - Part 3/[DC Comics] Batman- Troika (WEB-CBRO).cbl
+DC/Events/CBRO/1991-1997 - Part 3/[DC Comics] Bloodlines (WEB-CBRO).cbl
+DC/Events/CBRO/1991-1997 - Part 3/[DC Comics] DC Universe- Trinity (WEB-CBRO).cbl
+DC/Events/CBRO/1991-1997 - Part 3/[DC Comics] Death of Superman (WEB-CBRO).cbl
+DC/Events/CBRO/1991-1997 - Part 3/[DC Comics] Eclipso- The Darkness Within (WEB-CBRO).cbl
+DC/Events/CBRO/1991-1997 - Part 3/[DC Comics] Final Night (WEB-CBRO).cbl
+DC/Events/CBRO/1991-1997 - Part 3/[DC Comics] Funeral for a Friend (WEB-CBRO).cbl
+DC/Events/CBRO/1991-1997 - Part 3/[DC Comics] Justice League- Breakdowns (WEB-CBRO).cbl
+DC/Events/CBRO/1991-1997 - Part 3/[DC Comics] Knightfall Saga (WEB-CBRO).cbl
+DC/Events/CBRO/1991-1997 - Part 3/[DC Comics] Panic in the Sky (WEB-CBRO).cbl
+DC/Events/CBRO/1991-1997 - Part 3/[DC Comics] Reign of the Supermen (WEB-CBRO).cbl
+DC/Events/CBRO/1991-1997 - Part 3/[DC Comics] The Flash- Dead Heat (WEB-CBRO).cbl
+DC/Events/CBRO/1991-1997 - Part 3/[DC Comics] The Trial of Superman (WEB-CBRO).cbl
+DC/Events/CBRO/1991-1997 - Part 3/[DC Comics] Underworld Unleashed (WEB-CBRO).cbl
+DC/Events/CBRO/1991-1997 - Part 3/[DC Comics] Worlds Collide (WEB-CBRO).cbl
+DC/Events/CBRO/1991-1997 - Part 3/[DC Comics] Zero Hour (WEB-CBRO).cbl
+DC/Events/CBRO/1997-2002 - Part 4/[DC Comics] Batman- Cataclysm (WEB-CBRO).cbl
+DC/Events/CBRO/1997-2002 - Part 4/[DC Comics] Batman- No Man's Land (WEB-CBRO).cbl
+DC/Events/CBRO/1997-2002 - Part 4/[DC Comics] Batman- Officer Down (WEB-CBRO).cbl
+DC/Events/CBRO/1997-2002 - Part 4/[DC Comics] Behold! The Millennium Giants! (WEB-CBRO).cbl
+DC/Events/CBRO/1997-2002 - Part 4/[DC Comics] Brotherhood of the Fist (WEB-CBRO).cbl
+DC/Events/CBRO/1997-2002 - Part 4/[DC Comics] DC One Million (WEB-CBRO).cbl
+DC/Events/CBRO/1997-2002 - Part 4/[DC Comics] Day of Judgment (WEB-CBRO).cbl
+DC/Events/CBRO/1997-2002 - Part 4/[DC Comics] Genesis (WEB-CBRO).cbl
+DC/Events/CBRO/1997-2002 - Part 4/[DC Comics] Joker's Last Laugh (WEB-CBRO).cbl
+DC/Events/CBRO/1997-2002 - Part 4/[DC Comics] Our Worlds at War (WEB-CBRO).cbl
+DC/Events/CBRO/1997-2002 - Part 4/[DC Comics] Superman- Emperor Joker (WEB-CBRO).cbl
+DC/Events/CBRO/1997-2002 - Part 4/[DC Comics] The Justice Society Returns! (WEB-CBRO).cbl
+DC/Events/CBRO/2000-2005 - Part 5/[DC Comics] Batman- War Games (WEB-CBRO).cbl
+DC/Events/CBRO/2000-2005 - Part 5/[DC Comics] Bruce Wayne- Fugitive (WEB-CBRO).cbl
+DC/Events/CBRO/2000-2005 - Part 5/[DC Comics] Bruce Wayne- Murderer  (WEB-CBRO).cbl
+DC/Events/CBRO/2000-2005 - Part 5/[DC Comics] JSA- Black Reign (WEB-CBRO).cbl
+DC/Events/CBRO/2000-2005 - Part 5/[DC Comics] World Without Young Justice (WEB-CBRO).cbl
+DC/Events/CBRO/2005-2009 - Part 6/[DC Comics] Amazons Attack! (WEB-CBRO).cbl
+DC/Events/CBRO/2005-2009 - Part 6/[DC Comics] Batman- Face the Face (WEB-CBRO).cbl
+DC/Events/CBRO/2005-2009 - Part 6/[DC Comics] Batman- War Crimes (WEB-CBRO).cbl
+DC/Events/CBRO/2005-2009 - Part 6/[DC Comics] Countdown to Infinite Crisis (WEB-CBRO).cbl
+DC/Events/CBRO/2005-2009 - Part 6/[DC Comics] Grant Morrison's Batman (WEB-CBRO).cbl
+DC/Events/CBRO/2005-2009 - Part 6/[DC Comics] Identity Crisis (WEB-CBRO).cbl
+DC/Events/CBRO/2005-2009 - Part 6/[DC Comics] Infinite Crisis (WEB-CBRO).cbl
+DC/Events/CBRO/2005-2009 - Part 6/[DC Comics] Lightning Saga (WEB-CBRO).cbl
+DC/Events/CBRO/2005-2009 - Part 6/[DC Comics] Sinestro Corps War (WEB-CBRO).cbl
+DC/Events/CBRO/2005-2009 - Part 6/[DC Comics] Superman- Up, Up, and Away! (WEB-CBRO).cbl
+DC/Events/CBRO/2005-2009 - Part 6/[DC Comics] The Resurrection of Ra's al Ghul (WEB-CBRO).cbl
+DC/Events/CBRO/2008-2011 - Part 7/[DC Comics] Batman- Judgment on Gotham (WEB-CBRO).cbl
+DC/Events/CBRO/2008-2011 - Part 7/[DC Comics] Battle for the Cowl (WEB-CBRO).cbl
+DC/Events/CBRO/2008-2011 - Part 7/[DC Comics] Blackest Night (WEB-CBRO).cbl
+DC/Events/CBRO/2008-2011 - Part 7/[DC Comics] Brightest Day (WEB-CBRO).cbl
+DC/Events/CBRO/2008-2011 - Part 7/[DC Comics] Final Crisis (WEB-CBRO).cbl
+DC/Events/CBRO/2008-2011 - Part 7/[DC Comics] Flashpoint (WEB-CBRO).cbl
+DC/Events/CBRO/2008-2011 - Part 7/[DC Comics] Reign of Doomsday (WEB-CBRO).cbl
+DC/Events/CBRO/2008-2011 - Part 7/[DC Comics] Superman- New Krypton (WEB-CBRO).cbl
+DC/Events/CBRO/2008-2011 - Part 7/[DC Comics] War of the Green Lanterns (WEB-CBRO).cbl
+DC/Events/CBRO/2010-2021 - Part 8/[DC Comics] DCeased (WEB-CBRO).cbl
+DC/Events/CBRO/2010-2021 - Part 8/[DC Comics] Injustice (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] Batman- Endgame (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] Batman- Requiem (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] Batman- Zero Year (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] Convergence (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] Death of the Family (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] Forever Evil (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] Forever Evil- Blight (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] Gothtopia (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] Green Lantern- Godhead (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] Green Lantern- Lights Out (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] Green Lantern- Uprising (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] Krypton Returns (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] Multiversity (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] New 52- Futures End (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] Night of the Owls (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] Red Daughter of Krypton (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] Rise of the Third Army (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] Robin Rises (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] Rotworld (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] Superman- Doomed (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] Superman- H'el on Earth (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] The Black Diamond Probability (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] The Culling (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] Throne of Atlantis (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] Trinity War (WEB-CBRO).cbl
+DC/Events/CBRO/2011-2015 - New 52/[DC Comics] Wrath of the First Lantern (WEB-CBRO).cbl
+DC/Events/CBRO/2015-2016 - DC You/[DC Comics] Darkseid War (WEB-CBRO).cbl
+DC/Events/CBRO/2015-2016 - DC You/[DC Comics] Final Days of Superman (WEB-CBRO).cbl
+DC/Events/CBRO/2015-2016 - DC You/[DC Comics] Robin War (WEB-CBRO).cbl
+DC/Events/CBRO/2015-2016 - DC You/[DC Comics] Superman- Savage Dawn (WEB-CBRO).cbl
+DC/Events/CBRO/2016-2021 - DC Rebirth/[DC Comics] City of Bane (WEB-CBRO).cbl
+DC/Events/CBRO/2016-2021 - DC Rebirth/[DC Comics] Dark Nights- Death Metal (WEB-CBRO).cbl
+DC/Events/CBRO/2016-2021 - DC Rebirth/[DC Comics] Dark Nights- Metal (WEB-CBRO).cbl
+DC/Events/CBRO/2016-2021 - DC Rebirth/[DC Comics] Drowned Earth (WEB-CBRO).cbl
+DC/Events/CBRO/2016-2021 - DC Rebirth/[DC Comics] Endless Winter (WEB-CBRO).cbl
+DC/Events/CBRO/2016-2021 - DC Rebirth/[DC Comics] Event Leviathan (WEB-CBRO).cbl
+DC/Events/CBRO/2016-2021 - DC Rebirth/[DC Comics] Future State (WEB-CBRO).cbl
+DC/Events/CBRO/2016-2021 - DC Rebirth/[DC Comics] Heroes in Crisis (WEB-CBRO).cbl
+DC/Events/CBRO/2016-2021 - DC Rebirth/[DC Comics] Joker War (WEB-CBRO).cbl
+DC/Events/CBRO/2016-2021 - DC Rebirth/[DC Comics] Justice League vs. Suicide Squad (WEB-CBRO).cbl
+DC/Events/CBRO/2016-2021 - DC Rebirth/[DC Comics] Night of the Monster Men (WEB-CBRO).cbl
+DC/Events/CBRO/2016-2021 - DC Rebirth/[DC Comics] Superman Reborn (WEB-CBRO).cbl
+DC/Events/CBRO/2016-2021 - DC Rebirth/[DC Comics] The Infected (WEB-CBRO).cbl
+DC/Events/CBRO/2016-2021 - DC Rebirth/[DC Comics] The Lazarus Contract (WEB-CBRO).cbl
+DC/Events/CBRO/2021-2022 - Infinite Frontier/[DC Comics] Dark Crisis on Infinite Earths (WEB-CBRO).cbl
+DC/Events/CBRO/2021-2022 - Infinite Frontier/[DC Comics] Fear State (WEB-CBRO).cbl
+DC/Events/CBRO/2021-2022 - Infinite Frontier/[DC Comics] Lazarus Planet (WEB-CBRO).cbl
+DC/Events/CBRO/2021-2022 - Infinite Frontier/[DC Comics] Shadow War (WEB-CBRO).cbl
+DC/Events/CBRO/2021-2022 - Infinite Frontier/[DC Comics] Trial of the Amazons (WEB-CBRO).cbl
+DC/Events/CBRO/2023-2024 - Dawn of DC/[DC Comics] Absolute Power (WEB-CBRO).cbl
+DC/Events/CBRO/2023-2024 - Dawn of DC/[DC Comics] Gotham War (WEB-CBRO).cbl
+DC/Events/CBRO/2023-2024 - Dawn of DC/[DC Comics] Knight Terrors (WEB-CBRO).cbl
+DC/Events/CBRO/2023-2024 - Dawn of DC/[DC Comics] Superman House of Brainiac (WEB-CBRO).cbl
+DC/Events/CBRO/2023-2024 - Dawn of DC/[DC Comics] Titans Beast World (WEB-CBRO).cbl
+DC/Events/LoCG/[1984-1986] Crisis on Infinite Earths (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[1986-1987] Legends (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[1987-1988] Millennium (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[1989] The Janus Directive (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[1990-1991] War of the Gods (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[1994] Zero Hour (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[1995] WildStorm Rising (DC Comics) (LoCG).cbl
+DC/Events/LoCG/[1996-1997] Legacy (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[1996] Contagion (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[1998-1999] No Man's Land (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[1998] Aftershock (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[1998] Brotherhood of the Fist (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[1998] Cataclysm (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[1999] Day of Judgment (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2001] Joker's Last Laugh (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2001] Officer Down (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2002] Bruce Wayne Fugitive (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2002] Bruce Wayne Murderer (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2002] World Without Young Justice (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2004-2005] Batman War Games (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2004-2005] Identity Crisis (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2005-2006] Infinite Crisis (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2007-2008] The Resurrection of Ra's al Ghul (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2007] Amazons Attack (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2007] The Sinestro Corps War (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2008-2009] Final Crisis (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2008-2010] Blackest Night (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2009] Battle for the Cowl (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2010-2011] Brightest Day (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2010-2011] Flashpoint (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2011] Judgment on Gotham (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2011] War of the Green Lanterns (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2012-2013] Death of the Family (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2012-2013] H'El on Earth (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2012-2013] Rise of the Third Army (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2012-2013] Trinity War (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2012-2014] Batman Zero Year (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2012] Night of the Owls (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2012] The Culling (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2013-2014] Forever Evil (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2013] Green Lantern Lights Out (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2013] Wrath of the First Lantern (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2014-2015] Batman Endgame (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2014] Gothtopia (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2014] Green Lantern Godhead (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2014] Superman Doomed (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2015-2016] Justice League Darkseid War (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2015-2016] Robin War (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2015-2016] Superman Savage Dawn (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2015] Convergence (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2016-2017] Justice League vs. Suicide Squad (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2016] Final Days of Superman (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2016] Night of the Monster Men (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2017-2018] Dark Nights Metal (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2017] Superman Reborn (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2017] The Lazarus Contract (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2018-2019] Heroes in Crisis (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2018] Drowned Earth (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2018] The Witching Hour (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2020-2021] Dark Nights Death Metal (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2020] Endless Winter (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2020] Joker War (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2021-2022] Trial of the Amazons (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2021] Fear State (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2022] Dark Crisis on Infinite Earths (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2022] Shadow War (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2022] War for Earth-3 (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2023-2024] Titans Beast World (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2023] Knight Terrors (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2023] Lazarus Planet (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2023] The Gotham War (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2024] Absolute Power (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2024] House of Brainiac (DC Comics)(LoCG).cbl
+DC/Events/LoCG/[2025-Present] We Are Yesterday (DC Comics)(LoCG).cbl
+DC/Events/[DC Comics] [1992-1995] Batman - Knightfall.cbl
+DC/Events/[DC Comics] [1998-1999] The Kingdom - TPB Order.cbl
+DC/Events/[DC Comics] [2023-2024] Titans - Beast World.cbl
+DC/Events/unsorted/1984 - Pre-Crisis On Infinite Earths.cbl
+DC/Events/unsorted/1988 - Cosmic Odyssey.cbl
+DC/Events/unsorted/1989 - Green Lantern - Emerald Dawn.cbl
+DC/Events/unsorted/1991 - Emerald Dawn II.cbl
+DC/Events/unsorted/2003 - JLA Avengers.cbl
+DC/Events/unsorted/2005 - Seven Soldiers.cbl
+DC/Events/unsorted/2006 - 52.cbl
+DC/Events/unsorted/2007 - Countdown to Final Crisis.cbl
+DC/Events/unsorted/2009 - Faces of Evil.cbl
+DC/Master Reading Order/CBRO - With Events/[DC Comics] DC Master Reading Order Part #01 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO - With Events/[DC Comics] DC Master Reading Order Part #02 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO - With Events/[DC Comics] DC Master Reading Order Part #03 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO - With Events/[DC Comics] DC Master Reading Order Part #04 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO - With Events/[DC Comics] DC Master Reading Order Part #05 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO - With Events/[DC Comics] DC Master Reading Order Part #06 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO - With Events/[DC Comics] DC Master Reading Order Part #07 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO - With Events/[DC Comics] DC Master Reading Order Part #08 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO - With Events/[DC Comics] DC Master Reading Order- Infinite Frontier (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO - With Events/[DC Comics] DC Rebirth- DC Rebirth Part #1 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO - With Events/[DC Comics] DC Rebirth- DC Rebirth Part #2 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO - With Events/[DC Comics] DC Rebirth- DC Rebirth Part #3 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO - With Events/[DC Comics] DC You (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO - With Events/[DC Comics] Dawn of DC (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO - With Events/[DC Comics] New 52 Reading Order- New Part #1 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO - With Events/[DC Comics] New 52 Reading Order- New Part #2 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO - With Events/[DC Comics] New 52 Reading Order- New Part #3 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO/[DC Comics] DC Master Reading Order Part #01 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO/[DC Comics] DC Master Reading Order Part #02 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO/[DC Comics] DC Master Reading Order Part #03 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO/[DC Comics] DC Master Reading Order Part #04 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO/[DC Comics] DC Master Reading Order Part #05 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO/[DC Comics] DC Master Reading Order Part #06 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO/[DC Comics] DC Master Reading Order Part #07 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO/[DC Comics] DC Master Reading Order Part #08 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO/[DC Comics] DC Master Reading Order- Infinite Frontier (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO/[DC Comics] DC Rebirth- DC Rebirth Part #1 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO/[DC Comics] DC Rebirth- DC Rebirth Part #2 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO/[DC Comics] DC Rebirth- DC Rebirth Part #3 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO/[DC Comics] DC You (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO/[DC Comics] Dawn of DC (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO/[DC Comics] New 52 Reading Order- New Part #1 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO/[DC Comics] New 52 Reading Order- New Part #2 (WEB-CBRO).cbl
+DC/Master Reading Order/CBRO/[DC Comics] New 52 Reading Order- New Part #3 (WEB-CBRO).cbl
+DC/Master Reading Order/Marvel Guides/2011-2016 New 52/Part 1 Point of Origin/[DC] 2011-2016 Part 1.1 In the Beginning….cbl
+DC/Master Reading Order/Marvel Guides/2011-2016 New 52/Part 1 Point of Origin/[DC] 2011-2016 Part 1.2 Courting Disaster.cbl
+DC/Master Reading Order/Marvel Guides/2011-2016 New 52/Part 1 Point of Origin/[DC] 2011-2016 Part 1.3 A League of Their Own.cbl
+DC/Master Reading Order/Marvel Guides/2011-2016 New 52/Part 1 Point of Origin/[DC] 2011-2016 Part 1.4 The Culling.cbl
+DC/Master Reading Order/Marvel Guides/2011-2016 New 52/Part 2 Edge of Darkness/[DC] 2011-2016 Part 2.1 Agents of the Dark.cbl
+DC/Master Reading Order/Marvel Guides/2011-2016 New 52/Part 2 Edge of Darkness/[DC] 2011-2016 Part 2.2 Welcome to Rotworld.cbl
+DC/Master Reading Order/Marvel Guides/2011-2016 New 52/Part 2 Edge of Darkness/[DC] 2011-2016 Part 2.3 A Wild Storm Approaches.cbl
+DC/Master Reading Order/Marvel Guides/2016-2021 Rebirth/Part 1 Lost Time/[DC] 2016-2021 Part 1.1 Restoring a Legacy.cbl
+DC/Master Reading Order/Marvel Guides/2016-2021 Rebirth/Part 1 Lost Time/[DC] 2016-2021 Part 1.2 Reign of the Supers.cbl
+DC/Master Reading Order/Marvel Guides/2016-2021 Rebirth/Part 1 Lost Time/[DC] 2016-2021 Part 1.3 Welcome to the Big Leagues.cbl
+DC/Master Reading Order/Marvel Guides/2016-2021 Rebirth/Part 1 Lost Time/[DC] 2016-2021 Part 1.4 Monsters of Gotham.cbl
+DC/Master Reading Order/Marvel Guides/2016-2021 Rebirth/Part 1 Lost Time/[DC] 2016-2021 Part 1.5 Generations.cbl
+DC/Master Reading Order/Marvel Guides/2016-2021 Rebirth/Part 2 Crossover Crisis/[DC] 2016-2021 Part 2.1 Justice League vs. Suicide Squad.cbl
+DC/Master Reading Order/Marvel Guides/2016-2021 Rebirth/Part 2 Crossover Crisis/[DC] 2016-2021 Part 2.2 The Lazarus Contract.cbl
+DC/Master Reading Order/Marvel Guides/2016-2021 Rebirth/Part 2 Crossover Crisis/[DC] 2016-2021 Part 2.3 Superman Reborn.cbl
+DC/Master Reading Order/Marvel Guides/2016-2021 Rebirth/Part 2 Crossover Crisis/[DC] 2016-2021 Part 2.4 The Button.cbl
+DC/Teams/Doom Patrol/[DC Comics] Doom Patrol (WEB-CBRO).cbl
+DC/Teams/Justice League/[DC Comics] Justice League no events (WEB-CBRO).cbl
+DC/Teams/Justice League/[DC Comics] Justice League with events (WEB-CBRO).cbl
+DC/Teams/Teen Titans/[DC Comics] Teen Titans no events (WEB-CBRO).cbl
+DC/Teams/Teen Titans/[DC Comics] Teen Titans with events (WEB-CBRO).cbl
+DC/Teams/Watchmen/[DC Comics] Watchmen (WEB-CBRO).cbl
+DC/Teams/unsorted/Justice League/Justice League 001 (Pre-Crisis).cbl
+DC/Teams/unsorted/Justice League/Justice League 002 (Post Crisis).cbl
+DC/Teams/unsorted/Justice League/Justice League 003 (Task Force).cbl
+DC/Teams/unsorted/Justice League/Justice League 004 (JLA - 1996).cbl
+DC/Teams/unsorted/Justice League/Justice League 005 (2006).cbl
+DC/Teams/unsorted/Justice League/Justice League 006 (New 52).cbl
+DC/Teams/unsorted/Justice League/Justice League 007 (Rebirth).cbl
+DC/Teams/unsorted/Justice League/Justice League Mini-Series.cbl
+DC/Teams/unsorted/Justice League/Justice League TPB 1 - SIlver Age_Pre-Crisis.cbl
+DC/Teams/unsorted/Justice League/Justice League TPB 2 - Post Crisis.cbl
+DC/Teams/unsorted/Justice League/Justice League TPB 3 - New52_Rebirth.cbl
+DC/Teams/unsorted/Justice Society/JSA 001 (Pre-Crisis Continuity).cbl
+DC/Teams/unsorted/Justice Society/JSA 002 (Post-Crisis Continuity).cbl
+DC/Teams/unsorted/Justice Society/JSA 003 (Post-Crisis).cbl
+DC/Teams/unsorted/Justice Society/JSA 004 - Earth 2 (New 52).cbl
+DC/Teams/unsorted/Legion of Super-Heroes/Legion 001 - (Superboy).cbl
+DC/Teams/unsorted/Legion of Super-Heroes/Legion 002 - (1980-89).cbl
+DC/Teams/unsorted/Legion of Super-Heroes/Legion 003 - (5 Years Later).cbl
+DC/Teams/unsorted/Legion of Super-Heroes/Legion 004 - (Post Zero Hour).cbl
+DC/Teams/unsorted/Legion of Super-Heroes/Legion 005 - (2004-2011).cbl
+DC/Teams/unsorted/Legion of Super-Heroes/Legion 006 - (New 52).cbl
+DC/Teams/unsorted/Suicide Squad/Suicide Squad 001 - Post Crisis.cbl
+DC/Teams/unsorted/Suicide Squad/Suicide Squad 002 - New52_Rebirth.cbl
+Dark Horse/Characters/Black Hammer/Black Hammer.cbl
+Dark Horse/Characters/Hellboy/[Dark Horse] Hellboy (Mignolaverse) TPB Reading Order.cbl
+Dark Horse/Characters/Resident Alien/[Dark Horse] Resident Alien.cbl
+Dark Horse/Characters/RoboCop/[Dark Horse] RoboCop [1992-1994] [Publication Order].cbl
+Dark Horse/Characters/Usagi Yojimbo/[Dark Horse] Usagi Yojimbo (Books).cbl
+Dark Horse/Characters/Usagi Yojimbo/[Dark Horse] Usagi Yojimbo (Color Issues).cbl
+Dark Horse/Characters/Usagi Yojimbo/[Dark Horse] Usagi Yojimbo (Issues).cbl
+Dark Horse/Star Wars/[Dark Horse] Star Wars (WEB-CBRO).cbl
+Dark Horse/Umbrella Academy/[Dark Horse] Umbrella Academy.cbl
+Dynamite/Characters/RoboCop/[Dynamite Entertainment] RoboCop [2010-2012] [Publication Order].cbl
+Dynamite/Characters/The Boys/[Dynamite] The Boys (WEB-CBRO).cbl
+IDW/Characters/G.I. Joe/[IDW] [2008-2016] G.I. Joe (CBRO).cbl
+IDW/Characters/Ghostbusters/Ghostbusters IDW Run.cbl
+IDW/Characters/Teenage Mutant Ninja Turtles/[IDW] [2011-Present] TMNT Chronological Main Story [Turtlepedia].cbl
+IDW/Characters/Teenage Mutant Ninja Turtles/[IDW] [2011-Present] Teenage Mutant Ninja Turtles (HTLC).cbl
+IDW/Characters/Transformers/[IDW] [2005-2017] Transformers (CBRO).cbl
+IDW/Events/[IDW] [2016] Revolution (CBRO).cbl
+IDW/Events/[IDW] [2022] Teenage Mutant Ninja Turtles Armageddon Game (HTLC).cbl
+Image/Characters/Spawn/[Image] [1992-Present] Spawn (WEB-CBRO).cbl
+Image/Events/LoCG/[1994-1995] Extreme Sacrifice (Image Comics)(LoCG).cbl
+Image/Master Reading Order/Energon Universe/[Image] [2023-Present] Energon Universe (CBH).cbl
+Image/Master Reading Order/Invincible Universe/[Image] Invincible Universe (WEB-KCV).cbl
+Image/Master Reading Order/Jupiter's Legacy/[Image] [2013-2024] Jupiter's Legacy.cbl
+Image/Master Reading Order/Massive-Verse (Radiant Black)/[Image] [2014-2024] Massive-Verse (CBT).cbl
+Image/Master Reading Order/Massive-Verse (Radiant Black)/[Image] [2014-2026] Massive-Verse (LoCG).cbl
+Image/Master Reading Order/[Image] Supreme [1992-2015].cbl
+Image/Master Reading Order/[Image] [2010-2015] Skullkickers (Community-contributed).cbl
+Marvel/Characters/Beta Ray Bill/[Marvel] Beta Ray Bill no events (WEB-CBRO).cbl
+Marvel/Characters/Beta Ray Bill/[Marvel] Beta Ray Bill with events (WEB-CBRO).cbl
+Marvel/Characters/Black Panther/[Marvel] Black Panther no events (WEB-CBRO).cbl
+Marvel/Characters/Black Panther/[Marvel] Black Panther with events (WEB-CBRO).cbl
+Marvel/Characters/Blade/[Marvel] Blade no Events (WEB-CBRO).cbl
+Marvel/Characters/Blade/[Marvel] Blade with Events (WEB-CBRO).cbl
+Marvel/Characters/Captain America/[Marvel] Captain America no Events (WEB-CBRO).cbl
+Marvel/Characters/Captain America/[Marvel] Captain America with Events (WEB-CBRO).cbl
+Marvel/Characters/Cloak and Dagger/[Marvel] Cloak and Dagger no events (WEB-CBRO).cbl
+Marvel/Characters/Cloak and Dagger/[Marvel] Cloak and Dagger with events (WEB-CBRO).cbl
+Marvel/Characters/Daredevil/[Marvel] Daredevil no Events (WEB-CBRO).cbl
+Marvel/Characters/Daredevil/[Marvel] Daredevil with Events (WEB-CBRO).cbl
+Marvel/Characters/Deadpool/[Marvel] Deadpool (WEB-CBRO).cbl
+Marvel/Characters/Doctor Strange/[Marvel] Doctor Strange no Events (WEB-CBRO).cbl
+Marvel/Characters/Doctor Strange/[Marvel] Doctor Strange with Events (WEB-CBRO).cbl
+Marvel/Characters/Echo/Echo no events (WEB-CBRO).cbl
+Marvel/Characters/Echo/Echo with events (WEB-CBRO).cbl
+Marvel/Characters/Ghost Rider/[Marvel] Ghost Rider no events (WEB-CBRO).cbl
+Marvel/Characters/Ghost Rider/[Marvel] Ghost Rider with events (WEB-CBRO).cbl
+Marvel/Characters/Hawkeye/[Marvel] Hawkeye no events (WEB-CBRO).cbl
+Marvel/Characters/Hawkeye/[Marvel] Hawkeye with events (WEB-CBRO).cbl
+Marvel/Characters/Howard the Duck/[Marvel] Howard the Duck (WEB-CBRO).cbl
+Marvel/Characters/Hulk/[Marvel] Hulk no events (WEB-CBRO).cbl
+Marvel/Characters/Hulk/[Marvel] Hulk with events (WEB-CBRO).cbl
+Marvel/Characters/Iron Fist/[Marvel] Iron Fist no events (WEB-CBRO).cbl
+Marvel/Characters/Iron Fist/[Marvel] Iron Fist with events (WEB-CBRO).cbl
+Marvel/Characters/Iron Man/[Marvel] Iron Man no events (WEB-CBRO).cbl
+Marvel/Characters/Iron Man/[Marvel] Iron Man with events (WEB-CBRO).cbl
+Marvel/Characters/Jessica Jones/[Marvel] Jessica Jones no events (WEB-CBRO).cbl
+Marvel/Characters/Luke Cage/[Marvel] Luke Cage no events (WEB-CBRO).cbl
+Marvel/Characters/Luke Cage/[Marvel] Luke Cage with events (WEB-CBRO).cbl
+Marvel/Characters/Magik/[Marvel] Magik no events (WEB-CBRO).cbl
+Marvel/Characters/Magik/[Marvel] Magik with events (WEB-CBRO).cbl
+Marvel/Characters/Moon Knight/[Marvel] Moon Knight no events (WEB-CBRO).cbl
+Marvel/Characters/Moon Knight/[Marvel] Moon Knight with events (WEB-CBRO).cbl
+Marvel/Characters/Ms Marvel/[Marvel] Kamala Khan no events (WEB-CBRO).cbl
+Marvel/Characters/Ms Marvel/[Marvel] Kamala Khan with events (WEB-CBRO).cbl
+Marvel/Characters/Nova/[Marvel] Nova no events (WEB-CBRO).cbl
+Marvel/Characters/Nova/[Marvel] Nova with events (WEB-CBRO).cbl
+Marvel/Characters/RoboCop/[Marvel] RoboCop [1987-1992] [Publication Order].cbl
+Marvel/Characters/Silver Surfer/[Marvel] Silver Surfer no events (WEB-CBRO).cbl
+Marvel/Characters/Silver Surfer/[Marvel] Silver Surfer with events (WEB-CBRO).cbl
+Marvel/Characters/Spider-Gwen/[Marvel] Spider-Gwen no events (WEB-CBRO).cbl
+Marvel/Characters/Spider-Gwen/[Marvel] Spider-Gwen with events (WEB-CBRO).cbl
+Marvel/Characters/Spider-Man/CBRO/[Marvel] Miles Morales no events (WEB-CBRO).cbl
+Marvel/Characters/Spider-Man/CBRO/[Marvel] Miles Morales with events (WEB-CBRO).cbl
+Marvel/Characters/Spider-Man/CBRO/[Marvel] Spider-Man no events (WEB-CBRO).cbl
+Marvel/Characters/Spider-Man/CBRO/[Marvel] Spider-Man with events (WEB-CBRO).cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 00 - Complete 616 Chronology.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 01 - Silver Age Spider-Man.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 02 - Spectacular Spider-Man.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 03 - The 80s - A Tangled Web - Part 1.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 04 - Secret Wars.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 05 - Alien Costume Saga.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 06 - Secret Wars II.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 07 - The 80s - A Tangled Web - Part 2.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 08 - The Early 90s - Venomous.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 09 - Infinity Gauntlet.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 10 - The Early 90s - Carnage.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 11 - Infinity War.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 12 - The Early 90s - Part 3.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 13 - Maximum Carnage.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 14 - Infinity Crusade.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 15 - The Early 90s - Wrap Up.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 16 - The Mid 90s -The Clone Saga - Scarlet Spider.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 17 - The Mid 90s -The Clone Saga - Spider-Ben.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 18 - Onslaught.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 19 - The Mid 90s -The Clone Saga - Revelations.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 20 - The Mid 90s - Aftermath.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 21 - The Late 90s - The Next Chapter - Part 1.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 22 - Maximum Security.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 23 - The Late 90s - The Next Chapter - Part 2.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 24 - Infinity Abyss.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 25 - The Late 90s - The Next Chapter - Part 3.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 26 - The Late 90s - Amazing Again.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 27 - The Early 2000s - Marvel Knights - Part 1.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 28 - Avengers Disassembled.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 29 - Secret War.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 30 - The Early 2000s - Marvel Knights - Part 2.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 31 - House of M.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 32 - The Mid-00s - A Quick Break.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 33 - The Other.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 34 - Civil War.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 35 - Back In Black.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 36 - One More Day.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 37 - Brand New Day - Part 1.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 38 - Secret Invasion.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 39 - Brand New Day - Part 2.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 40 - Dark Reign.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 41 - Brand New Day - Part 3.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 42 - Siege.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 43 - Brand New Day - Part 4.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 44 - One Moment In Time.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 45 - Brand New Day - Part 5.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 46 - Shadowland.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 47 - Big Time - Part 1.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 48 - Fear Itself.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 49 - Big Time - Part 2.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 50 - Spider Island.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 51 - Big Time - Part 3.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 52 - Avengers vs X-Men.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 53 - Big Time - Part 4.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 54 - Superior Spider-Man - Part 1.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 55 - Age of Ultron.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 56 - Superior Spider-Man - Part 2.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 57 - Inhumanity.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 58 - Superior Spider-Man - Part 3.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 59 - Amazing Again!.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 60 - Original Sin.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 61 - Spider-Verse.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 62 - Amazing Continued.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 63 - Secret Wars.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 64 - Worldwide - Part 1.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 65 - Civil War II.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 66 - Worldwide - Part 2.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 67 - Dead No More - The Clone Conspiracy.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 68 - Worldwide - Part 3.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 69 - Secret Empire.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 70 - Legacy.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 71 - Fresh Start - Part 1.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 72 - Spider-Geddon.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 73 - Fresh Start - Part 2.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 74 - War of the Realms.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 75 - Fresh Start - Part 3.cbl
+Marvel/Characters/Spider-Man/Spider-Man Complete 616  Chronology (reddit)/[Spider-Man] 76 - Absolute Carnage.cbl
+Marvel/Characters/Squirrel Girl/[Marvel] Squirrel Girl (WEB-CBRO).cbl
+Marvel/Characters/The Punisher/[Marvel] Punisher no events (WEB-CBRO).cbl
+Marvel/Characters/The Punisher/[Marvel] Punisher with events (WEB-CBRO).cbl
+Marvel/Characters/Thor/[Marvel] Thor no events (WEB-CBRO).cbl
+Marvel/Characters/Thor/[Marvel] Thor with events (WEB-CBRO).cbl
+Marvel/Characters/Venom/[Marvel] Venom no events (WEB-CBRO).cbl
+Marvel/Characters/Venom/[Marvel] Venom with events (WEB-CBRO).cbl
+Marvel/Characters/Wolverine/[Marvel] Wolverine no Events (WEB-CBRO).cbl
+Marvel/Characters/Wolverine/[Marvel] Wolverine with Events (WEB-CBRO).cbl
+Marvel/Characters/X-23/[Marvel] X-23 no events (WEB-CBRO).cbl
+Marvel/Characters/X-23/[Marvel] X-23 with events (WEB-CBRO).cbl
+Marvel/Characters/unsorted/Adam Warlock/Adam Warlock.cbl
+Marvel/Characters/unsorted/Black Panther/Black Panther 001.cbl
+Marvel/Characters/unsorted/Black Panther/Black Panther 002.cbl
+Marvel/Characters/unsorted/Captain America/Captain America 001 - Golden Age.cbl
+Marvel/Characters/unsorted/Captain America/Captain America 002 - Silver Age.cbl
+Marvel/Characters/unsorted/Captain America/Captain America 003.cbl
+Marvel/Characters/unsorted/Captain America/Captain America 004 - Marvel Knights.cbl
+Marvel/Characters/unsorted/Captain Marvel/Captain Marvel.cbl
+Marvel/Characters/unsorted/Cosmic Ghost Rider/Cosmic Ghost Rider.cbl
+Marvel/Characters/unsorted/Daredevil/Daredevil 001.cbl
+Marvel/Characters/unsorted/Daredevil/Daredevil 002.cbl
+Marvel/Characters/unsorted/Daredevil/Daredevil 003.cbl
+Marvel/Characters/unsorted/Incredible Hulk/Incredible Hulk 001.cbl
+Marvel/Characters/unsorted/Incredible Hulk/Incredible Hulk 002.cbl
+Marvel/Characters/unsorted/Incredible Hulk/Incredible Hulk 003.cbl
+Marvel/Characters/unsorted/Incredible Hulk/Incredible Hulk 004.cbl
+Marvel/Characters/unsorted/Micronauts/The Micronauts.cbl
+Marvel/Characters/unsorted/She-Hulk/She-Hulk.cbl
+Marvel/Characters/unsorted/Silver Surfer/Silver Surfer.cbl
+Marvel/Characters/unsorted/Spider-Man/Spider-Man 001 (Silver Age).cbl
+Marvel/Characters/unsorted/Spider-Man/Spider-Man 002 (The 70s).cbl
+Marvel/Characters/unsorted/Spider-Man/Spider-Man 003 (The 80s).cbl
+Marvel/Characters/unsorted/Spider-Man/Spider-Man 004 (Venomous).cbl
+Marvel/Characters/unsorted/Spider-Man/Spider-Man 005 (Clone Years).cbl
+Marvel/Characters/unsorted/Spider-Man/Spider-Man 006 (1998-2003).cbl
+Marvel/Characters/unsorted/Spider-Man/Spider-Man 007 (Straczynski Cont.).cbl
+Marvel/Characters/unsorted/Spider-Man/Spider-Man 008 (Brand New Day).cbl
+Marvel/Characters/unsorted/Spider-Man/Spider-Man 009 (Superior_Marvel NOW!).cbl
+Marvel/Characters/unsorted/Spider-Man/Spider-Man 010 (All New, All Different).cbl
+Marvel/Characters/unsorted/Spider-Man/Spider-Man 011 (Legacy).cbl
+Marvel/Characters/unsorted/Sub-Mariner/Sub-Mariner 001.cbl
+Marvel/Characters/unsorted/Sub-Mariner/Sub-Mariner 002.cbl
+Marvel/Creator Runs/[Marvel] [1962-1966] Spider-Man by Stan Lee & Steve Ditko.cbl
+Marvel/Creator Runs/[Marvel] [1973-2019] Cosmic Saga by Jim Starlin.cbl
+Marvel/Creator Runs/[Marvel] [1975-1991] Complete X-Titles by Chris Claremont.cbl
+Marvel/Creator Runs/[Marvel] [1979-1993] Daredevil by Frank Miller.cbl
+Marvel/Creator Runs/[Marvel] [1979-1993] Doctor Strange by Aaron & Bachalo.cbl
+Marvel/Creator Runs/[Marvel] [1980-1984] Spider-Man by Roger Stern.cbl
+Marvel/Creator Runs/[Marvel] [1983-1987] Thor by Walt Simonson.cbl
+Marvel/Creator Runs/[Marvel] [1985-1993] She-Hulk by John Byrne.cbl
+Marvel/Creator Runs/[Marvel] [1988-1990] Amazing Spider-Man by Michelinie and McFarlane.cbl
+Marvel/Creator Runs/[Marvel] [1988-1991] Avengers_Fantastic Four by Walt Simonson.cbl
+Marvel/Creator Runs/[Marvel] [1998-2004] Dan Jurgens Thor.cbl
+Marvel/Creator Runs/[Marvel] [2001-2006] Daredevil by Brian Michael Bendis.cbl
+Marvel/Creator Runs/[Marvel] [2001-2006] Howard the Duck by Zdarsky and Quinones.cbl
+Marvel/Creator Runs/[Marvel] [2001-2007] Amazing Spider-Man by J. Michael Straczynski.cbl
+Marvel/Creator Runs/[Marvel] [2002-2005] Fantastic Four by Mark Waid.cbl
+Marvel/Creator Runs/[Marvel] [2004-2007] She-Hulk by Dan Slott.cbl
+Marvel/Creator Runs/[Marvel] [2004-2008] Astonishing X-Men by Joss Whedon.cbl
+Marvel/Creator Runs/[Marvel] [2004-2013] Avengers by Brian Michael Bendis.cbl
+Marvel/Creator Runs/[Marvel] [2004-2013] Captain America by Ed Brubaker.cbl
+Marvel/Creator Runs/[Marvel] [2005-2011] DnA's Marvel Cosmic Saga.cbl
+Marvel/Creator Runs/[Marvel] [2006-2007] Moon Knight by Huston and Finch.cbl
+Marvel/Creator Runs/[Marvel] [2007-2010] She-Hulk by Peter David.cbl
+Marvel/Creator Runs/[Marvel] [2008-2012] Thor by Matt Fraction.cbl
+Marvel/Creator Runs/[Marvel] [2009-2012] Fantastic Four by Jonathan Hickman.cbl
+Marvel/Creator Runs/[Marvel] [2009-2016] Jonathan Hickman's Marvel no Events (WEB-CBRO).cbl
+Marvel/Creator Runs/[Marvel] [2009-2016] Jonathan Hickman's Marvel with Events (WEB-CBRO).cbl
+Marvel/Creator Runs/[Marvel] [2011-2012] Moon Knight by Brian Michael Bendis.cbl
+Marvel/Creator Runs/[Marvel] [2012-2014] Iron Man by Kieron Gillen.cbl
+Marvel/Creator Runs/[Marvel] [2012-2015] Hawkeye by Fraction and Aja.cbl
+Marvel/Creator Runs/[Marvel] [2012-2015] Uncanny Avengers by Rick Remender.cbl
+Marvel/Creator Runs/[Marvel] [2012-2015] X-Men by Brian Michael Bendis.cbl
+Marvel/Creator Runs/[Marvel] [2012-2019] Thor by Jason Aaron.cbl
+Marvel/Creator Runs/[Marvel] [2014-2015] She-Hulk by Charles Soule.cbl
+Marvel/Creator Runs/[Marvel] [2014-2017] Doctor Strange by Jed MacKay.cbl
+Marvel/Creator Runs/[Marvel] [2014-2017] Hulk by Peter David.cbl
+Marvel/Creator Runs/[Marvel] [2014-2017] Silver Surfer by Slott & Allred.cbl
+Marvel/Creator Runs/[Marvel] [2014-2017] Wasp by Ewing & Nie.cbl
+Marvel/Creator Runs/[Marvel] [2015-2018] All New Wolverine by Tom Taylor.cbl
+Marvel/Creator Runs/[Marvel] [2015-2018] Iron Man by Brian Michael Bendis.cbl
+Marvel/Creator Runs/[Marvel] [2016-2017] Moon Knight by Jeff Lemire.cbl
+Marvel/Creator Runs/[Marvel] [2016-2018] Hawkeye by Kelly Thompson.cbl
+Marvel/Creator Runs/[Marvel] [2017-2018] Spectacular Spider-Man by Chip Zdarsky.cbl
+Marvel/Creator Runs/[Marvel] [2018-2020] Deadpool by Wong & Coccolo.cbl
+Marvel/Creator Runs/[Marvel] [2018-2020] Fantastic Four by North & Coello.cbl
+Marvel/Creator Runs/[Marvel] [2018-2020] Hellcat by Cantwell.cbl
+Marvel/Creator Runs/[Marvel] [2018-2020] Invincible Iron Man by Gerry Duggan.cbl
+Marvel/Creator Runs/[Marvel] [2018-2020] Scarlet Witch by Orlando & Pichelli.cbl
+Marvel/Creator Runs/[Marvel] [2018-2020] Tony Stark_ Iron Man by Dan Slott.cbl
+Marvel/Creator Runs/[Marvel] [2018-2021] Amazing Spider-Man by Nick Spencer.cbl
+Marvel/Creator Runs/[Marvel] [2020-2022] Black Widow by Kelly Thompson.cbl
+Marvel/Events/CBH/[Marvel] [2014-2015] Death of Wolverine (CBH).cbl
+Marvel/Events/CBH/[Marvel] [2015-2016] Secret Wars (Simplified) (CBH).cbl
+Marvel/Events/CBH/[Marvel] [2024-2026] The New Marvel Ultimate Universe 2.0 (CBH).cbl
+Marvel/Events/CBRO/1965-1971 - Part 1/[Marvel] 1971 Kree-Skrull War (WEB-CBRO).cbl
+Marvel/Events/CBRO/1965-1971 - Part 1/[Marvel] Reed Richards and Sue Storm's Wedding (WEB-CBRO).cbl
+Marvel/Events/CBRO/1972-1981 - Part 2/[Marvel] Avengers-Defenders War (WEB-CBRO).cbl
+Marvel/Events/CBRO/1972-1981 - Part 2/[Marvel] Spider-Man Original Clone Saga (WEB-CBRO).cbl
+Marvel/Events/CBRO/1972-1981 - Part 2/[Marvel] Thanos War (WEB-CBRO).cbl
+Marvel/Events/CBRO/1972-1981 - Part 2/[Marvel] The Night Gwen Stacy Died (WEB-CBRO).cbl
+Marvel/Events/CBRO/1972-1981 - Part 2/[Marvel] X-Men Dark Phoenix Saga (WEB-CBRO).cbl
+Marvel/Events/CBRO/1972-1981 - Part 2/[Marvel] X-Men Days of Future Past (WEB-CBRO).cbl
+Marvel/Events/CBRO/1972-1981 - Part 2/[Marvel] X-Men Phoenix Saga (WEB-CBRO).cbl
+Marvel/Events/CBRO/1982-1985 - Part 3/[Marvel] Contest of Champions (WEB-CBRO).cbl
+Marvel/Events/CBRO/1982-1985 - Part 3/[Marvel] Marvel Super Heroes Secret Wars (WEB-CBRO).cbl
+Marvel/Events/CBRO/1982-1985 - Part 3/[Marvel] Secret Wars II (WEB-CBRO).cbl
+Marvel/Events/CBRO/1982-1985 - Part 3/[Marvel] Wraith War (WEB-CBRO).cbl
+Marvel/Events/CBRO/1986-1993 - Part 4/[Marvel] Acts of Vengeance (WEB-CBRO).cbl
+Marvel/Events/CBRO/1986-1993 - Part 4/[Marvel] Atlantis Attacks (WEB-CBRO).cbl
+Marvel/Events/CBRO/1986-1993 - Part 4/[Marvel] Days of Future Present (WEB-CBRO).cbl
+Marvel/Events/CBRO/1986-1993 - Part 4/[Marvel] Dead Man's Hand (WEB-CBRO).cbl
+Marvel/Events/CBRO/1986-1993 - Part 4/[Marvel] Evolutionary War (WEB-CBRO).cbl
+Marvel/Events/CBRO/1986-1993 - Part 4/[Marvel] Fall of the Mutants (WEB-CBRO).cbl
+Marvel/Events/CBRO/1986-1993 - Part 4/[Marvel] Inferno (WEB-CBRO).cbl
+Marvel/Events/CBRO/1986-1993 - Part 4/[Marvel] Infinity Gauntlet (WEB-CBRO).cbl
+Marvel/Events/CBRO/1986-1993 - Part 4/[Marvel] Infinity War (WEB-CBRO).cbl
+Marvel/Events/CBRO/1986-1993 - Part 4/[Marvel] Kraven's Last Hunt (WEB-CBRO).cbl
+Marvel/Events/CBRO/1986-1993 - Part 4/[Marvel] Muir Island Saga (WEB-CBRO).cbl
+Marvel/Events/CBRO/1986-1993 - Part 4/[Marvel] Mutant Massacre (WEB-CBRO).cbl
+Marvel/Events/CBRO/1986-1993 - Part 4/[Marvel] Mys-Tech Wars (WEB-CBRO) copy.cbl
+Marvel/Events/CBRO/1986-1993 - Part 4/[Marvel] Operation- Galactic Storm (WEB-CBRO).cbl
+Marvel/Events/CBRO/1986-1993 - Part 4/[Marvel] Rise of the Midnight Sons (WEB-CBRO).cbl
+Marvel/Events/CBRO/1986-1993 - Part 4/[Marvel] X-Cutioner's Song (WEB-CBRO).cbl
+Marvel/Events/CBRO/1986-1993 - Part 4/[Marvel] X-Tinction Agenda (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] Age of Apocalypse (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] Blood and Thunder (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] Bloodties (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] Child's Play (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] Countdown (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] Eighth Day (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] Fatal Attractions (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] For Love Nor Money (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] Heroes Reborn (1996) (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] Infinity Crusade (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] Magneto War (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] Marvel 2099 (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] Maximum Carnage (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] Midnight Massacre (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] Onslaught Saga (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] Operation- Zero Tolerance (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] Over the Edge (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] Phalanx Covenant (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] Road to Vengeance- Missing Link (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] Second Clone Saga (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] Siege of Darkness (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] Spider-Man- Identity Crisis (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] The Hunt for Xavier (WEB-CBRO).cbl
+Marvel/Events/CBRO/1992-1999 - Part 5/[Marvel] Time and Time Again (WEB-CBRO).cbl
+Marvel/Events/CBRO/1999-2004 - Part 6/[Marvel] Apocalypse- The Twelve (WEB-CBRO).cbl
+Marvel/Events/CBRO/1999-2004 - Part 6/[Marvel] Earth X (WEB-CBRO).cbl
+Marvel/Events/CBRO/1999-2004 - Part 6/[Marvel] Eve of Destruction (WEB-CBRO).cbl
+Marvel/Events/CBRO/1999-2004 - Part 6/[Marvel] Magneto - Dark Seduction (WEB-CBRO).cbl
+Marvel/Events/CBRO/1999-2004 - Part 6/[Marvel] Maximum Security (WEB-CBRO).cbl
+Marvel/Events/CBRO/2002-2007 - Part 7/[Marvel] Avengers Disassembled (WEB-CBRO).cbl
+Marvel/Events/CBRO/2002-2007 - Part 7/[Marvel] Decimation (WEB-CBRO).cbl
+Marvel/Events/CBRO/2002-2007 - Part 7/[Marvel] House of M (WEB-CBRO).cbl
+Marvel/Events/CBRO/2002-2007 - Part 7/[Marvel] Marvel 1602 (WEB-CBRO).cbl
+Marvel/Events/CBRO/2002-2007 - Part 7/[Marvel] Spider-Man- The Other (WEB-CBRO).cbl
+Marvel/Events/CBRO/2005-2009 - Part 8/[Marvel] Annihilation (WEB-CBRO).cbl
+Marvel/Events/CBRO/2005-2009 - Part 8/[Marvel] Annihilation- Conquest (WEB-CBRO).cbl
+Marvel/Events/CBRO/2005-2009 - Part 8/[Marvel] Civil War (WEB-CBRO).cbl
+Marvel/Events/CBRO/2005-2009 - Part 8/[Marvel] Messiah War (WEB-CBRO).cbl
+Marvel/Events/CBRO/2005-2009 - Part 8/[Marvel] One More Day (WEB-CBRO).cbl
+Marvel/Events/CBRO/2005-2009 - Part 8/[Marvel] Planet Hulk (WEB-CBRO).cbl
+Marvel/Events/CBRO/2005-2009 - Part 8/[Marvel] Secret Invasion (WEB-CBRO).cbl
+Marvel/Events/CBRO/2005-2009 - Part 8/[Marvel] The Initiative (WEB-CBRO).cbl
+Marvel/Events/CBRO/2005-2009 - Part 8/[Marvel] World War Hulk (WEB-CBRO).cbl
+Marvel/Events/CBRO/2005-2009 - Part 8/[Marvel] X-Men- Divided We Stand (WEB-CBRO).cbl
+Marvel/Events/CBRO/2005-2009 - Part 8/[Marvel] X-Men- Endangered Species (WEB-CBRO).cbl
+Marvel/Events/CBRO/2005-2009 - Part 8/[Marvel] X-Men- Manifest Destiny (WEB-CBRO).cbl
+Marvel/Events/CBRO/2005-2009 - Part 8/[Marvel] X-Men- Messiah Complex (WEB-CBRO).cbl
+Marvel/Events/CBRO/2005-2009 - Part 8/[Marvel] X-Men- Original Sin (WEB-CBRO).cbl
+Marvel/Events/CBRO/2009-2011 - Part 9/[Marvel] Age of X (WEB-CBRO).cbl
+Marvel/Events/CBRO/2009-2011 - Part 9/[Marvel] Chaos War (WEB-CBRO).cbl
+Marvel/Events/CBRO/2009-2011 - Part 9/[Marvel] Curse of the Mutants (WEB-CBRO).cbl
+Marvel/Events/CBRO/2009-2011 - Part 9/[Marvel] Dark Reign (WEB-CBRO).cbl
+Marvel/Events/CBRO/2009-2011 - Part 9/[Marvel] Fall of the Hulks (WEB-CBRO).cbl
+Marvel/Events/CBRO/2009-2011 - Part 9/[Marvel] Heroic Age (WEB-CBRO).cbl
+Marvel/Events/CBRO/2009-2011 - Part 9/[Marvel] Necrosha (WEB-CBRO).cbl
+Marvel/Events/CBRO/2009-2011 - Part 9/[Marvel] Realm of Kings (WEB-CBRO).cbl
+Marvel/Events/CBRO/2009-2011 - Part 9/[Marvel] Shadowland (WEB-CBRO).cbl
+Marvel/Events/CBRO/2009-2011 - Part 9/[Marvel] Siege (WEB-CBRO).cbl
+Marvel/Events/CBRO/2009-2011 - Part 9/[Marvel] The Thanos Imperative (WEB-CBRO).cbl
+Marvel/Events/CBRO/2009-2011 - Part 9/[Marvel] Utopia (WEB-CBRO).cbl
+Marvel/Events/CBRO/2009-2011 - Part 9/[Marvel] War of Kings (WEB-CBRO).cbl
+Marvel/Events/CBRO/2009-2011 - Part 9/[Marvel] Wolverine Goes to Hell (WEB-CBRO).cbl
+Marvel/Events/CBRO/2009-2011 - Part 9/[Marvel] World War Hulks (WEB-CBRO).cbl
+Marvel/Events/CBRO/2009-2011 - Part 9/[Marvel] X-Men- Nation X (WEB-CBRO).cbl
+Marvel/Events/CBRO/2009-2011 - Part 9/[Marvel] X-Men- Second Coming (WEB-CBRO).cbl
+Marvel/Events/CBRO/2011-2012 - Part 10/[Marvel] Avengers vs. X-Men (WEB-CBRO).cbl
+Marvel/Events/CBRO/2011-2012 - Part 10/[Marvel] Fear Itself (WEB-CBRO).cbl
+Marvel/Events/CBRO/2011-2012 - Part 10/[Marvel] Minimum Carnage (WEB-CBRO).cbl
+Marvel/Events/CBRO/2011-2012 - Part 10/[Marvel] Shattered Heroes (WEB-CBRO).cbl
+Marvel/Events/CBRO/2011-2012 - Part 10/[Marvel] Spider-Island (WEB-CBRO).cbl
+Marvel/Events/CBRO/2011-2012 - Part 10/[Marvel] X-Men- Regenesis (WEB-CBRO).cbl
+Marvel/Events/CBRO/2011-2012 - Part 10/[Marvel] X-Men- Schism (WEB-CBRO).cbl
+Marvel/Events/CBRO/2011-2012 - Part 10/[Marvel] X-Termination (WEB-CBRO).cbl
+Marvel/Events/CBRO/2012-2016 - Marvel NOW!/[Marvel] Age of Ultron (WEB-CBRO).cbl
+Marvel/Events/CBRO/2012-2016 - Marvel NOW!/[Marvel] Avengers & X-Men - AXIS (WEB-CBRO).cbl
+Marvel/Events/CBRO/2012-2016 - Marvel NOW!/[Marvel] Battle of the Atom (WEB-CBRO).cbl
+Marvel/Events/CBRO/2012-2016 - Marvel NOW!/[Marvel] Black Vortex (WEB-CBRO).cbl
+Marvel/Events/CBRO/2012-2016 - Marvel NOW!/[Marvel] Death of Wolverine (WEB-CBRO).cbl
+Marvel/Events/CBRO/2012-2016 - Marvel NOW!/[Marvel] Goblin Nation (WEB-CBRO).cbl
+Marvel/Events/CBRO/2012-2016 - Marvel NOW!/[Marvel] Infinity (WEB-CBRO).cbl
+Marvel/Events/CBRO/2012-2016 - Marvel NOW!/[Marvel] Inhumanity (WEB-CBRO).cbl
+Marvel/Events/CBRO/2012-2016 - Marvel NOW!/[Marvel] Original Sin (WEB-CBRO).cbl
+Marvel/Events/CBRO/2012-2016 - Marvel NOW!/[Marvel] Secret Wars (WEB-CBRO).cbl
+Marvel/Events/CBRO/2012-2016 - Marvel NOW!/[Marvel] Spider-Verse (WEB-CBRO).cbl
+Marvel/Events/CBRO/2012-2016 - Marvel NOW!/[Marvel] The Trial of Jean Grey (WEB-CBRO).cbl
+Marvel/Events/CBRO/2015-2018 - All-New All Different Marvel/[Marvel] Apocalypse Wars (WEB-CBRO).cbl
+Marvel/Events/CBRO/2015-2018 - All-New All Different Marvel/[Marvel] Avengers- Standoff (WEB-CBRO).cbl
+Marvel/Events/CBRO/2015-2018 - All-New All Different Marvel/[Marvel] Civil War II (WEB-CBRO).cbl
+Marvel/Events/CBRO/2015-2018 - All-New All Different Marvel/[Marvel] Dead No More- The Clone Conspiracy (WEB-CBRO).cbl
+Marvel/Events/CBRO/2015-2018 - All-New All Different Marvel/[Marvel] Inhumans vs. X-Men (WEB-CBRO).cbl
+Marvel/Events/CBRO/2015-2018 - All-New All Different Marvel/[Marvel] Monsters Unleashed (WEB-CBRO).cbl
+Marvel/Events/CBRO/2015-2018 - All-New All Different Marvel/[Marvel] Secret Empire (WEB-CBRO).cbl
+Marvel/Events/CBRO/2015-2018 - All-New All Different Marvel/[Marvel] Spider-Women (WEB-CBRO).cbl
+Marvel/Events/CBRO/2017-2018 - Marvel Legacy/[Marvel] Damnation (WEB-CBRO).cbl
+Marvel/Events/CBRO/2017-2018 - Marvel Legacy/[Marvel] Infinity Countdown (WEB-CBRO).cbl
+Marvel/Events/CBRO/2017-2018 - Marvel Legacy/[Marvel] Venom Inc. (WEB-CBRO).cbl
+Marvel/Events/CBRO/2017-2018 - Marvel Legacy/[Marvel] Venomverse (WEB-CBRO).cbl
+Marvel/Events/CBRO/2018-2019 - A Fresh Start/[Marvel] Absolute Carnage (WEB-CBRO).cbl
+Marvel/Events/CBRO/2018-2019 - A Fresh Start/[Marvel] Age of X-Man (WEB-CBRO).cbl
+Marvel/Events/CBRO/2018-2019 - A Fresh Start/[Marvel] Infinity Wars (WEB-CBRO).cbl
+Marvel/Events/CBRO/2018-2019 - A Fresh Start/[Marvel] Spider-Geddon (WEB-CBRO).cbl
+Marvel/Events/CBRO/2018-2019 - A Fresh Start/[Marvel] War of the Realms (WEB-CBRO).cbl
+Marvel/Events/CBRO/2019-2021 - Part 11/[Marvel] Annihilation- Scourge (WEB-CBRO).cbl
+Marvel/Events/CBRO/2019-2021 - Part 11/[Marvel] Empyre (WEB-CBRO).cbl
+Marvel/Events/CBRO/2019-2021 - Part 11/[Marvel] Iron Man 2020 (WEB-CBRO).cbl
+Marvel/Events/CBRO/2019-2021 - Part 11/[Marvel] King In Black (WEB-CBRO).cbl
+Marvel/Events/CBRO/2019-2021 - Part 11/[Marvel] Marvel Events- 2099 (WEB-CBRO).cbl
+Marvel/Events/CBRO/2019-2021 - Part 11/[Marvel] X of Swords (WEB-CBRO).cbl
+Marvel/Events/CBRO/2020-2022 - Part 12/[Marvel] Death of Doctor Strange (WEB-CBRO).cbl
+Marvel/Events/CBRO/2020-2022 - Part 12/[Marvel] Devil's Reign (WEB-CBRO).cbl
+Marvel/Events/CBRO/2020-2022 - Part 12/[Marvel] Hellfire Gala (WEB-CBRO).cbl
+Marvel/Events/CBRO/2020-2022 - Part 12/[Marvel] Heroes Reborn (2021) (WEB-CBRO).cbl
+Marvel/Events/CBRO/2020-2022 - Part 12/[Marvel] Last Annihilation (2021) (WEB-CBRO).cbl
+Marvel/Events/CBRO/2022-2023 - Part 13/[Marvel] A.X.E. Judgment Day (WEB-CBRO).cbl
+Marvel/Events/CBRO/2022-2023 - Part 13/[Marvel] Avengers Assemble (WEB-CBRO).cbl
+Marvel/Events/CBRO/2022-2023 - Part 13/[Marvel] Dark Web (WEB-CBRO).cbl
+Marvel/Events/CBRO/2022-2023 - Part 13/[Marvel] Gang War (WEB-CBRO).cbl
+Marvel/Events/CBRO/2022-2023 - Part 13/[Marvel] Sins of Sinister (WEB-CBRO).cbl
+Marvel/Events/CBRO/2024-2025 - Part 14/[Marvel] Blood Hunt (WEB-CBRO).cbl
+Marvel/Events/CBRO/2024-2025 - Part 14/[Marvel] Venom War (WEB-CBRO).cbl
+Marvel/Events/CBRO/2024-2025 - Part 14/[Marvel] Venom War.cbl
+Marvel/Events/CBRO/[Marvel] Cosmic Marvel (WEB-CBRO).cbl
+Marvel/Events/CBRO/[Marvel] Jonathan Hickman's Marvel (WEB-CBRO).cbl
+Marvel/Events/CBRO/[Marvel] Marvel Events- MC (WEB-CBRO).cbl
+Marvel/Events/CBRO/[Marvel] Marvel Events- Marvel (WEB-CBRO).cbl
+Marvel/Events/CBRO/[Marvel] Marvel Zombies (WEB-CBRO).cbl
+Marvel/Events/CBRO/[Marvel] Revolutionary War (WEB-CBRO).cbl
+Marvel/Events/CBRO/[Marvel] Ultimate Marvel (WEB-CBRO).cbl
+Marvel/Events/CBT/[Marvel] [2024] Blood Hunt (CBT).cbl
+Marvel/Events/CBT/[Marvel] [2024] Blood Hunt - Red Band (CBT).cbl
+Marvel/Events/CBT/[Marvel] [2024] Venom War (CBT).cbl
+Marvel/Events/Community/[Marvel] [2024] Symbiosis Necrosis (Community-Contributed).cbl
+Marvel/Events/LoCG Community/[2022-2023] X-Men - Destiny of X (Marvel)(LoCG).cbl
+Marvel/Events/LoCG/[1987] Life in the Mad Dog Ward (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[1987] Spider-Man Kraven's Last Hunt (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[1989] Atlantis Attacks (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[1990-1992] Infinity Gauntlet (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[1992-1993] Infinity War (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[1992] Operation Galactic Storm (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[1992] Rise of the Midnight Sons (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[1993-1994] Blood and Thunder (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[1993] Bloodties (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[1993] Fatal Attractions (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[1993] Infinity Crusade (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[1993] Maximum Carnage (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[1994-1997] Age of Apocalypse (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[1994] Phalanx Covenant (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[1995] Planet of the Symbiotes (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[1999] The Eighth Day (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2000] Maximum Security (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2004] Avengers Disassembled (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2005-2006] Decimation (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2005-2006] House of M (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2005-2006] Spider-Man The Other (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2005-2007] Annihilation (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2006-2007] Civil War (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2006-2009] War of Kings (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2007-2008] Annihilation Conquest (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2007-2008] World War Hulk (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2007-2008] X-Men Messiah Complex (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2007-2009] Secret Invasion (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2007] One More Day (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2007] X-Men Endangered Species (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2008-2009] X-Men Manifest Destiny (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2008] X-Men Divided We Stand (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2009-2010] Realm of Kings (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2010-2011] Chaos War (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2010-2011] The Thanos Imperative (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2010] Shadowland (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2011] Fear Itself (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2011] Spider-Island (LOCG).cbl
+Marvel/Events/LoCG/[2012] Avengers vs. X-Men (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2012] Minimum Carnage (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2012] The Omega Effect (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2013-2014] Infinity (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2013-2014] Inhumanity (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2013] The Enemy Within (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2014-2015] Original Sin (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2014-2015] Spider-Verse (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2014] AXIS (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2014] Revolutionary War (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2015-2016] Secret Wars (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2015-2016] Star Wars Vader Down (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2015] Guardians of the Galaxy & X-Men The Black Vortex (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2016-2017] Civil War II (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2016-2017] Dead No More The Clone Conspiracy (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2016-2017] Inhumans vs. X-Men (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2016] Avengers Standoff (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2016] Spider-Women (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2017-2018] Venom Inc. (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2017] Monsters Unleashed (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2017] Secret Empire (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2017] Star Wars The Screaming Citadel (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2018-2019] Infinity Wars (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2018-2019] Spider-Geddon (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2018] Doctor Strange Damnation (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2018] Infinity Countdown (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2019-2020] Empyre (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2019] Absolute Carnage (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2019] Annihilation Scourge (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2019] War of the Realms (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2020-2021] King in Black (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2020-2021] X of Swords (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2020] Iron Man 2020 (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2021-2022] Death of Doctor Strange (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2021-2022] Devil's Reign (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2021-2022] Star Wars Crimson Reign (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2021-2022] The Darkhold Saga (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2021] Extreme Carnage (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2021] Hellfire Gala (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2021] Heroes Reborn (2021) (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2021] Star Wars War of the Bounty Hunters (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2021] The Last Annihilation (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2022-2023] Avengers Assemble (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2022-2023] Dark Web (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2022-2023] Sins of Sinister (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2022] A.X.E. Judgment Day (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2022] Fantastic Four Reckoning War (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2022] Hulk vs. Thor Banner of War (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2023-2024] Gang War (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2023-2024] Star Wars Dark Droids (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2023] Captain America Cold War (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2023] Carnage Reigns (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2023] Contest of Chaos (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2023] Ghost Rider - Wolverine Weapons of Vengeance (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2024] Blood Hunt (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2024] The Infinity Watch (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2024] Venom War (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2025-2026] Amazing Spider-Man - Venom Death Spiral (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2025-2026] X-Men Age of Revelation (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2025-Present] One World Under Doom (Marvel Comics)(LoCG).cbl
+Marvel/Events/LoCG/[2025] Imperial (LoCG).cbl
+Marvel/Events/LoCG/[2025] X-Manhunt (Marvel Comics)(LoCG).cbl
+Marvel/Events/Marvel Guides/[Marvel] Venom War (Marvel Guides).cbl
+Marvel/Events/Official/[Marvel] (2006-02) Civil War (Official).cbl
+Marvel/Events/Official/[Marvel] (2007-08) Secret Invasion (Official).cbl
+Marvel/Events/Official/[Marvel] (2013) Battle of The Atom (Official).cbl
+Marvel/Events/Official/[Marvel] (2014-10) Edge of Spider-Verse (Official).cbl
+Marvel/Events/Official/[Marvel] (2015-01) Spider-Verse (Official).cbl
+Marvel/Events/Official/[Marvel] (2017-01) Inhumans vs. X-Men (Official).cbl
+Marvel/Events/Official/[Marvel] (2017-06) Secret Empire (Official).cbl
+Marvel/Events/Official/[Marvel] (2017-08) Venomverse (Official).cbl
+Marvel/Events/Official/[Marvel] (2018-09) Infinity Wars (Official).cbl
+Marvel/Events/Official/[Marvel] (2018-11) Spider-Geddon (Official).cbl
+Marvel/Events/Official/[Marvel] (2019-03) Age of X-Man (Official).cbl
+Marvel/Events/Official/[Marvel] (2019-06) War of the Realms (Official).cbl
+Marvel/Events/Official/[Marvel] (2019-10) Absolute Carnage (Official).cbl
+Marvel/Events/Official/[Marvel] (2020-01) 2099 (Official).cbl
+Marvel/Events/Official/[Marvel] (2020-01) Annihilation - Scourge (Official).cbl
+Marvel/Events/Official/[Marvel] (2020-03) Iron Man 2020 (Official).cbl
+Marvel/Events/Official/[Marvel] (2020-08) Empyre (Official).cbl
+Marvel/Events/Official/[Marvel] (2020-09) X of Swords (Official).cbl
+Marvel/Events/Official/[Marvel] (2021-01) King In Black (Official).cbl
+Marvel/Events/Official/[Marvel] (2021-06) Hellfire Gala (Official).cbl
+Marvel/Events/Official/[Marvel] (2021-07) Heroes Reborn (Official).cbl
+Marvel/Events/Official/[Marvel] (2021-09) Inferno (Official).cbl
+Marvel/Events/Official/[Marvel] (2021-11) Death of Doctor Strange (Official).cbl
+Marvel/Events/Official/[Marvel] (2022-02) Devil's Reign  (Official).cbl
+Marvel/Events/Official/[Marvel] (2022-08) AXE Judgment Day (Official).cbl
+Marvel/Events/Official/[Marvel] (2022-11) Road to Dark Web (Official).cbl
+Marvel/Events/Official/[Marvel] (2022-12) Dark Web (Official).cbl
+Marvel/Events/Official/[Marvel] (2023-01) Sins of Sinister (Official).cbl
+Marvel/Master Reading Order/CBRO - With Events/[Marvel] All-New, All Different Marvel- All-New, All-Different Marvel Part #1 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO - With Events/[Marvel] All-New, All Different Marvel- All-New, All-Different Marvel Part #2 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO - With Events/[Marvel] Marvel Master Reading Order Part #01 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO - With Events/[Marvel] Marvel Master Reading Order Part #02 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO - With Events/[Marvel] Marvel Master Reading Order Part #03 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO - With Events/[Marvel] Marvel Master Reading Order Part #04 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO - With Events/[Marvel] Marvel Master Reading Order Part #05 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO - With Events/[Marvel] Marvel Master Reading Order Part #06 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO - With Events/[Marvel] Marvel Master Reading Order Part #07 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO - With Events/[Marvel] Marvel Master Reading Order Part #08 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO - With Events/[Marvel] Marvel Master Reading Order Part #09 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO - With Events/[Marvel] Marvel Master Reading Order Part #10 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO - With Events/[Marvel] Marvel Master Reading Order Part #11 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO - With Events/[Marvel] Marvel Master Reading Order Part #12 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO - With Events/[Marvel] Marvel Master Reading Order Part #13 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO - With Events/[Marvel] Marvel Master Reading Order Part #14 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO - With Events/[Marvel] Marvel Master Reading Order- A Fresh Start (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO - With Events/[Marvel] Marvel Master Reading Order- Marvel Legacy (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO - With Events/[Marvel] Marvel NOW!- Marvel NOW! Part #1 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO - With Events/[Marvel] Marvel NOW!- Marvel NOW! Part #2 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO/[Marvel] All-New, All Different Marvel- All-New, All-Different Marvel Part #1 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO/[Marvel] All-New, All Different Marvel- All-New, All-Different Marvel Part #2 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO/[Marvel] Marvel Master Reading Order Part #01 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO/[Marvel] Marvel Master Reading Order Part #02 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO/[Marvel] Marvel Master Reading Order Part #03 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO/[Marvel] Marvel Master Reading Order Part #04 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO/[Marvel] Marvel Master Reading Order Part #05 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO/[Marvel] Marvel Master Reading Order Part #06 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO/[Marvel] Marvel Master Reading Order Part #07 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO/[Marvel] Marvel Master Reading Order Part #08 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO/[Marvel] Marvel Master Reading Order Part #09 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO/[Marvel] Marvel Master Reading Order Part #10 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO/[Marvel] Marvel Master Reading Order Part #11 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO/[Marvel] Marvel Master Reading Order Part #12 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO/[Marvel] Marvel Master Reading Order Part #13 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO/[Marvel] Marvel Master Reading Order Part #14 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO/[Marvel] Marvel Master Reading Order- A Fresh Start (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO/[Marvel] Marvel Master Reading Order- Marvel Legacy (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO/[Marvel] Marvel NOW!- Marvel NOW! Part #1 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CBRO/[Marvel] Marvel NOW!- Marvel NOW! Part #2 (WEB-CBRO).cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 01.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 02.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 03.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 04.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 05.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 06.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 07.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 08.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 09.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 10.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 11.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 12.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 13.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 14.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 15.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 16.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 17.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 18.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 19.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 20.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 21.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 22.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 23.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 24.cbl
+Marvel/Master Reading Order/CMRO/Core/[Marvel] CMRO Core Reading Order-Part 25.cbl
+Marvel/Master Reading Order/CMRO/Essential/[Marvel] CMRO Essential Reading Order-Part 01.cbl
+Marvel/Master Reading Order/CMRO/Essential/[Marvel] CMRO Essential Reading Order-Part 02.cbl
+Marvel/Master Reading Order/CMRO/Essential/[Marvel] CMRO Essential Reading Order-Part 03.cbl
+Marvel/Master Reading Order/CMRO/Essential/[Marvel] CMRO Essential Reading Order-Part 04.cbl
+Marvel/Master Reading Order/CMRO/Essential/[Marvel] CMRO Essential Reading Order-Part 05.cbl
+Marvel/Master Reading Order/CMRO/Essential/[Marvel] CMRO Essential Reading Order-Part 06.cbl
+Marvel/Master Reading Order/CMRO/Essential/[Marvel] CMRO Essential Reading Order-Part 07.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 01.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 02.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 03.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 04.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 05.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 06.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 07.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 08.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 09.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 10.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 11.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 12.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 13.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 14.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 15.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 16.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 17.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 18.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 19.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 20.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 21.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 22.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 23.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 24.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 25.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 26.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 27.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 28.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 29.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 30.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 31.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 32.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 33.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 34.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 35.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 36.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 37.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 38.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 39.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 40.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 41.cbl
+Marvel/Master Reading Order/CMRO/Expanded/[Marvel] CMRO Expanded Reading Order-Part 42.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 01.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 02.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 03.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 04.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 05.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 06.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 07.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 08.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 09.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 10.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 11.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 12.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 13.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 14.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 15.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 16.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 17.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 18.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 19.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 20.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 21.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 22.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 23.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 24.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 25.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 26.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 27.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 28.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 29.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 30.cbl
+Marvel/Master Reading Order/CMRO/Main/[Marvel] CMRO Main Reading Order-Part 31.cbl
+Marvel/Master Reading Order/CMRO/Misc/[Marvel] CMRO Funny Animals Reading Order.cbl
+Marvel/Master Reading Order/CMRO/Misc/[Marvel] CMRO Golden Reading Order.cbl
+Marvel/Master Reading Order/CMRO/Misc/[Marvel] CMRO Hyborian Reading Order.cbl
+Marvel/Master Reading Order/CMRO/Misc/[Marvel] CMRO M2 Reading Order.cbl
+Marvel/Master Reading Order/CMRO/Misc/[Marvel] CMRO M2099 Reading Order.cbl
+Marvel/Master Reading Order/CMRO/Misc/[Marvel] CMRO MAX Reading Order.cbl
+Marvel/Master Reading Order/CMRO/Misc/[Marvel] CMRO New Universe Reading Order.cbl
+Marvel/Master Reading Order/CMRO/Misc/[Marvel] CMRO Romance-Teen Reading Order-Part 01.cbl
+Marvel/Master Reading Order/CMRO/Misc/[Marvel] CMRO Romance-Teen Reading Order-Part 02.cbl
+Marvel/Master Reading Order/CMRO/Misc/[Marvel] CMRO Star Comics Reading Order.cbl
+Marvel/Master Reading Order/CMRO/Misc/[Marvel] CMRO Ultimate Reading Order.cbl
+Marvel/Master Reading Order/CMRO/Misc/[Marvel] CMRO Ultraverse Reading Order.cbl
+Marvel/Master Reading Order/CMRO/Misc/[Marvel] CMRO WWII Reading Order.cbl
+Marvel/Master Reading Order/CMRO/Misc/[Marvel] CMRO Western Reading Order.cbl
+Marvel/Master Reading Order/Marvel Guides/1939-1956 Golden Age/Part 01 Timely Heroes/[Marvel] 1939-1956 Part 1.1 Birth of a Superhero (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1939-1956 Golden Age/Part 01 Timely Heroes/[Marvel] 1939-1956 Part 1.2 Axis and Allies (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1939-1956 Golden Age/Part 01 Timely Heroes/[Marvel] 1939-1956 Part 1.3 The War Rages On (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1939-1956 Golden Age/Part 02 Super Soldiers/[Marvel] 1939-1956 Part 2.1 Heroes Old and New (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1939-1956 Golden Age/Part 02 Super Soldiers/[Marvel] 1939-1956 Part 2.2 A War on All Fronts (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1939-1956 Golden Age/Part 02 Super Soldiers/[Marvel] 1939-1956 Part 2.3 Winners Unite! (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1939-1956 Golden Age/Part 03 Post-War Powers/[Marvel] 1939-1956 Part 3.1 The War at Home (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1939-1956 Golden Age/Part 03 Post-War Powers/[Marvel] 1939-1956 Part 3.2 Weird Tales (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1939-1956 Golden Age/Part 03 Post-War Powers/[Marvel] 1939-1956 Part 3.3 Age of Atlas (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1961-1970 Silver Age/Part 01 Origins/[Marvel] 1961-1970 Part 1.1 The Marvel Age Begins (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1961-1970 Silver Age/Part 01 Origins/[Marvel] 1961-1970 Part 1.2 Power and Responsibility (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1961-1970 Silver Age/Part 01 Origins/[Marvel] 1961-1970 Part 1.3 Strength in Numbers (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1961-1970 Silver Age/Part 01 Origins/[Marvel] 1961-1970 Part 1.4 Blast from the Past (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1961-1970 Silver Age/Part 02 City of Heroes/[Marvel] 1961-1970 Part 2.1 Darkest Hour (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1961-1970 Silver Age/Part 02 City of Heroes/[Marvel] 1961-1970 Part 2.2 Without Fear (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1961-1970 Silver Age/Part 02 City of Heroes/[Marvel] 1961-1970 Part 2.3 Return of Doom (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1961-1970 Silver Age/Part 02 City of Heroes/[Marvel] 1961-1970 Part 2.4 Avengers AssembleÔÇªAgain! (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1961-1970 Silver Age/Part 03 World of Evil/[Marvel] 1961-1970 Part 3.1 Trial of the Gods (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1961-1970 Silver Age/Part 03 World of Evil/[Marvel] 1961-1970 Part 3.2 Threats Unseen (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1961-1970 Silver Age/Part 03 World of Evil/[Marvel] 1961-1970 Part 3.3 From the Streets to the Stars (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1961-1970 Silver Age/Part 04 A Bigger Universe/[Marvel] 1961-1970 Part 4.1 The Edge of Annihilation (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1961-1970 Silver Age/Part 04 A Bigger Universe/[Marvel] 1961-1970 Part 4.2 New Beginnings (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1961-1970 Silver Age/Part 04 A Bigger Universe/[Marvel] 1961-1970 Part 4.3 Missing in Action (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1961-1970 Silver Age/Part 04 A Bigger Universe/[Marvel] 1961-1970 Part 4.4 Triple Threat (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1961-1970 Silver Age/Part 05 End of the Beginning/[Marvel] 1961-1970 Part 5.1 Evil Returns (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1961-1970 Silver Age/Part 05 End of the Beginning/[Marvel] 1961-1970 Part 5.2 Mutants, Monsters, and Marvels (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1961-1970 Silver Age/Part 05 End of the Beginning/[Marvel] 1961-1970 Part 5.3 End of an Era (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1970-1984 Bronze Age/Part 01 Darker Territory/[Marvel] 1970-1984 Part 1.1 Momentous Events (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1970-1984 Bronze Age/Part 01 Darker Territory/[Marvel] 1970-1984 Part 1.2 New Age Heroes (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1970-1984 Bronze Age/Part 01 Darker Territory/[Marvel] 1970-1984 Part 1.3 Monsters Unleashed (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1970-1984 Bronze Age/Part 02 Death and Rebirth/[Marvel] 1970-1984 Part 2.1 Broken Hearts (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1970-1984 Bronze Age/Part 02 Death and Rebirth/[Marvel] 1970-1984 Part 2.2 Avengers vs. Defenders (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1970-1984 Bronze Age/Part 02 Death and Rebirth/[Marvel] 1970-1984 Part 2.3 The Terror From Titan (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1970-1984 Bronze Age/Part 02 Death and Rebirth/[Marvel] 1970-1984 Part 2.4 Hellish Present, Darker Futures (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1970-1984 Bronze Age/Part 02 Death and Rebirth/[Marvel] 1970-1984 Part 2.5 Giant-Size Changes (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1970-1984 Bronze Age/Part 03 Ever Expanding/[Marvel] 1970-1984 Part 3.1 Step Into The Spotlight (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1970-1984 Bronze Age/Part 03 Ever Expanding/[Marvel] 1970-1984 Part 3.2 Ghosts and Devils (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1970-1984 Bronze Age/Part 03 Ever Expanding/[Marvel] 1970-1984 Part 3.3 Villains and Champions (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1984-1997 Modern Age Begins/Part 01 Secret Wars Aftermath/[Marvel] 1984-1997 Part 1.1 Heroes Return (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1984-1997 Modern Age Begins/Part 01 Secret Wars Aftermath/[Marvel] 1984-1997 Part 1.2 Black Suit Begins (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1984-1997 Modern Age Begins/Part 01 Secret Wars Aftermath/[Marvel] 1984-1997 Part 1.3 Ice and Fire (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1984-1997 Modern Age Begins/Part 01 Secret Wars Aftermath/[Marvel] 1984-1997 Part 1.4 Separation Anxiety (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1984-1997 Modern Age Begins/Part 02 Secret Wars II/[Marvel] 1984-1997 Part 2.1 Before the Beyonder (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1984-1997 Modern Age Begins/Part 02 Secret Wars II/[Marvel] 1984-1997 Part 2.2 Who is the Beyonder (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1984-1997 Modern Age Begins/Part 02 Secret Wars II/[Marvel] 1984-1997 Part 2.3 Beyond Repair (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1984-1997 Modern Age Begins/Part 03 Out of the Frying Pan/[Marvel] 1984-1997 Part 3.1 Beyond the Beyonder (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1984-1997 Modern Age Begins/Part 03 Out of the Frying Pan/[Marvel] 1984-1997 Part 3.2 Missing in Action (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1984-1997 Modern Age Begins/Part 03 Out of the Frying Pan/[Marvel] 1984-1997 Part 3.3 Mutant Massacre (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1984-1997 Modern Age Begins/Part 03 Out of the Frying Pan/[Marvel] 1984-1997 Part 3.4 Job Hopping (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1984-1997 Modern Age Begins/Part 03 Out of the Frying Pan/[Marvel] 1984-1997 Part 3.5 Fall of the Mutants (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1984-1997 Modern Age Begins/Part 04 And Into the Inferno/[Marvel] 1984-1997 Part 4.1 Rising Fire (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1984-1997 Modern Age Begins/Part 04 And Into the Inferno/[Marvel] 1984-1997 Part 4.2 Evolutionary War (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1984-1997 Modern Age Begins/Part 04 And Into the Inferno/[Marvel] 1984-1997 Part 4.3 Inferno (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1997-2004 Heroes Relaunched/Part 01 World Without Heroes/[Marvel] 1997-2004 Part 1.1 A Void to Fill (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1997-2004 Heroes Relaunched/Part 01 World Without Heroes/[Marvel] 1997-2004 Part 1.2 Spider-Man - Rebirth (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1997-2004 Heroes Relaunched/Part 02 Heroes Reborn/[Marvel] 1997-2004 Part 2.1 Industrial Revolution (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1997-2004 Heroes Relaunched/Part 02 Heroes Reborn/[Marvel] 1997-2004 Part 2.1 Pocket Universe (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1997-2004 Heroes Relaunched/Part 02 Heroes Reborn/[Marvel] 1997-2004 Part 2.3 Heroes Return (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/1997-2004 Heroes Relaunched/Part 02 Heroes Reborn/[Marvel] 1997-2004 Part 2.4 One-Shots Reborn (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 01 Power Void/[Marvel] 2004-2012 Part 1.1 Marvel Next (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 01 Power Void/[Marvel] 2004-2012 Part 1.2 A History of Violence (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 01 Power Void/[Marvel] 2004-2012 Part 1.3 Fractured Family (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 01 Power Void/[Marvel] 2004-2012 Part 1.4 Monster Smash (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 01 Power Void/[Marvel] 2004-2012 Part 1.5 X-Men ReLoad (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 01 Power Void/[Marvel] 2004-2012 Part 1.6 Enemy of the State (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 01 Power Void/[Marvel] 2004-2012 Part 1.7 Something Old, Something New (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 02 House of M/[Marvel] 2004-2012 Part 2.1 House of M Prelude (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 02 House of M/[Marvel] 2004-2012 Part 2.2 The World of M (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 02 House of M/[Marvel] 2004-2012 Part 2.3 The Fall of the House of M (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 03 Road to Civil War/[Marvel] 2004-2012 Part 3.1 Decimation (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 03 Road to Civil War/[Marvel] 2004-2012 Part 3.2 Trouble in the Streets (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 03 Road to Civil War/[Marvel] 2004-2012 Part 3.3 The Other (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 03 Road to Civil War/[Marvel] 2004-2012 Part 3.4 End of the Road (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 04 Civil War/[Marvel] 2004-2012 Part 4.1 Inciting Incident (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 04 Civil War/[Marvel] 2004-2012 Part 4.2 Unmasked (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 04 Civil War/[Marvel] 2004-2012 Part 4.3 All-Out War (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 04 Civil War/[Marvel] 2004-2012 Part 4.4 Casualties of War (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 04 Civil War/[Marvel] 2004-2012 Part 4.5 Epilogue (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 05 Annihilation/[Marvel] 2004-2012 Part 5.1 Cosmic Forces (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 05 Annihilation/[Marvel] 2004-2012 Part 5.2 Road to Annihilation (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 05 Annihilation/[Marvel] 2004-2012 Part 5.3 Annihilation (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 06 Reconstruction/[Marvel] 2004-2012 Part 6.1 America's Legacy (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 06 Reconstruction/[Marvel] 2004-2012 Part 6.2 Welcome to The Initiative (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 06 Reconstruction/[Marvel] 2004-2012 Part 6.3 Endangered Species (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 07 World War Hulk/[Marvel] 2004-2012 Part 7.1 Return of the World Breaker (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 07 World War Hulk/[Marvel] 2004-2012 Part 7.2 Weaponized Rage (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 07 World War Hulk/[Marvel] 2004-2012 Part 7.3 Aftersmash (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 08 Divided and Conquered/[Marvel] 2004-2012 Part 8.1 Annihilation Conquest (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 08 Divided and Conquered/[Marvel] 2004-2012 Part 8.2 One More Day, Brand New Day (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 08 Divided and Conquered/[Marvel] 2004-2012 Part 8.3 Messiah Complex (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 08 Divided and Conquered/[Marvel] 2004-2012 Part 8.4 Divided We Stand (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 09 Secret Invasion/[Marvel] 2004-2012 Part 9.1 The Infiltration (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 09 Secret Invasion/[Marvel] 2004-2012 Part 9.2 Landing Party (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 09 Secret Invasion/[Marvel] 2004-2012 Part 9.3 Battle of Manhattan (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 09 Secret Invasion/[Marvel] 2004-2012 Part 9.4 World War Skrull (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 09 Secret Invasion/[Marvel] 2004-2012 Part 9.5 Secret Invasion Aftermath (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 12 The Heroic Age/[Marvel] 2004-2012 Part 12.1 Welcome to the New Age (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 12 The Heroic Age/[Marvel] 2004-2012 Part 12.2 Chaos War (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 12 The Heroic Age/[Marvel] 2004-2012 Part 12.3 ShadowLand (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 12 The Heroic Age/[Marvel] 2004-2012 Part 12.4 Vampires and Demons (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 12 The Heroic Age/[Marvel] 2004-2012 Part 12.5 Age of X (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 12 The Heroic Age/[Marvel] 2004-2012 Part 12.6 Spies and Soldiers (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 13 Fear Itself/[Marvel] 2004-2012 Part 13.1 The Road to Fear Itself (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 13 Fear Itself/[Marvel] 2004-2012 Part 13.2 Asgard’s Sin (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 13 Fear Itself/[Marvel] 2004-2012 Part 13.3 The Worthy (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 13 Fear Itself/[Marvel] 2004-2012 Part 13.4 Midgard’s Last Stand (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 13 Fear Itself/[Marvel] 2004-2012 Part 13.5 Shattered Heroes (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 14 Spider-Island/[Marvel] 2004-2012 Part 14.1 The Road to Spider-Island (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 14 Spider-Island/[Marvel] 2004-2012 Part 14.2 Spider-Island (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 14 Spider-Island/[Marvel] 2004-2012 Part 14.3 Spider-Island Aftermath (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 14 Spider-Island/[Marvel] 2004-2012 Part 14.4 Minimum Carnage (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 14 Spider-Island/[Marvel] 2004-2012 Part 14.5 The War of Four Cities (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 15 Avengers vs. X-Men/[Marvel] 2004-2012 Part 15.1 Some Assembly Required (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 15 Avengers vs. X-Men/[Marvel] 2004-2012 Part 15.2 Schism and Regenesis (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 15 Avengers vs. X-Men/[Marvel] 2004-2012 Part 15.3 Flight of the Phoenix (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 15 Avengers vs. X-Men/[Marvel] 2004-2012 Part 15.4 The Phoenix Five (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 15 Avengers vs. X-Men/[Marvel] 2004-2012 Part 15.5 A New Hope (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2004-2012 Marvel Disassembled/Part 15 Avengers vs. X-Men/[Marvel] 2004-2012 Part 15.6 End Times (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 01 Now or Never/[Marvel] 2012-2015 Part 1.1 Unity - Division (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 01 Now or Never/[Marvel] 2012-2015 Part 1.2 FRACTURED FOUR (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 01 Now or Never/[Marvel] 2012-2015 Part 1.3 Force Majeure  (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 01 Now or Never/[Marvel] 2012-2015 Part 1.4 Superior Power (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 02 Age of Ultron/[Marvel] 2012-2015 Part 2.1 Age of Ultron (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 02 Age of Ultron/[Marvel] 2012-2015 Part 2.2 Aftermath of Ultron (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 02 Age of Ultron/[Marvel] 2012-2015 Part 2.3 The Enemy Within (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 03 Battle of the Atom/[Marvel] 2012-2015 Part 3.1 Battle of the Atom (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 03 Battle of the Atom/[Marvel] 2012-2015 Part 3.2 Aftermath of the Atom (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 04 Infinity/[Marvel] 2012-2015 Part 4.1 A War on Two Fronts (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 04 Infinity/[Marvel] 2012-2015 Part 4.2 Building Castles in the Sky (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 04 Infinity/[Marvel] 2012-2015 Part 4.3 Living Death (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 05 Inhumanity/[Marvel] 2012-2015 Part 5.1 Mist Marvels (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 05 Inhumanity/[Marvel] 2012-2015 Part 5.2 Rise of the Inhumans (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 06 All-New Marvel NOW!/[Marvel] 2012-2015 Part 6.1 Starting Point (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 06 All-New Marvel NOW!/[Marvel] 2012-2015 Part 6.2 Hero Or Menace  (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 06 All-New Marvel NOW!/[Marvel] 2012-2015 Part 6.3 Revolutionary War (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 06 All-New Marvel NOW!/[Marvel] 2012-2015 Part 6.4 World Of Mutants (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 06 All-New Marvel NOW!/[Marvel] 2012-2015 Part 6.5 World Of Avengers (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 06 All-New Marvel NOW!/[Marvel] 2012-2015 Part 6.6 The Trial Of Jean Grey (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 07 Original Sin/[Marvel] 2012-2015 Part 7.1 The Road to Original Sin (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 07 Original Sin/[Marvel] 2012-2015 Part 7.2 Sins Past (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 07 Original Sin/[Marvel] 2012-2015 Part 7.3 Fallen Heroes (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 08 AXIS/[Marvel] 2012-2015 Part 08.1 The Red Supremacy (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 08 AXIS/[Marvel] 2012-2015 Part 08.2 Inversion (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 08 AXIS/[Marvel] 2012-2015 Part 08.3 New World Disorder (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 09 Black Vortex/[Marvel] 2012-2015 Part 09.1 Before the Vortex (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 09 Black Vortex/[Marvel] 2012-2015 Part 09.2 The Black Vortex (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 09 Black Vortex/[Marvel] 2012-2015 Part 09.3 Guardians and Mutants (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 10 Spider-Verse/[Marvel] 2012-2015 Part 10.1 Edge of Spider-Verse (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 10 Spider-Verse/[Marvel] 2012-2015 Part 10.2 Enter the Spider-Verse (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 10 Spider-Verse/[Marvel] 2012-2015 Part 10.3 End of the Spider-Verse (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 10 Spider-Verse/[Marvel] 2012-2015 Part 10.4 Spider-Verse Aftermath (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 11 Time Runs Out/[Marvel] 2012-2015 Part 11.1 Ultimate Interlude (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 11 Time Runs Out/[Marvel] 2012-2015 Part 11.2 Time Runs Out (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 12 Secret Wars/[Marvel] 2012-2015 Part 12.1 Last Days (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 12 Secret Wars/[Marvel] 2012-2015 Part 12.2 Welcome to Battleworld (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 12 Secret Wars/[Marvel] 2012-2015 Part 12.3 Warzones Part 1 (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 12 Secret Wars/[Marvel] 2012-2015 Part 12.4 Warzones Part 2 (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 12 Secret Wars/[Marvel] 2012-2015 Part 12.5 World of War (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 12 Secret Wars/[Marvel] 2012-2015 Part 12.6 Warzones Part 3 (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 12 Secret Wars/[Marvel] 2012-2015 Part 12.7 Cracks in the Wall (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2012-2015 Marvel NOW!/Part 12 Secret Wars/[Marvel] 2012-2015 Part 12.8 Everything Dies (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 01 New Foundation/[Marvel] 2015-2018 Part 1.1 Welcome to Prime Earth (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 01 New Foundation/[Marvel] 2015-2018 Part 1.2 Remnants of Battleworld (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 01 New Foundation/[Marvel] 2015-2018 Part 1.3 Guardians and Asgardians (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 02 Street-Level and Beyond/[Marvel] 2015-2018 Part 2.1 New York Vigilantes (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 02 Street-Level and Beyond/[Marvel] 2015-2018 Part 2.2 Earth's Mightiest Deadpool (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 02 Street-Level and Beyond/[Marvel] 2015-2018 Part 2.3 Spider-Women (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 03 Inhumans, Mutants, and Magic/[Marvel] 2015-2018 Part 3.1 An Inhuman World (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 03 Inhumans, Mutants, and Magic/[Marvel] 2015-2018 Part 3.2 Apocalypse Wars (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 03 Inhumans, Mutants, and Magic/[Marvel] 2015-2018 Part 3.3 Last Days of Magic (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 03 Inhumans, Mutants, and Magic/[Marvel] 2015-2018 Part 3.4 Family Matters (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 04 Avengers Standoff/[Marvel] 2015-2018 Part 4.1 Meet the Avengers (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 04 Avengers Standoff/[Marvel] 2015-2018 Part 4.2 A.I.M. and S.H.I.E.L.D. (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 04 Avengers Standoff/[Marvel] 2015-2018 Part 4.3 Avengers Standoff! (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 04 Avengers Standoff/[Marvel] 2015-2018 Part 4.4 Beyond the Standoff (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 05 Road to War/[Marvel] 2015-2018 Part 5.1 Supreme (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 05 Road to War/[Marvel] 2015-2018 Part 5.2 Women of Marvel (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 05 Road to War/[Marvel] 2015-2018 Part 5.3 A Nation Under Our Feet (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 05 Road to War/[Marvel] 2015-2018 Part 5.4 Last Stop (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 06 Civil War II/[Marvel] 2015-2018 Part 6.1 Freedom or Security (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 06 Civil War II/[Marvel] 2015-2018 Part 6.2 Choosing Sides (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 06 Civil War II/[Marvel] 2015-2018 Part 6.3 The Accused and the Fallen (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 06 Civil War II/[Marvel] 2015-2018 Part 6.4 Future Fight (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 07 Civil War II Aftermath/[Marvel] 2015-2018 Part 7.1 Divided We Stand (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 07 Civil War II Aftermath/[Marvel] 2015-2018 Part 7.2 Sitting in a Tree (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 07 Civil War II Aftermath/[Marvel] 2015-2018 Part 7.3 America's Shadow (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 07 Civil War II Aftermath/[Marvel] 2015-2018 Part 7.4 Monsters Unleashed (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 07 Civil War II Aftermath/[Marvel] 2015-2018 Part 7.5 Endings (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 07 Civil War II Aftermath/[Marvel] 2015-2018 Part 7.6 Beginnings (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 07 Civil War II Aftermath/[Marvel] 2015-2018 Part 7.7 Grounded (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 08 Dead No More/[Marvel] 2015-2018 Part 8.1 The Clone Conspiracy (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 08 Dead No More/[Marvel] 2015-2018 Part 8.2 Venomverse (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 08 Dead No More/[Marvel] 2015-2018 Part 8.3 After Dead No More (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 08 Dead No More/[Marvel] 2015-2018 Part 8.4 Spider-Man and Deadpool (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 09 Inhumans vs. X-Men/[Marvel] 2015-2018 Part 9.1 Inhumans vs. X-Men Prelude (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 09 Inhumans vs. X-Men/[Marvel] 2015-2018 Part 9.2 Inhumans vs. X-Men (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 09 Inhumans vs. X-Men/[Marvel] 2015-2018 Part 9.3 ResurrXion (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 09 Inhumans vs. X-Men/[Marvel] 2015-2018 Part 9.4 'Til Death Do Us... (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 09 Inhumans vs. X-Men/[Marvel] 2015-2018 Part 9.5 Weapons of Mutant Destruction (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 10 Empire Building/[Marvel] 2015-2018 Part 10.1 Running With The Devil (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 10 Empire Building/[Marvel] 2015-2018 Part 10.2 Cosmic Players (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 10 Empire Building/[Marvel] 2015-2018 Part 10.3 Infamous  (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 10 Empire Building/[Marvel] 2015-2018 Part 10.4 Hail to the Captain (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 11 Secret Empire/[Marvel] 2015-2018 Part 11.1 Opening Salvo (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 11 Secret Empire/[Marvel] 2015-2018 Part 11.2 Brave New World  (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 11 Secret Empire/[Marvel] 2015-2018 Part 11.3 Crumbling Empire (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 11 Secret Empire/[Marvel] 2015-2018 Part 11.4 Generations (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 11 Secret Empire/[Marvel] 2015-2018 Part 11.5 Picking Up the Pieces (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 12 Legacy/[Marvel] 2015-2018 Part 12.1 Legacy One-Shots (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 12 Legacy/[Marvel] 2015-2018 Part 12.2 Defenders Legacy (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 12 Legacy/[Marvel] 2015-2018 Part 12.3 Spider-Man Legacy (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 12 Legacy/[Marvel] 2015-2018 Part 12.4 Damnation (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 12 Legacy/[Marvel] 2015-2018 Part 12.5 X-Men Legacy (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 12 Legacy/[Marvel] 2015-2018 Part 12.6 Cosmic Legacy (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2015-2018 ANAD Marvel/Part 12 Legacy/[Marvel] 2015-2018 Part 12.7 Avengers Legacy (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 01 Avengers, Defenders, and Guardians/[Marvel] 2018-2021 Part 1.1 Infinity Countdown (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 01 Avengers, Defenders, and Guardians/[Marvel] 2018-2021 Part 1.2 Avengers Reassemble (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 01 Avengers, Defenders, and Guardians/[Marvel] 2018-2021 Part 1.3 Defenders of the Streets  (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 01 Avengers, Defenders, and Guardians/[Marvel] 2018-2021 Part 1.4 The Best Defense (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 02 Infinity Wars/[Marvel] 2018-2021 Part 2.1 Requiem for a Soul (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 02 Infinity Wars/[Marvel] 2018-2021 Part 2.2 Infinity Warps (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 02 Infinity Wars/[Marvel] 2018-2021 Part 2.3 Infinity's End (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 02 Infinity Wars/[Marvel] 2018-2021 Part 2.4 Secret Warps (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 02 Infinity Wars/[Marvel] 2018-2021 Part 2.5 Beyond Infinity (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 03 Spider-Geddon/[Marvel] 2018-2021 Part 3.1 Back to Basics (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 03 Spider-Geddon/[Marvel] 2018-2021 Part 3.2 Web of Venom (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 03 Spider-Geddon/[Marvel] 2018-2021 Part 3.3 Edge of Spider-Geddon (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 03 Spider-Geddon/[Marvel] 2018-2021 Part 3.4 Spider-Geddon (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 03 Spider-Geddon/[Marvel] 2018-2021 Part 3.5 Spider-Geddon Aftermath (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 04 Anniversary/[Marvel] 2018-2021 Part 4.1 First Family (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 04 Anniversary/[Marvel] 2018-2021 Part 4.2 Timeless Tales (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 04 Anniversary/[Marvel] 2018-2021 Part 4.3 Past and Future (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 04 Anniversary/[Marvel] 2018-2021 Part 4.4 Hunted (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 04 Anniversary/[Marvel] 2018-2021 Part 4.5 Acts of Evil (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 05 X-Men Disassembled/[Marvel] 2018-2021 Part 5.1 Hunt for Wolverine (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 05 X-Men Disassembled/[Marvel] 2018-2021 Part 5.2 Extraordinary Weapons (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 05 X-Men Disassembled/[Marvel] 2018-2021 Part 5.3 Extermination (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 05 X-Men Disassembled/[Marvel] 2018-2021 Part 5.4 The Return (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 06 War of the Realms/[Marvel] 2018-2021 Part 6.1 The War of the Realms is Coming (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 06 War of the Realms/[Marvel] 2018-2021 Part 6.2 The World at War (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 06 War of the Realms/[Marvel] 2018-2021 Part 6.3 Reclaim the Realms (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 06 War of the Realms/[Marvel] 2018-2021 Part 6.4 Midgard's Last Stand (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 07 War of the Realms Aftermath/[Marvel] 2018-2021 Part 7.1 Journey's End (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 07 War of the Realms Aftermath/[Marvel] 2018-2021 Part 7.2 Fragments of War (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 07 War of the Realms Aftermath/[Marvel] 2018-2021 Part 7.3 Age of X-Man  (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 07 War of the Realms Aftermath/[Marvel] 2018-2021 Part 7.4 Heroes of Midgard (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 08 Absolute Carnage/[Marvel] 2018-2021 Part 8.1 Prelude to Carnage (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 08 Absolute Carnage/[Marvel] 2018-2021 Part 8.2 Absolute Carnage (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 08 Absolute Carnage/[Marvel] 2018-2021 Part 8.3 Absolute Aftermath (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 09 Dawn of X/[Marvel] 2018-2021 Part 9.1 Powerhouse (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 09 Dawn of X/[Marvel] 2018-2021 Part 9.2 Brave New World (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 09 Dawn of X/[Marvel] 2018-2021 Part 9.3 Breaking Dawn (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 10 Time and Space/[Marvel] 2018-2021 Part 10.1 Ghosts and Guardians (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 10 Time and Space/[Marvel] 2018-2021 Part 10.2 Annihilation Scourge (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 10 Time and Space/[Marvel] 2018-2021 Part 10.3 2099 (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 10 Time and Space/[Marvel] 2018-2021 Part 10.4 Point of Origin (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 11 Empyre/[Marvel] 2018-2021 Part 11.1 Incoming Threats (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 11 Empyre/[Marvel] 2018-2021 Part 11.2 Outlawed (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 11 Empyre/[Marvel] 2018-2021 Part 11.3 Iron Man 2020 (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 11 Empyre/[Marvel] 2018-2021 Part 11.4 Empyre (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 11 Empyre/[Marvel] 2018-2021 Part 11.5 Empyre Aftermath (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 12 X of Swords/[Marvel] 2018-2021 Part 12.1 X of Swords (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 13 Spiders, Spies, and Spells/[Marvel] 2018-2021 Part 13.1 Sins Rising and Last Remains (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 13 Spiders, Spies, and Spells/[Marvel] 2018-2021 Part 13.2 Red and Black (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 13 Spiders, Spies, and Spells/[Marvel] 2018-2021 Part 13.3 Cursed with Magic (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 13 Spiders, Spies, and Spells/[Marvel] 2018-2021 Part 13.4 The Darkhold (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 14 King in Black/[Marvel] 2018-2021 Part 14.1 King in Black Prelude (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 14 King in Black/[Marvel] 2018-2021 Part 14.2 King in Black (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 14 King in Black/[Marvel] 2018-2021 Part 14.3 King in Black Aftermath (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 15 Reign of X/[Marvel] 2018-2021 Part 15.1 After the Dawn Comes the Reign (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 15 Reign of X/[Marvel] 2018-2021 Part 15.2 Hellfire Gala (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 15 Reign of X/[Marvel] 2018-2021 Part 15.3 The Last Annihilation  (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 15 Reign of X/[Marvel] 2018-2021 Part 15.4 Trial by Fire (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 16 Fresh Restart/[Marvel] 2018-2021 Part 16.1 Reborn Again (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 16 Fresh Restart/[Marvel] 2018-2021 Part 16.2 Sinister War (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 16 Fresh Restart/[Marvel] 2018-2021 Part 16.3 Death of Doctor Strange (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 16 Fresh Restart/[Marvel] 2018-2021 Part 16.4 Devil's Reign (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2018-2021 Fresh Start/Part 16 Fresh Restart/[Marvel] 2018-2021 Part 16.5 Beyond (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 01 Once and Future/[Marvel] 2021-2024 Part 1.1 For All Time (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 01 Once and Future/[Marvel] 2021-2024 Part 1.2 Heroes of the People (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 01 Once and Future/[Marvel] 2021-2024 Part 1.3 Reckoning War (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 01 Once and Future/[Marvel] 2021-2024 Part 1.4 Banner of War (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 01 Once and Future/[Marvel] 2021-2024 Part 1.5 Fight for the Future (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 01 Once and Future/[Marvel] 2021-2024 Part 1.6 Across the Multiverse (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 02 Destiny of X/[Marvel] 2021-2023 Part 2.1 Life and Death (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 02 Destiny of X/[Marvel] 2021-2023 Part 2.2 Secret Pasts, Sinister Futures (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 02 Destiny of X/[Marvel] 2021-2023 Part 2.3 Hellfire and Brimstone (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 03 A.X.E. Judgement Day/[Marvel] 2021-2023 Part 3.1 Sleeping Giants (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 03 A.X.E. Judgement Day/[Marvel] 2021-2023 Part 3.2 Rush to Judgement (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 03 A.X.E. Judgement Day/[Marvel] 2021-2023 Part 3.3  New Gods (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 03 A.X.E. Judgement Day/[Marvel] 2021-2023 Part 3.4 Post-Judgement Brooding (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 04 Dark Web/[Marvel] 2021-2023 Part 4.1 End of the Spider-Verse (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 04 Dark Web/[Marvel] 2021-2023 Part 4.2 Spinning the Dark Web (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 04 Dark Web/[Marvel] 2021-2023 Part 4.3 Enter the Dark Web (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 04 Dark Web/[Marvel] 2021-2023 Part 4.4 Dark Web Aftermath (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 05 Monsters and Magic/[Marvel] 2021-2023 Part 5.1 Carnage Reigns (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 05 Monsters and Magic/[Marvel] 2021-2023 Part 5.2 Strange Spotlight (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 05 Monsters and Magic/[Marvel] 2021-2023 Part 5.3 Unforgiven (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 05 Monsters and Magic/[Marvel] 2021-2023 Part 5.4 Hand Over Fist (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 06 Avengers Assemble/[Marvel] 2021-2023 Part 6.1 Missing Moment (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 06 Avengers Assemble/[Marvel] 2021-2023 Part 6.2 Captain America Cold War (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 06 Avengers Assemble/[Marvel] 2021-2023 Part 6.3 Before the Assembly (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 06 Avengers Assemble/[Marvel] 2021-2023 Part 6.4 Avengers Assemble (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 07 Sins of Sinister/[Marvel] 2021-2023 Part 7.1 Dawn of Essex (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 07 Sins of Sinister/[Marvel] 2021-2023 Part 7.2 Sins of Sinister (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 07 Sins of Sinister/[Marvel] 2021-2023 Part 7.3 The Beast Agenda (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 08 Cosmic Chaos/[Marvel] 2021-2023 Part 8.1 Fractured Four (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 08 Cosmic Chaos/[Marvel] 2021-2023 Part 8.2 Grootfall (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 08 Cosmic Chaos/[Marvel] 2021-2023 Part 8.3 Might and Magic (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 08 Cosmic Chaos/[Marvel] 2021-2023 Part 8.4 Contest of Chaos (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 09 Fall of X/[Marvel] 2021-2023 Part 9.1 Before the Fall (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 09 Fall of X/[Marvel] 2021-2023 Part 9.2 Mutant Massacre (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 09 Fall of X/[Marvel] 2021-2023 Part 9.3 Scattered Mutants (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 09 Fall of X/[Marvel] 2021-2023 Part 9.4 Krakoa's Last Stand (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 10 Gang War/[Marvel] 2021-2024 Part 10.1 - Road to Gang War.cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 10 Gang War/[Marvel] 2021-2024 Part 10.2 - Gang War.cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 10 Gang War/[Marvel] 2021-2024 Part 10.3 - Symbiosis Necrosis.cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 10 Gang War/[Marvel] 2021-2024 Part 10.4 - Gang War Aftermath.cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 11 Blood Hunt/[Marvel] 2021-2024 Part 11.1 Road to Blood Hunt.cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 11 Blood Hunt/[Marvel] 2021-2024 Part 11.2 Blood Hunt.cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 11 Blood Hunt/[Marvel] 2021-2024 Part 11.3 Blood Hunt Aftermath.cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 12 Venom War/[Marvel] 2021-2024 Part 12.1 Road to Venom War.cbl
+Marvel/Master Reading Order/Marvel Guides/2021-2024 Timeless/Part 12 Venom War/[Marvel] 2021-2024 Part 12.2 Venom War.cbl
+Marvel/Master Reading Order/Marvel Guides/Alternate Universes/Ultimate Marvel (Earth-1610)/Part 1 Brave New World/[Marvel] 2000-2015 Part 1.1 Ultimate Origins (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/Alternate Universes/Ultimate Marvel (Earth-1610)/Part 1 Brave New World/[Marvel] 2000-2015 Part 1.2 It's All Connected (MG).cbl
+Marvel/Master Reading Order/Marvel Guides/Alternate Universes/Ultimate Marvel (Earth-1610)/Part 1 Brave New World/[Marvel] 2000-2015 Part 1.3 Gah Lak Tus (MG).cbl
+Marvel/Star Wars/[Marvel] Star Wars (WEB-CBRO).cbl
+Marvel/Teams/Avengers/[Marvel] Avengers no events (WEB-CBRO).cbl
+Marvel/Teams/Avengers/[Marvel] Avengers with events (WEB-CBRO).cbl
+Marvel/Teams/Fantastic Four/[Marvel] [1961-2026] Fantastic Four (CBRO).cbl
+Marvel/Teams/Fantastic Four/[Marvel] [Post-Civil War - Secret Wars] Fantastic Four (Comic Book Herald).cbl
+Marvel/Teams/Guardians of the Galaxy/[Marvel] Guardians of the Galaxy (1969) no events (WEB-CBRO).cbl
+Marvel/Teams/Guardians of the Galaxy/[Marvel] Guardians of the Galaxy (2008) no events (WEB-CBRO).cbl
+Marvel/Teams/Guardians of the Galaxy/[Marvel] Guardians of the Galaxy (2008) with events (WEB-CBRO).cbl
+Marvel/Teams/Thunderbolts/[Marvel] Thunderbolts no events (WEB-CBRO).cbl
+Marvel/Teams/Thunderbolts/[Marvel] Thunderbolts with events (WEB-CBRO).cbl
+Marvel/Teams/X-Men/Age of Krakoa/Age of Krakoa - Eras Lists/[X-Men Krakoa 0.1] House of X Powers of X.cbl
+Marvel/Teams/X-Men/Age of Krakoa/Age of Krakoa - Eras Lists/[X-Men Krakoa 1.1] Dawn of X.cbl
+Marvel/Teams/X-Men/Age of Krakoa/Age of Krakoa - Eras Lists/[X-Men Krakoa 1.2] X of Swords.cbl
+Marvel/Teams/X-Men/Age of Krakoa/Age of Krakoa - Eras Lists/[X-Men Krakoa 1.3] Reign of X.cbl
+Marvel/Teams/X-Men/Age of Krakoa/Age of Krakoa - Eras Lists/[X-Men Krakoa 1.4] Hellfire Gala 2021.cbl
+Marvel/Teams/X-Men/Age of Krakoa/Age of Krakoa - Eras Lists/[X-Men Krakoa 1.5] Reign of X Continued.cbl
+Marvel/Teams/X-Men/Age of Krakoa/Age of Krakoa - Eras Lists/[X-Men Krakoa 2.1] Destiny of X.cbl
+Marvel/Teams/X-Men/Age of Krakoa/Age of Krakoa - Eras Lists/[X-Men Krakoa 2.2] Judgement of X.cbl
+Marvel/Teams/X-Men/Age of Krakoa/Age of Krakoa - Eras Lists/[X-Men Krakoa 2.3] Destiny of X Continued.cbl
+Marvel/Teams/X-Men/Age of Krakoa/Age of Krakoa - Eras Lists/[X-Men Krakoa 2.4] Sins of Sinister.cbl
+Marvel/Teams/X-Men/Age of Krakoa/Age of Krakoa - Eras Lists/[X-Men Krakoa 2.5] Destiny of X Before the Fall.cbl
+Marvel/Teams/X-Men/Age of Krakoa/Age of Krakoa - Eras Lists/[X-Men Krakoa 3.1] Fall of X.cbl
+Marvel/Teams/X-Men/Age of Krakoa/Age of Krakoa - Eras Lists/[X-Men Krakoa 3.2] Fall of the House of X.cbl
+Marvel/Teams/X-Men/Age of Krakoa/Age of Krakoa - Single List/[X-Men Krakoa] [2019-Present] The Age of Krakoa.cbl
+Marvel/Teams/X-Men/CBH X-Men Reading Order/I. Phoenix_Dark Phoenix Saga.cbl
+Marvel/Teams/X-Men/CBH X-Men Reading Order/II. Days of Future Past _ Brood Saga.cbl
+Marvel/Teams/X-Men/CBH X-Men Reading Order/III. Enter the New Mutants & X-Factor.cbl
+Marvel/Teams/X-Men/CBH X-Men Reading Order/IV. Mutant Massacre.cbl
+Marvel/Teams/X-Men/CBH X-Men Reading Order/V. Fall of the Mutants.cbl
+Marvel/Teams/X-Men/CBH X-Men Reading Order/VI. Inferno.cbl
+Marvel/Teams/X-Men/CBH X-Men Reading Order/VII. Days of Future Present.cbl
+Marvel/Teams/X-Men/CBH X-Men Reading Order/VIII. Xtinction Agenda.cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[1963-1974] X-Men Era One The Silver Age (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[1974-1983] X-Men Era Two The Uncanny X-Men (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[1982-1986] X-Men Era Three The New Mutants  (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[1986-1989] X-Men Era Four X-Factory (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[1989-1991] X-Men Era Five X-Tinction (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[1990-1992] Interlude The Infinity Gauntlet (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[1991-1994] X-Men Era Six X-Men Reborn (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[1993-1995] X-Men Era Seven The Age of Apocalypse (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[1995-1997] X-Men Era Eight The Age of Onslaught (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[1996-1997] X-Men Era Nine Outlaw Mutants (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[1997-2000] X-Men Era Ten Aftermath (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[2000-2001] X-Men Era Eleven Revolution (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[2001-2004] X-Men Era Twelve New X-Men (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[2003-2006] X-Men Era Thirteen House of X, House of M (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[2006-2008] X-Men Era Fourteen Decimation (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[2008-2009] X-Men Era Fifteen Manifest Destiny (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[2009-2010] X-Men Era Sixteen Utopia-Siege (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[2010-2011] X-Men Era Seventeen The X-Men Go Through Hell (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[2012-2013] X-Men Era Eighteen Regenesis (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[2012-2013] X-Men Era Eighteen.One The Return of The Phoenix (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[2013-2014] X-Men Era Nineteen The Broken Universe (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[2014-2015] X-Men Era Twenty Who Wants To Live Forever (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[2014-2015] X-Men Era Twenty-One Time Runs Out (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[2015-2016] Interlude Secret Wars (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[2015-2017] X-Men Era Twenty-Two Terrigen Mists (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[2017-2018] X-Men Era Twenty-Three Blue & Gold (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[2018-2019] X-Men Era Twenty-Four Disassembled (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[2019-2021] X-Men Era Twenty-Five Dawn of X (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[2021-2022] X-Men Era Twenty-Six Reign of X (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[2022-2023] X-Men Era Twenty-Seven Destiny of X (UXRO).cbl
+Marvel/Teams/X-Men/Ultimate X-Men Reading Order/[2023-2024] X-Men Era Twenty-Eight Fall of X (UXRO).cbl
+Marvel/Teams/X-Men/WEB-CBRO/[Marvel] X-Men Krakoa Era no events (WEB-CBRO).cbl
+Marvel/Teams/X-Men/WEB-CBRO/[Marvel] X-Men Krakoa Era with events (WEB-CBRO).cbl
+Marvel/Teams/X-Men/WEB-CBRO/[Marvel] X-Men no events (WEB-CBRO).cbl
+Marvel/Teams/X-Men/WEB-CBRO/[Marvel] X-Men with events (WEB-CBRO).cbl
+Marvel/Teams/unsorted/Avengers/Avengers 001.cbl
+Marvel/Teams/unsorted/Avengers/Avengers 002.cbl
+Marvel/Teams/unsorted/Avengers/Avengers 003.cbl
+Marvel/Teams/unsorted/Avengers/Avengers 004.cbl
+Marvel/Teams/unsorted/Avengers/Avengers 005 - Secret Wars.cbl
+Marvel/Teams/unsorted/Avengers/Avengers 006 - Solo-Avengers West.cbl
+Marvel/Teams/unsorted/Avengers/Avengers 007.cbl
+Marvel/Teams/unsorted/Avengers/Avengers 008 - Force Works-Onslaught.cbl
+Marvel/Teams/unsorted/Avengers/Avengers 009 - Heroes Return.cbl
+Marvel/Teams/unsorted/Avengers/Avengers 010.cbl
+Marvel/Teams/unsorted/Avengers/Avengers 011 - Civil War - WW Hulk.cbl
+Marvel/Teams/unsorted/Avengers/Avengers 012.cbl
+Marvel/Teams/unsorted/Avengers/Avengers 013 - Heroic Age.cbl
+Marvel/Teams/unsorted/Avengers/Avengers 014 - AVX.cbl
+Marvel/Teams/unsorted/Avengers/Avengers 015 - Marvel NOW!.cbl
+Marvel/Teams/unsorted/Avengers/Avengers 016.cbl
+Marvel/Teams/unsorted/Avengers/Avengers 017.cbl
+Marvel/Teams/unsorted/Avengers/Avengers 018 - All-New.cbl
+Marvel/Teams/unsorted/Avengers/Avengers 019 - Legacy.cbl
+Marvel/Teams/unsorted/Cloak and Dagger/Cloak and Dagger.cbl
+Marvel/Teams/unsorted/Fantastic Four/Fantastic Four 001 - Early Years.cbl
+Marvel/Teams/unsorted/Fantastic Four/Fantastic Four 002 - Byrne Run.cbl
+Marvel/Teams/unsorted/Fantastic Four/Fantastic Four 003 - Post Byrne.cbl
+Marvel/Teams/unsorted/Fantastic Four/Fantastic Four 004 - Heroes Reborn.cbl
+Marvel/Teams/unsorted/Fantastic Four/Fantastic Four 005 - Marvel Knights.cbl
+Marvel/Teams/unsorted/Fantastic Four/Fantastic Four 006 - Hickman Run.cbl
+Marvel/Teams/unsorted/Fantastic Four/Fantastic Four 007 - Fresh Start.cbl
+Marvel/Teams/unsorted/Guardians of the Galaxy/Guardians of the Galaxy (2008) pt.1.cbl
+Marvel/Teams/unsorted/Guardians of the Galaxy/Guardians of the Galaxy (2008) pt.2.cbl
+Marvel/Teams/unsorted/Guardians of the Galaxy/Guardians of the Galaxy Classic.cbl
+Marvel/Teams/unsorted/Heroes for Hire/Heroes for Hire.cbl
+Marvel/Teams/unsorted/Heroes for Hire/Luke Cage.cbl
+Marvel/Teams/unsorted/Inhumans/Inhumans.cbl
+Marvel/Teams/unsorted/X-Men/Alpha Flight/Alpha Flight.cbl
+Marvel/Teams/unsorted/X-Men/X-Men - Part 001 (Original Team).cbl
+Marvel/Teams/unsorted/X-Men/X-Men - Part 002 (New X-Men).cbl
+Marvel/Teams/unsorted/X-Men/X-Men - Part 003.cbl
+Marvel/Teams/unsorted/X-Men/X-Men - Part 004 (Blue - Gold).cbl
+Marvel/Teams/unsorted/X-Men/X-Men - Part 005.cbl
+Marvel/Teams/unsorted/X-Men/X-Men - Part 006.cbl
+Marvel/Teams/unsorted/X-Men/X-Men - Part 007.cbl
+Marvel/Teams/unsorted/X-Men/X-Men - Part 008 (Morrison Era).cbl
+Marvel/Teams/unsorted/X-Men/X-Men - Part 009 (X-Men Reload).cbl
+Marvel/Teams/unsorted/X-Men/X-Men - Part 010 (Decimation).cbl
+Marvel/Teams/unsorted/X-Men/X-Men - Part 011 (Messiah Complex).cbl
+Marvel/Teams/unsorted/X-Men/X-Men - Part 012.cbl
+Marvel/Teams/unsorted/X-Men/X-Men - Part 013 - (Regenesis).cbl
+Marvel/Teams/unsorted/X-Men/X-Men - Part 014 - (Marvel NOW!).cbl
+Marvel/Teams/unsorted/X-Men/X-Men - Part 015.cbl
+Marvel/Teams/unsorted/X-Men/X-Men - Part 016 (All New, All Different).cbl
+Marvel/Teams/unsorted/X-Men/X-Men - Part 017 - (Resurrection).cbl
+Marvel/Teams/unsorted/X-Men/X-Men - Part 018.cbl
+Marvel/Teams/unsorted/X-Men/X-Men - Part 019 - (Hickman Era).cbl
+Other/Multiple Publishers/Hellraiser/[Multiple Publishers] Hellraiser (Non-Boom Series).cbl
+Other/Star Wars/CBRO/[Marvel] 001 The High Republic.cbl
+Other/Star Wars/CBRO/[Marvel] 002 The Clone Wars.cbl
+Other/Star Wars/CBRO/[Marvel] 003 Reign of the Empire.cbl
+Other/Star Wars/CBRO/[Marvel] 004-1 Age of Rebellion.cbl
+Other/Star Wars/CBRO/[Marvel] 004-2 Vader Down.cbl
+Other/Star Wars/CBRO/[Marvel] 004-3 Age of Rebellion.cbl
+Other/Star Wars/CBRO/[Marvel] 004-4 The Screaming Citadel.cbl
+Other/Star Wars/CBRO/[Marvel] 004-5 Age of Rebellion.cbl
+Other/Star Wars/CBRO/[Marvel] 004-6 War of the Bounty Hunters.cbl
+Other/Star Wars/CBRO/[Marvel] 004-7 Age of Rebellion.cbl
+Other/Star Wars/CBRO/[Marvel] 005 Rise of the First Order.cbl
+Other/Star Wars/Unknown/Events/[Marvel] (2021-12) Star Wars - Crimson Reign.cbl
+Other/Star Wars/Unknown/Events/[Marvel] (2022-11) Star Wars - Hidden Empire.cbl
+Other/Star Wars/Unknown/Events/[Marvel] (2023-08) Star Wars - Dark Droids.cbl
+Other/Star Wars/Unknown/Master Reading Order (Unsorted)/Canon (Marvel)/[Marvel] 001 - The High Republic.cbl
+Other/Star Wars/Unknown/Master Reading Order (Unsorted)/Canon (Marvel)/[Marvel] 002 - Fall of the Jedi.cbl
+Other/Star Wars/Unknown/Master Reading Order (Unsorted)/Canon (Marvel)/[Marvel] 003 - Reign of the Empire.cbl
+Other/Star Wars/Unknown/Master Reading Order (Unsorted)/Canon (Marvel)/[Marvel] 004 - Age of Rebellion.cbl
+Other/Star Wars/Unknown/Master Reading Order (Unsorted)/Canon (Marvel)/[Marvel] 005 - The New Republic.cbl
+Other/Star Wars/Unknown/Master Reading Order (Unsorted)/Canon (Marvel)/[Marvel] 006 - Rise of the First Order.cbl
+Other/Star Wars/Unknown/Master Reading Order (Unsorted)/Legacy (Dark Horse)/[Dark Horse Comics] 001 - Before the Republic.cbl
+Other/Star Wars/Unknown/Master Reading Order (Unsorted)/Legacy (Dark Horse)/[Dark Horse Comics] 002 - Old Republic Era.cbl
+Other/Star Wars/Unknown/Master Reading Order (Unsorted)/Legacy (Dark Horse)/[Dark Horse Comics] 003 - Rise of the Empire Era.cbl
+Other/Star Wars/Unknown/Master Reading Order (Unsorted)/Legacy (Dark Horse)/[Dark Horse Comics] 004 - Rebellion Era.cbl
+Other/Star Wars/Unknown/Master Reading Order (Unsorted)/Legacy (Dark Horse)/[Dark Horse Comics] 005 - New Republic Era.cbl
+Other/Star Wars/Unknown/Master Reading Order (Unsorted)/Legacy (Dark Horse)/[Dark Horse Comics] 006 - New Jedi Order Era.cbl
+Other/Star Wars/Unknown/Master Reading Order (Unsorted)/Legacy (Dark Horse)/[Dark Horse Comics] 007 - Legacy Era.cbl
+Other/Teenage Mutant Ninja Turtles/[Mirage-Archie] (1984-2010) Teenage Mutant Ninja Turtles (WEB-CBRO).cbl
+Other/The Authority/The Authority 00 - Prior Reading [1995-1999].cbl
+Other/The Authority/The Authority 01 - Full Reading Order[1999-2011].cbl
+Other/unsorted/A Nightmare on Elm Street.cbl
+Other/unsorted/Adolescent Radioactive Black Belt Hamsters (original run).cbl
+Other/unsorted/Alan Moore's Top 10.cbl
+Other/unsorted/America's Best Comics.cbl
+Other/unsorted/Astro City.cbl
+Other/unsorted/Chucky Master List.cbl
+Other/unsorted/Dark Horse/Bacchus.cbl
+Other/unsorted/Dark Horse/Concrete.cbl
+Other/unsorted/Deadworld.cbl
+Other/unsorted/Dynamite/Dynamite Army of Darkness (First Continuity).cbl
+Other/unsorted/Dynamite/Dynamite Army of Darkness Reboot.cbl
+Other/unsorted/Dynamite/Game of Thrones.cbl
+Other/unsorted/Dynamite/Vampirella.cbl
+Other/unsorted/Friday the 13th Master List.cbl
+Other/unsorted/Locke and Key.cbl
+Other/unsorted/Mirage TMNT Vol 1 (Laird Canon).cbl
+Other/unsorted/Space Goat Evil Dead 2.cbl
+Other/unsorted/Stephen King's The Dark Tower.cbl
+Rebellion/Dark Judges Story Order/Dark Judges Story Order.cbl
+Valiant/Events/[Valiant] [1992-1994] Unity (LoCG).cbl
+Valiant/Events/[Valiant] [1993-1994] Deathmate (LoCG).cbl
+Valiant/Events/[Valiant] [1994-1995] The Chaos Effect (LoCG).cbl
+Valiant/Events/[Valiant] [2013-2014] To Kill A King {CBRO).cbl
+Valiant/Events/[Valiant] [2013] Harbinger Wars (CBRO).cbl
+Valiant/Events/[Valiant] [2013] Harbinger Wars (LoCG).cbl
+Valiant/Events/[Valiant] [2014] Armor Hunters (CBRO).cbl
+Valiant/Events/[Valiant] [2014] Armor Hunters (LoCG).cbl
+Valiant/Events/[Valiant] [2015] Book of Death (LoCG).cbl
+Valiant/Events/[Valiant] [2016] 4001 A.D. (CBRO).cbl
+Valiant/Events/[Valiant] [2016] 4001 A.D. (LoCG).cbl
+Valiant/Events/[Valiant] [2017-2018] Harbinger Wars 2 (LoCG).cbl
+Valiant/Master Reading Order/[Valiant] [2012-2019] Valiant Universe (CBRO).cbl
+Vertigo/Characters/American Vampire/[Vertigo][2010-2021] American Vampire (HTLC).cbl
+Vertigo/Events/Fables/[Vertigo] [2009] The Great Fables Crossover (LoCG).cbl
+Vertigo/Events/The Sandman Universe/[Vertigo] [1993-1994] The Children's Crusade (LoCG).cbl
+Vertigo/Master Reading Order/Fables/[Vertigo] [2002-Present] Fables (CBRO).cbl
+Zenescope/Grimm Fairy Tales Main/Grimm Fairy Tales Act 1.cbl
+Zenescope/Grimm Fairy Tales Main/Grimm Fairy Tales Act 2.cbl
+Zenescope/Grimm Fairy Tales Spin-Offs/GFT Others Act 1.cbl
+Zenescope/Grimm Fairy Tales Spin-Offs/GFT Others Act 2.cbl
+Zenescope/Wonderland/Wonderland Act 1.cbl
+Zenescope/Wonderland/Wonderland Act 2.cbl

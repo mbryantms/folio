@@ -27,6 +27,7 @@ pub mod cbl_derive;
 pub mod cbl_link_nav;
 pub mod cbl_links;
 pub mod cbl_lists;
+pub mod cbl_orders;
 pub mod characters;
 pub mod collection_sequence;
 pub mod collections;

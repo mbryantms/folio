@@ -896,6 +896,7 @@ Default admin (first registered user becomes admin):
 - Archive writes and the "files stay clean" invariant (every writer, its `allow_archive_writeback` gate, its test): [docs/dev/archive-writes.md](docs/dev/archive-writes.md)
 - Matching accuracy (ComicTagger-derived heuristics, threshold tuning, fixture-adding playbook): [docs/dev/matching-accuracy.md](docs/dev/matching-accuracy.md)
 - M0 schema restructure (external_ids + junctions + field_provenance + issue_cover): [docs/dev/schema-restructure.md](docs/dev/schema-restructure.md)
+- Catalog sources (CBRO, CMRO, Marvel Guides, UXRO…: where each lives, `cbl::sources` profiles, whole-order import): [docs/dev/catalog-sources.md](docs/dev/catalog-sources.md)
 - Dependency policy (what auto-merges, what waits, what alerts; Renovate rules, daily sweep, SBOM): [docs/dev/dependency-management.md](docs/dev/dependency-management.md)
 - Deploying a release to the compose host (gated `deploy` job records a GitHub Deployment; the host's `folio-deploy.timer` pulls it): [docs/dev/deploy.md](docs/dev/deploy.md)
 - Active plans live under `~/.claude/plans/`; check the auto-memory index for

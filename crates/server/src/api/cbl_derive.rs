@@ -213,7 +213,7 @@ fn book_keys(parsed: &parsers::cbl::ParsedCbl) -> Vec<BookKey> {
         .collect()
 }
 
-fn catalog_failure(e: &CatalogError) -> Response {
+pub(super) fn catalog_failure(e: &CatalogError) -> Response {
     match e {
         CatalogError::RateLimited => error(
             StatusCode::TOO_MANY_REQUESTS,
@@ -939,7 +939,7 @@ async fn link_event(
 }
 
 /// Chain `from` → `to` (`continues`); `Ok(false)` = already chained.
-async fn link_part(
+pub(super) async fn link_part(
     app: &AppState,
     from: &cbl_list::Model,
     to: &cbl_list::Model,

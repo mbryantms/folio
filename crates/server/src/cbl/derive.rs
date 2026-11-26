@@ -353,21 +353,10 @@ pub fn file_stem(path: &str) -> &str {
     name.strip_suffix(".cbl").unwrap_or(name)
 }
 
-/// "… Part #07 (WEB-CBRO)" → ("…", 7.0); "Part 2.1" → 2.1. The prefix is
-/// everything before "Part", trimmed, so parts of one series compare equal.
+/// "… Part #07 (WEB-CBRO)" → ("…", 7.0); "Part 2.1" → 2.1. One
+/// implementation for every catalog source: [`super::sources::part_of`].
 pub fn part_ordinal(stem: &str) -> Option<(String, f64)> {
-    let lower = stem.to_lowercase();
-    let at = lower.rfind("part")?;
-    let rest = stem[at + 4..]
-        .trim_start()
-        .trim_start_matches('#')
-        .trim_start();
-    let num: String = rest
-        .chars()
-        .take_while(|c| c.is_ascii_digit() || *c == '.')
-        .collect();
-    let n: f64 = num.trim_end_matches('.').parse().ok()?;
-    Some((stem[..at].trim().to_owned(), n))
+    super::sources::part_of(stem)
 }
 
 fn tokens(s: &str) -> Vec<String> {
