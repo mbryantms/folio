@@ -79,6 +79,11 @@ pub struct ImportOrderResp {
     pub failed: Vec<ApplyFailure>,
     /// The caller's lists for the order's parts, in reading order.
     pub list_ids: Vec<String>,
+    /// The reading-lists group (named after the order) the parts were
+    /// filed into, when this call imported or chained any. A part the
+    /// caller already keeps in a group of their own stays there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<String>,
 }
 
 fn internal() -> Response {
@@ -263,6 +268,35 @@ pub async fn import_order(
         }
     }
 
+    // One group for the order, so 25 parts don't flood the lists page.
+    // Only when this call imported or chained something: a reader who
+    // took the group apart keeps their arrangement.
+    let mut group_id = None;
+    if imported > 0 || linked > 0 {
+        let mut views = Vec::with_capacity(parts.len());
+        for path in &parts {
+            let Some(list) = have.get(path) else { continue };
+            match super::saved_views::ensure_cbl_view(&app.db, user.id, list).await {
+                Ok((view, _)) => views.push(view),
+                Err(e) => {
+                    tracing::warn!(error = %e, "cbl orders: couldn't find the part's view");
+                }
+            }
+        }
+        match super::view_groups::file_into_group(
+            &app,
+            user.id,
+            super::view_groups::SCOPE_CBL,
+            &order_name,
+            &views,
+        )
+        .await
+        {
+            Ok(g) => group_id = g.map(|g| g.to_string()),
+            Err(e) => tracing::warn!(error = %e, "cbl orders: couldn't group the parts"),
+        }
+    }
+
     let remaining = parts.iter().filter(|p| !have.contains_key(*p)).count();
     Json(ImportOrderResp {
         order_name,
@@ -275,6 +309,7 @@ pub async fn import_order(
             .iter()
             .filter_map(|p| have.get(p).map(|l| l.id.to_string()))
             .collect(),
+        group_id,
     })
     .into_response()
 }

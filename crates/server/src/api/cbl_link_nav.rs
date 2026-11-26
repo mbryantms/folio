@@ -36,6 +36,11 @@ use crate::state::AppState;
 pub struct NextUpDetour {
     pub link_id: String,
     pub list_id: String,
+    /// The list the event is linked into, for the reader's own "skip
+    /// this event" (`PUT /me/cbl-lists/{parent}/links/{link_id}/skip`).
+    /// `None` for a collection's list entry, which can't be skipped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_list_id: Option<String>,
     pub name: String,
     /// The reader's view of the event list (`None` = they have none yet;
     /// `POST /me/cbl-lists/{list_id}/view` makes one).
@@ -288,7 +293,11 @@ pub(crate) async fn detours_between(
         .collect();
     links.retain(|l| !skipped.contains(&l.id));
     let pairs: Vec<(Uuid, Uuid)> = links.iter().map(|l| (l.id, l.child_list_id)).collect();
-    detours_for(app, user_id, acl, &pairs).await
+    let mut due = detours_for(app, user_id, acl, &pairs).await?;
+    for d in &mut due {
+        d.parent_list_id = Some(list_id.to_string());
+    }
+    Ok(due)
 }
 
 /// Events due before a list's next issue, for surfaces that show one
@@ -302,6 +311,52 @@ pub(crate) async fn pending_events(
     acl: &VisibleLibraries,
     ranges: &[(Uuid, i32, i32)],
 ) -> Result<HashMap<Uuid, Vec<(String, String)>>, sea_orm::DbErr> {
+    Ok(pending_detours(app, user_id, acl, ranges)
+        .await?
+        .into_iter()
+        .map(|(list, due)| (list, due.into_iter().map(|d| (d.link_id, d.name)).collect()))
+        .collect())
+}
+
+/// The issue to read before a list's own next pick, for surfaces that
+/// can only point at one issue (the OPDS up-next link): the first unread
+/// issue of the first event due before `pick_position` (1-based, as
+/// `pick_next_in_cbl` returns it). `None` when no event is due.
+pub(crate) async fn due_event_issue(
+    app: &AppState,
+    user_id: Uuid,
+    acl: &VisibleLibraries,
+    list_id: Uuid,
+    pick_position: i32,
+) -> Result<Option<String>, sea_orm::DbErr> {
+    let pick_pos = pick_position - 1;
+    // The issue the reader came from: the last matched entry before the
+    // pick (same rule as the On Deck card).
+    let from: Option<i32> = entity::cbl_entry::Entity::find()
+        .select_only()
+        .column_as(entity::cbl_entry::Column::Position.max(), "from")
+        .filter(entity::cbl_entry::Column::CblListId.eq(list_id))
+        .filter(entity::cbl_entry::Column::MatchedIssueId.is_not_null())
+        .filter(entity::cbl_entry::Column::Position.lt(pick_pos))
+        .into_tuple()
+        .one(&app.db)
+        .await?
+        .flatten();
+    let ranges = [(list_id, from.unwrap_or(0), pick_pos)];
+    Ok(pending_detours(app, user_id, acl, &ranges)
+        .await?
+        .remove(&list_id)
+        .and_then(|due| due.into_iter().next())
+        .map(|d| d.first_unread.issue_id))
+}
+
+/// [`pending_events`] with each event's card (progress, where to start).
+async fn pending_detours(
+    app: &AppState,
+    user_id: Uuid,
+    acl: &VisibleLibraries,
+    ranges: &[(Uuid, i32, i32)],
+) -> Result<HashMap<Uuid, Vec<NextUpDetour>>, sea_orm::DbErr> {
     if ranges.is_empty() {
         return Ok(HashMap::new());
     }
@@ -345,10 +400,12 @@ pub(crate) async fn pending_events(
         .iter()
         .map(|l| (l.id.to_string(), l.parent_list_id))
         .collect();
-    let mut out: HashMap<Uuid, Vec<(String, String)>> = HashMap::new();
+    let mut out: HashMap<Uuid, Vec<NextUpDetour>> = HashMap::new();
     for d in due {
         if let Some(parent) = parent_of.get(&d.link_id) {
-            out.entry(*parent).or_default().push((d.link_id, d.name));
+            let mut d = d;
+            d.parent_list_id = Some(parent.to_string());
+            out.entry(*parent).or_default().push(d);
         }
     }
     Ok(out)
@@ -428,6 +485,7 @@ pub(crate) async fn detours_for(
             Some(NextUpDetour {
                 link_id: id.to_string(),
                 list_id: c.list_id.clone(),
+                parent_list_id: None,
                 name: c.name.clone(),
                 view_id: c.view_id.clone(),
                 total: c.total,

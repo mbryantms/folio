@@ -1224,19 +1224,27 @@ async fn cbl_list_acq(
     let up_next_full = crate::api::next_up::pick_next_in_cbl(&app, user.id, id, &visible, None)
         .await
         .ok()
-        .flatten()
-        .map(|(iss, _slug, _name, _pos)| iss);
+        .flatten();
+    // An event due before the list's next issue is read first (see the
+    // v1 feed).
+    let due_event = match up_next_full.as_ref() {
+        Some((_, _, _, pos)) => {
+            crate::api::cbl_link_nav::due_event_issue(&app, user.id, &visible, id, *pos)
+                .await
+                .ok()
+                .flatten()
+        }
+        None => None,
+    };
+    let up_next_id = due_event.or_else(|| up_next_full.as_ref().map(|(i, ..)| i.id.clone()));
     if !list.preserve_canonical_order {
-        opds::reorder_issues_up_next_first(
-            &mut issues,
-            up_next_full.as_ref().map(|i| i.id.as_str()),
-        );
+        opds::reorder_issues_up_next_first(&mut issues, up_next_id.as_deref());
     }
     let publications = build_publications_sequential(
         &app,
         &user,
         &issues,
-        up_next_full.as_ref().map(|i| i.id.as_str()),
+        up_next_id.as_deref(),
         Some(&entry_positions),
     )
     .await;
@@ -1246,8 +1254,8 @@ async fn cbl_list_acq(
         "href": format!("/opds/v2/lists/{id}"),
         "type": NAV_CT,
     })];
-    if let Some(up_next) = up_next_full.as_ref() {
-        links.push(up_next_link_json(&up_next.id));
+    if let Some(up_next) = up_next_id.as_deref() {
+        links.push(up_next_link_json(up_next));
     }
     // Linked reading lists (PR 6): `related` links to the events (in
     // reading order), the next part and the lists this one is part of,

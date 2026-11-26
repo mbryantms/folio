@@ -54,9 +54,16 @@ pub fn routes() -> OpenApiRouter<AppState> {
 
 #[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct CreateBreakReq {
-    /// The entry the new chapter starts at.
+    /// The entry the new chapter starts at. Give this or `position`.
+    #[serde(default)]
     #[garde(skip)]
-    pub entry_id: Uuid,
+    pub entry_id: Option<Uuid>,
+    /// The 0-based position the chapter starts at, for naming a chapter
+    /// that already exists (the list's first, or the one after an event)
+    /// without knowing its first entry's id.
+    #[serde(default)]
+    #[garde(range(min = 0))]
+    pub position: Option<i32>,
     /// The chapter's name; omitted or blank = named after its first issue.
     #[serde(default)]
     #[garde(custom(label_fits))]
@@ -132,11 +139,28 @@ pub async fn create_break(
     if let Err(r) = ensure_can_manage(&list, &user).await {
         return r;
     }
-    let (key, position) = match anchor_of_entry(&app, list.id, req.entry_id).await {
+    let entry_id = match (req.entry_id, req.position) {
+        (Some(id), _) => id,
+        (None, Some(position)) => {
+            let found = entity::cbl_entry::Entity::find()
+                .filter(entity::cbl_entry::Column::CblListId.eq(list.id))
+                .filter(entity::cbl_entry::Column::Position.eq(position))
+                .one(&app.db)
+                .await;
+            match found {
+                Ok(Some(e)) => e.id,
+                Ok(None) => return field_error("position", "no entry at that position"),
+                Err(_) => return internal(),
+            }
+        }
+        (None, None) => return field_error("entry_id", "say which issue the chapter starts at"),
+    };
+    let (key, position) = match anchor_of_entry(&app, list.id, entry_id).await {
         Ok(Some(v)) => v,
         Ok(None) => return field_error("entry_id", "entry not in this list"),
         Err(_) => return internal(),
     };
+    let label = clean(req.label);
     let checks = async {
         let earliest = entity::cbl_entry::Entity::find()
             .filter(entity::cbl_entry::Column::CblListId.eq(list.id))
@@ -160,7 +184,9 @@ pub async fn create_break(
         Ok(v) => v,
         Err(_) => return internal(),
     };
-    if is_first {
+    // The first chapter already starts at the first issue: a break there
+    // only carries its name.
+    if is_first && label.is_none() {
         return field_error("entry_id", "the list's first chapter already starts there");
     }
     if taken {
@@ -176,7 +202,6 @@ pub async fn create_break(
             &format!("a list can hold at most {MAX_BREAKS_PER_LIST} chapter breaks"),
         );
     }
-    let label = clean(req.label);
     let now = Utc::now().fixed_offset();
     let row = reading_list_break::ActiveModel {
         id: Set(Uuid::now_v7()),

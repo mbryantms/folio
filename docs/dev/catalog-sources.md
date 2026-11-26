@@ -62,6 +62,11 @@ order, and chains every adjacent pair (`continues`, `auto_chain`).
   against the per-user list cap; hitting it stops the run and says so.
 - A part that fails to import leaves its neighbours unchained until a
   later run imports it.
+- A call that imported or chained anything files the order's parts into
+  one reading-lists group named after the order
+  (`view_groups::file_into_group`, returned as `group_id`). A part the
+  reader already keeps in a group stays there; a run that had nothing to
+  do leaves the reader's arrangement alone.
 
 ## The audit
 

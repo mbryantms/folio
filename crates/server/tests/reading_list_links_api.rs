@@ -1031,6 +1031,98 @@ async fn chapter_breaks_split_chapters_with_and_without_events() {
 }
 
 #[tokio::test]
+async fn any_chapter_can_be_named_by_its_start_position() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "name-chapters@example.com").await;
+    let (_, issues) = seed_cbl_with_matched_entries(&app, user.user_id, 12).await;
+    let master = make_list(&app, Some(user.user_id), "Master", &issues[..8]).await;
+    let event = make_list(&app, Some(user.user_id), "House of M", &issues[8..]).await;
+    let at3 = entry_at(&app, master, 3).await;
+    let (status, _) = send(
+        &app,
+        Method::POST,
+        &links_uri(master),
+        &user,
+        Some(serde_json::json!({"child_list_id": event, "kind": "event", "after_entry_id": at3})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    // The first chapter and the one the event starts, by position.
+    let (status, body) = send(
+        &app,
+        Method::POST,
+        &breaks_uri(master),
+        &user,
+        Some(serde_json::json!({ "position": 0, "label": "Prelude" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body:#?}");
+    let (status, body) = send(
+        &app,
+        Method::POST,
+        &breaks_uri(master),
+        &user,
+        Some(serde_json::json!({ "position": 4, "label": "Decimation" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body:#?}");
+    assert_eq!(
+        chapter_shape(&body),
+        vec![
+            (0, 3, "Prelude".into(), true),
+            (4, 7, "Decimation".into(), true),
+        ]
+    );
+    assert_eq!(
+        body["chapters"][0]["event_link_ids"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1,
+        "naming a chapter does not move its event"
+    );
+
+    // Removing the name leaves the chapter where it was.
+    let first = body["chapters"][0]["break_id"].as_str().unwrap().to_owned();
+    let (status, _) = send(
+        &app,
+        Method::DELETE,
+        &format!("{}/{first}", breaks_uri(master)),
+        &user,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, body) = get_json(&app, &links_uri(master), &user).await;
+    assert_eq!(
+        chapter_shape(&body),
+        vec![
+            (0, 3, "Up to House of M".into(), false),
+            (4, 7, "Decimation".into(), true),
+        ]
+    );
+
+    // Neither an entry nor a position, a position past the end, and a
+    // nameless break at the first issue are refused; the text stands on
+    // its own, with the field in `details`.
+    for (req, field) in [
+        (serde_json::json!({ "label": "x" }), "entry_id"),
+        (
+            serde_json::json!({ "position": 99, "label": "x" }),
+            "position",
+        ),
+        (serde_json::json!({ "position": 0 }), "entry_id"),
+    ] {
+        let (status, body) = send(&app, Method::POST, &breaks_uri(master), &user, Some(req)).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body:#?}");
+        assert_eq!(body["error"]["details"][0]["field"], field);
+        let message = body["error"]["message"].as_str().unwrap();
+        assert!(!message.starts_with(field), "{message}");
+    }
+}
+
+#[tokio::test]
 async fn admin_breaks_on_a_shared_list_are_audited() {
     let app = TestApp::spawn().await;
     let admin = register(&app, "breaks-share-admin@example.com").await;
@@ -1278,6 +1370,56 @@ async fn derive_chains_parts_and_links_imported_events() {
     .await;
     assert_eq!(status, StatusCode::OK, "{resp}");
     assert_eq!(resp["linked"], 0);
+
+    // A derived link that lost its place (a refresh could no longer find
+    // its issue) is offered again and put back, as the same link.
+    use entity::reading_list_link::AnchorStatus;
+    let mut am: entity::reading_list_link::ActiveModel = ev.clone().into();
+    am.anchor_status = Set(AnchorStatus::Lost);
+    am.anchor_position_hint = Set(None);
+    am.update(&db).await.unwrap();
+    let relink = serde_json::json!({
+        "events": [{"catalog_path": EVENT, "after_entry_id": after}],
+        "parts": [],
+    });
+    let (status, resp) = send(
+        &app,
+        Method::POST,
+        &format!("{}/apply", derive_uri(part2)),
+        &user,
+        Some(relink.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(resp["linked"], 1, "{resp}");
+    let again = entity::reading_list_link::Entity::find_by_id(ev.id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(again.anchor_status, AnchorStatus::Placed);
+    assert_eq!(again.anchor_position_hint, Some(0));
+
+    // One a person placed is theirs to repair: left lost.
+    let mut am: entity::reading_list_link::ActiveModel = again.into();
+    am.anchor_status = Set(AnchorStatus::Lost);
+    am.placement = Set(LinkPlacement::Manual);
+    am.update(&db).await.unwrap();
+    let (_, resp) = send(
+        &app,
+        Method::POST,
+        &format!("{}/apply", derive_uri(part2)),
+        &user,
+        Some(relink),
+    )
+    .await;
+    assert_eq!(resp["linked"], 0, "{resp}");
+    let kept = entity::reading_list_link::Entity::find_by_id(ev.id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.anchor_status, AnchorStatus::Lost);
 }
 
 #[tokio::test]
@@ -1758,6 +1900,50 @@ async fn opds_feeds_carry_linked_lists_and_collection_list_entries() {
     assert!(entry_kinds.contains(&serde_json::json!("list")), "{body}");
 }
 
+/// The issue the v2 list feed's up-next link points at.
+async fn opds_up_next(app: &TestApp, list: Uuid, auth: &Authed) -> String {
+    let (s, body) = get_json(app, &format!("/opds/v2/lists/{list}"), auth).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    body["links"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|l| l["href"].as_str())
+        .find_map(|h| h.strip_prefix("/opds/v1/issues/"))
+        .unwrap_or_else(|| panic!("no up-next link: {body}"))
+        .to_owned()
+}
+
+#[tokio::test]
+async fn opds_up_next_reads_a_due_event_first() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "opds-due@example.com").await;
+    let (master, issues) = seed_cbl_with_matched_entries(&app, user.user_id, 6).await;
+    // The event (two issues that are also the master's last two) is read
+    // after the master's third issue.
+    let event = make_list(&app, Some(user.user_id), "Age of Ultron", &issues[4..6]).await;
+    link(&app, &user, master, event, Some(2)).await;
+
+    // Nothing read: the list's own first issue.
+    assert_eq!(opds_up_next(&app, master, &user).await, issues[0]);
+
+    // Past the anchor: the event's first unread issue, in both feeds.
+    for (i, issue) in issues[..3].iter().enumerate() {
+        finish(&app, user.user_id, issue, 100 - i as i64).await;
+    }
+    assert_eq!(opds_up_next(&app, master, &user).await, issues[4]);
+    let (_, xml) = get_text(&app, &format!("/opds/v1/lists/{master}"), &user).await;
+    assert!(
+        xml.contains(&format!("href=\"/opds/v1/issues/{}\"", issues[4])),
+        "{xml}"
+    );
+
+    // The event finished: back to the master's own next issue.
+    finish(&app, user.user_id, &issues[4], 10).await;
+    finish(&app, user.user_id, &issues[5], 9).await;
+    assert_eq!(opds_up_next(&app, master, &user).await, issues[3]);
+}
+
 fn cbl_xml(name: &str, series: &str, count: usize) -> String {
     let books: String = (1..=count)
         .map(|n| format!(r#"<Book Series="{series}" Number="{n}" Volume="2012" Year="2013"/>"#))
@@ -2165,7 +2351,28 @@ async fn import_order_chains_the_parts_of_a_catalog_order() {
     let (_, links) = get_json(&app, &links_uri(ids[1]), &user).await;
     assert_eq!(links["continues"]["child_list_id"], ids[2].to_string());
 
-    // Again: nothing left to do.
+    // The parts are filed into one reading-lists group named after the
+    // order, in reading order.
+    let group = resp["group_id"].as_str().expect("grouped").to_owned();
+    let (_, groups) = get_json(&app, "/api/me/view-groups?scope=cbl", &user).await;
+    let g = &groups["groups"][0];
+    assert_eq!(g["id"], group.as_str(), "{groups}");
+    assert_eq!(g["name"], "[Marvel] CMRO Core Reading Order");
+    let mut views = Vec::new();
+    for id in &ids {
+        views.push(view_of(&app, *id, &user).await);
+    }
+    assert_eq!(
+        g["view_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_owned())
+            .collect::<Vec<_>>(),
+        views
+    );
+
+    // Again: nothing left to do, and the group is left as it is.
     let (_, resp) = send(
         &app,
         Method::POST,
@@ -2176,6 +2383,7 @@ async fn import_order_chains_the_parts_of_a_catalog_order() {
     .await;
     assert_eq!(resp["linked"], 0, "{resp}");
     assert_eq!(resp["remaining"], 0);
+    assert!(resp["group_id"].is_null(), "{resp}");
 
     // A standalone list is not part of an order.
     let (status, resp) = send(
