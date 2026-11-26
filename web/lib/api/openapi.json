@@ -2260,7 +2260,7 @@
         ],
         "responses": {
           "204": {
-            "description": "the reading list is now shared with every user"
+            "description": "the reading list is now shared with every user, along with the lists linked into it (its events and next parts) that the admin owned"
           },
           "403": {
             "description": "admin only; the view must be the caller's own reading list"
@@ -41737,7 +41737,8 @@
               "integer",
               "null"
             ],
-            "format": "int32"
+            "format": "int32",
+            "description": "0 or more: the event's order among the events after one issue."
           }
         }
       },

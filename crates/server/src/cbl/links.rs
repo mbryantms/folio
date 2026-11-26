@@ -23,6 +23,7 @@ use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult,
     QueryFilter, QueryOrder, QuerySelect,
 };
+use std::collections::HashMap;
 use uuid::Uuid;
 
 /// The identity of the issue a link is read after.
@@ -85,24 +86,19 @@ pub struct EntryRef {
     pub cv_issue_id: Option<i32>,
 }
 
-/// The position of the entry `key` names in `entries`, or `None` when the
-/// issue is no longer in the list.
+/// Every position in `entries` that `key` names, in list order; empty
+/// when the issue is no longer in the list.
 ///
 /// Tried in order, each step only when the previous found nothing:
 /// 1. the ComicVine issue id;
 /// 2. the exact (series, number, volume, year) key;
-/// 3. series and number alone, case-insensitive — a list that re-tagged a
-///    volume or year still finds the issue.
-///
-/// An issue listed twice resolves to the occurrence nearest `hint` (the
-/// position it last resolved to), else the first.
-pub fn resolve(entries: &[EntryRef], key: &AnchorKey, hint: Option<i32>) -> Option<i32> {
-    let pick = |matches: Vec<i32>| -> Option<i32> {
-        match hint {
-            Some(h) => matches.into_iter().min_by_key(|p| (p - h).abs()),
-            None => matches.into_iter().min(),
-        }
-    };
+/// 3. series and number alone, case-insensitive, for a list that
+///    re-tagged a volume or a year. This step never guesses: it needs
+///    exactly one such entry, and that entry must not differ in **both**
+///    volume and year (a re-tag changes one; another series of the same
+///    name, such as Avengers #1 of 1963 and of 1998, changes both). When
+///    it can't tell, the anchor is lost and the reader re-places it.
+pub fn candidates(entries: &[EntryRef], key: &AnchorKey) -> Vec<i32> {
     if let Some(cv) = key.cv_issue_id {
         let hits: Vec<i32> = entries
             .iter()
@@ -110,11 +106,11 @@ pub fn resolve(entries: &[EntryRef], key: &AnchorKey, hint: Option<i32>) -> Opti
             .map(|e| e.position)
             .collect();
         if !hits.is_empty() {
-            return pick(hits);
+            return hits;
         }
     }
     let (Some(series), Some(number)) = (key.series.as_deref(), key.number.as_deref()) else {
-        return None;
+        return Vec::new();
     };
     let exact: Vec<i32> = entries
         .iter()
@@ -127,17 +123,86 @@ pub fn resolve(entries: &[EntryRef], key: &AnchorKey, hint: Option<i32>) -> Opti
         .map(|e| e.position)
         .collect();
     if !exact.is_empty() {
-        return pick(exact);
+        return exact;
     }
-    let loose: Vec<i32> = entries
+    let loose: Vec<&EntryRef> = entries
         .iter()
         .filter(|e| {
             e.series_name.eq_ignore_ascii_case(series)
                 && e.issue_number.eq_ignore_ascii_case(number)
         })
-        .map(|e| e.position)
         .collect();
-    pick(loose)
+    // Both known and different.
+    let differs =
+        |a: &Option<String>, b: &Option<String>| matches!((a, b), (Some(x), Some(y)) if x != y);
+    match loose.as_slice() {
+        [only] if !(differs(&only.volume, &key.volume) && differs(&only.year, &key.year)) => {
+            vec![only.position]
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// The position of the entry `key` names in `entries`, or `None` when the
+/// issue is no longer in the list. See [`candidates`] for the match.
+///
+/// An issue listed twice resolves to the occurrence nearest `hint` (the
+/// position it last resolved to), else the first. Across a refresh use
+/// [`resolve_nth`]: positions before and after a rewrite don't compare.
+pub fn resolve(entries: &[EntryRef], key: &AnchorKey, hint: Option<i32>) -> Option<i32> {
+    let matches = candidates(entries, key);
+    match hint {
+        Some(h) => matches.into_iter().min_by_key(|p| (p - h).abs()),
+        None => matches.into_iter().min(),
+    }
+}
+
+/// [`resolve`] for an issue listed more than once, by **which occurrence**
+/// the anchor was on (0 = first) instead of by distance to an old
+/// position. With fewer occurrences now, the last one.
+pub fn resolve_nth(entries: &[EntryRef], key: &AnchorKey, nth: usize) -> Option<i32> {
+    let matches = candidates(entries, key);
+    matches.get(nth).or(matches.last()).copied()
+}
+
+/// Which occurrence of its issue each event link and chapter break of
+/// `list_id` sits on, keyed by link / break id, read from `entries` (the
+/// list **before** a rewrite). Only anchors on a repeated issue appear.
+pub async fn anchor_occurrences(
+    db: &impl ConnectionTrait,
+    list_id: Uuid,
+    entries: &[EntryRef],
+) -> Result<HashMap<Uuid, usize>, sea_orm::DbErr> {
+    let mut out = HashMap::new();
+    let mut note = |id: Uuid, key: &AnchorKey, hint: Option<i32>| {
+        let matches = candidates(entries, key);
+        if matches.len() < 2 {
+            return;
+        }
+        if let Some(nth) = hint.and_then(|h| matches.iter().position(|p| *p == h)) {
+            out.insert(id, nth);
+        }
+    };
+    let links = reading_list_link::Entity::find()
+        .filter(reading_list_link::Column::ParentListId.eq(list_id))
+        .filter(reading_list_link::Column::Kind.eq(LinkKind::Event))
+        .filter(reading_list_link::Column::AnchorStatus.eq(AnchorStatus::Placed))
+        .all(db)
+        .await?;
+    for l in &links {
+        if let Some(key) = AnchorKey::of_link(l) {
+            note(l.id, &key, l.anchor_position_hint);
+        }
+    }
+    let breaks = reading_list_break::Entity::find()
+        .filter(reading_list_break::Column::ListId.eq(list_id))
+        .filter(reading_list_break::Column::AnchorStatus.eq(AnchorStatus::Placed))
+        .all(db)
+        .await?;
+    for b in &breaks {
+        note(b.id, &AnchorKey::of_break(b), b.anchor_position_hint);
+    }
+    Ok(out)
 }
 
 /// What [`reresolve_parent`] changed (event links and chapter breaks).
@@ -156,9 +221,14 @@ fn reresolved(
     key: &AnchorKey,
     status: AnchorStatus,
     hint: Option<i32>,
+    nth: Option<usize>,
     summary: &mut ReresolveSummary,
 ) -> Option<(AnchorStatus, Option<i32>)> {
-    let (next, next_hint) = match resolve(entries, key, hint) {
+    let found = match nth {
+        Some(n) => resolve_nth(entries, key, n),
+        None => resolve(entries, key, hint),
+    };
+    let (next, next_hint) = match found {
         Some(p) => (AnchorStatus::Placed, Some(p)),
         // Keep the last known place so the card stays where it was.
         None => (AnchorStatus::Lost, hint),
@@ -200,9 +270,13 @@ pub async fn load_entries(
 /// current entries and write back position hints and status. Call inside
 /// the transaction that rewrote the entries, so a failed refresh leaves
 /// them untouched.
+///
+/// `occurrences` is [`anchor_occurrences`] taken before the rewrite, so an
+/// anchor on a twice-listed issue stays on the same occurrence.
 pub async fn reresolve_parent(
     db: &impl ConnectionTrait,
     list_id: Uuid,
+    occurrences: &HashMap<Uuid, usize>,
 ) -> Result<ReresolveSummary, sea_orm::DbErr> {
     let links = reading_list_link::Entity::find()
         .filter(reading_list_link::Column::ParentListId.eq(list_id))
@@ -228,6 +302,7 @@ pub async fn reresolve_parent(
             &key,
             link.anchor_status,
             link.anchor_position_hint,
+            occurrences.get(&link.id).copied(),
             &mut summary,
         ) else {
             continue;
@@ -245,6 +320,7 @@ pub async fn reresolve_parent(
             &key,
             b.anchor_status,
             b.anchor_position_hint,
+            occurrences.get(&b.id).copied(),
             &mut summary,
         ) else {
             continue;
@@ -331,6 +407,46 @@ mod tests {
         let k = key("A", "1", Some(10));
         assert_eq!(resolve(&entries, &k, None), Some(0));
         assert_eq!(resolve(&entries, &k, Some(8)), Some(9));
+    }
+
+    #[test]
+    fn a_repeated_issue_keeps_its_occurrence_across_a_rewrite() {
+        // Before: the issue at 0 and at 9, the anchor on the second.
+        let k = key("Avengers", "1", Some(7));
+        // After 20 books are inserted near the top, they sit at 0 and 29.
+        // Nearest the old position (9) would pick 0, the wrong one.
+        let after = [
+            e(0, "Avengers", "1", Some(7)),
+            e(29, "Avengers", "1", Some(7)),
+        ];
+        assert_eq!(resolve(&after, &k, Some(9)), Some(0));
+        assert_eq!(resolve_nth(&after, &k, 1), Some(29));
+        // One occurrence left: that one.
+        let one = [e(4, "Avengers", "1", Some(7))];
+        assert_eq!(resolve_nth(&one, &k, 1), Some(4));
+        assert_eq!(resolve_nth(&[], &k, 1), None);
+    }
+
+    #[test]
+    fn the_loose_match_never_guesses() {
+        let mut k = key("Avengers", "1", None);
+        k.volume = Some("1963".into());
+        k.year = Some("1963".into());
+        // Another series of the same name: volume and year both differ.
+        let mut other = e(3, "Avengers", "1", None);
+        other.volume = Some("1998".into());
+        other.year = Some("1998".into());
+        assert_eq!(resolve(&[other.clone()], &k, Some(3)), None);
+        // A re-tagged year alone still resolves.
+        let mut retagged = e(3, "Avengers", "1", None);
+        retagged.volume = Some("1963".into());
+        retagged.year = Some("1964".into());
+        assert_eq!(resolve(&[retagged.clone()], &k, None), Some(3));
+        // Two loose candidates: no way to tell, so lost.
+        let mut second = retagged.clone();
+        second.position = 8;
+        second.volume = Some("1".into());
+        assert_eq!(resolve(&[retagged, second], &k, None), None);
     }
 
     #[test]

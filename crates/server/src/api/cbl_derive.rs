@@ -811,6 +811,9 @@ async fn link_event(
     child: &cbl_list::Model,
     entry_id: Uuid,
 ) -> Result<bool, String> {
+    let _lock = super::cbl_links::link_write_lock(app)
+        .await
+        .map_err(|_| "couldn't link it".to_owned())?;
     let db_err = |_| "couldn't link it".to_owned();
     if child.id == parent.id {
         return Err("a list can't link to itself".into());
@@ -874,6 +877,9 @@ async fn link_part(
     from: &cbl_list::Model,
     to: &cbl_list::Model,
 ) -> Result<bool, String> {
+    let _lock = super::cbl_links::link_write_lock(app)
+        .await
+        .map_err(|_| "couldn't link it".to_owned())?;
     let db_err = |_| "couldn't link it".to_owned();
     if link_exists(app, from.id, to.id, LinkKind::Continues)
         .await

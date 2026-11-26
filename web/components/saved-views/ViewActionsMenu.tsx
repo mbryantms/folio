@@ -163,8 +163,9 @@ function ShareReadingListDialog({
           </AlertDialogTitle>
           <AlertDialogDescription>
             Every user will see this reading list under Reading Lists and can
-            pin it, but only admins can edit, refresh or delete it. Sharing
-            can&rsquo;t be undone from here.
+            pin it, but only admins can edit, refresh or delete it. Lists linked
+            into it that you own (its events and next parts) are shared with it,
+            so everyone sees them. Sharing can&rsquo;t be undone from here.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
