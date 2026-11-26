@@ -24,6 +24,7 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { useCblListEntriesInfinite } from "@/lib/api/queries";
 import type { ReadingListCardView } from "@/lib/api/types";
+import { progressLabel } from "@/lib/cbl/linked-plan";
 import { displayListName, ensureListView } from "@/lib/reader/list-context";
 import { readerUrl } from "@/lib/urls";
 
@@ -95,7 +96,7 @@ export function ReadingListEntryCard({
           aria-label={`${name} progress`}
         />
         <p className="text-muted-foreground mt-1 text-xs tabular-nums">
-          {list.read} / {list.total} read
+          {progressLabel(list)}
         </p>
       </div>
       <div className="mt-auto flex items-center gap-1">

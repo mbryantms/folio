@@ -31,6 +31,38 @@ export type ChapterBlock<E> = {
   events: ReadingListLinkView[];
 };
 
+/** Read / owned / total counts of a list, a chapter or an event. */
+export type ProgressCounts = {
+  read: number;
+  in_library: number;
+  total: number;
+};
+
+/**
+ * One wording for progress wherever a list, chapter or event shows it.
+ * "Finished" means everything the reader owns is read, so when part of
+ * it isn't in the library the label says so instead of showing a check
+ * beside "3 / 64 read":
+ *
+ * - everything owned: `12 / 64 read`
+ * - some not owned: `3 of 3 owned read · 64 in list`
+ * - none owned: `None of 64 in your library`
+ */
+export function progressLabel(c: ProgressCounts): string {
+  if (c.total > 0 && c.in_library === 0) {
+    return `None of ${c.total} in your library`;
+  }
+  if (c.in_library < c.total) {
+    return `${c.read} of ${c.in_library} owned read · ${c.total} in list`;
+  }
+  return `${c.read} / ${c.total} read`;
+}
+
+/** The short form for a rail row: read over what the reader owns. */
+export function progressShort(c: ProgressCounts): string {
+  return `${c.read}/${c.in_library > 0 ? c.in_library : c.total}`;
+}
+
 /** Everything the reader owns in the chapter is read. */
 export function isChapterDone(c: ReadingListChapterView): boolean {
   return c.in_library > 0 && c.read >= c.in_library;

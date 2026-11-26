@@ -32074,6 +32074,13 @@
               "last_activity": {
                 "type": "string"
               },
+              "pending_events": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/OnDeckPendingEvent"
+                },
+                "description": "Linked reading lists: events read before this issue that the\nreader hasn't started or finished (anchored between the last\nissue they read in the list and this one, not skipped). The\ncard still points at the list's own next issue; this says an\nevent is due first."
+              },
               "position": {
                 "type": "integer",
                 "format": "int32",
@@ -32083,6 +32090,23 @@
           }
         ],
         "description": "Discriminated union for the On Deck rail. Each card represents one\n\"what's next\" suggestion — either the next-unread issue in a series the\nuser has finished at least one issue of, or the next-unread entry in a\nCBL list the user is working through."
+      },
+      "OnDeckPendingEvent": {
+        "type": "object",
+        "description": "An event due before a reading list's next issue (see\n[`OnDeckCard::CblNext`]).",
+        "required": [
+          "link_id",
+          "name"
+        ],
+        "properties": {
+          "link_id": {
+            "type": "string",
+            "description": "The link's id: `/views/{view}?event={link_id}` opens the list at\nthe event's band."
+          },
+          "name": {
+            "type": "string"
+          }
+        }
       },
       "OnDeckView": {
         "type": "object",

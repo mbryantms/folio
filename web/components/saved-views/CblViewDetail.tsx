@@ -34,7 +34,10 @@ import {
   anchorSiblings,
   reorderWrites,
 } from "@/components/cbl/links/MoveEventDialog";
-import { PartOfLink } from "@/components/cbl/links/PartOfLink";
+import {
+  FromCollectionLink,
+  PartOfLink,
+} from "@/components/cbl/links/PartOfLink";
 import { AddToCollectionDialog } from "@/components/collections/AddToCollectionDialog";
 
 import { CblDetail, CblInfoRow } from "@/components/cbl/cbl-detail";
@@ -131,6 +134,7 @@ import {
   chapterStep,
   foldedChapters,
   isChapterDone,
+  progressLabel,
   seekStart,
   type PlanItem,
 } from "@/lib/cbl/linked-plan";
@@ -486,6 +490,7 @@ function CblViewDetailInner({
   // event's band, its chapter unfolded. Once, when the links are known.
   const searchParams = useSearchParams();
   const eventParam = searchParams.get("event");
+  const viaParam = searchParams.get("via");
   const [pendingEvent, setPendingEvent] = React.useState<string | null>(null);
   const [eventHandled, setEventHandled] = React.useState(false);
   if (!eventHandled && eventParam != null && chapters.length > 0) {
@@ -868,6 +873,7 @@ function CblViewDetailInner({
       entry={entry}
       issue={entry.issue ?? undefined}
       cblSavedViewId={savedView.id}
+      viaViewId={searchParams.get("via")}
       isCurrent={upNextPosition != null && entry.position === upNextPosition}
       selectMode={
         selection.selectMode
@@ -1223,6 +1229,11 @@ function CblViewDetailInner({
         parents={linksQuery.data?.parents ?? []}
         viaViewId={searchParams.get("via")}
       />
+      {viaParam &&
+      linksQuery.data &&
+      !linksQuery.data.parents.some((p) => p.view_id === viaParam) ? (
+        <FromCollectionLink viaViewId={viaParam} />
+      ) : null}
       {/* A failing refresh shows at every width: it is the one thing
        *  here the reader cannot learn elsewhere on the page. */}
       <RefreshFailureNotice
@@ -1410,7 +1421,7 @@ function CblViewDetailInner({
                   <span className="font-medium">{nextPart.child_name}</span>
                 )}
                 <span className="text-muted-foreground ml-auto text-xs">
-                  {nextPart.read} / {nextPart.total} read
+                  {progressLabel(nextPart)}
                 </span>
                 {canManageLinks && (
                   <Button

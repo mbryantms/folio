@@ -18,6 +18,7 @@ import { CoverMorph } from "@/components/library/CoverMorph";
 import { issueLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { OnDeckCard as OnDeckCardData } from "@/lib/api/types";
+import { displayListName } from "@/lib/reader/list-context";
 import { issueUrl, readerUrl } from "@/lib/urls";
 import {
   useDismissRailItem,
@@ -85,7 +86,27 @@ export function OnDeckCard({
           target_id: card.cbl_list_id,
         };
 
+  // Linked reading lists: an event the list reads before this issue.
+  // The card stays one link to the list's own next issue; the caption
+  // says the event comes first and the menu opens the list at it.
+  const pendingEvent =
+    card.kind === "cbl_next" ? (card.pending_events?.[0] ?? null) : null;
+  const pendingMore =
+    card.kind === "cbl_next" ? (card.pending_events?.length ?? 0) - 1 : 0;
+  const pendingName = pendingEvent ? displayListName(pendingEvent.name) : null;
+
   const menuActions: CoverMenuAction[] = [
+    ...(pendingEvent && cblParam
+      ? [
+          {
+            label: "Go to the event in the list",
+            onSelect: () =>
+              router.push(
+                `/views/${cblParam}?event=${encodeURIComponent(pendingEvent.link_id)}`,
+              ),
+          },
+        ]
+      : []),
     {
       label: "Mark this issue as read",
       onSelect: () => {
@@ -170,9 +191,20 @@ export function OnDeckCard({
           <div className="truncate text-sm font-medium" title={heading}>
             {heading}
           </div>
-          <div className="text-muted-foreground mt-0.5 text-[11px]">
-            Up next
-          </div>
+          {pendingName ? (
+            <div
+              className="text-muted-foreground mt-0.5 truncate text-[11px]"
+              title={`Read ${pendingName} before this issue`}
+              data-testid="on-deck-pending-event"
+            >
+              Event first: {pendingName}
+              {pendingMore > 0 ? ` +${pendingMore}` : ""}
+            </div>
+          ) : (
+            <div className="text-muted-foreground mt-0.5 text-[11px]">
+              Up next
+            </div>
+          )}
         </div>
       </Link>
       {longPress.sheet}

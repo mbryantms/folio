@@ -14,6 +14,7 @@ import { useRouter } from "next/navigation";
 import { CornerUpLeft } from "lucide-react";
 
 import { useOpenCblListView } from "@/lib/api/mutations/reading-list-links";
+import { useCollections } from "@/lib/api/queries";
 import type { ReadingListParentView } from "@/lib/api/types";
 import { displayListName } from "@/lib/reader/list-context";
 
@@ -32,6 +33,31 @@ export function parentHref(p: ReadingListParentView, viewId: string): string {
   return p.kind === "event"
     ? `/views/${viewId}?event=${encodeURIComponent(p.link_id)}`
     : `/views/${viewId}`;
+}
+
+/**
+ * A list opened from a collection's tile (`?via=<collection id>`): the
+ * way back to that collection. Mounted only when `via` isn't one of the
+ * list's parents, so the collections query runs only then.
+ */
+export function FromCollectionLink({ viaViewId }: { viaViewId: string }) {
+  const collections = useCollections();
+  const found = collections.data?.find((c) => c.id === viaViewId);
+  if (!found) return null;
+  return (
+    <p className="text-muted-foreground flex items-center gap-1.5 text-sm">
+      <CornerUpLeft className="size-4 shrink-0" aria-hidden />
+      <span>
+        In collection{" "}
+        <Link
+          href={`/views/${found.id}`}
+          className="text-foreground font-medium hover:underline"
+        >
+          {found.name}
+        </Link>
+      </span>
+    </p>
+  );
 }
 
 export function PartOfLink({

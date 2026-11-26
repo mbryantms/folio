@@ -28,6 +28,7 @@ import type {
   ReadingListLinkView,
 } from "@/lib/api/types";
 import { statusToneDot, statusToneText } from "@/lib/ui/status-tone";
+import { progressLabel, progressShort } from "@/lib/cbl/linked-plan";
 import { displayListName } from "@/lib/reader/list-context";
 import { useCurrentChapter } from "./use-current-chapter";
 import { cn } from "@/lib/utils";
@@ -95,7 +96,7 @@ export function ChapterHeader({
             aria-hidden
           />
         )}
-        {chapter.read} / {chapter.total} read
+        {progressLabel(chapter)}
       </span>
       {actions}
     </div>
@@ -202,7 +203,7 @@ export function ChapterRailList({
                     {c.index + 1}. {c.label}
                   </span>
                   <span className="text-muted-foreground shrink-0 text-xs">
-                    {c.read}/{c.total}
+                    <span title={progressLabel(c)}>{progressShort(c)}</span>
                   </span>
                 </button>
                 {c.event_link_ids.length > 0 && (
@@ -224,7 +225,7 @@ export function ChapterRailList({
                             {name}
                           </span>
                           <span className="ml-auto shrink-0">
-                            {ev.skipped ? "skipped" : `${ev.read}/${ev.total}`}
+                            {ev.skipped ? "skipped" : progressShort(ev)}
                           </span>
                         </>
                       );

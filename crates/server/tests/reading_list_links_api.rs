@@ -2056,3 +2056,54 @@ async fn inline_events_export_writes_each_issue_once() {
         .collect();
     assert_eq!(order, ["Main 1", "Main 2", "Side 1", "Main 3", "Main 4"]);
 }
+
+/// 2.0 PR 7: a master's On Deck card names an event that is due before
+/// its next issue (anchored after the issue the reader last read), and
+/// stops once the event is skipped.
+#[tokio::test]
+async fn on_deck_names_an_event_due_before_the_next_issue() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "ondeck-events@example.com").await;
+    let (_, issues) = seed_cbl_with_matched_entries(&app, user.user_id, 8).await;
+    let master = make_list(&app, Some(user.user_id), "Master", &issues[0..4]).await;
+    let event = make_list(&app, Some(user.user_id), "Event", &issues[4..6]).await;
+    let later = make_list(&app, Some(user.user_id), "Later event", &issues[6..8]).await;
+    let link_id = link(&app, &user, master, event, Some(1)).await;
+    link(&app, &user, master, later, Some(2)).await;
+    view_of(&app, master, &user).await;
+    finish(&app, user.user_id, &issues[0], 120).await;
+    finish(&app, user.user_id, &issues[1], 60).await;
+
+    let card = |body: &serde_json::Value| {
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["cbl_list_id"] == master.to_string())
+            .cloned()
+    };
+    let (status, body) = get_json(&app, "/api/me/on-deck", &user).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let c = card(&body).expect("the master is on deck");
+    // The card still points at the master's own next issue...
+    assert_eq!(c["issue"]["id"], issues[2], "{c}");
+    // ...and names the event due first, not the one after that issue.
+    let due: Vec<_> = c["pending_events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(due, ["Event"], "{c}");
+    assert_eq!(c["pending_events"][0]["link_id"], link_id);
+
+    // Skipped: no longer due.
+    let skip = format!("{}/{link_id}/skip", links_uri(master));
+    assert_eq!(
+        send(&app, Method::PUT, &skip, &user, None).await.0,
+        StatusCode::NO_CONTENT
+    );
+    let (_, body) = get_json(&app, "/api/me/on-deck", &user).await;
+    let c = card(&body).expect("still on deck");
+    assert!(c.get("pending_events").is_none(), "{c}");
+}

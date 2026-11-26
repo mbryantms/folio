@@ -15,6 +15,8 @@ import {
   chapterStep,
   currentChapter,
   foldedChapters,
+  progressLabel,
+  progressShort,
   seekStart,
   type PlanItem,
 } from "@/lib/cbl/linked-plan";
@@ -270,5 +272,28 @@ describe("currentChapter", () => {
   });
   it("never lands on an unloaded chapter", () => {
     expect(currentChapter([-10, Number.POSITIVE_INFINITY])).toBe(0);
+  });
+});
+
+describe("progressLabel / progressShort", () => {
+  it("is read over total when everything is in the library", () => {
+    expect(progressLabel({ read: 12, in_library: 64, total: 64 })).toBe(
+      "12 / 64 read",
+    );
+  });
+  it("says what is owned when part of it isn't", () => {
+    // Finished means owned-and-read: no bare "3 / 64 read" beside a check.
+    expect(progressLabel({ read: 3, in_library: 3, total: 64 })).toBe(
+      "3 of 3 owned read · 64 in list",
+    );
+  });
+  it("says so when none of it is in the library", () => {
+    expect(progressLabel({ read: 0, in_library: 0, total: 21 })).toBe(
+      "None of 21 in your library",
+    );
+  });
+  it("short form is read over owned", () => {
+    expect(progressShort({ read: 3, in_library: 5, total: 64 })).toBe("3/5");
+    expect(progressShort({ read: 0, in_library: 0, total: 21 })).toBe("0/21");
   });
 });
