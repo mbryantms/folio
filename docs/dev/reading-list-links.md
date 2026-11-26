@@ -94,6 +94,27 @@ and gives imported events the master's refresh schedule.
 Lookups of "which lists are these" go through `cbl_link_nav::lists_lite`
 (id, owner, name): a `cbl_lists` row also carries its whole source file.
 
+## Chapters for events read inline (`api::cbl_chapters`)
+
+A CMRO part, a CBRO with-events master or a "with events" character list
+already has its events in place: there is nothing to link, but the list
+is one unbroken run. "Find event chapters…" (`POST
+/me/cbl-lists/{id}/chapters/detect`) compares the list with event lists
+and proposes a named chapter for each event read as one stretch
+(`derive::detect_event_runs`: the smallest list holding an issue owns it,
+a stray issue or two doesn't split a stretch, and a stretch must hold at
+least three issues, half of the event and be mostly the event).
+
+- Candidates: the lists the caller can see (shared lists only, for a
+  shared list), then for a catalog list the catalog's event lists for the
+  years it covers (`sources::event_files_for_years`), downloaded for the
+  comparison and not stored.
+- It is a preview and writes nothing. The reader picks; the web creates
+  ordinary chapter breaks (a named one at the event's first issue, an
+  unnamed one where the list goes on).
+- **Never automatic.** Chapters are not added on import, and any reader
+  can switch a list to its Plain view.
+
 ## Reading across lists (`api::cbl_link_nav`)
 
 `cbl_link_nav` is the one resolver module; Up Next, the list page's back
