@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { ChevronDown, ChevronRight, Sparkles } from "lucide-react";
-import { useRef } from "react";
+import dynamic from "next/dynamic";
+import { useRef, useState } from "react";
 
 import { ScanEventBeacon } from "@/components/admin/ScanEventBeacon";
 import {
@@ -27,6 +28,13 @@ import { useLocalToday } from "@/lib/upcoming/today";
 import { useSidebarSectionCollapse } from "@/lib/use-sidebar-section-collapse";
 
 import { mainNavIcons } from "./main-nav-icons";
+
+// The in-place editor (drag and drop, menus) loads only when "Edit
+// sidebar" is pressed, so it adds nothing to every page's bundle.
+const SidebarEditMode = dynamic(
+  () => import("./SidebarEditMode").then((m) => m.SidebarEditMode),
+  { ssr: false },
+);
 import type { MainNavSection } from "./main-nav";
 import { railIconByKey } from "./rail-icons";
 
@@ -35,6 +43,11 @@ import { railIconByKey } from "./rail-icons";
  * The icon-collapsed rail, the tooltips it shows, and the cookie-persisted
  * open state all come from the vendored component; this file only maps the
  * `/me/sidebar-layout` sections onto `SidebarGroup` / `SidebarMenu`.
+ *
+ * "Edit sidebar" in the account menu at the foot of the sidebar swaps the
+ * links for the in-place editor (`SidebarEditMode`): reorder, rename, hide
+ * and add headers right where the sidebar is read. It lives in that menu,
+ * not in the nav, so it never reads as one more destination.
  */
 export function MainSidebar({
   sections,
@@ -49,7 +62,11 @@ export function MainSidebar({
   const search = useSearchParams();
   const activeLibrary = search?.get("library") ?? null;
   const collapsed = useSidebarCollapsed();
-  const { isMobile } = useSidebar();
+  const { isMobile, setOpen } = useSidebar();
+  const [editing, setEditing] = useState(false);
+  // The editor needs the full-width column; in the icon rail the links
+  // show as usual until the rail is expanded again.
+  const showEditor = editing && !collapsed;
   const markerCount = useMarkerCount({ enabled: showMarkerCount });
   // The Upcoming entry exists only while the feature is on, so its
   // presence is what turns the count on: this week's releases in the
@@ -79,6 +96,9 @@ export function MainSidebar({
         </SidebarHeader>
       ) : null}
       <SidebarContent>
+        {showEditor ? (
+          <SidebarEditMode onDone={() => setEditing(false)} />
+        ) : null}
         {/* `relative isolate`: the sliding highlight is positioned in the
             nav's box and paints under the items (`-z-10` inside this
             stacking context). Once it is placed, the active item drops
@@ -86,6 +106,7 @@ export function MainSidebar({
         <nav
           ref={navRef}
           aria-label="Library navigation"
+          hidden={showEditor}
           className="relative isolate flex flex-col gap-2 data-[nav-pill=ready]:[&_[data-sidebar=menu-button][data-active=true]]:bg-transparent"
         >
           <SlidingNavHighlight
@@ -230,7 +251,15 @@ export function MainSidebar({
         </nav>
       </SidebarContent>
       <SidebarFooter className="p-0">
-        <UserFooter user={user} collapsed={collapsed} />
+        <UserFooter
+          user={user}
+          collapsed={collapsed}
+          onEditSidebar={() => {
+            // The editor needs the full-width column.
+            if (collapsed) setOpen(true);
+            setEditing(true);
+          }}
+        />
       </SidebarFooter>
     </>
   );

@@ -13,6 +13,7 @@ import {
   Info,
   Keyboard,
   LogOut,
+  PanelLeft,
   Settings,
   Shield,
   User as UserIcon,
@@ -41,6 +42,7 @@ export function UserFooter({
   user,
   collapsed = false,
   libraryHref,
+  onEditSidebar,
 }: {
   user: { display_name: string; email?: string | null; role: string };
   /** When true, the footer renders just the avatar (matches the
@@ -49,6 +51,9 @@ export function UserFooter({
   /** When set (admin/settings shells), adds a "Library" item that returns
    *  to the main app. Omitted in the library shell, where it'd be redundant. */
   libraryHref?: string;
+  /** When set (the library shell), adds "Edit sidebar", which switches
+   *  the sidebar above into its in-place editor. */
+  onEditSidebar?: () => void;
 }) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -175,6 +180,11 @@ export function UserFooter({
             </DropdownMenuItem>
           ) : null}
           <DropdownMenuSeparator />
+          {onEditSidebar ? (
+            <DropdownMenuItem onSelect={() => onEditSidebar()}>
+              <PanelLeft /> Edit sidebar
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuItem asChild>
             {/* Replays the first-run tour on Home (`?tour=1`). */}
             <Link href="/?tour=1">

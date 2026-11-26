@@ -6,7 +6,7 @@ export default function SidebarSettingsPage() {
     <>
       <PageHeader
         title="Sidebar"
-        description="Rearrange libraries, pages, and saved views in the left sidebar. Drag to reorder, toggle to hide, add custom headers or spacers to organize sections."
+        description="Reorder the sidebar, hide items, rename them, and add headers or spacers. Most of this can also be done in place: choose Edit sidebar in the account menu at the bottom of the sidebar. Use this page to add saved views that are not in the sidebar yet, or to reset it."
       />
       <NavigationManager />
     </>
