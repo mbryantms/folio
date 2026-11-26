@@ -61,11 +61,28 @@ const DOWNLOAD_CONCURRENCY: usize = 6;
 /// import matches its entries inline; the JSON route times out at 60 s).
 /// Running the apply again finishes: imported lists are reused.
 const APPLY_IMPORT_BUDGET: std::time::Duration = std::time::Duration::from_secs(35);
+/// Everything a preview or an apply does against the catalog (index
+/// refresh, downloads) shares this one budget, so two back-to-back waits
+/// can't add up past the JSON route timeout.
+const CATALOG_BUDGET: std::time::Duration = std::time::Duration::from_secs(40);
+const _: () = assert!(CATALOG_BUDGET.as_secs() + 10 < crate::app::JSON_ROUTE_TIMEOUT.as_secs());
+
+fn catalog_too_slow() -> Response {
+    error(
+        StatusCode::BAD_GATEWAY,
+        "fetch_failed",
+        "the catalog took too long to answer",
+    )
+}
 
 pub fn routes() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new()
+    // The preview downloads up to 61 files from the catalog host per call,
+    // uncached; a loop of them would spend the server's allowance with
+    // that host for everyone.
+    let preview = OpenApiRouter::new()
         .routes(routes!(preview))
-        .routes(routes!(apply))
+        .route_layer(crate::middleware::rate_limit::CBL_DERIVE_PREVIEW.build_per_user());
+    OpenApiRouter::new().merge(preview).routes(routes!(apply))
 }
 
 // ───── wire types ─────
@@ -126,6 +143,12 @@ pub struct DerivePreview {
     pub parts: Vec<ProposedPartLink>,
     /// Proposed event lists the caller doesn't have yet (imported on apply).
     pub imports_needed: i32,
+    /// The with-events version was found but shares too few issues with
+    /// this list to compare (a different edition, or one side has no
+    /// ComicVine ids): no events are proposed. Refreshing the list first
+    /// usually fixes it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub twin_mismatch: bool,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -387,28 +410,22 @@ pub async fn preview(
         unplaced: Vec::new(),
         parts: Vec::new(),
         imports_needed: 0,
+        twin_mismatch: false,
     };
     let (source, path) = match catalog_origin(&app, &list).await {
         Ok(Some(v)) => v,
         Ok(None) => return Json(out).into_response(),
         Err(_) => return internal(),
     };
-    let index = match tokio::time::timeout(
-        crate::cbl::fetch::REQUEST_BUDGET.list_budget,
-        catalog::refresh_index(&app.db, &source, false),
-    )
-    .await
-    {
-        Ok(Ok(i)) => i,
-        Ok(Err(e)) => return catalog_failure(&e),
-        Err(_) => {
-            return error(
-                StatusCode::BAD_GATEWAY,
-                "fetch_failed",
-                "the catalog took too long to answer",
-            );
-        }
-    };
+    let deadline = tokio::time::Instant::now() + CATALOG_BUDGET;
+    let index =
+        match tokio::time::timeout_at(deadline, catalog::refresh_index(&app.db, &source, false))
+            .await
+        {
+            Ok(Ok(i)) => i,
+            Ok(Err(e)) => return catalog_failure(&e),
+            Err(_) => return catalog_too_slow(),
+        };
     let index_paths: Vec<&str> = index.entries.iter().map(|e| e.path.as_str()).collect();
 
     // Parts.
@@ -454,20 +471,10 @@ pub async fn preview(
             .filter(|e| candidate_paths.contains(&e.path))
             .cloned(),
     );
-    let downloaded = match tokio::time::timeout(
-        crate::cbl::fetch::REQUEST_BUDGET.list_budget,
-        download_parsed(&source, wanted),
-    )
-    .await
+    let downloaded = match tokio::time::timeout_at(deadline, download_parsed(&source, wanted)).await
     {
         Ok(d) => d,
-        Err(_) => {
-            return error(
-                StatusCode::BAD_GATEWAY,
-                "fetch_failed",
-                "the catalog took too long to answer",
-            );
-        }
+        Err(_) => return catalog_too_slow(),
     };
     let Some(twin) = downloaded.get(&twin_path) else {
         return error(
@@ -509,7 +516,23 @@ pub async fn preview(
             keys: book_keys(&downloaded[*p]),
         })
         .collect();
-    let d = derive::twin_diff(&plain, &book_keys(twin), &candidates);
+    let twin_keys = book_keys(twin);
+    if twin.books.len() > crate::cbl::MAX_BOOKS_PER_LIST
+        || derive::twin_overlap(&plain, &twin_keys) < derive::MIN_TWIN_OVERLAP
+    {
+        out.twin_mismatch = true;
+        return Json(out).into_response();
+    }
+    // The diff is CPU work over thousands of books; keep it off the
+    // async workers.
+    let d = match tokio::task::spawn_blocking(move || {
+        derive::twin_diff(&plain, &twin_keys, &candidates)
+    })
+    .await
+    {
+        Ok(d) => d,
+        Err(_) => return internal(),
+    };
 
     let placed_paths: Vec<String> = d
         .placements
@@ -611,7 +634,7 @@ pub async fn apply(
     };
 
     if !req.events.is_empty() {
-        let (source, _) = match catalog_origin(&app, &parent).await {
+        let (source, master_path) = match catalog_origin(&app, &parent).await {
             Ok(Some(v)) => v,
             Ok(None) => {
                 return super::cbl_links::field_error(
@@ -636,45 +659,88 @@ pub async fn apply(
             Ok(m) => m,
             Err(_) => return internal(),
         };
-        // One import token for the whole apply.
-        if paths.iter().any(|p| !have.contains_key(p))
+        let catalog_deadline = tokio::time::Instant::now() + CATALOG_BUDGET;
+        // The index (cached for an hour) says which catalog files are
+        // events of this master: an apply imports those and nothing else,
+        // whatever paths the request names.
+        let index = match tokio::time::timeout_at(
+            catalog_deadline,
+            catalog::refresh_index(&app.db, &source, false),
+        )
+        .await
+        {
+            Ok(Ok(i)) => i,
+            Ok(Err(e)) => return catalog_failure(&e),
+            Err(_) => return catalog_too_slow(),
+        };
+        let allowed: HashSet<String> = {
+            let index_paths: Vec<&str> = index.entries.iter().map(|e| e.path.as_str()).collect();
+            derive::event_candidate_paths(&master_path, &index_paths)
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
+        };
+        // The entries an event may be placed after, read once: a refresh
+        // between the preview and this apply rewrites every entry id, and
+        // an event whose place is gone must fail before its list is
+        // imported, not after.
+        let entry_ids: HashSet<Uuid> = match cbl_entry::Entity::find()
+            .select_only()
+            .column(cbl_entry::Column::Id)
+            .filter(cbl_entry::Column::CblListId.eq(parent.id))
+            .into_tuple::<Uuid>()
+            .all(&app.db)
+            .await
+        {
+            Ok(v) => v.into_iter().collect(),
+            Err(_) => return internal(),
+        };
+        let wanted = |p: &String| allowed.contains(p) && !have.contains_key(p);
+        // One import token for the whole apply, taken once the catalog has
+        // answered (a catalog failure above doesn't spend it).
+        if paths.iter().any(wanted)
             && let Err(resp) = crate::cbl::quota::consume_import(&app, &user).await
         {
             return resp;
         }
         // Download every list to import up front, in parallel.
-        let missing: Vec<CatalogEntry> = if paths.iter().any(|p| !have.contains_key(p)) {
-            let index = match catalog::refresh_index(&app.db, &source, false).await {
-                Ok(i) => i,
-                Err(e) => return catalog_failure(&e),
-            };
-            index
-                .entries
-                .into_iter()
-                .filter(|e| paths.contains(&e.path) && !have.contains_key(&e.path))
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let missing: Vec<CatalogEntry> = index
+            .entries
+            .into_iter()
+            .filter(|e| paths.contains(&e.path) && wanted(&e.path))
+            .collect();
         let source_ref = &source;
-        let mut blobs: HashMap<String, Result<catalog::FetchedBlob, String>> =
-            futures::stream::iter(missing)
-                .map(|entry| async move {
-                    let blob = catalog::download_blob(source_ref, &entry)
-                        .await
-                        .map_err(|e| e.public_message());
-                    (entry.path, blob)
-                })
-                .buffer_unordered(DOWNLOAD_CONCURRENCY)
-                .collect()
-                .await;
+        let downloads = futures::stream::iter(missing)
+            .map(|entry| async move {
+                let blob = catalog::download_blob(source_ref, &entry)
+                    .await
+                    .map_err(|e| e.public_message());
+                (entry.path, blob)
+            })
+            .buffer_unordered(DOWNLOAD_CONCURRENCY)
+            .collect::<HashMap<String, Result<catalog::FetchedBlob, String>>>();
+        let mut blobs = match tokio::time::timeout_at(catalog_deadline, downloads).await {
+            Ok(b) => b,
+            Err(_) => return catalog_too_slow(),
+        };
         let deadline = tokio::time::Instant::now() + APPLY_IMPORT_BUDGET;
 
         for ev in &req.events {
             let name = derive::file_stem(&ev.catalog_path).to_owned();
+            if !entry_ids.contains(&ev.after_entry_id) {
+                fail(
+                    &mut failed,
+                    &name,
+                    "this list changed since the events were found; run Find events again",
+                );
+                continue;
+            }
             // Import when missing.
             let child = if let Some(l) = have.get(&ev.catalog_path) {
                 l.clone()
+            } else if !allowed.contains(&ev.catalog_path) {
+                fail(&mut failed, &name, "not an event of this list");
+                continue;
             } else {
                 let Some(blob) = blobs.remove(&ev.catalog_path) else {
                     fail(&mut failed, &name, "not in the catalog");
@@ -725,7 +791,8 @@ pub async fn apply(
                         catalog_path: ev.catalog_path.clone(),
                         blob_sha: blob.blob_sha,
                         description: None,
-                        refresh_schedule: None,
+                        // Events refresh with their master.
+                        refresh_schedule: parent.refresh_schedule.clone(),
                     },
                 )
                 .await

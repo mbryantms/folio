@@ -20,7 +20,8 @@ use chrono::{DateTime, FixedOffset};
 use entity::reading_list_link::{self, AnchorStatus, LinkKind};
 use entity::{cbl_list, issue, reading_list_link_skip};
 use sea_orm::{
-    ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter, Statement, Value,
+    ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter, QuerySelect, Statement,
+    Value,
 };
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -91,6 +92,45 @@ fn visible(list: &cbl_list::Model, user_id: Uuid) -> bool {
     list.owner_user_id.is_none_or(|o| o == user_id)
 }
 
+/// The columns of a reading list the link code reads. A `cbl_lists` row
+/// also holds the whole source file (`raw_xml`, megabytes for a master),
+/// which nothing here needs; every "which lists are these" lookup goes
+/// through [`lists_lite`] instead of loading full models.
+#[derive(Debug, Clone, FromQueryResult)]
+pub(crate) struct ListLite {
+    pub id: Uuid,
+    pub owner_user_id: Option<Uuid>,
+    pub parsed_name: String,
+}
+
+impl ListLite {
+    /// Own or shared.
+    pub(crate) fn visible_to(&self, user_id: Uuid) -> bool {
+        self.owner_user_id.is_none_or(|o| o == user_id)
+    }
+}
+
+/// [`ListLite`] rows for `ids` (one statement; absent ids are absent).
+pub(crate) async fn lists_lite(
+    db: &impl sea_orm::ConnectionTrait,
+    ids: &[Uuid],
+) -> Result<Vec<ListLite>, sea_orm::DbErr> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    cbl_list::Entity::find()
+        .select_only()
+        .columns([
+            cbl_list::Column::Id,
+            cbl_list::Column::OwnerUserId,
+            cbl_list::Column::ParsedName,
+        ])
+        .filter(cbl_list::Column::Id.is_in(ids.to_vec()))
+        .into_model::<ListLite>()
+        .all(db)
+        .await
+}
+
 #[derive(Debug, FromQueryResult)]
 struct LastRead {
     cbl_list_id: Uuid,
@@ -118,13 +158,20 @@ async fn parents_with_status(
     user_id: Uuid,
     list_id: Uuid,
 ) -> Result<Vec<(ReadingListParentView, AnchorStatus)>, sea_orm::DbErr> {
-    let rows: Vec<_> = reading_list_link::Entity::find()
+    let links = reading_list_link::Entity::find()
         .filter(reading_list_link::Column::ChildListId.eq(list_id))
-        .find_also_related(cbl_list::Entity)
         .all(&app.db)
+        .await?;
+    let parent_ids: Vec<Uuid> = links.iter().map(|l| l.parent_list_id).collect();
+    let parents: HashMap<Uuid, ListLite> = lists_lite(&app.db, &parent_ids)
         .await?
         .into_iter()
-        .filter_map(|(l, p)| p.filter(|p| visible(p, user_id)).map(|p| (l, p)))
+        .filter(|p| p.visible_to(user_id))
+        .map(|p| (p.id, p))
+        .collect();
+    let rows: Vec<(reading_list_link::Model, ListLite)> = links
+        .into_iter()
+        .filter_map(|l| parents.get(&l.parent_list_id).cloned().map(|p| (l, p)))
         .collect();
     if rows.is_empty() {
         return Ok(Vec::new());
@@ -271,12 +318,10 @@ pub(crate) async fn list_cards(
     if list_ids.is_empty() {
         return Ok(HashMap::new());
     }
-    let lists: Vec<cbl_list::Model> = cbl_list::Entity::find()
-        .filter(cbl_list::Column::Id.is_in(list_ids.to_vec()))
-        .all(&app.db)
+    let lists: Vec<ListLite> = lists_lite(&app.db, list_ids)
         .await?
         .into_iter()
-        .filter(|c| visible(c, user_id))
+        .filter(|c| c.visible_to(user_id))
         .collect();
     let ids: Vec<Uuid> = lists.iter().map(|l| l.id).collect();
     let views = caller_views(app, user_id, &ids).await?;
@@ -369,7 +414,7 @@ async fn next_part_with_unread(
     user_id: Uuid,
     acl: &VisibleLibraries,
     list_id: Uuid,
-) -> Result<Option<(cbl_list::Model, CblPick)>, axum::response::Response> {
+) -> Result<Option<(ListLite, CblPick)>, axum::response::Response> {
     let db_err = |e: sea_orm::DbErr| {
         tracing::error!(error = %e, "next_up: next part lookup failed");
         super::cbl_links::internal()
@@ -388,14 +433,14 @@ async fn next_part_with_unread(
         };
         // `find_also_related` would follow the parent relation; the child
         // is the next part.
-        let Some(part) = cbl_list::Entity::find_by_id(link.child_list_id)
-            .one(&app.db)
+        let Some(part) = lists_lite(&app.db, &[link.child_list_id])
             .await
             .map_err(db_err)?
+            .pop()
         else {
             return Ok(None);
         };
-        if !visible(&part, user_id) || !seen.insert(part.id) {
+        if !part.visible_to(user_id) || !seen.insert(part.id) {
             return Ok(None);
         }
         if let Some(pick) =
@@ -429,7 +474,7 @@ pub(crate) async fn after_list_end(
         tracing::error!(error = %e, "next_up: linked lists lookup failed");
         super::cbl_links::internal()
     };
-    let continues = |part: cbl_list::Model, pick: CblPick, view: Option<String>| LinkedNext {
+    let continues = |part: ListLite, pick: CblPick, view: Option<String>| LinkedNext {
         list_id: part.id,
         issue: pick.0,
         series_slug: pick.1,
@@ -580,21 +625,13 @@ pub(crate) async fn feed_links(
         .filter(reading_list_link::Column::ParentListId.eq(list_id))
         .all(&app.db)
         .await?;
-    let children: HashMap<Uuid, cbl_list::Model> = if links.is_empty() {
-        HashMap::new()
-    } else {
-        cbl_list::Entity::find()
-            .filter(
-                cbl_list::Column::Id
-                    .is_in(links.iter().map(|l| l.child_list_id).collect::<Vec<_>>()),
-            )
-            .all(&app.db)
-            .await?
-            .into_iter()
-            .filter(|c| visible(c, user_id))
-            .map(|c| (c.id, c))
-            .collect()
-    };
+    let child_ids: Vec<Uuid> = links.iter().map(|l| l.child_list_id).collect();
+    let children: HashMap<Uuid, ListLite> = lists_lite(&app.db, &child_ids)
+        .await?
+        .into_iter()
+        .filter(|c| c.visible_to(user_id))
+        .map(|c| (c.id, c))
+        .collect();
     links.sort_by_key(event_order);
     let mut out = FeedLinks::default();
     for l in links {
@@ -686,6 +723,11 @@ pub(crate) async fn inline_events_xml(
         .map(|c| (c.id, c))
         .collect();
     links.sort_by_key(event_order);
+    let book_key = |b: &parsers::cbl::ParsedCblBook| {
+        crate::cbl::derive::BookKey::new(b.comicvine_issue_id(), &b.series, &b.number)
+    };
+    let mut seen: HashSet<crate::cbl::derive::BookKey> =
+        master.books.iter().map(book_key).collect();
     let mut after: HashMap<usize, Vec<parsers::cbl::ParsedCblBook>> = HashMap::new();
     for l in &links {
         let Some(child) = children.get(&l.child_list_id) else {
@@ -695,7 +737,13 @@ pub(crate) async fn inline_events_xml(
             continue;
         };
         let at = usize::try_from(l.anchor_position_hint.unwrap_or_default()).unwrap_or(0);
-        after.entry(at).or_default().extend(parsed.books);
+        // An issue the file already holds (the master lists some of an
+        // event's issues itself, or two events share one) is written once.
+        let fresh = parsed
+            .books
+            .into_iter()
+            .filter(|b| seen.insert(book_key(b)));
+        after.entry(at).or_default().extend(fresh);
     }
     let books = std::mem::take(&mut master.books);
     for (i, b) in books.into_iter().enumerate() {

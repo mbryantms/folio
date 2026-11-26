@@ -163,6 +163,24 @@ pub const MIN_EVENT_COVERAGE: f64 = 0.6;
 /// as part of it (a stray tie-in inside an event's run).
 const ABSORB_GAP: usize = 2;
 
+/// The share of `plain`'s books the `twin` also holds (0.0–1.0; 1.0 for
+/// an empty plain list). A real twin is the plain list plus insertions,
+/// so nearly all of it. When the two barely overlap (the stored list has
+/// no ComicVine ids and the twin does, or it is a different edition) a
+/// diff would propose every event after the last issue and cost memory
+/// quadratic in the mismatch, so callers treat it as "no usable twin".
+pub fn twin_overlap(plain: &[BookKey], twin: &[BookKey]) -> f64 {
+    if plain.is_empty() {
+        return 1.0;
+    }
+    let twin_keys: std::collections::HashSet<&BookKey> = twin.iter().collect();
+    let shared = plain.iter().filter(|k| twin_keys.contains(k)).count();
+    shared as f64 / plain.len() as f64
+}
+
+/// Below this [`twin_overlap`] the twin is not diffed.
+pub const MIN_TWIN_OVERLAP: f64 = 0.8;
+
 /// Diff `plain` against its with-events `twin` and place `candidates`.
 pub fn twin_diff(plain: &[BookKey], twin: &[BookKey], candidates: &[Candidate]) -> Derivation {
     // Which candidate owns each key: the smallest list holding it.
@@ -629,5 +647,20 @@ mod tests {
             vec!["[DC Comics] Darkseid War (WEB-CBRO)"]
         );
         assert!(pick("Other/Star Wars/CBRO/x.cbl").is_empty());
+    }
+
+    #[test]
+    fn twin_overlap_tells_a_real_twin_from_a_mismatch() {
+        let k = |n: i32| BookKey::Cv(n);
+        let plain: Vec<BookKey> = (0..10).map(k).collect();
+        // The plain list plus insertions: everything overlaps.
+        let twin: Vec<BookKey> = (0..10).flat_map(|n| [k(n), k(100 + n)]).collect();
+        assert!(twin_overlap(&plain, &twin) >= MIN_TWIN_OVERLAP);
+        // Same books keyed by name on one side, by id on the other.
+        let named: Vec<BookKey> = (0..10)
+            .map(|n| BookKey::new(None, "Series", &n.to_string()))
+            .collect();
+        assert!(twin_overlap(&named, &twin) < MIN_TWIN_OVERLAP);
+        assert_eq!(twin_overlap(&[], &twin), 1.0);
     }
 }

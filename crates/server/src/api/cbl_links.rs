@@ -41,6 +41,7 @@ use axum::{
 use chrono::Utc;
 use entity::reading_list_link::{self, AnchorStatus, LinkKind, LinkPlacement};
 use entity::{cbl_entry, cbl_list, reading_list_break, reading_list_link_skip, saved_view};
+use futures::StreamExt;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, DbBackend, EntityTrait, FromQueryResult,
     ModelTrait, PaginatorTrait, QueryFilter, Statement, sea_query::OnConflict, sea_query::Value,
@@ -375,18 +376,14 @@ pub(super) async fn build_view(
         .all(&app.db)
         .await?;
     let child_ids: Vec<Uuid> = links.iter().map(|l| l.child_list_id).collect();
-    let children: HashMap<Uuid, cbl_list::Model> = if child_ids.is_empty() {
-        HashMap::new()
-    } else {
-        cbl_list::Entity::find()
-            .filter(cbl_list::Column::Id.is_in(child_ids))
-            .all(&app.db)
+    // Names and owners only: a list row also carries its whole source file.
+    let children: HashMap<Uuid, super::cbl_link_nav::ListLite> =
+        super::cbl_link_nav::lists_lite(&app.db, &child_ids)
             .await?
             .into_iter()
-            .filter(|c| visible_to(c, user))
+            .filter(|c| c.visible_to(user.id))
             .map(|c| (c.id, c))
-            .collect()
-    };
+            .collect();
     let links: Vec<_> = links
         .into_iter()
         .filter(|l| children.contains_key(&l.child_list_id))
@@ -600,6 +597,9 @@ pub(super) async fn anchor_of_entry(
             (AnchorKey::of_entry(&r), r.position)
         }))
 }
+
+/// Progress writes a mark-read-through runs at once.
+const MARK_THROUGH_CONCURRENCY: usize = 8;
 
 /// Serializes writes that add a link (here and in `cbl_derive`). Holds a
 /// transaction-scoped Postgres advisory lock: keep the returned
@@ -1231,32 +1231,40 @@ pub async fn mark_read_through(
         })
         .into_response();
     }
-    let mut marked = 0u32;
-    let mut failed = 0u32;
-    for iss in issues {
-        let last = iss.page_count.unwrap_or(1).max(1) - 1;
-        // Marked read without being read here: backfill, so it stays out
-        // of time-bound activity (same as the bulk mark).
-        match super::progress::upsert_explicit(
-            &app,
-            user.id,
-            &iss.id,
-            iss.page_count,
-            last,
-            1.0,
-            true,
-            None,
-            super::progress::resolve_is_backfill(true, true),
-        )
-        .await
-        {
-            Ok(_) => marked += 1,
-            Err(e) => {
-                tracing::warn!(error = %e, issue_id = %iss.id, "cbl links: mark-through write failed");
-                failed += 1;
+    // Each write goes through the same atomic upsert as a single mark (it
+    // owns reread runs and the backfill flag), a few at a time: one by one
+    // a 1,000-issue master could outlast the route timeout.
+    let app_ref = &app;
+    let results: Vec<bool> = futures::stream::iter(issues)
+        .map(|iss| async move {
+            let last = iss.page_count.unwrap_or(1).max(1) - 1;
+            // Marked read without being read here: backfill, so it stays
+            // out of time-bound activity (same as the bulk mark).
+            match super::progress::upsert_explicit(
+                app_ref,
+                user.id,
+                &iss.id,
+                iss.page_count,
+                last,
+                1.0,
+                true,
+                None,
+                super::progress::resolve_is_backfill(true, true),
+            )
+            .await
+            {
+                Ok(_) => true,
+                Err(e) => {
+                    tracing::warn!(error = %e, issue_id = %iss.id, "cbl links: mark-through write failed");
+                    false
+                }
             }
-        }
-    }
+        })
+        .buffer_unordered(MARK_THROUGH_CONCURRENCY)
+        .collect()
+        .await;
+    let marked = u32::try_from(results.iter().filter(|ok| **ok).count()).unwrap_or(u32::MAX);
+    let failed = u32::try_from(results.len()).unwrap_or(u32::MAX) - marked;
     Json(MarkThroughResp { marked, failed }).into_response()
 }
 

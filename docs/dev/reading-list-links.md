@@ -81,6 +81,19 @@ back). The refresh log records `links_lost` / `links_restored`.
   (`auto_twin`) and chains (`auto_chain`). A list that fails to import is
   reported and the rest still apply.
 
+Hardening (2.0): a preview or an apply spends one `CATALOG_BUDGET` on
+the catalog (index refresh + downloads), under the route timeout; the
+preview is rate-limited per user (`cbl_derive_preview`); the twin is not
+diffed when it shares too few issues with the list (`twin_overlap` below
+`MIN_TWIN_OVERLAP` → `twin_mismatch`), and the diff runs on a blocking
+thread. An apply imports only catalog files that are event candidates of
+this master, fails an event whose anchor entry is gone **before**
+importing its list, takes its import token after the catalog answered,
+and gives imported events the master's refresh schedule.
+
+Lookups of "which lists are these" go through `cbl_link_nav::lists_lite`
+(id, owner, name): a `cbl_lists` row also carries its whole source file.
+
 ## Reading across lists (`api::cbl_link_nav`)
 
 `cbl_link_nav` is the one resolver module; Up Next, the list page's back
