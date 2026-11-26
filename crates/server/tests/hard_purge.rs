@@ -658,10 +658,12 @@ async fn unconstrained_id_columns_are_accounted_for() {
         "release_calendar_issue.metron_issue_id",
         "release_calendar_series.metron_series_id",
         "release_calendar_series.cv_series_id",
-        // A pushed Mylar snapshot: ComicVine ids as Mylar reported them,
-        // replaced whole by the next push.
+        // Add-to-Mylar requests: ComicVine ids of issues the library does
+        // not hold (that is why they were requested).
         "mylar_add_request.cv_issue_id",
         "mylar_add_request.cv_series_id",
+        // A pushed Mylar snapshot: ComicVine ids as Mylar reported them,
+        // replaced whole by the next push.
         "mylar_pull.cv_issue_id",
         "mylar_pull.cv_series_id",
         "mylar_wanted.cv_issue_id",
