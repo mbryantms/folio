@@ -163,6 +163,123 @@ pub const MIN_EVENT_COVERAGE: f64 = 0.6;
 /// as part of it (a stray tie-in inside an event's run).
 const ABSORB_GAP: usize = 2;
 
+/// An event found inline in a list: the stretch of the list that is the
+/// event's issues.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EventRun {
+    /// Index into the candidates.
+    pub candidate: usize,
+    /// First and last index of the stretch in the list (inclusive).
+    pub start: usize,
+    pub end: usize,
+    /// Issues of the event in the stretch.
+    pub issues: usize,
+}
+
+/// A stretch shorter than this is a tie-in, not an event read here.
+pub const MIN_RUN_ISSUES: usize = 3;
+/// Share of an event's issues one stretch must hold to count as the
+/// place the event is read (a list that interleaves an event across the
+/// whole part has no such place, and gets no chapter for it).
+pub const MIN_RUN_COVERAGE: f64 = 0.5;
+
+/// Share of a stretch that must be the event's own issues.
+pub const MIN_RUN_DENSITY: f64 = 0.6;
+
+/// Find the events a list reads **inline** (a with-events master, a CMRO
+/// part): for each candidate event list, the one stretch of `list` that
+/// holds most of its issues. For chapters, not links: nothing is moved,
+/// the stretch just gets a name.
+///
+/// Same rules as [`twin_diff`]: an issue belongs to the **smallest**
+/// candidate holding it, a stray issue or two inside a stretch doesn't
+/// split it, and an event with no stretch holding enough of it is left
+/// out rather than guessed. Runs come back in list order and never
+/// overlap (a later, smaller claim on an already-taken stretch is
+/// dropped).
+pub fn detect_event_runs(list: &[BookKey], candidates: &[Candidate]) -> Vec<EventRun> {
+    let mut owner: HashMap<&BookKey, usize> = HashMap::new();
+    for (ci, c) in candidates.iter().enumerate() {
+        for k in &c.keys {
+            owner
+                .entry(k)
+                .and_modify(|cur| {
+                    if candidates[*cur].keys.len() > c.keys.len() {
+                        *cur = ci;
+                    }
+                })
+                .or_insert(ci);
+        }
+    }
+    // Stretches of one owner, absorbing short gaps inside it.
+    struct Seg {
+        owner: Option<usize>,
+        start: usize,
+        end: usize, // inclusive
+        issues: usize,
+    }
+    let mut segs: Vec<Seg> = Vec::new();
+    for (i, key) in list.iter().enumerate() {
+        let o = owner.get(key).copied();
+        match segs.last_mut() {
+            Some(s) if s.owner == o => {
+                s.end = i;
+                s.issues += 1;
+            }
+            _ => segs.push(Seg {
+                owner: o,
+                start: i,
+                end: i,
+                issues: 1,
+            }),
+        }
+    }
+    let mut i = 1;
+    while i + 1 < segs.len() {
+        if segs[i - 1].owner.is_some()
+            && segs[i - 1].owner == segs[i + 1].owner
+            && segs[i].end - segs[i].start < ABSORB_GAP
+        {
+            segs[i - 1].end = segs[i + 1].end;
+            segs[i - 1].issues += segs[i + 1].issues;
+            segs.drain(i..=i + 1);
+        } else {
+            i += 1;
+        }
+    }
+    // Each event's largest stretch, if it is enough of the event.
+    let mut best: HashMap<usize, usize> = HashMap::new();
+    for (si, s) in segs.iter().enumerate() {
+        if let Some(o) = s.owner
+            && best.get(&o).is_none_or(|&b| s.issues > segs[b].issues)
+        {
+            best.insert(o, si);
+        }
+    }
+    let mut runs: Vec<EventRun> = best
+        .into_iter()
+        .filter_map(|(cand, si)| {
+            let s = &segs[si];
+            let size = candidates[cand].keys.len().max(1);
+            let span = s.end - s.start + 1;
+            (s.issues >= MIN_RUN_ISSUES
+                && (s.issues as f64) / (size as f64) >= MIN_RUN_COVERAGE
+                // Absorbing gaps can chain an event that only ever appears
+                // an issue at a time across a whole part; a stretch must
+                // be mostly the event.
+                && (s.issues as f64) / (span as f64) >= MIN_RUN_DENSITY)
+                .then_some(EventRun {
+                    candidate: cand,
+                    start: s.start,
+                    end: s.end,
+                    issues: s.issues,
+                })
+        })
+        .collect();
+    runs.sort_by_key(|r| (r.start, r.candidate));
+    runs
+}
+
 /// The share of `plain`'s books the `twin` also holds (0.0–1.0; 1.0 for
 /// an empty plain list). A real twin is the plain list plus insertions,
 /// so nearly all of it. When the two barely overlap (the stored list has
@@ -651,5 +768,64 @@ mod tests {
             .collect();
         assert!(twin_overlap(&named, &twin) < MIN_TWIN_OVERLAP);
         assert_eq!(twin_overlap(&[], &twin), 1.0);
+    }
+
+    #[test]
+    fn detects_events_read_inline() {
+        let k = |n: i32| BookKey::Cv(n);
+        // 0..5 main, 100..106 event A (6 issues) with one stray main issue
+        // inside, 6..8 main, 200..203 event B, then a lone A tie-in.
+        let list: Vec<BookKey> = [0, 1, 2, 3, 4, 100, 101, 102, 5, 103, 104, 105]
+            .into_iter()
+            .chain([6, 7, 200, 201, 202, 8, 106])
+            .map(k)
+            .collect();
+        let a = Candidate {
+            keys: (100..107).map(k).collect(),
+        };
+        let b = Candidate {
+            keys: (200..203).map(k).collect(),
+        };
+        // A roll-up holding both events never claims a specific event's run.
+        let rollup = Candidate {
+            keys: (100..107).chain(200..203).map(k).collect(),
+        };
+        let runs = detect_event_runs(&list, &[a, b, rollup]);
+        assert_eq!(
+            runs,
+            vec![
+                EventRun {
+                    candidate: 0,
+                    start: 5,
+                    end: 11,
+                    issues: 6
+                },
+                EventRun {
+                    candidate: 1,
+                    start: 14,
+                    end: 16,
+                    issues: 3
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_event_spread_thin_gets_no_chapter() {
+        let k = |n: i32| BookKey::Cv(n);
+        // Ten event issues, never more than two together.
+        let list: Vec<BookKey> = (0..10)
+            .flat_map(|i| [k(i), k(i + 50), k(100 + i)])
+            .collect();
+        let ev = Candidate {
+            keys: (100..110).map(k).collect(),
+        };
+        assert!(detect_event_runs(&list, &[ev]).is_empty());
+        // Too few issues to be an event read here.
+        let tiny = Candidate {
+            keys: vec![k(100), k(101)],
+        };
+        let list: Vec<BookKey> = [0, 100, 101, 1].into_iter().map(k).collect();
+        assert!(detect_event_runs(&list, &[tiny]).is_empty());
     }
 }

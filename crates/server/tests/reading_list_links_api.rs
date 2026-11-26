@@ -2203,3 +2203,73 @@ async fn import_order_chains_the_parts_of_a_catalog_order() {
     assert_eq!(ev["source"], "cbro");
     assert!(ev.get("order_key").is_none(), "{ev}");
 }
+
+/// 2.0 PR 9: a list that reads an event inline gets a proposed chapter
+/// for it, from the event lists the caller already has. Nothing is
+/// written by the detection; a chapter that already starts there is
+/// reported as such.
+#[tokio::test]
+async fn detect_chapters_finds_an_event_read_inline() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "detect-chapters@example.com").await;
+    let (_, issues) = seed_cbl_with_matched_entries(&app, user.user_id, 12).await;
+    // A master of eight entries; positions 2..=5 are the event's issues.
+    let master = make_list(&app, Some(user.user_id), "Master", &issues[0..8]).await;
+    let event = make_list(&app, Some(user.user_id), "Event", &issues[8..12]).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    for n in 0..4 {
+        let row = cbl_entry::Entity::find()
+            .filter(cbl_entry::Column::CblListId.eq(master))
+            .filter(cbl_entry::Column::Position.eq(2 + n))
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut am: cbl_entry::ActiveModel = row.into();
+        // `make_list` names an entry "<list> series" #<index>.
+        am.series_name = Set("Event series".into());
+        am.issue_number = Set(n.to_string());
+        am.update(&db).await.unwrap();
+    }
+
+    let uri = format!("/api/me/cbl-lists/{master}/chapters/detect");
+    let (status, body) = send(&app, Method::POST, &uri, &user, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["used_catalog"], false);
+    let proposals = body["proposals"].as_array().unwrap();
+    assert_eq!(proposals.len(), 1, "{body}");
+    let p = &proposals[0];
+    assert_eq!(p["name"], "Event");
+    assert_eq!(p["position"], 2);
+    assert_eq!(p["end_position"], 5);
+    assert_eq!(p["issues"], 4);
+    assert_eq!(p["total"], 4);
+    assert_eq!(p["starts_at"], "Event series #0");
+    assert_eq!(p["already_chapter"], false);
+    assert_eq!(p["next_already_chapter"], false);
+    assert_eq!(p["entry_id"], entry_at(&app, master, 2).await);
+    assert_eq!(p["next_entry_id"], entry_at(&app, master, 6).await);
+
+    // Nothing was written.
+    let (_, links) = get_json(&app, &links_uri(master), &user).await;
+    assert!(links["breaks"].as_array().unwrap().is_empty(), "{links}");
+
+    // Keep it: an ordinary chapter break. Detection then reports it.
+    let (status, _) = send(
+        &app,
+        Method::POST,
+        &breaks_uri(master),
+        &user,
+        Some(serde_json::json!({ "entry_id": p["entry_id"], "label": "Event" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (_, body) = send(&app, Method::POST, &uri, &user, None).await;
+    assert_eq!(body["proposals"][0]["already_chapter"], true, "{body}");
+
+    // Another reader's list is not theirs to detect on.
+    let other = register(&app, "detect-other@example.com").await;
+    let (status, _) = send(&app, Method::POST, &uri, &other, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let _ = event;
+}

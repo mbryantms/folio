@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { ApiMutationError } from "@/lib/api/mutations/_core";
 import { DeriveLinksDialog } from "@/components/cbl/links/DeriveLinksDialog";
+import { DetectChaptersDialog } from "@/components/cbl/links/DetectChaptersDialog";
 import {
   LostAnchorsNotice,
   MoveEventDialog,
@@ -452,6 +453,7 @@ function CblViewDetailInner({
   const markThrough = useMarkCblReadThrough(listId);
   const [chaptersOpen, setChaptersOpen] = React.useState(false);
   const [deriveOpen, setDeriveOpen] = React.useState(false);
+  const [detectOpen, setDetectOpen] = React.useState(false);
   const [collectionOpen, setCollectionOpen] = React.useState(false);
   const [insertTarget, setInsertTarget] = React.useState<{
     entryId: string | null;
@@ -1015,6 +1017,11 @@ function CblViewDetailInner({
           <Waypoints className="size-4" /> Find events and parts…
         </DropdownMenuItem>
       ) : null}
+      {canManageLinks ? (
+        <DropdownMenuItem onSelect={() => setDetectOpen(true)}>
+          <ListTree className="size-4" /> Find event chapters…
+        </DropdownMenuItem>
+      ) : null}
       {canManageLinks && !nextPart ? (
         <DropdownMenuItem
           onSelect={() => setInsertTarget({ entryId: null, label: null })}
@@ -1485,6 +1492,13 @@ function CblViewDetailInner({
           label: list.parsed_name,
         }}
       />
+      {detectOpen && (
+        <DetectChaptersDialog
+          listId={list.id}
+          open={detectOpen}
+          onOpenChange={setDetectOpen}
+        />
+      )}
       {deriveOpen && (
         <DeriveLinksDialog
           listId={list.id}

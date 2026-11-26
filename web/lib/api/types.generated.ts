@@ -3293,6 +3293,22 @@ export interface paths {
         patch: operations["cbl_breaks_update"];
         trace?: never;
     };
+    "/api/me/cbl-lists/{id}/chapters/detect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["cbl_lists_detect_chapters"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/cbl-lists/{id}/check": {
         parameters: {
             query?: never;
@@ -10066,6 +10082,17 @@ export interface components {
             agree: boolean;
             summary: string;
         };
+        DetectChaptersPreview: {
+            /**
+             * Format: int32
+             * @description Event lists the list was compared with.
+             */
+            compared: number;
+            /** @description In reading order. */
+            proposals: components["schemas"]["ProposedChapter"][];
+            /** @description Some of those came from the catalog (the list is a catalog list). */
+            used_catalog: boolean;
+        };
         DetectGap: {
             error?: string | null;
             high: string;
@@ -14243,6 +14270,40 @@ export interface components {
             percent: number;
             /** @description RFC 3339 timestamp of the most recent progress write. */
             updated_at: string;
+        };
+        ProposedChapter: {
+            /** @description A chapter already starts at `position` (nothing to create there). */
+            already_chapter: boolean;
+            /**
+             * Format: int32
+             * @description 0-based position of the stretch's last entry.
+             */
+            end_position: number;
+            /** @description The entry the chapter would start at. */
+            entry_id: string;
+            /**
+             * Format: int32
+             * @description Issues of the event in the stretch, and in the event's own list.
+             */
+            issues: number;
+            /** @description The event's name, as its list is named. */
+            name: string;
+            /** @description A chapter already starts right after the stretch. */
+            next_already_chapter: boolean;
+            /**
+             * @description The entry right after the stretch, where the list goes on: a break
+             *     there ends the event's chapter. `None` at the end of the list.
+             */
+            next_entry_id?: string | null;
+            /**
+             * Format: int32
+             * @description 0-based position of that entry.
+             */
+            position: number;
+            /** @description "Fantastic Four #8": the issue the event starts at here. */
+            starts_at: string;
+            /** Format: int32 */
+            total: number;
         };
         ProposedEventLink: {
             after_entry_id: string;
@@ -25482,6 +25543,55 @@ export interface operations {
             };
             /** @description validation */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cbl_lists_detect_chapters: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DetectChaptersPreview"];
+                };
+            };
+            /** @description not the list's manager */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description list not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description too many detections */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the catalog could not be read */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

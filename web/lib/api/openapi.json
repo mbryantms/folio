@@ -7216,6 +7216,44 @@
         }
       }
     },
+    "/api/me/cbl-lists/{id}/chapters/detect": {
+      "post": {
+        "operationId": "cbl_lists_detect_chapters",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetectChaptersPreview"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "not the list's manager"
+          },
+          "404": {
+            "description": "list not found"
+          },
+          "429": {
+            "description": "too many detections"
+          },
+          "502": {
+            "description": "the catalog could not be read"
+          }
+        }
+      }
+    },
     "/api/me/cbl-lists/{id}/check": {
       "post": {
         "operationId": "cbl_lists_check_one",
@@ -23443,6 +23481,32 @@
           }
         }
       },
+      "DetectChaptersPreview": {
+        "type": "object",
+        "required": [
+          "proposals",
+          "compared",
+          "used_catalog"
+        ],
+        "properties": {
+          "compared": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Event lists the list was compared with."
+          },
+          "proposals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProposedChapter"
+            },
+            "description": "In reading order."
+          },
+          "used_catalog": {
+            "type": "boolean",
+            "description": "Some of those came from the catalog (the list is a catalog list)."
+          }
+        }
+      },
       "DetectGap": {
         "type": "object",
         "required": [
@@ -33142,6 +33206,68 @@
           "updated_at": {
             "type": "string",
             "description": "RFC 3339 timestamp of the most recent progress write."
+          }
+        }
+      },
+      "ProposedChapter": {
+        "type": "object",
+        "required": [
+          "name",
+          "entry_id",
+          "position",
+          "starts_at",
+          "issues",
+          "total",
+          "end_position",
+          "already_chapter",
+          "next_already_chapter"
+        ],
+        "properties": {
+          "already_chapter": {
+            "type": "boolean",
+            "description": "A chapter already starts at `position` (nothing to create there)."
+          },
+          "end_position": {
+            "type": "integer",
+            "format": "int32",
+            "description": "0-based position of the stretch's last entry."
+          },
+          "entry_id": {
+            "type": "string",
+            "description": "The entry the chapter would start at."
+          },
+          "issues": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Issues of the event in the stretch, and in the event's own list."
+          },
+          "name": {
+            "type": "string",
+            "description": "The event's name, as its list is named."
+          },
+          "next_already_chapter": {
+            "type": "boolean",
+            "description": "A chapter already starts right after the stretch."
+          },
+          "next_entry_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The entry right after the stretch, where the list goes on: a break\nthere ends the event's chapter. `None` at the end of the list."
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32",
+            "description": "0-based position of that entry."
+          },
+          "starts_at": {
+            "type": "string",
+            "description": "\"Fantastic Four #8\": the issue the event starts at here."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },

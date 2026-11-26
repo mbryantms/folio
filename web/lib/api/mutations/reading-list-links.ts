@@ -12,6 +12,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { apiPath } from "../path";
 import { queryKeys } from "../queries";
 import type {
+  DetectChaptersPreview,
   ImportOrderReq,
   ImportOrderResp,
   ApplyDeriveReq,
@@ -363,6 +364,61 @@ export function useImportCblOrder() {
         qc.invalidateQueries({ queryKey: CBL_LINKS_PREFIX });
         invalidateSavedViews(qc);
       },
+    },
+  );
+}
+
+/** Find the events a list reads inline (a preview; it writes nothing). A
+ *  mutation, not a query: it downloads from the catalog and is
+ *  rate-limited. */
+export function useDetectCblChapters(listId: string) {
+  return useApiMutation<DetectChaptersPreview, void>(() => ({
+    path: apiPath`/me/cbl-lists/${listId}/chapters/detect`,
+    method: "POST",
+  }));
+}
+
+/** One chapter break to create for a detected event. */
+export type DetectedBreak = { entry_id: string; label: string | null };
+
+/** Create the chapter breaks the reader kept, in order. A break that is
+ *  refused (a chapter already starts there) doesn't stop the rest. */
+export function useApplyDetectedChapters(listId: string) {
+  const invalidate = useInvalidateLinks();
+  return useApiRunMutation<
+    { created: number; failed: number },
+    DetectedBreak[]
+  >(
+    async (breaks) => {
+      let created = 0;
+      let failed = 0;
+      for (const b of breaks) {
+        try {
+          await apiMutate<ReadingListLinksView>({
+            path: apiPath`/me/cbl-lists/${listId}/breaks`,
+            method: "POST",
+            body: b,
+          });
+          created += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+      return { created, failed };
+    },
+    {
+      successMessage: (r) => {
+        const n = r?.created ?? 0;
+        const base =
+          n === 0
+            ? "No chapters added"
+            : `Added ${n} ${n === 1 ? "chapter" : "chapters"}`;
+        return r && r.failed > 0
+          ? `${base}; ${r.failed} couldn't be added`
+          : base;
+      },
+      successVariant: (r) => (r && r.failed > 0 ? "info" : "success"),
+      onSettled: invalidate,
     },
   );
 }

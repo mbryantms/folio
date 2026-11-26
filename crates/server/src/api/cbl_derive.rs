@@ -230,7 +230,7 @@ pub(super) fn catalog_failure(e: &CatalogError) -> Response {
 }
 
 /// Download and parse `entries` in parallel; failures are dropped (logged).
-async fn download_parsed(
+pub(super) async fn download_parsed(
     source: &catalog_source::Model,
     entries: Vec<CatalogEntry>,
 ) -> HashMap<String, parsers::cbl::ParsedCbl> {
@@ -364,7 +364,7 @@ async fn link_exists(
 }
 
 /// The list's catalog source and path, when it came from a catalog.
-async fn catalog_origin(
+pub(super) async fn catalog_origin(
     app: &AppState,
     list: &cbl_list::Model,
 ) -> Result<Option<(catalog_source::Model, String)>, sea_orm::DbErr> {
