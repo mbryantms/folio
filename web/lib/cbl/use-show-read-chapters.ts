@@ -8,7 +8,8 @@ import { useCallback, useSyncExternalStore } from "react";
  * chapter. A per-viewer convenience kept in localStorage; the server
  * snapshot is the default, and a blocked store just means the default.
  * Same store pattern as `use-hide-missing`. Also holds the "hide the
- * chapter rail" preference (`useChapterRailHidden`).
+ * chapter rail" preference (`useChapterRailHidden`) and the per-list
+ * plain view (`usePlainListView`).
  */
 const PREFIX = "folio.cbl.showReadChapters.";
 const listeners = new Set<() => void>();
@@ -62,4 +63,13 @@ export function useShowReadChapters(
  *  list: it is about the reader's screen, not the list. */
 export function useChapterRailHidden(): [boolean, (next: boolean) => void] {
   return useStoredFlag("folio.cbl.chapterRailHidden");
+}
+
+/** Per-list "plain list" view: a flat cover grid with no chapter
+ *  headers, folding, rail or event bands, for readers who just want the
+ *  issues in order. Off by default (chapters show when a list has them). */
+export function usePlainListView(
+  listId: string,
+): [boolean, (next: boolean) => void] {
+  return useStoredFlag("folio.cbl.plainView." + listId);
 }

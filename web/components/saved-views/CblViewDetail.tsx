@@ -16,6 +16,7 @@ import {
   ListChecks,
   Loader2,
   Pencil,
+  LayoutGrid,
   ListTree,
   MoreHorizontal,
   RefreshCw,
@@ -97,6 +98,10 @@ import {
 } from "@/lib/api/mutations";
 import { EventBand } from "@/components/cbl/links/EventBand";
 import {
+  chapterTops,
+  scrollBehavior,
+} from "@/components/cbl/links/use-current-chapter";
+import {
   ChapterHeader,
   ChapterRail,
   ChapterRailButton,
@@ -112,6 +117,7 @@ import {
 } from "@/components/cbl/links/LinkDialogs";
 import {
   buildChapterBlocks,
+  chapterKey,
   chapterStep,
   foldedChapters,
   isChapterDone,
@@ -120,8 +126,10 @@ import {
 } from "@/lib/cbl/linked-plan";
 import {
   useChapterRailHidden,
+  usePlainListView,
   useShowReadChapters,
 } from "@/lib/cbl/use-show-read-chapters";
+import { usePinnedControlsHeight } from "@/lib/ui/use-pinned-controls-height";
 import { listShortcutFor } from "@/lib/keyboard/list-shortcuts";
 import type { ReadingListLinkView } from "@/lib/api/types";
 import { skippedEntryIds } from "@/lib/library/bulk-archive-skips";
@@ -205,15 +213,26 @@ function CblViewDetailInner({
   // Linked reading lists: events, next part and chapters. The entries
   // query waits for them so it can start at the reader's chapter.
   const linksQuery = useCblListLinks(listId);
+  // Plain list: the flat cover grid, as if the list had no chapters or
+  // events (the reader's choice, per list).
+  const [plainView, setPlainView] = usePlainListView(listId);
+  const allChapters = linksQuery.data?.chapters;
+  const allEvents = linksQuery.data?.events;
   const chapters = React.useMemo(
-    () => linksQuery.data?.chapters ?? [],
-    [linksQuery.data?.chapters],
+    () => (plainView ? [] : (allChapters ?? [])),
+    [plainView, allChapters],
   );
   const linkEvents = React.useMemo(
-    () => linksQuery.data?.events ?? [],
-    [linksQuery.data?.events],
+    () => (plainView ? [] : (allEvents ?? [])),
+    [plainView, allEvents],
   );
+  // Whether the list has structure to show or hide at all.
+  const hasStructure =
+    (allChapters?.length ?? 0) > 1 || (allEvents?.length ?? 0) > 0;
   const [showReadChapters, setShowReadChapters] = useShowReadChapters(listId);
+  // Chapter headers and the rail pin under the topbar plus whichever
+  // control row is pinned; this publishes that row's height.
+  const pinnedRootRef = usePinnedControlsHeight<HTMLDivElement>();
   const [railHidden, setRailHidden] = useChapterRailHidden();
   const [foldOverrides, setFoldOverrides] = React.useState<
     Record<number, boolean>
@@ -221,7 +240,9 @@ function CblViewDetailInner({
   // Which chapters were finished when the page opened (see foldedChapters).
   const [doneAtLoad, setDoneAtLoad] = React.useState<Set<number> | null>(null);
   if (doneAtLoad == null && linksQuery.data) {
-    setDoneAtLoad(new Set(chapters.filter(isChapterDone).map((c) => c.index)));
+    setDoneAtLoad(
+      new Set((allChapters ?? []).filter(isChapterDone).map(chapterKey)),
+    );
   }
   const foldingActive = debouncedQ.length === 0 && chapters.length > 1;
   const folded = React.useMemo(
@@ -237,13 +258,17 @@ function CblViewDetailInner({
     [foldingActive, chapters, foldOverrides, showReadChapters, doneAtLoad],
   );
   const fromPosition = foldingActive ? seekStart(chapters, folded) : undefined;
+  // Entries wait for the links (to start at the reader's chapter), but
+  // not on a links request that is failing: the list still loads, flat.
+  const linksSettled = !linksQuery.isPending || linksQuery.failureCount > 0;
   const entriesQuery = useCblListEntriesInfinite(
-    linksQuery.isPending ? "" : listId,
+    linksSettled ? listId : "",
     {
       status: hideMissing ? "matched,ambiguous,manual" : undefined,
       q: debouncedQ || undefined,
       fromPosition,
     },
+    { keepPrevious: true },
   );
   // Tiny piggy-back on the rail's window query so the detail page
   // highlights the same "Up next" anchor card as the home rail.
@@ -328,7 +353,7 @@ function CblViewDetailInner({
         requestAnimationFrame(() => {
           document
             .getElementById(`cbl-entry-${jumpTarget}`)
-            ?.scrollIntoView({ behavior: "smooth", block: "center" });
+            ?.scrollIntoView({ behavior: scrollBehavior(), block: "center" });
           setJumpTarget(null);
         }),
       );
@@ -451,11 +476,23 @@ function CblViewDetailInner({
     setEventHandled(true);
     const i = chapters.findIndex((c) => c.event_link_ids.includes(eventParam));
     if (i >= 0) {
-      setFoldOverrides((o) => ({ ...o, [i]: false }));
+      setFoldOverrides((o) => ({ ...o, [chapterKey(chapters[i]!)]: false }));
       setPendingEvent(eventParam);
       setPendingChapter(i);
     }
   }
+  // Drop `?event=` once it has been acted on, so a reload or Back to this
+  // URL restores the scroll position instead of jumping again.
+  React.useEffect(() => {
+    if (!eventHandled || eventParam == null) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("event");
+    window.history.replaceState(
+      window.history.state,
+      "",
+      url.pathname + url.search + url.hash,
+    );
+  }, [eventHandled, eventParam]);
   React.useEffect(() => {
     if (pendingChapter == null) return;
     // A rail jump that unfolds a chapter moves the entries query's start;
@@ -468,9 +505,22 @@ function CblViewDetailInner({
       ? document.querySelector(eventSel)
       : document.getElementById(chapterAnchorId(pendingChapter));
     if (!el) {
+      // A search is being cleared (its debounce hasn't flushed): the
+      // loaded pages are still the filtered ones. Wait for the real list.
+      if (q.trim() !== debouncedQ) return;
       // Not loaded yet: walk the pages until its header renders.
-      if (entriesHasNext && !entriesFetchingNext) void entriesFetchNext();
-      return;
+      if (entriesHasNext) {
+        if (!entriesFetchingNext) void entriesFetchNext();
+        return;
+      }
+      if (entriesFetchingNext) return;
+      // Every page is in and it still isn't there (filtered out): give up
+      // rather than hold the jump, and the rail's highlight, forever.
+      const giveUp = requestAnimationFrame(() => {
+        setPendingChapter(null);
+        setPendingEvent(null);
+      });
+      return () => cancelAnimationFrame(giveUp);
     }
     const raf = requestAnimationFrame(() => {
       // Scroll the chapter's section, not its header: the header is
@@ -481,7 +531,7 @@ function CblViewDetailInner({
         document.querySelector(`[data-chapter-index="${pendingChapter}"]`) ||
         document.getElementById(chapterAnchorId(pendingChapter));
       if (!target) return;
-      target.scrollIntoView({ behavior: "smooth", block: "start" });
+      target.scrollIntoView({ behavior: scrollBehavior(), block: "start" });
       setPendingChapter(null);
       setPendingEvent(null);
     });
@@ -495,6 +545,8 @@ function CblViewDetailInner({
     entriesHasNext,
     entriesFetchingNext,
     entriesFetchNext,
+    q,
+    debouncedQ,
   ]);
   // `]` / `[`: next / previous chapter (PR 3a; listed in the `?` sheet
   // from `LIST_SHORTCUTS`). Positions come from the rendered chapter
@@ -507,24 +559,16 @@ function CblViewDetailInner({
       const action = listShortcutFor(e.key);
       if (!action) return;
       if (document.querySelector('[role="dialog"][data-state="open"]')) return;
-      const header = document.querySelector<HTMLElement>(
-        '[data-testid="chapter-header"]',
+      const target = chapterStep(
+        chapterTops(chapterCount),
+        action === "nextChapter" ? 1 : -1,
       );
-      const line = header
-        ? (Number.parseFloat(getComputedStyle(header).top) || 0) +
-          header.offsetHeight
-        : 0;
-      const tops = Array.from({ length: chapterCount }, (_, i) => {
-        const el = document.querySelector(`[data-chapter-index="${i}"]`);
-        return el
-          ? el.getBoundingClientRect().top - line
-          : Number.POSITIVE_INFINITY;
-      });
-      const target = chapterStep(tops, action === "nextChapter" ? 1 : -1);
       if (target == null) return;
       e.preventDefault();
       // No unfolding: a finished chapter stays folded, and its header and
-      // events are where the shortcut stops.
+      // events are where the shortcut stops. A search hides chapters with
+      // no matches, so it is cleared first (as the Up Next jump does).
+      setQ("");
       setPendingChapter(target);
     };
     window.addEventListener("keydown", onKey);
@@ -635,6 +679,14 @@ function CblViewDetailInner({
   function scrollToUpNext() {
     if (upNextPosition == null) return;
     if (q.length > 0) setQ("");
+    // A folded chapter isn't loaded; open the one holding Up Next first.
+    const holder = chapters.find(
+      (c) =>
+        upNextPosition >= c.start_position && upNextPosition <= c.end_position,
+    );
+    if (holder && folded.has(holder.index)) {
+      setFoldOverrides((o) => ({ ...o, [chapterKey(holder)]: false }));
+    }
     setJumpTarget(upNextPosition);
   }
 
@@ -693,9 +745,12 @@ function CblViewDetailInner({
   );
   const hasChapters = chapters.length > 1;
   const jumpToChapter = (index: number) => {
-    if (folded.has(index)) {
-      setFoldOverrides((o) => ({ ...o, [index]: false }));
+    const target = chapters[index];
+    if (target && folded.has(index)) {
+      setFoldOverrides((o) => ({ ...o, [chapterKey(target)]: false }));
     }
+    // A search hides chapters with no matches; the jump needs the list.
+    if (q.length > 0) setQ("");
     setPendingChapter(index);
   };
   const entryLabel = (e: CblEntryHydratedView) =>
@@ -847,7 +902,7 @@ function CblViewDetailInner({
           <Download className="size-4" /> Export
         </a>
       </DropdownMenuItem>
-      {linkEvents.length > 0 && (
+      {(allEvents?.length ?? 0) > 0 && (
         <DropdownMenuItem asChild>
           <a
             href={`/api/me/cbl-lists/${list.id}/export?inline_events=true`}
@@ -891,6 +946,21 @@ function CblViewDetailInner({
           {showReadChapters ? "Showing read chapters" : "Show read chapters"}
         </DropdownMenuItem>
       ) : null}
+      {hasStructure ? (
+        <DropdownMenuItem
+          onSelect={() => {
+            setFoldOverrides({});
+            setPlainView(!plainView);
+          }}
+        >
+          {plainView ? (
+            <ListTree className="size-4" />
+          ) : (
+            <LayoutGrid className="size-4" />
+          )}
+          {plainView ? "Show chapters and events" : "Plain list"}
+        </DropdownMenuItem>
+      ) : null}
       {canManageLinks && list.catalog_source_id ? (
         <DropdownMenuItem onSelect={() => setDeriveOpen(true)}>
           <Waypoints className="size-4" /> Find events and parts…
@@ -921,7 +991,7 @@ function CblViewDetailInner({
   );
 
   return (
-    <div className="space-y-6">
+    <div ref={pinnedRootRef} className="space-y-6">
       {offlineMounted && (
         <OfflineDownloadDialog
           open={offlineOpen}
@@ -1176,7 +1246,13 @@ function CblViewDetailInner({
       />
       {adminBulk.dialogs}
 
-      {entriesQuery.isLoading || linksQuery.isPending ? (
+      {linksQuery.isError ? (
+        <RailError
+          message="Couldn't load this list's chapters and events. The issues are shown as a plain list."
+          onRetry={() => void linksQuery.refetch()}
+        />
+      ) : null}
+      {entriesQuery.isLoading || !linksSettled ? (
         <CoverGridSkeleton label="Loading entries…" />
       ) : list.stats.total === 0 ? (
         <div className="border-border/60 text-muted-foreground rounded-lg border border-dashed p-8 text-center text-sm">
@@ -1202,7 +1278,7 @@ function CblViewDetailInner({
                     ? `Chapter ${block.chapter.index + 1}: ${block.chapter.label}`
                     : undefined
                 }
-                className="scroll-mt-28 space-y-4"
+                className="scroll-mt-[calc(var(--topbar-h)+var(--pinned-controls-h,0px)+0.25rem)] space-y-4"
               >
                 {block.chapter && hasChapters && (
                   <ChapterHeader
@@ -1212,10 +1288,10 @@ function CblViewDetailInner({
                     onToggle={
                       foldingActive
                         ? () => {
-                            const idx = block.chapter!.index;
+                            const key = chapterKey(block.chapter!);
                             setFoldOverrides((o) => ({
                               ...o,
-                              [idx]: !block.folded,
+                              [key]: !block.folded,
                             }));
                           }
                         : undefined
@@ -1312,6 +1388,7 @@ function CblViewDetailInner({
               chapters={chapters}
               events={linkEvents}
               next={nextPart}
+              jumpTarget={pendingChapter}
               onJump={jumpToChapter}
               onHide={() => setRailHidden(true)}
             />
@@ -1327,6 +1404,7 @@ function CblViewDetailInner({
           chapters={chapters}
           events={linkEvents}
           next={nextPart}
+          jumpTarget={pendingChapter}
           onJump={jumpToChapter}
         />
       )}

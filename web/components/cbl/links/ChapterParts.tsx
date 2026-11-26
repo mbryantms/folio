@@ -5,7 +5,7 @@
  * anchors divide it into — the pinned header above each stretch, and the
  * rail that jumps between them (desktop beside the grid, phone in a sheet).
  */
-import type * as React from "react";
+import * as React from "react";
 import {
   ChevronRight,
   CircleCheck,
@@ -28,6 +28,7 @@ import type {
   ReadingListLinkView,
 } from "@/lib/api/types";
 import { statusToneDot, statusToneText } from "@/lib/ui/status-tone";
+import { useCurrentChapter } from "./use-current-chapter";
 import { cn } from "@/lib/utils";
 
 /** A chapter the reader has finished: everything they own in it is read. */
@@ -58,7 +59,7 @@ export function ChapterHeader({
     <div
       id={chapterAnchorId(chapter.index)}
       data-testid="chapter-header"
-      className="bg-background/95 supports-[backdrop-filter]:bg-background/80 border-border/60 sticky top-[var(--cbl-chapter-top,3.5rem)] z-10 flex scroll-mt-28 items-center gap-2 border-b py-2 backdrop-blur"
+      className="bg-background/95 supports-[backdrop-filter]:bg-background/80 border-border/60 sticky top-[calc(var(--topbar-h)+var(--pinned-controls-h,0px))] z-10 flex items-center gap-2 border-b py-2 backdrop-blur"
     >
       {onToggle ? (
         <button
@@ -97,72 +98,131 @@ export function ChapterHeader({
   );
 }
 
-function RailBody({
+/** Data attribute on the element that scrolls the rail (the desktop
+ *  column or the sheet), so the current chapter can be kept in view
+ *  inside it without scrolling the page. */
+const RAIL_SCROLL_ATTR = "data-chapter-rail-scroll";
+
+/** The chapter list itself, with the current chapter marked. Exported
+ *  for tests; pages use {@link ChapterRail} / {@link ChapterRailSheet}. */
+export function ChapterRailList({
   chapters,
   events,
   next,
+  current,
   onJump,
 }: {
   chapters: ReadingListChapterView[];
   events: ReadingListLinkView[];
   next: ReadingListLinkView | null;
+  /** The chapter in view (`useCurrentChapter`). */
+  current: number;
   onJump: (index: number) => void;
 }) {
   const byId = new Map(events.map((e) => [e.id, e]));
+  const listRef = React.useRef<HTMLDivElement>(null);
+  const barRef = React.useRef<HTMLSpanElement>(null);
+  // Slide the indicator to the current chapter's row. Written to the DOM
+  // directly: it follows the page's scroll, which shouldn't re-render the
+  // list. The first placement doesn't animate (no slide in from the top).
+  React.useLayoutEffect(() => {
+    const list = listRef.current;
+    const bar = barRef.current;
+    if (!list || !bar) return;
+    const row = list.querySelector<HTMLElement>(
+      `[data-rail-chapter="${current}"]`,
+    );
+    if (!row) {
+      bar.style.opacity = "0";
+      return;
+    }
+    bar.style.transform = `translateY(${row.offsetTop}px)`;
+    bar.style.height = `${row.offsetHeight}px`;
+    bar.style.opacity = "1";
+    if (!bar.dataset.placed) {
+      // Let this position paint before transitions switch on.
+      requestAnimationFrame(() => {
+        if (barRef.current) barRef.current.dataset.placed = "true";
+      });
+    }
+    // Keep the row in view inside the rail, never scrolling the page.
+    const scroller = list.closest<HTMLElement>(`[${RAIL_SCROLL_ATTR}]`);
+    if (scroller) {
+      const box = scroller.getBoundingClientRect();
+      const r = row.getBoundingClientRect();
+      const margin = 48;
+      if (r.top < box.top + margin || r.bottom > box.bottom - margin) {
+        scroller.scrollTop += r.top - box.top - box.height / 2 + r.height / 2;
+      }
+    }
+  }, [current, chapters]);
   return (
     <nav aria-label="Chapters">
-      <ol className="space-y-0.5 text-sm">
-        {chapters.map((c) => {
-          const done = chapterDone(c);
-          return (
-            <li key={c.index}>
-              <button
-                type="button"
-                onClick={() => onJump(c.index)}
-                className="hover:bg-accent flex min-h-9 w-full items-center gap-2 rounded-md px-2 text-left"
-              >
-                <span
-                  aria-hidden
+      <div ref={listRef} className="relative pl-2">
+        <span
+          ref={barRef}
+          aria-hidden
+          className="bg-primary pointer-events-none absolute top-0 left-0 w-0.5 rounded-full opacity-0 data-[placed]:transition-[transform,height] data-[placed]:duration-300 data-[placed]:ease-out motion-reduce:transition-none"
+        />
+        <ol className="space-y-0.5 text-sm">
+          {chapters.map((c) => {
+            const done = chapterDone(c);
+            const isCurrent = c.index === current;
+            return (
+              <li key={c.index}>
+                <button
+                  type="button"
+                  data-rail-chapter={c.index}
+                  aria-current={isCurrent ? "location" : undefined}
+                  onClick={() => onJump(c.index)}
                   className={cn(
-                    "size-2 shrink-0 rounded-full",
-                    done
-                      ? statusToneDot("success")
-                      : c.read > 0
-                        ? "bg-primary"
-                        : "border-muted-foreground border",
+                    "hover:bg-accent flex min-h-9 w-full items-center gap-2 rounded-md px-2 text-left transition-colors motion-reduce:transition-none",
+                    isCurrent && "bg-muted text-foreground font-medium",
                   )}
-                />
-                <span className="min-w-0 flex-1 truncate">
-                  {c.index + 1}. {c.label}
-                </span>
-                <span className="text-muted-foreground shrink-0 text-xs">
-                  {c.read}/{c.total}
-                </span>
-              </button>
-              {c.event_link_ids.length > 0 && (
-                <ul className="text-muted-foreground ml-6 space-y-0.5 text-xs">
-                  {c.event_link_ids.map((id) => {
-                    const ev = byId.get(id);
-                    if (!ev) return null;
-                    return (
-                      <li key={id} className="flex items-center gap-1.5">
-                        <Zap
-                          className={cn("size-3", statusToneText("warning"))}
-                          aria-hidden
-                        />
-                        <span className="truncate">{ev.child_name}</span>
-                        <span className="ml-auto shrink-0">
-                          {ev.skipped ? "skipped" : `${ev.read}/${ev.total}`}
-                        </span>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </li>
-          );
-        })}
-      </ol>
+                >
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "size-2 shrink-0 rounded-full",
+                      done
+                        ? statusToneDot("success")
+                        : c.read > 0
+                          ? "bg-primary"
+                          : "border-muted-foreground border",
+                    )}
+                  />
+                  <span className="min-w-0 flex-1 truncate">
+                    {c.index + 1}. {c.label}
+                  </span>
+                  <span className="text-muted-foreground shrink-0 text-xs">
+                    {c.read}/{c.total}
+                  </span>
+                </button>
+                {c.event_link_ids.length > 0 && (
+                  <ul className="text-muted-foreground ml-6 space-y-0.5 text-xs">
+                    {c.event_link_ids.map((id) => {
+                      const ev = byId.get(id);
+                      if (!ev) return null;
+                      return (
+                        <li key={id} className="flex items-center gap-1.5">
+                          <Zap
+                            className={cn("size-3", statusToneText("warning"))}
+                            aria-hidden
+                          />
+                          <span className="truncate">{ev.child_name}</span>
+                          <span className="ml-auto shrink-0">
+                            {ev.skipped ? "skipped" : `${ev.read}/${ev.total}`}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </li>
+            );
+          })}
+        </ol>
+      </div>
       {next && (
         <p className="text-muted-foreground mt-3 px-2 text-xs">
           Continues in {next.child_name} →
@@ -170,6 +230,19 @@ function RailBody({
       )}
     </nav>
   );
+}
+
+/** The list wired to the page's scroll position. The tracking state
+ *  lives here, not in the page: crossing a chapter re-renders the rail
+ *  only, never the cover grid. */
+function TrackedRailList({
+  jumpTarget,
+  ...props
+}: Omit<React.ComponentProps<typeof ChapterRailList>, "current"> & {
+  jumpTarget: number | null;
+}) {
+  const current = useCurrentChapter(props.chapters.length, jumpTarget);
+  return <ChapterRailList {...props} current={current} />;
 }
 
 /** Desktop: a sticky column beside the grid, which the reader can hide
@@ -181,11 +254,16 @@ export function ChapterRail({
   chapters: ReadingListChapterView[];
   events: ReadingListLinkView[];
   next: ReadingListLinkView | null;
+  /** The chapter a jump is heading for, while it is under way. */
+  jumpTarget: number | null;
   onJump: (index: number) => void;
   onHide: () => void;
 }) {
   return (
-    <aside className="sticky top-20 hidden max-h-[calc(100dvh-6rem)] w-60 shrink-0 overflow-y-auto xl:block">
+    <aside
+      {...{ [RAIL_SCROLL_ATTR]: "" }}
+      className="sticky top-[calc(var(--topbar-h)+var(--pinned-controls-h,0px)+1rem)] hidden max-h-[calc(100dvh-var(--topbar-h)-var(--pinned-controls-h,0px)-2rem)] w-60 shrink-0 overflow-y-auto xl:block"
+    >
       <div className="mb-1 flex items-center justify-between pl-2">
         <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
           Chapters
@@ -200,7 +278,7 @@ export function ChapterRail({
           <PanelRightClose className="size-4" aria-hidden />
         </Button>
       </div>
-      <RailBody {...props} />
+      <TrackedRailList {...props} />
     </aside>
   );
 }
@@ -221,11 +299,16 @@ export function ChapterRailSheet({
   chapters: ReadingListChapterView[];
   events: ReadingListLinkView[];
   next: ReadingListLinkView | null;
+  jumpTarget: number | null;
   onJump: (index: number) => void;
 }) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-80 overflow-y-auto">
+      <SheetContent
+        side="right"
+        className="w-80 overflow-y-auto"
+        {...{ [RAIL_SCROLL_ATTR]: "" }}
+      >
         <SheetHeader>
           <SheetTitle>Chapters</SheetTitle>
           <SheetDescription>
@@ -234,7 +317,7 @@ export function ChapterRailSheet({
           </SheetDescription>
         </SheetHeader>
         <div className="px-4 pb-4">
-          <RailBody
+          <TrackedRailList
             {...props}
             onJump={(i) => {
               onOpenChange(false);

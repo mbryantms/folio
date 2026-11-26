@@ -9,6 +9,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import type { NextUpDetour } from "@/lib/api/types";
@@ -39,13 +40,17 @@ function DetourList({
   const start = async (d: NextUpDetour) => {
     setPending(d.link_id);
     const view = await ensureListView(d.list_id, d.view_id);
+    if (!view) {
+      // Without the event's view the reader would open the issue in
+      // series order and lose the event; say so and stay put.
+      setPending(null);
+      toast.error(`Couldn't open ${displayListName(d.name)}. Try again.`);
+      return;
+    }
     const href = readerUrl(
       d.first_unread.series_slug,
       d.first_unread.issue_slug,
-      {
-        cbl: view,
-        via: view ? viaViewId : null,
-      },
+      { cbl: view, via: viaViewId },
     );
     onStart?.();
     noteReplace(href);
@@ -67,7 +72,7 @@ function DetourList({
           onClick={() => void start(d)}
         >
           <span className="min-w-0 truncate text-left">
-            Start {displayListName(d.name)}
+            {d.read > 0 ? "Resume" : "Start"} {displayListName(d.name)}
           </span>
           <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
             {pending === d.link_id ? (

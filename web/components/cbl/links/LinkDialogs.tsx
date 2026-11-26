@@ -147,19 +147,22 @@ export function MarkThroughDialog({
   onConfirm: (position: number) => void;
   isPending: boolean;
 }) {
-  const [count, setCount] = React.useState<number | null>(null);
+  // `null` = counting; "failed" = the count request failed (the reader
+  // may still mark, just without the number).
+  const [count, setCount] = React.useState<number | "failed" | null>(null);
   const position = target?.position;
   React.useEffect(() => {
     if (position == null) return;
     let live = true;
     countCblReadThrough(listId, position)
       .then((r) => live && setCount(r?.marked ?? 0))
-      .catch(() => live && setCount(null));
+      .catch(() => live && setCount("failed"));
     return () => {
       live = false;
       setCount(null);
     };
   }, [listId, position]);
+  const failed = count === "failed";
   return (
     <AlertDialog open={target != null} onOpenChange={onOpenChange}>
       <AlertDialogContent>
@@ -168,12 +171,18 @@ export function MarkThroughDialog({
           <AlertDialogDescription>
             {count == null
               ? "Counting the unread issues up to "
-              : count === 0
-                ? "Everything you own up to "
-                : `${count} unread ${count === 1 ? "issue" : "issues"} up to and including `}
+              : failed
+                ? "Couldn\u2019t count the unread issues. Every unread issue you own up to and including "
+                : count === 0
+                  ? "Everything you own up to "
+                  : `${count} unread ${count === 1 ? "issue" : "issues"} up to and including `}
             {target?.label}
-            {count === 0 ? " is already read." : "."} Events linked into this
-            list aren&rsquo;t touched.
+            {count === 0
+              ? " is already read."
+              : failed
+                ? " will be marked read."
+                : "."}{" "}
+            Events linked into this list aren&rsquo;t touched.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -185,7 +194,7 @@ export function MarkThroughDialog({
               disabled={count == null || isPending}
               onClick={() => target && onConfirm(target.position)}
             >
-              Mark {count ?? ""} read
+              {failed ? "Mark read" : `Mark ${count ?? ""} read`}
             </AlertDialogAction>
           )}
         </AlertDialogFooter>

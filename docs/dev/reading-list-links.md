@@ -121,6 +121,24 @@ link, collections and OPDS all go through it.
 - Reader: `DetourButtons` on the end card / webtoon footer, `switch_to`
   handling, `lib/reader/list-context.ts` ("Back to X" / "Continue in X").
 - `components/collections/ReadingListEntryCard.tsx`: the collection tile.
+- **List page state** (`components/saved-views/CblViewDetail.tsx`):
+  - *Plain list*: a per-reader, per-list switch (`usePlainListView`,
+    localStorage) that renders the list with no chapters, folding, rail
+    or bands. Chapters are never forced on a reader.
+  - *Fold state* is keyed by `chapterKey` (the chapter's start position),
+    never its index: indexes renumber when a link or break is added or
+    removed elsewhere.
+  - *Chapter in view*: `useCurrentChapter` lives inside the rail
+    (`ChapterParts.tsx`), not the page, so crossing a chapter re-renders
+    the rail only. A jump holds the highlight on its target until the
+    page settles.
+  - *Sticky offsets*: `usePinnedControlsHeight` publishes the pinned
+    control row's height as `--pinned-controls-h`; chapter headers, the
+    rail and the scroll margins on sections and bands sit at
+    `--topbar-h` + that. Don't hard-code a pixel offset.
+  - The entries query keeps its previous pages while a fold change moves
+    its start (`keepPrevious`), and loads without chapters when the
+    links request fails (an error strip offers Retry).
 
 ## Tests
 
