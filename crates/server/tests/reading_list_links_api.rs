@@ -1900,6 +1900,177 @@ async fn opds_feeds_carry_linked_lists_and_collection_list_entries() {
     assert!(entry_kinds.contains(&serde_json::json!("list")), "{body}");
 }
 
+#[tokio::test]
+async fn a_collection_exports_and_saves_its_list_entries_in_place() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "coll-save@example.com").await;
+    let (_, issues) = seed_cbl_with_matched_entries(&app, user.user_id, 4).await;
+    let event = make_list(&app, Some(user.user_id), "Event", &issues[2..4]).await;
+    let cid = new_collection(&app, &user, "Shelf").await;
+    // issue 0, issue 2, the event (issues 2 and 3), issue 1: the list's
+    // copy of an issue the collection already wrote is left out.
+    add_to_collection(&app, &user, &cid, "issue", &issues[0]).await;
+    add_to_collection(&app, &user, &cid, "issue", &issues[2]).await;
+    add_to_collection(&app, &user, &cid, "list", &event.to_string()).await;
+    add_to_collection(&app, &user, &cid, "issue", &issues[1]).await;
+
+    let (s, xml) = get_text(&app, &format!("/api/me/collections/{cid}/export"), &user).await;
+    assert_eq!(s, StatusCode::OK, "{xml}");
+    assert_eq!(xml.matches("<Book ").count(), 4, "{xml}");
+
+    let (status, body) = send(
+        &app,
+        Method::POST,
+        &format!("/api/me/collections/{cid}/reading-list"),
+        &user,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["name"], "Shelf");
+    assert_eq!(body["total"], 4);
+    assert!(body["view_id"].is_string(), "{body}");
+    let list = Uuid::parse_str(body["list_id"].as_str().unwrap()).unwrap();
+    let db = Database::connect(&app.db_url).await.unwrap();
+    use sea_orm::QueryOrder;
+    let matched: Vec<Option<String>> = entity::cbl_entry::Entity::find()
+        .filter(entity::cbl_entry::Column::CblListId.eq(list))
+        .order_by_asc(entity::cbl_entry::Column::Position)
+        .all(&db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|e| e.matched_issue_id)
+        .collect();
+    assert_eq!(
+        matched,
+        [0usize, 2, 3, 1]
+            .iter()
+            .map(|i| Some(issues[*i].clone()))
+            .collect::<Vec<_>>(),
+        "the collection's order, with the list in its place"
+    );
+    let row = cbl_list::Entity::find_by_id(list)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.owner_user_id, Some(user.user_id));
+
+    // An empty collection has nothing to save; someone else's is unknown.
+    let empty = new_collection(&app, &user, "Empty").await;
+    let (status, _) = send(
+        &app,
+        Method::POST,
+        &format!("/api/me/collections/{empty}/reading-list"),
+        &user,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let other = register(&app, "coll-save-other@example.com").await;
+    let (status, _) = send(
+        &app,
+        Method::POST,
+        &format!("/api/me/collections/{cid}/reading-list"),
+        &other,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_shared_list_is_copied_with_its_chapters_and_links() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "copy-admin@example.com").await;
+    let reader = register(&app, "copy-reader@example.com").await;
+    let (_, issues) = seed_cbl_with_matched_entries(&app, admin.user_id, 10).await;
+    // A shared master with a shared event after its third issue, a
+    // private event of the admin's after its fifth, a named chapter and
+    // a shared next part.
+    let master = make_list(&app, None, "Master", &issues[..6]).await;
+    set_xml(&app, master, cbl_xml("Master", "Master series", 6)).await;
+    let shared_event = make_list(&app, None, "Shared Event", &issues[6..8]).await;
+    let next = make_list(&app, None, "Part Two", &issues[8..10]).await;
+    link(&app, &admin, master, shared_event, Some(2)).await;
+    link(&app, &admin, master, next, None).await;
+    let (status, _) = send(
+        &app,
+        Method::POST,
+        &breaks_uri(master),
+        &admin,
+        Some(serde_json::json!({ "position": 4, "label": "Aftermath" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, body) = send(
+        &app,
+        Method::POST,
+        &format!("/api/me/cbl-lists/{master}/copy"),
+        &reader,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["name"], "Master");
+    assert_eq!(body["links"], 2);
+    assert_eq!(body["chapters"], 1);
+    assert!(body["view_id"].is_string(), "{body}");
+    let copy = Uuid::parse_str(body["list_id"].as_str().unwrap()).unwrap();
+    assert_ne!(copy, master);
+
+    // The copy is the reader's, laid out like the original, and theirs to
+    // arrange: a chapter of their own is accepted.
+    let (status, links) = get_json(&app, &links_uri(copy), &reader).await;
+    assert_eq!(status, StatusCode::OK, "{links}");
+    assert_eq!(
+        links["events"][0]["child_list_id"],
+        shared_event.to_string()
+    );
+    assert_eq!(links["events"][0]["anchor"]["position"], 2);
+    assert_eq!(links["continues"]["child_list_id"], next.to_string());
+    assert_eq!(
+        chapter_shape(&links),
+        vec![
+            (0, 2, "Up to Shared Event".into(), false),
+            (3, 3, "After Shared Event".into(), false),
+            (4, 5, "Aftermath".into(), true),
+        ]
+    );
+    let (status, _) = send(
+        &app,
+        Method::POST,
+        &breaks_uri(copy),
+        &reader,
+        Some(serde_json::json!({ "position": 0, "label": "Mine" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    // ...which the original does not gain.
+    let (_, original) = get_json(&app, &links_uri(master), &reader).await;
+    assert_eq!(original["chapters"][0]["label"], "Up to Shared Event");
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let row = cbl_list::Entity::find_by_id(copy)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.owner_user_id, Some(reader.user_id));
+
+    // Someone else's personal list is unknown.
+    let (status, _) = send(
+        &app,
+        Method::POST,
+        &format!("/api/me/cbl-lists/{copy}/copy"),
+        &admin,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
 /// The issue the v2 list feed's up-next link points at.
 async fn opds_up_next(app: &TestApp, list: Uuid, auth: &Authed) -> String {
     let (s, body) = get_json(app, &format!("/opds/v2/lists/{list}"), auth).await;

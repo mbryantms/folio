@@ -7283,6 +7283,41 @@
         }
       }
     },
+    "/api/me/cbl-lists/{id}/copy": {
+      "post": {
+        "operationId": "cbl_lists_copy",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CopiedListRef"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "list not found"
+          },
+          "422": {
+            "description": "the per-user list limit is reached"
+          },
+          "429": {
+            "description": "per-user CBL import quota exceeded"
+          }
+        }
+      }
+    },
     "/api/me/cbl-lists/{id}/entries": {
       "get": {
         "summary": "`GET /me/cbl-lists/{id}/entries` — paginated walk over CBL entries\nin position order, hydrated with `IssueSummaryView` for matched\nrows. Status filter is server-side, so the Resolution tab can\nstream just `ambiguous,missing` without touching the matched majority.",
@@ -8441,6 +8476,42 @@
           },
           "404": {
             "description": "collection not found"
+          }
+        }
+      }
+    },
+    "/api/me/collections/{id}/reading-list": {
+      "post": {
+        "summary": "`POST /me/collections/{id}/reading-list` — save the collection as a\nreading list of the caller's: the same books, in the same order, as\nthe CBL export (series entries expanded, reading-list entries written\nin place). The collection is left as it is; the two do not stay in\nsync. A reading list has what a collection lacks: chapters, linked\nevents, a next part, and Up Next that follows its order.",
+        "operationId": "collections_save_as_reading_list",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedReadingListRef"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "collection not found"
+          },
+          "422": {
+            "description": "the collection has nothing to save, or too many issues"
+          },
+          "429": {
+            "description": "per-user CBL import quota exceeded"
           }
         }
       }
@@ -20733,6 +20804,40 @@
           }
         }
       },
+      "CopiedListRef": {
+        "type": "object",
+        "required": [
+          "list_id",
+          "name",
+          "links",
+          "chapters"
+        ],
+        "properties": {
+          "chapters": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Chapter breaks carried over."
+          },
+          "links": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Event and next-part links carried over."
+          },
+          "list_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "view_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The caller's view of the copy (`/views/{view_id}`)."
+          }
+        }
+      },
       "CornerRadius": {
         "type": "string",
         "description": "`sharp` | `default` | `round` — the `--radius` token every corner in\nthe UI derives from (shadcn plan PR 6).",
@@ -25704,6 +25809,26 @@
           }
         }
       },
+      "ExportReadingListSkip": {
+        "type": "object",
+        "description": "\"Skip this event\": the event `child` linked into `parent`.",
+        "required": [
+          "parent",
+          "child",
+          "skipped_at"
+        ],
+        "properties": {
+          "child": {
+            "$ref": "#/components/schemas/ExportListRef"
+          },
+          "parent": {
+            "$ref": "#/components/schemas/ExportListRef"
+          },
+          "skipped_at": {
+            "type": "string"
+          }
+        }
+      },
       "ExportReadingSession": {
         "type": "object",
         "required": [
@@ -25899,7 +26024,8 @@
           "reading_log",
           "preferences",
           "reading_list_links",
-          "reading_list_breaks"
+          "reading_list_breaks",
+          "reading_list_skips"
         ],
         "properties": {
           "collections": {
@@ -25964,6 +26090,13 @@
               "$ref": "#/components/schemas/ExportReadingListLink"
             },
             "description": "Links between the reading lists the user owns (an event read\ninside a master list, a part that continues another). Each list\nis named by its CBL file name, which survives a re-import."
+          },
+          "reading_list_skips": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportReadingListSkip"
+            },
+            "description": "Events the user chose to skip, in their own lists and in shared\nones. A skip is the reader's, not the list's."
           },
           "reading_log": {
             "type": "array",
@@ -36870,6 +37003,35 @@
               "$ref": "#/components/schemas/SharedUniverse"
             },
             "description": "What is shared (universes first, then series groups; by name)."
+          }
+        }
+      },
+      "SavedReadingListRef": {
+        "type": "object",
+        "description": "The reading list a collection was saved as.",
+        "required": [
+          "list_id",
+          "name",
+          "total"
+        ],
+        "properties": {
+          "list_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Books written to the list."
+          },
+          "view_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The caller's view of the new list (`/views/{view_id}`)."
           }
         }
       },

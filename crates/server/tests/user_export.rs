@@ -550,6 +550,7 @@ async fn export_contains_every_section_the_user_owns() {
         "reading_log",
         "reading_list_links",
         "reading_list_breaks",
+        "reading_list_skips",
     ] {
         assert_eq!(
             sb[section].as_array().map(Vec::len),
@@ -614,6 +615,7 @@ async fn export_is_json_even_when_the_user_owns_nothing() {
         "reading_log",
         "reading_list_links",
         "reading_list_breaks",
+        "reading_list_skips",
     ] {
         assert!(
             doc["sections"][section].is_array(),
@@ -655,7 +657,15 @@ async fn export_carries_reading_list_links_breaks_and_list_entries() {
         created_at: Set(now),
         updated_at: Set(now),
     };
-    link_am(event, LinkKind::Event).insert(&db).await.unwrap();
+    let event_link = link_am(event, LinkKind::Event).insert(&db).await.unwrap();
+    entity::reading_list_link_skip::ActiveModel {
+        user_id: Set(a.user_id),
+        link_id: Set(event_link.id),
+        skipped_at: Set(now),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
     link_am(next, LinkKind::Continues)
         .insert(&db)
         .await
@@ -711,6 +721,11 @@ async fn export_carries_reading_list_links_breaks_and_list_entries() {
     let cont = links.iter().find(|l| l["kind"] == "continues").unwrap();
     assert_eq!(cont["child"]["name"], "Master Part #2");
     assert!(cont["anchor"].is_null(), "a continues link has no anchor");
+
+    let skips = s["reading_list_skips"].as_array().unwrap();
+    assert_eq!(skips.len(), 1, "{skips:?}");
+    assert_eq!(skips[0]["parent"]["name"], "Master Part #1");
+    assert_eq!(skips[0]["child"]["name"], "Age of Ultron");
 
     let breaks = s["reading_list_breaks"].as_array().unwrap();
     assert_eq!(breaks.len(), 1);

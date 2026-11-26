@@ -8,6 +8,7 @@ import {
   BookOpen,
   Check,
   Circle,
+  Copy,
   Download,
   Eye,
   EyeOff,
@@ -98,6 +99,7 @@ import {
 } from "@/lib/api/queries";
 import {
   useBulkMarkProgress,
+  useCopyCblList,
   useCreateCblBreak,
   useCreateCblLink,
   useCreateSavedViewBatch,
@@ -472,6 +474,7 @@ function CblViewDetailInner({
   const moveLink = useUpdateCblLink(listId);
   const reorderLinks = useReorderCblLinks(listId);
   // Chapter breaks (PR 3a): naming a new one / renaming, and removing.
+  const copyList = useCopyCblList(listId);
   const createBreak = useCreateCblBreak(listId);
   const updateBreak = useUpdateCblBreak(listId);
   const deleteBreak = useDeleteCblBreak(listId);
@@ -986,6 +989,16 @@ function CblViewDetailInner({
         <HardDriveDownload className="size-4" />
         Download for offline…
       </DropdownMenuItem>
+      {list.owner_user_id == null && (
+        // A shared list is the admin's to arrange; a copy is the
+        // reader's own, for events and chapters of their choosing.
+        <DropdownMenuItem
+          disabled={copyList.isPending}
+          onSelect={() => copyList.mutate()}
+        >
+          <Copy className="size-4" /> Copy to my lists
+        </DropdownMenuItem>
+      )}
       <DropdownMenuItem asChild>
         <a
           href={`/api/me/cbl-lists/${list.id}/export`}

@@ -127,6 +127,9 @@ pub struct ExportSections {
     pub reading_list_links: Vec<ExportReadingListLink>,
     /// Chapter breaks in the reading lists the user owns.
     pub reading_list_breaks: Vec<ExportReadingListBreak>,
+    /// Events the user chose to skip, in their own lists and in shared
+    /// ones. A skip is the reader's, not the list's.
+    pub reading_list_skips: Vec<ExportReadingListSkip>,
 }
 
 /// A reading list named portably: its id, plus the CBL `<Name>` and
@@ -163,6 +166,14 @@ pub struct ExportReadingListLink {
     pub placement: LinkPlacement,
     pub sort_within_anchor: i32,
     pub created_at: String,
+}
+
+/// "Skip this event": the event `child` linked into `parent`.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ExportReadingListSkip {
+    pub parent: ExportListRef,
+    pub child: ExportListRef,
+    pub skipped_at: String,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -558,9 +569,36 @@ async fn build_export(
             .await?;
         (links, breaks)
     };
+    // The reader's skipped events, with the link each one is on (a skip
+    // may sit on a shared list's link, which `link_rows` doesn't hold).
+    let skip_rows = entity::reading_list_link_skip::Entity::find()
+        .filter(entity::reading_list_link_skip::Column::UserId.eq(user_id))
+        .order_by_asc(entity::reading_list_link_skip::Column::SkippedAt)
+        .all(db)
+        .await?;
+    let skipped_links: HashMap<Uuid, (Uuid, Uuid)> = if skip_rows.is_empty() {
+        HashMap::new()
+    } else {
+        reading_list_link::Entity::find()
+            .select_only()
+            .column(reading_list_link::Column::Id)
+            .column(reading_list_link::Column::ParentListId)
+            .column(reading_list_link::Column::ChildListId)
+            .filter(
+                reading_list_link::Column::Id
+                    .is_in(skip_rows.iter().map(|s| s.link_id).collect::<Vec<_>>()),
+            )
+            .into_tuple::<(Uuid, Uuid, Uuid)>()
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|(id, parent, child)| (id, (parent, child)))
+            .collect()
+    };
     let named: Vec<Uuid> = owned_lists
         .iter()
         .copied()
+        .chain(skipped_links.values().flat_map(|(p, c)| [*p, *c]))
         .chain(link_rows.iter().map(|l| l.child_list_id))
         .chain(entry_rows.iter().filter_map(|e| e.cbl_list_id))
         .collect::<HashSet<_>>()
@@ -885,6 +923,17 @@ async fn build_export(
             created_at: l.created_at.to_rfc3339(),
         })
         .collect();
+    let reading_list_skips = skip_rows
+        .into_iter()
+        .filter_map(|sk| {
+            let (parent, child) = skipped_links.get(&sk.link_id)?;
+            Some(ExportReadingListSkip {
+                parent: list_ref(&list_names, *parent),
+                child: list_ref(&list_names, *child),
+                skipped_at: sk.skipped_at.to_rfc3339(),
+            })
+        })
+        .collect();
     let reading_list_breaks = break_rows
         .into_iter()
         .map(|b| ExportReadingListBreak {
@@ -928,6 +977,7 @@ async fn build_export(
             preferences,
             reading_list_links,
             reading_list_breaks,
+            reading_list_skips,
         },
     })
 }
