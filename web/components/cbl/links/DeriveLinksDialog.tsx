@@ -27,6 +27,7 @@ import {
 } from "@/lib/api/mutations/reading-list-links";
 import type {
   ApplyDeriveReq,
+  ApplyDeriveResp,
   DerivePreview,
   ProposedEventLink,
   ProposedPartLink,
@@ -67,6 +68,47 @@ function initialPicks(preview: DerivePreview): Set<string> {
   ]);
 }
 
+/** What an apply did when part of it failed. */
+function ApplyResult({ result }: { result: ApplyDeriveResp }) {
+  return (
+    <div className="space-y-3 py-2" data-testid="derive-result">
+      <p className="text-sm">
+        {result.linked === 0
+          ? "Nothing new was linked."
+          : `Linked ${result.linked} ${result.linked === 1 ? "list" : "lists"}`}
+        {result.imported > 0
+          ? ` (${result.imported} imported).`
+          : result.linked > 0
+            ? "."
+            : ""}
+      </p>
+      <section className="space-y-2">
+        <h3 className="text-sm font-medium">
+          {result.failed.length === 1
+            ? "1 list wasn\u2019t linked"
+            : `${result.failed.length} lists weren\u2019t linked`}
+        </h3>
+        <ul className="space-y-1.5 text-sm">
+          {result.failed.map((f, i) => (
+            <li key={i}>
+              <span className="line-clamp-2 font-medium" title={f.name}>
+                {f.name}
+              </span>
+              <span className="text-muted-foreground block text-xs">
+                {f.message}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <p className="text-muted-foreground text-xs">
+          Open Find events and parts again to retry them; lists already imported
+          are reused.
+        </p>
+      </section>
+    </div>
+  );
+}
+
 export function DeriveLinksDialog({
   listId,
   open,
@@ -81,10 +123,12 @@ export function DeriveLinksDialog({
   const [preview, setPreview] = React.useState<DerivePreview | null>(null);
   const [picked, setPicked] = React.useState<Set<string>>(new Set());
   const [failed, setFailed] = React.useState(false);
+  // What the last apply did, when some of it failed: the dialog stays
+  // open on this instead of closing with one toast for the lot.
+  const [result, setResult] = React.useState<ApplyDeriveResp | null>(null);
   const { mutate: runPreview } = previewM;
 
-  React.useEffect(() => {
-    if (!open) return;
+  const fetchPreview = React.useCallback(() => {
     runPreview(undefined, {
       onSuccess: (p) => {
         if (!p) return;
@@ -93,7 +137,14 @@ export function DeriveLinksDialog({
       },
       onError: () => setFailed(true),
     });
-  }, [open, runPreview]);
+  }, [runPreview]);
+  React.useEffect(() => {
+    if (open) fetchPreview();
+  }, [open, fetchPreview]);
+  const retry = () => {
+    setFailed(false);
+    fetchPreview();
+  };
 
   const toggle = (key: string, on: boolean) =>
     setPicked((prev) => {
@@ -113,6 +164,11 @@ export function DeriveLinksDialog({
           picked.has(eventKey(e)),
       ).length
     : 0;
+  // The event rows that can be ticked, for "Select all / none".
+  const selectable = preview
+    ? preview.events.filter((e) => !e.already_linked).map(eventKey)
+    : [];
+  const allPicked = selectable.every((k) => picked.has(k));
   const nothing =
     preview != null &&
     preview.events.length === 0 &&
@@ -133,14 +189,31 @@ export function DeriveLinksDialog({
         <div className="-mx-6 min-h-0 flex-1 overflow-y-auto px-6">
           {preview == null ? (
             failed ? (
-              <p className="text-muted-foreground py-6 text-sm">
-                Couldn&rsquo;t read the catalog. Try again later.
-              </p>
+              <div className="space-y-3 py-6">
+                <p className="text-muted-foreground text-sm">
+                  Couldn&rsquo;t read the catalog.
+                </p>
+                <Button variant="outline" size="sm" onClick={retry}>
+                  Try again
+                </Button>
+              </div>
             ) : (
-              <p className="text-muted-foreground flex items-center gap-2 py-6 text-sm">
-                <Loader2 className="size-4 animate-spin" /> Reading the catalog…
-              </p>
+              <div className="space-y-3 py-6" aria-busy="true">
+                <p className="text-muted-foreground flex items-center gap-2 text-sm">
+                  <Loader2 className="size-4 animate-spin" /> Reading the
+                  catalog… this can take up to half a minute.
+                </p>
+                {[0, 1, 2].map((i) => (
+                  <div
+                    key={i}
+                    className="bg-muted h-9 animate-pulse rounded"
+                    aria-hidden
+                  />
+                ))}
+              </div>
             )
+          ) : result ? (
+            <ApplyResult result={result} />
           ) : nothing ? (
             <p className="text-muted-foreground py-6 text-sm">
               {preview.twin_found
@@ -151,7 +224,28 @@ export function DeriveLinksDialog({
             <div className="space-y-5 py-1">
               {preview.events.length > 0 && (
                 <section className="space-y-2">
-                  <h3 className="text-sm font-medium">Events</h3>
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-sm font-medium">Events</h3>
+                    {selectable.length > 1 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={applyM.isPending}
+                        onClick={() =>
+                          setPicked((prev) => {
+                            const next = new Set(prev);
+                            for (const k of selectable) {
+                              if (allPicked) next.delete(k);
+                              else next.add(k);
+                            }
+                            return next;
+                          })
+                        }
+                      >
+                        {allPicked ? "Select none" : "Select all"}
+                      </Button>
+                    )}
+                  </div>
                   <ul className="space-y-1">
                     {preview.events.map((e) => {
                       const key = eventKey(e);
@@ -162,11 +256,14 @@ export function DeriveLinksDialog({
                             id={id}
                             className="mt-0.5"
                             checked={e.already_linked || picked.has(key)}
-                            disabled={e.already_linked}
+                            disabled={e.already_linked || applyM.isPending}
                             onCheckedChange={(v) => toggle(key, v === true)}
                           />
                           <label htmlFor={id} className="min-w-0 text-sm">
-                            <span className="block truncate font-medium">
+                            <span
+                              className="line-clamp-2 font-medium"
+                              title={e.name}
+                            >
                               {e.name}
                             </span>
                             <span className="text-muted-foreground block text-xs">
@@ -197,11 +294,14 @@ export function DeriveLinksDialog({
                             id={id}
                             className="mt-0.5"
                             checked={p.already_linked || picked.has(key)}
-                            disabled={p.already_linked}
+                            disabled={p.already_linked || applyM.isPending}
                             onCheckedChange={(v) => toggle(key, v === true)}
                           />
                           <label htmlFor={id} className="min-w-0 text-sm">
-                            <span className="block truncate font-medium">
+                            <span
+                              className="line-clamp-2 font-medium"
+                              title={p.name}
+                            >
                               {p.name}
                             </span>
                             <span className="text-muted-foreground block text-xs">
@@ -252,13 +352,20 @@ export function DeriveLinksDialog({
             </p>
           )}
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            {count === 0 ? "Close" : "Cancel"}
+            {result ? "Done" : count === 0 ? "Close" : "Cancel"}
           </Button>
-          {count > 0 && body && (
+          {count > 0 && body && !result && (
             <Button
               disabled={applyM.isPending}
               onClick={() =>
-                applyM.mutate(body, { onSuccess: () => onOpenChange(false) })
+                applyM.mutate(body, {
+                  onSuccess: (resp) => {
+                    // Anything that failed keeps the dialog open on what
+                    // happened; a clean run closes it.
+                    if (resp && resp.failed.length > 0) setResult(resp);
+                    else onOpenChange(false);
+                  },
+                })
               }
             >
               {applyM.isPending && <Loader2 className="size-4 animate-spin" />}

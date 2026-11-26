@@ -40,6 +40,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { countCblReadThrough } from "@/lib/api/mutations";
 import { useCblLists } from "@/lib/api/queries";
 import type { CblListView } from "@/lib/api/types";
+import { displayListName } from "@/lib/reader/list-context";
 
 /** Lists the insert picker may offer for `parent`: never the list
  *  itself, and for a shared list only shared lists (the server refuses
@@ -65,6 +66,8 @@ export function InsertListDialog({
   alreadyLinked,
   hasNextPart,
   onPick,
+  isPending = false,
+  error = null,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -74,6 +77,10 @@ export function InsertListDialog({
   alreadyLinked: ReadonlySet<string>;
   hasNextPart: boolean;
   onPick: (childListId: string, kind: "event" | "continues") => void;
+  /** A link is being created: the dialog stays open and the rows wait. */
+  isPending?: boolean;
+  /** Why the last pick was refused, shown in the dialog. */
+  error?: string | null;
 }) {
   const lists = useCblLists();
   const [kind, setKind] = React.useState<"event" | "continues">(
@@ -105,8 +112,18 @@ export function InsertListDialog({
             Next part
           </ToggleGroupItem>
         </ToggleGroup>
+        {!afterLabel || hasNextPart ? (
+          <p className="text-muted-foreground text-xs">
+            {!afterLabel
+              ? "To add an event, use “Link a reading list after this…” on the issue it follows."
+              : "This list already has a next part. Unlink it first to choose another."}
+          </p>
+        ) : null}
         <Command className="border-border rounded-md border">
-          <CommandInput placeholder="House of M" />
+          <CommandInput
+            placeholder="House of M"
+            aria-label="Search your reading lists"
+          />
           <CommandList className="max-h-72">
             <CommandEmpty>
               {lists.isLoading ? "Loading lists…" : "No lists to link."}
@@ -115,10 +132,14 @@ export function InsertListDialog({
               {options.map((l) => (
                 <CommandItem
                   key={l.id}
-                  value={`${l.parsed_name} ${l.id}`}
+                  value={l.id}
+                  keywords={[l.parsed_name]}
+                  disabled={isPending}
                   onSelect={() => onPick(l.id, kind)}
                 >
-                  <span className="truncate">{l.parsed_name}</span>
+                  <span className="line-clamp-2" title={l.parsed_name}>
+                    {displayListName(l.parsed_name)}
+                  </span>
                   <span className="text-muted-foreground ml-auto shrink-0 text-xs">
                     {l.stats.total} issues
                   </span>
@@ -127,6 +148,13 @@ export function InsertListDialog({
             </CommandGroup>
           </CommandList>
         </Command>
+        {error ? (
+          <p role="alert" className="text-destructive text-sm">
+            {error}
+          </p>
+        ) : isPending ? (
+          <p className="text-muted-foreground text-xs">Linking…</p>
+        ) : null}
       </DialogContent>
     </Dialog>
   );

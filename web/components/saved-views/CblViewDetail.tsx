@@ -9,6 +9,7 @@ import {
   Check,
   Circle,
   Download,
+  Eye,
   EyeOff,
   FileCog,
   HardDriveDownload,
@@ -25,6 +26,7 @@ import {
   Waypoints,
   FolderPlus,
 } from "lucide-react";
+import { ApiMutationError } from "@/lib/api/mutations/_core";
 import { DeriveLinksDialog } from "@/components/cbl/links/DeriveLinksDialog";
 import {
   LostAnchorsNotice,
@@ -455,6 +457,7 @@ function CblViewDetailInner({
     position: number;
     label: string;
   } | null>(null);
+  const [insertError, setInsertError] = React.useState<string | null>(null);
   const [removeTarget, setRemoveTarget] =
     React.useState<ReadingListLinkView | null>(null);
   // Move an event to after another issue (also "Place…" for a lost one).
@@ -766,6 +769,16 @@ function CblViewDetailInner({
     if (q.length > 0) setQ("");
     setPendingChapter(index);
   };
+  // The rail's event rows jump to the event's band.
+  const jumpToEvent = (linkId: string, chapterIndex: number) => {
+    const target = chapters[chapterIndex];
+    if (target && folded.has(chapterIndex)) {
+      setFoldOverrides((o) => ({ ...o, [chapterKey(target)]: false }));
+    }
+    if (q.length > 0) setQ("");
+    setPendingEvent(linkId);
+    setPendingChapter(chapterIndex);
+  };
   const entryLabel = (e: CblEntryHydratedView) =>
     `${e.series_name} #${e.issue_number}`;
   // Positions where a chapter already starts (the first issue, a break).
@@ -777,14 +790,14 @@ function CblViewDetailInner({
   );
   const cardActions = (e: CblEntryHydratedView) => [
     {
-      label: "Mark read up to here",
+      label: "Mark read up to here…",
       onSelect: () =>
         setMarkTarget({ position: e.position, label: entryLabel(e) }),
     },
     ...(canManageLinks
       ? [
           {
-            label: "Insert reading list after this",
+            label: "Link a reading list after this…",
             onSelect: () =>
               setInsertTarget({ entryId: e.id, label: entryLabel(e) }),
           },
@@ -793,7 +806,7 @@ function CblViewDetailInner({
     ...(canManageLinks && e.position > firstPosition && !breakAt.has(e.position)
       ? [
           {
-            label: "Start a chapter here",
+            label: "Start a chapter here…",
             onSelect: () =>
               setNameTarget({
                 mode: "create",
@@ -969,11 +982,11 @@ function CblViewDetailInner({
           }}
         >
           {showReadChapters ? (
-            <Check className="size-4" />
-          ) : (
             <EyeOff className="size-4" />
+          ) : (
+            <Eye className="size-4" />
           )}
-          {showReadChapters ? "Showing read chapters" : "Show read chapters"}
+          {showReadChapters ? "Fold read chapters" : "Show read chapters"}
         </DropdownMenuItem>
       ) : null}
       {hasStructure ? (
@@ -1404,6 +1417,7 @@ function CblViewDetailInner({
                     variant="ghost"
                     size="sm"
                     onClick={() => setRemoveTarget(nextPart)}
+                    aria-label={`Unlink ${nextPart.child_name}`}
                   >
                     Unlink
                   </Button>
@@ -1431,6 +1445,7 @@ function CblViewDetailInner({
               next={nextPart}
               jumpTarget={pendingChapter}
               onJump={jumpToChapter}
+              onJumpEvent={jumpToEvent}
               onHide={() => setRailHidden(true)}
             />
           )}
@@ -1447,6 +1462,7 @@ function CblViewDetailInner({
           next={nextPart}
           jumpTarget={pendingChapter}
           onJump={jumpToChapter}
+          onJumpEvent={jumpToEvent}
         />
       )}
       <AddToCollectionDialog
@@ -1501,19 +1517,39 @@ function CblViewDetailInner({
       <InsertListDialog
         key={`insert-${insertTarget ? (insertTarget.entryId ?? "next-part") : "closed"}`}
         open={insertTarget != null}
-        onOpenChange={(o) => !o && setInsertTarget(null)}
+        onOpenChange={(o) => {
+          if (o) return;
+          setInsertTarget(null);
+          setInsertError(null);
+        }}
         parent={list}
         afterLabel={insertTarget?.label ?? null}
         alreadyLinked={linkedIds}
         hasNextPart={nextPart != null}
+        isPending={createLink.isPending}
+        error={insertError}
         onPick={(childId, kind) => {
           const t = insertTarget;
-          setInsertTarget(null);
-          createLink.mutate({
-            child_list_id: childId,
-            kind,
-            after_entry_id: kind === "event" ? (t?.entryId ?? null) : null,
-          });
+          setInsertError(null);
+          // The dialog stays open until the link is made: a refusal (a
+          // list that has events of its own, a loop of parts) shows in
+          // it, where the reader is looking, with the picker still there.
+          createLink.mutate(
+            {
+              child_list_id: childId,
+              kind,
+              after_entry_id: kind === "event" ? (t?.entryId ?? null) : null,
+            },
+            {
+              onSuccess: () => setInsertTarget(null),
+              onError: (err) =>
+                setInsertError(
+                  err instanceof ApiMutationError && err.fields[0]
+                    ? sentence(err.fields[0].message)
+                    : sentence(err.message),
+                ),
+            },
+          );
         }}
       />
       <ChapterNameDialog
@@ -1680,4 +1716,12 @@ function renderYearRangeBadge(
       </Tooltip>
     </TooltipProvider>
   );
+}
+
+/** "a list can’t link to itself" → "A list can’t link to itself." */
+function sentence(message: string): string {
+  const m = message.trim();
+  if (!m) return m;
+  const cap = m[0]!.toUpperCase() + m.slice(1);
+  return /[.!?]$/.test(cap) ? cap : `${cap}.`;
 }

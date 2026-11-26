@@ -83,7 +83,7 @@ export function CblIssueCard({
    *  use one shared idiom for the anchor card. */
   isCurrent?: boolean;
   /** List-level actions appended to the card menu (linked reading
-   *  lists: "Mark read up to here", "Insert reading list after this"). */
+   *  lists: "Mark read up to here…", "Link a reading list after this…"). */
   extraActions?: CoverMenuAction[];
 }) {
   const positionLabel = `#${entry.position + 1}`;
@@ -127,7 +127,11 @@ export function CblIssueCard({
           ...collectionActions.actions,
           ...(extraActions ?? []),
         ]
-      : [];
+      : // An entry that isn't in the library has no issue to act on, but
+        // it still has a place in the list: the list-level actions
+        // (start a chapter here, insert a reading list after this, mark
+        // read up to here) apply to it like any other entry.
+        (extraActions ?? []);
   // Hook is always called (rules-of-hooks); when there's no resolved
   // issue the sheet renders nothing useful, which is fine.
   const inSelectMode = selectMode?.isActive ?? false;
@@ -239,12 +243,16 @@ export function CblIssueCard({
           <ProgressFill id={issue?.id ?? ""} percent={percent} />
         </div>
       )}
-      {showActions && issue && !inSelectMode && (
-        <>
+      {!inSelectMode &&
+        menuActions.length > 0 &&
+        (issue ? showActions : true) && (
           <CoverMenuButton
             label={`Actions for ${heading}`}
             actions={menuActions}
           />
+        )}
+      {showActions && issue && !inSelectMode && (
+        <>
           <QuickReadOverlay
             onActivate={morph.mark}
             readerHref={readerUrl(issue, { cbl: cblSavedViewId })}
@@ -317,9 +325,12 @@ export function CblIssueCard({
     );
   }
   return (
-    <div className={cn(wrapClass, "cursor-default opacity-90")} data-card="">
-      {cover(false)}
-      {meta}
-    </div>
+    <>
+      <div className={cn(wrapClass, "cursor-default opacity-90")} data-card="">
+        {cover(false)}
+        {meta}
+      </div>
+      {!inSelectMode && longPress.sheet}
+    </>
   );
 }
