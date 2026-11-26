@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { List, Plus, RefreshCw } from "lucide-react";
+import { List, ListChecks, Plus, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { DropdownMenuItem } from "@/components/folio/dropdown-menu";
@@ -14,6 +14,13 @@ import {
 } from "@/components/cbl/CblRefreshDashboard";
 import { CblListsContext } from "@/components/cbl/cbl-lists-context";
 import { readingListRows } from "@/components/cbl/ReadingListRows";
+import {
+  ListSelectionBar,
+  ListSelectionProvider,
+  SelectListsButton,
+  canDeleteList,
+  useListSelection,
+} from "@/components/cbl/ReadingListsSelection";
 import {
   GroupedViewsBoard,
   type BoardRowsPresentation,
@@ -75,13 +82,15 @@ export function ReadingListsBoard({
     <CblListsContext.Provider value={cblListsById}>
       <BatchRefreshProvider>
         <CblUpdatesProvider lists={targets}>
-          <Board
-            views={views}
-            loading={loading}
-            onImport={canImport ? () => setImportOpen(true) : null}
-            rows={rows}
-            blurb={blurb}
-          />
+          <ListSelectionProvider>
+            <Board
+              views={views}
+              loading={loading}
+              onImport={canImport ? () => setImportOpen(true) : null}
+              rows={rows}
+              blurb={blurb}
+            />
+          </ListSelectionProvider>
         </CblUpdatesProvider>
       </BatchRefreshProvider>
       {canImport ? (
@@ -110,23 +119,38 @@ function Board({
   blurb: string | null;
 }) {
   const { busy, startBatch } = useCblUpdates();
+  const selection = useListSelection();
+  const beginSelection = selection?.begin;
+  const anyDeletable = React.useMemo(() => views.some(canDeleteList), [views]);
   const groupMenuExtra = React.useCallback(
     // Every list in the group and the groups under it.
     (_group: BoardGroup, views: SavedViewView[]) => {
       const ids = views.flatMap((v) =>
         v.cbl_list_id ? [{ id: v.cbl_list_id, name: v.name }] : [],
       );
+      const own = views.filter(canDeleteList).map((v) => v.id);
       return (
-        <DropdownMenuItem
-          disabled={ids.length === 0 || busy}
-          onSelect={() => startBatch(ids)}
-        >
-          <RefreshCw className="size-4" /> Update{" "}
-          {ids.length === 1 ? "this list" : `these ${ids.length} lists`}
-        </DropdownMenuItem>
+        <>
+          <DropdownMenuItem
+            disabled={ids.length === 0 || busy}
+            onSelect={() => startBatch(ids)}
+          >
+            <RefreshCw className="size-4" /> Update{" "}
+            {ids.length === 1 ? "this list" : `these ${ids.length} lists`}
+          </DropdownMenuItem>
+          {beginSelection ? (
+            <DropdownMenuItem
+              disabled={own.length === 0}
+              onSelect={() => beginSelection(own)}
+            >
+              <ListChecks className="size-4" /> Select{" "}
+              {own.length === 1 ? "this list" : `these ${own.length} lists`}
+            </DropdownMenuItem>
+          ) : null}
+        </>
       );
     },
-    [busy, startBatch],
+    [busy, startBatch, beginSelection],
   );
   return (
     <GroupedViewsBoard
@@ -138,6 +162,7 @@ function Board({
       icon={List}
       action={
         <>
+          <SelectListsButton disabled={!anyDeletable} />
           <CblUpdatesMenu />
           {onImport ? (
             <Button type="button" onClick={onImport}>
@@ -146,7 +171,12 @@ function Board({
           ) : null}
         </>
       }
-      panel={<CblUpdatesPanel />}
+      panel={
+        <>
+          <ListSelectionBar views={views} />
+          <CblUpdatesPanel />
+        </>
+      }
       rows={rows}
       groupMenuExtra={groupMenuExtra}
       empty={
