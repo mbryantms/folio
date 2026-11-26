@@ -51,6 +51,7 @@ export function CblIssueCard({
   entry,
   issue,
   cblSavedViewId,
+  viaViewId = null,
   className,
   selectMode,
   onEnterSelectMode,
@@ -66,6 +67,10 @@ export function CblIssueCard({
    *  reader URL as `?cbl=` so the reader's next-issue resolver picks
    *  the next list entry instead of the next series issue. */
   cblSavedViewId: string;
+  /** Linked reading lists: the list (or collection) this list was
+   *  opened from (`?via=`), kept on the reader URL so the list's last
+   *  issue returns there. */
+  viaViewId?: string | null;
   className?: string;
   /** Multi-select mode (M6 extension). Mirrors `<IssueCard>`'s shape.
    *  Only meaningful when `issue` is set — placeholder cards (missing
@@ -158,7 +163,9 @@ export function CblIssueCard({
             label: `Read ${heading}`,
             onSelect: () => {
               morph.mark();
-              router.push(readerUrl(issue, { cbl: cblSavedViewId }));
+              router.push(
+                readerUrl(issue, { cbl: cblSavedViewId, via: viaViewId }),
+              );
             },
           }
         : undefined,
@@ -255,7 +262,10 @@ export function CblIssueCard({
         <>
           <QuickReadOverlay
             onActivate={morph.mark}
-            readerHref={readerUrl(issue, { cbl: cblSavedViewId })}
+            readerHref={readerUrl(issue, {
+              cbl: cblSavedViewId,
+              via: viaViewId,
+            })}
             label={`Read ${heading}`}
           />
         </>

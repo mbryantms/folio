@@ -291,6 +291,69 @@ pub(crate) async fn detours_between(
     detours_for(app, user_id, acl, &pairs).await
 }
 
+/// Events due before a list's next issue, for surfaces that show one
+/// "next" per list (the On Deck rail): for each `(list, from, to)`, the
+/// events anchored at a position in `from..to` that the reader can see,
+/// hasn't skipped and has an unread issue in, as `(link id, name)` in
+/// reading order. A fixed number of statements however many lists.
+pub(crate) async fn pending_events(
+    app: &AppState,
+    user_id: Uuid,
+    acl: &VisibleLibraries,
+    ranges: &[(Uuid, i32, i32)],
+) -> Result<HashMap<Uuid, Vec<(String, String)>>, sea_orm::DbErr> {
+    if ranges.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let range_of: HashMap<Uuid, (i32, i32)> =
+        ranges.iter().map(|(l, f, t)| (*l, (*f, *t))).collect();
+    let mut links: Vec<reading_list_link::Model> = reading_list_link::Entity::find()
+        .filter(
+            reading_list_link::Column::ParentListId
+                .is_in(ranges.iter().map(|(l, _, _)| *l).collect::<Vec<_>>()),
+        )
+        .filter(reading_list_link::Column::Kind.eq(LinkKind::Event))
+        .filter(reading_list_link::Column::AnchorStatus.eq(AnchorStatus::Placed))
+        .all(&app.db)
+        .await?;
+    links.retain(|l| {
+        let (Some((from, to)), Some(p)) = (range_of.get(&l.parent_list_id), l.anchor_position_hint)
+        else {
+            return false;
+        };
+        p >= *from && p < *to
+    });
+    if links.is_empty() {
+        return Ok(HashMap::new());
+    }
+    links.sort_by_key(event_order);
+    let skipped: HashSet<Uuid> = reading_list_link_skip::Entity::find()
+        .filter(reading_list_link_skip::Column::UserId.eq(user_id))
+        .filter(
+            reading_list_link_skip::Column::LinkId
+                .is_in(links.iter().map(|l| l.id).collect::<Vec<_>>()),
+        )
+        .all(&app.db)
+        .await?
+        .into_iter()
+        .map(|s| s.link_id)
+        .collect();
+    links.retain(|l| !skipped.contains(&l.id));
+    let pairs: Vec<(Uuid, Uuid)> = links.iter().map(|l| (l.id, l.child_list_id)).collect();
+    let due = detours_for(app, user_id, acl, &pairs).await?;
+    let parent_of: HashMap<String, Uuid> = links
+        .iter()
+        .map(|l| (l.id.to_string(), l.parent_list_id))
+        .collect();
+    let mut out: HashMap<Uuid, Vec<(String, String)>> = HashMap::new();
+    for d in due {
+        if let Some(parent) = parent_of.get(&d.link_id) {
+            out.entry(*parent).or_default().push((d.link_id, d.name));
+        }
+    }
+    Ok(out)
+}
+
 /// A reading list as the caller sees it: name, their view, progress and
 /// where to start. Used for event detours and for a collection's list
 /// entries.

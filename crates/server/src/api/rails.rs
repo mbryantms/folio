@@ -220,7 +220,24 @@ pub enum OnDeckCard {
         /// "#N" badge the CBL detail UI shows).
         position: i32,
         last_activity: String,
+        /// Linked reading lists: events read before this issue that the
+        /// reader hasn't started or finished (anchored between the last
+        /// issue they read in the list and this one, not skipped). The
+        /// card still points at the list's own next issue; this says an
+        /// event is due first.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pending_events: Vec<OnDeckPendingEvent>,
     },
+}
+
+/// An event due before a reading list's next issue (see
+/// [`OnDeckCard::CblNext`]).
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct OnDeckPendingEvent {
+    /// The link's id: `/views/{view}?event={link_id}` opens the list at
+    /// the event's band.
+    pub link_id: String,
+    pub name: String,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -1769,6 +1786,7 @@ async fn compute_on_deck_ranked(
             Err(resp) => return Err(resp),
         };
 
+    let mut event_ranges: Vec<(Uuid, i32, i32)> = Vec::new();
     for cand in &cbl_candidates {
         // Ghost guard. The SQL EXISTS already filtered; this re-check
         // keeps the map and the candidate query coherent across their
@@ -1811,6 +1829,16 @@ async fn compute_on_deck_ranked(
         if let Some(series_ids) = cbl_series_ownership.get(&cand.cbl_list_id) {
             cbl_owned_series_ids.extend(series_ids.iter().copied());
         }
+        // Events due before this pick: anchored from the last matched
+        // entry before it (the issue the reader came from) up to it.
+        let pick_pos = pick.position - 1;
+        let from = entries
+            .iter()
+            .filter(|e| e.matched_issue_id.is_some() && e.position < pick_pos)
+            .map(|e| e.position)
+            .max()
+            .unwrap_or(0);
+        event_ranges.push((cand.cbl_list_id, from, pick_pos));
         items.push((
             frontier_ts,
             OnDeckCard::CblNext {
@@ -1823,8 +1851,33 @@ async fn compute_on_deck_ranked(
                 cbl_saved_view_id: Some(sv_id.to_string()),
                 position: pick.position,
                 last_activity: frontier_ts.to_rfc3339(),
+                pending_events: Vec::new(),
             },
         ));
+    }
+    // One batch for every list's due events (a fixed number of
+    // statements); a failure only drops the hint.
+    if !event_ranges.is_empty() {
+        match crate::api::cbl_link_nav::pending_events(app, user_id, acl, &event_ranges).await {
+            Ok(mut due) => {
+                for (_, card) in items.iter_mut() {
+                    if let OnDeckCard::CblNext {
+                        cbl_list_id,
+                        pending_events,
+                        ..
+                    } = card
+                        && let Ok(id) = Uuid::parse_str(cbl_list_id)
+                        && let Some(found) = due.remove(&id)
+                    {
+                        *pending_events = found
+                            .into_iter()
+                            .map(|(link_id, name)| OnDeckPendingEvent { link_id, name })
+                            .collect();
+                    }
+                }
+            }
+            Err(e) => tracing::warn!(error = %e, "rails: on-deck pending events failed"),
+        }
     }
 
     // Drain the deferred SeriesNext buffer, skipping any whose series

@@ -78,7 +78,9 @@ function DetourList({
             {pending === d.link_id ? (
               <Loader2 className="size-3 animate-spin" aria-hidden />
             ) : (
-              `${d.read}/${d.in_library}`
+              <span title={`${d.read} of ${d.in_library} read`}>
+                {d.read}/{d.in_library}
+              </span>
             )}
           </span>
         </Button>

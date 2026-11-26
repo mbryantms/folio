@@ -13771,11 +13771,31 @@ export interface components {
             kind: "cbl_next";
             last_activity: string;
             /**
+             * @description Linked reading lists: events read before this issue that the
+             *     reader hasn't started or finished (anchored between the last
+             *     issue they read in the list and this one, not skipped). The
+             *     card still points at the list's own next issue; this says an
+             *     event is due first.
+             */
+            pending_events?: components["schemas"]["OnDeckPendingEvent"][];
+            /**
              * Format: int32
              * @description 1-based position of the entry within its CBL list (matches the
              *     "#N" badge the CBL detail UI shows).
              */
             position: number;
+        };
+        /**
+         * @description An event due before a reading list's next issue (see
+         *     [`OnDeckCard::CblNext`]).
+         */
+        OnDeckPendingEvent: {
+            /**
+             * @description The link's id: `/views/{view}?event={link_id}` opens the list at
+             *     the event's band.
+             */
+            link_id: string;
+            name: string;
         };
         OnDeckView: {
             /**

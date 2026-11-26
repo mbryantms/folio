@@ -46,6 +46,7 @@ import { Progress } from "@/components/ui/progress";
 import { useOpenCblListView } from "@/lib/api/mutations";
 import { useCblListEntriesInfinite } from "@/lib/api/queries";
 import type { ReadingListLinkView } from "@/lib/api/types";
+import { progressLabel } from "@/lib/cbl/linked-plan";
 import { readerUrl } from "@/lib/urls";
 import { statusToneText } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
@@ -62,9 +63,9 @@ export function eventBandState(link: ReadingListLinkView): EventBandState {
   return "full";
 }
 
-/** "6 / 64 read · resume at …" — the band's progress line. */
+/** "6 / 64 read · in progress" — the band's progress line. */
 export function eventProgressLabel(link: ReadingListLinkView): string {
-  const base = `${link.read} / ${link.total} read`;
+  const base = progressLabel(link);
   if (link.read === 0) return base;
   return link.first_unread ? `${base} · in progress` : base;
 }
@@ -211,9 +212,7 @@ export function EventBand({
         )}
         <span className="truncate text-sm font-medium">{link.child_name}</span>
         <span className="text-muted-foreground shrink-0 text-xs">
-          {state === "finished"
-            ? `${link.read} / ${link.total} read`
-            : "Skipped"}
+          {state === "finished" ? progressLabel(link) : "Skipped"}
         </span>
         {lost && <LostBadge />}
         <span className="ml-auto flex shrink-0 items-center gap-1">

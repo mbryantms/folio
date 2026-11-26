@@ -38,6 +38,8 @@
 import type {
   CblWindowPageView,
   CollectionWindowView,
+  ReadingListLinksView,
+  ReadingListLinkView,
   IssueDetailView,
   IssueListView,
   IssueSummaryView,
@@ -174,6 +176,39 @@ export type ListWindowItem = {
   position: number;
   finished: boolean;
 };
+
+/** A linked event still to be read: its list and the 0-based position
+ *  of the issue it is read after. */
+export type DueEvent = { listId: string; after: number; taken?: boolean };
+
+/** The events of a list an offline download should include: placed, not
+ *  skipped, with something unread in the library; in reading order. Pure. */
+export function dueEvents(events: readonly ReadingListLinkView[]): DueEvent[] {
+  return events
+    .filter(
+      (e) =>
+        !e.skipped &&
+        e.anchor?.status === "placed" &&
+        e.anchor.position != null &&
+        e.in_library > e.read,
+    )
+    .map((e) => ({ listId: e.child_list_id, after: e.anchor!.position! }));
+}
+
+/** The not-yet-taken events read after a position in `from..before`
+ *  (an event follows the issue at `after`), marking them taken. Pure
+ *  apart from that mark. */
+export function takeDue(
+  events: DueEvent[],
+  from: number,
+  before: number,
+): DueEvent[] {
+  const out = events.filter(
+    (e) => !e.taken && e.after >= from && e.after < before,
+  );
+  for (const e of out) e.taken = true;
+  return out;
+}
 
 /** The subset of a progress write the offline resume position needs. */
 export type ProgressLike = {
@@ -863,6 +898,88 @@ export function createDownloadManager(
     await Promise.all(keys.map((k) => target.delete(k)));
   };
 
+  /**
+   * A reading list's upcoming issues in the order they are read. With
+   * `withEvents`, each linked event's issues come where the event is
+   * read (after the issue it follows), so "the next 20" is the next 20
+   * the reader will actually open, not the list's own next 20 with the
+   * events left out. Skipped events and events whose place was lost are
+   * not included; an event is walked without its own links (events
+   * don't nest).
+   */
+  async function* walkCblList(
+    listId: string,
+    withEvents: boolean,
+  ): AsyncGenerator<ListWindowItem & { total: number | null }> {
+    const id = encodeURIComponent(listId);
+    let events: DueEvent[] = [];
+    if (withEvents) {
+      try {
+        const links = await fetchJson<ReadingListLinksView>(
+          `/me/cbl-lists/${id}/links`,
+        );
+        events = dueEvents(links.events);
+      } catch {
+        // The list itself still downloads; only the events are left out.
+        events = [];
+      }
+    }
+    let cursor: number | null = null;
+    let more = true;
+    let total: number | null = null;
+    // Events that follow a position before `from` are behind the reader.
+    let from = -1;
+    async function* eventsBefore(
+      position: number,
+    ): AsyncGenerator<ListWindowItem & { total: number | null }> {
+      for (const ev of takeDue(events, from, position)) {
+        let k = 0;
+        for await (const item of walkCblList(ev.listId, false)) {
+          // Ordered inside the master, after the issue the event follows.
+          k += 1;
+          yield { ...item, position: ev.after + k / 10_000, total };
+        }
+      }
+    }
+    while (more) {
+      const qs: string =
+        cursor == null
+          ? `before=${events.length > 0 ? 1 : 0}&after=${CBL_WINDOW_INITIAL}`
+          : `direction=after&cursor=${cursor}&limit=${CBL_WINDOW_PAGE}`;
+      const page: CblWindowPageView = await fetchJson<CblWindowPageView>(
+        `/me/cbl-lists/${id}/window-paginated?${qs}`,
+      );
+      let items = page.items;
+      if (cursor == null) {
+        total = page.total_matched ?? null;
+        // The anchored page is the finished entry before the current one
+        // (asked for only to know where the reader is) + the current
+        // entry + upcoming ones; without a current entry everything in
+        // the list is finished.
+        if (page.current_index == null) {
+          yield* eventsBefore(Number.POSITIVE_INFINITY);
+          return;
+        }
+        const before = items.slice(0, page.current_index);
+        if (before.length > 0) from = before[before.length - 1]!.position;
+        items = items.slice(page.current_index);
+      }
+      for (const item of items) {
+        yield* eventsBefore(item.position);
+        yield {
+          issue: item.issue,
+          position: item.position,
+          finished: item.finished,
+          total,
+        };
+      }
+      more = page.has_more_after && page.max_position != null;
+      cursor = page.max_position ?? null;
+    }
+    // Events read after the list's last issue.
+    yield* eventsBefore(Number.POSITIVE_INFINITY);
+  }
+
   /** The list's upcoming issues from the reader's current position, in
    *  reading order, one server page at a time. Stops being consumed as
    *  soon as the caller has enough. */
@@ -871,34 +988,7 @@ export function createDownloadManager(
   ): AsyncGenerator<ListWindowItem & { total: number | null }> {
     const id = encodeURIComponent(list.sourceId);
     if (list.kind === "cbl") {
-      let cursor: number | null = null;
-      let more = true;
-      let total: number | null = null;
-      while (more) {
-        const qs: string =
-          cursor == null
-            ? `before=0&after=${CBL_WINDOW_INITIAL}`
-            : `direction=after&cursor=${cursor}&limit=${CBL_WINDOW_PAGE}`;
-        const page: CblWindowPageView = await fetchJson<CblWindowPageView>(
-          `/me/cbl-lists/${id}/window-paginated?${qs}`,
-        );
-        if (cursor == null) {
-          total = page.total_matched ?? null;
-          // The anchored page is `before` finished entries (none asked
-          // for) + the current entry + upcoming ones; without a current
-          // entry everything is finished.
-          if (page.current_index == null) return;
-        }
-        for (const item of page.items)
-          yield {
-            issue: item.issue,
-            position: item.position,
-            finished: item.finished,
-            total,
-          };
-        more = page.has_more_after && page.max_position != null;
-        cursor = page.max_position ?? null;
-      }
+      yield* walkCblList(list.sourceId, true);
       return;
     }
     let cursor: number | null = null;
