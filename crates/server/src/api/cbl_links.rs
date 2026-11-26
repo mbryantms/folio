@@ -409,6 +409,9 @@ pub(super) async fn build_view(
             .unwrap_or_default()
     };
 
+    // One order for events everywhere (the page, Up Next, feeds).
+    let mut links = links;
+    links.sort_by_key(super::cbl_link_nav::event_order);
     let mut events = Vec::new();
     let mut continues = None;
     for link in &links {
@@ -439,15 +442,6 @@ pub(super) async fn build_view(
             LinkKind::Continues => continues = Some(view),
         }
     }
-    events.sort_by_key(|v| {
-        (
-            v.anchor
-                .as_ref()
-                .and_then(|a| a.position)
-                .unwrap_or(i32::MAX),
-            v.sort_within_anchor,
-        )
-    });
 
     let mut breaks: Vec<ReadingListBreakView> = reading_list_break::Entity::find()
         .filter(reading_list_break::Column::ListId.eq(parent.id))

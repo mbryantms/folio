@@ -565,6 +565,8 @@ async fn resolve_cbl_next(
     let current_entry = match cbl_entry::Entity::find()
         .filter(cbl_entry::Column::CblListId.eq(cbl_list_id))
         .filter(cbl_entry::Column::MatchedIssueId.eq(current.id.clone()))
+        // An issue listed twice: always its first occurrence.
+        .order_by_asc(cbl_entry::Column::Position)
         .one(&app.db)
         .await
     {
@@ -586,17 +588,26 @@ async fn resolve_cbl_next(
         tracing::error!(error = %e, "next_up: linked lists lookup failed");
         error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
     };
-    let mut detours =
-        cbl_link_nav::detours_at(app, user_id, acl, cbl_list_id, current_entry.position, None)
-            .await
-            .map_err(internal)?;
-
     let next = match pick_next_in_cbl(app, user_id, cbl_list_id, acl, Some(current_entry.position))
         .await
     {
         Ok(opt) => opt,
         Err(resp) => return Err(resp),
     };
+    // Events due before the next issue the reader opens: anchored at the
+    // current entry or at any entry Up Next steps over on the way.
+    let mut detours = cbl_link_nav::detours_between(
+        app,
+        user_id,
+        acl,
+        cbl_list_id,
+        current_entry.position,
+        // The pick's position is the 1-based badge; anchors are 0-based.
+        next.as_ref().map(|n| n.3 - 1),
+        None,
+    )
+    .await
+    .map_err(internal)?;
     let mut switch_to = None;
     let (target_list_id, (issue_model, series_slug, series_name, position)) = match next {
         Some(n) => (cbl_list_id, n),
@@ -625,9 +636,22 @@ async fn resolve_cbl_next(
             let (found, stale) =
                 cbl_link_nav::after_list_end(app, user_id, acl, cbl_list_id, from_list).await?;
             linked.via_param_was_stale |= stale || (linked.via.is_some() && from_list.is_none());
-            let Some(ln) = found else {
-                linked.detours = detours;
-                return Ok(CblBranchOutcome::NoMatch);
+            let ln = match found {
+                cbl_link_nav::AfterListEnd::Next(ln) => *ln,
+                cbl_link_nav::AfterListEnd::BackTo(switch) => {
+                    // An event's end with nothing left in the list it is
+                    // part of: the reading order ends, it does not fall
+                    // into the last issue's series.
+                    let mut view = none_view(false, false);
+                    view.detours = detours;
+                    view.switch_to = Some(switch);
+                    view.via_param_was_stale = linked.via_param_was_stale;
+                    return Ok(CblBranchOutcome::Resolved(view));
+                }
+                cbl_link_nav::AfterListEnd::Nothing => {
+                    linked.detours = detours;
+                    return Ok(CblBranchOutcome::NoMatch);
+                }
             };
             detours.extend(ln.detours);
             switch_to = Some(ln.switch);
@@ -690,10 +714,14 @@ async fn resolve_collection_next(
     let Some(current_idx) = seq.index_of(&current.id) else {
         return Ok(CblBranchOutcome::StaleParam);
     };
-    // Reading lists placed right after this issue: detours (PR 5).
-    let detours = collection_detours(app, user_id, acl, &seq, Some(current_idx), None).await?;
     let progress = collection_sequence::progress_map(app, user_id, &seq).await?;
-    let Some(idx) = seq.first_unfinished_after(acl, &progress, Some(current_idx)) else {
+    let next = seq.first_unfinished_after(acl, &progress, Some(current_idx));
+    // Reading lists due before the next issue the reader opens: placed
+    // after this issue or after any item Up Next steps over. A list at
+    // the very top has no issue before it, so the first issue offers it.
+    let from = (current_idx > 0).then_some(current_idx);
+    let detours = collection_detours(app, user_id, acl, &seq, from, next, None).await?;
+    let Some(idx) = next else {
         linked.detours = detours;
         return Ok(CblBranchOutcome::NoMatch);
     };
@@ -714,18 +742,19 @@ fn finished_count(
     i32::try_from(n).unwrap_or(i32::MAX)
 }
 
-/// The collection's list entries placed after item `at`, as detours
+/// The collection's list entries placed in `from..to`, as detours
 /// (`except` leaves out the list being returned from).
 async fn collection_detours(
     app: &AppState,
     user_id: Uuid,
     acl: &access::VisibleLibraries,
     seq: &collection_sequence::CollectionSequence,
-    at: Option<usize>,
+    from: Option<usize>,
+    to: Option<usize>,
     except: Option<Uuid>,
 ) -> Result<Vec<NextUpDetour>, Response> {
     let pairs: Vec<(Uuid, Uuid)> = seq
-        .lists_after(at)
+        .lists_between(from, to)
         .into_iter()
         .filter(|(_, l)| Some(*l) != except)
         .collect();
@@ -763,7 +792,8 @@ async fn return_to_collection(
         return Ok(Some((none_view(false, false), false)));
     };
     let mut view = collection_view(&seq, idx, Some(finished_count(&seq, &progress)));
-    view.detours = collection_detours(app, user_id, acl, &seq, at, Some(list_id)).await?;
+    view.detours =
+        collection_detours(app, user_id, acl, &seq, at, Some(idx), Some(list_id)).await?;
     view.switch_to = Some(NextUpListSwitch {
         reason: cbl_link_nav::NextUpSwitchReason::Return,
         list_id: None,

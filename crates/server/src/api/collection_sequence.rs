@@ -18,7 +18,7 @@
 //!     at its first position only;
 //!   - a **list entry** (a reading list) contributes nothing: it is a
 //!     detour, offered by Up Next after the item before it
-//!     ([`CollectionSequence::lists_after`]).
+//!     ([`CollectionSequence::lists_between`]).
 //!
 //! Collections are strictly user-owned (no system collections except
 //! Want to Read, which is still per-user), so a view belonging to
@@ -63,12 +63,29 @@ impl CollectionSequence {
         self.items.iter().position(|i| i.id == issue_id)
     }
 
-    /// List entries placed right after item `idx` (`None` = at the top),
-    /// as `(entry id, list id)` in entry order.
-    pub(crate) fn lists_after(&self, idx: Option<usize>) -> Vec<(Uuid, Uuid)> {
+    /// List entries placed after item `from` and before item `to`
+    /// (`from = None`: from the top; `to = None`: to the end), as
+    /// `(entry id, list id)` in entry order. A range because Up Next
+    /// steps over finished and hidden items: a list placed after one of
+    /// those is still due before the next issue the reader opens.
+    pub(crate) fn lists_between(
+        &self,
+        from: Option<usize>,
+        to: Option<usize>,
+    ) -> Vec<(Uuid, Uuid)> {
         self.lists
             .iter()
-            .filter(|(at, _, _)| *at == idx)
+            .filter(|(at, _, _)| match (at, from) {
+                (None, None) => true,
+                (None, Some(_)) => false,
+                (Some(_), None) => true,
+                (Some(a), Some(f)) => *a >= f,
+            })
+            .filter(|(at, _, _)| match (at, to) {
+                (_, None) => true,
+                (None, Some(_)) => true,
+                (Some(a), Some(t)) => *a < t,
+            })
             .map(|(_, e, l)| (*e, *l))
             .collect()
     }

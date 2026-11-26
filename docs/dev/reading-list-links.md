@@ -72,20 +72,37 @@ back). The refresh log records `links_lost` / `links_restored`.
 `cbl_link_nav` is the one resolver module; Up Next, the list page's back
 link, collections and OPDS all go through it.
 
-- **Detours**: at an issue an event is anchored after, Up Next still
-  points at the main line and also offers each event there the reader
-  hasn't skipped and has something unread in (`NextUpView.detours`, in
-  `sort_within_anchor` order).
-- **Return**: at an event's last issue, Up Next goes back to a parent:
-  the one the reader came from (`?via=<view id>` on the reader URL), else
-  the one with the most recent reading on its own issues (`parents_of`),
-  at the first unread issue after the anchor. `NextUpView.switch_to`
-  says so (`reason = return`).
-- **Continues**: at a list's end with a next part, Up Next moves into the
-  next part's first unread issue (`reason = continues`).
+- **Detours**: Up Next still points at the main line and also offers
+  each event the reader hasn't skipped and has something unread in
+  (`NextUpView.detours`, in `event_order`). The events offered are the
+  ones anchored anywhere from the current entry up to the next issue Up
+  Next opens (`detours_between`), not only at the current entry: Up Next
+  steps over entries that are finished, not in the library or hidden, and
+  an event after one of those is still due.
+- **Return**: at an event's last issue, Up Next goes back to a parent, at
+  the first unread issue after the anchor (`switch_to`, `reason =
+  return`). The parent is the one the reader came from
+  (`?via=<view id>`), else the one with the most recent reading on its
+  own issues (`parents_of`). A parent the reader has never read is not
+  returned into without `via`, and a `lost` anchor is never a place to
+  return to.
+- **Continues**: at a list's end with a next part, Up Next moves into
+  the next part's first unread issue (`reason = continues`), walking past
+  parts that are finished or have nothing in the library.
+- **The end of the order**: when an event ends and its parent has nothing
+  left after it, Up Next follows the parent's next part; when that chain
+  is empty too, the answer is `source = none` with `switch_to` naming the
+  parent and **no target** ("back to the master"), never the next issue
+  of the last issue's series. The end card renders that as
+  `ListEndNotice`.
+- **One order for events**: `cbl_link_nav::event_order` (anchor position,
+  order at the anchor, age, id) sorts events on the list page, in Up
+  Next, in feeds and in the export.
 - **Collections**: a reading list in a collection is a detour too, never
   inlined. The collection's reading order skips list entries
-  (`collection_sequence`); the list is offered after the entry before it,
+  (`collection_sequence`); the list is offered after the entry before it
+  (or across items Up Next steps over, `lists_between`; a list at the very
+  top is offered at the first issue),
   and its end returns to the collection when `via` is that collection
   (`switch_to.collection = true`).
 - `?via=` is ignored and scrubbed from the URL when stale

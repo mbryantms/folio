@@ -1813,3 +1813,125 @@ async fn cbl_export_can_inline_events() {
     );
     assert_eq!(parsed.name, "Master");
 }
+
+/// 2.0 PR 2: Up Next across links when the straight path isn't there.
+/// - an event anchored after an issue Up Next steps over is still offered;
+/// - an event's end with nothing left in the master follows the master's
+///   next part, past a finished part, else reports "back to the master"
+///   instead of falling into series order;
+/// - an event opened on its own doesn't return into a master the reader
+///   never read, and never into one whose anchor is lost.
+#[tokio::test]
+async fn up_next_handles_passed_anchors_event_ends_and_part_chains() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "upnext-edges@example.com").await;
+    let (_, issues) = seed_cbl_with_matched_entries(&app, user.user_id, 14).await;
+    let master = make_list(&app, Some(user.user_id), "Master", &issues[0..4]).await;
+    let event = make_list(&app, Some(user.user_id), "Event", &issues[4..6]).await;
+    let part2 = make_list(&app, Some(user.user_id), "Part 2", &issues[6..8]).await;
+    let part3 = make_list(&app, Some(user.user_id), "Part 3", &issues[8..10]).await;
+    let lone_event = make_list(&app, Some(user.user_id), "Lone event", &issues[10..12]).await;
+    let lone_master = make_list(&app, Some(user.user_id), "Unread master", &issues[12..14]).await;
+    link(&app, &user, master, event, Some(1)).await;
+    link(&app, &user, master, part2, None).await;
+    link(&app, &user, part2, part3, None).await;
+    let lone_link = link(&app, &user, lone_master, lone_event, Some(0)).await;
+    let master_view = view_of(&app, master, &user).await;
+    let event_view = view_of(&app, event, &user).await;
+    let part3_view = view_of(&app, part3, &user).await;
+    let lone_event_view = view_of(&app, lone_event, &user).await;
+    let lone_master_view = view_of(&app, lone_master, &user).await;
+    let cbl = |v: &str| format!("cbl={v}");
+
+    // The anchor issue (position 1) was already read: from position 0 Up
+    // Next steps over it to position 2, and still offers the event.
+    finish(&app, user.user_id, &issues[1], 300).await;
+    let body = next_up(&app, &user, &issues[0], &cbl(&master_view)).await;
+    assert_eq!(body["target"]["id"], issues[2], "{body}");
+    assert_eq!(detour_names(&body), ["Event"]);
+    // From position 2 it is behind the reader: not offered again.
+    let body = next_up(&app, &user, &issues[2], &cbl(&master_view)).await;
+    assert!(detour_names(&body).is_empty(), "{body}");
+
+    // The master is finished after the event's place, and Part 2 is
+    // finished too: the event's end continues in Part 3.
+    for (i, ago) in [(2, 290), (3, 280), (6, 270), (7, 260)] {
+        finish(&app, user.user_id, &issues[i], ago).await;
+    }
+    let from_master = format!("{}&via={master_view}", cbl(&event_view));
+    let body = next_up(&app, &user, &issues[5], &from_master).await;
+    assert_eq!(body["source"], "cbl", "{body}");
+    assert_eq!(body["target"]["id"], issues[8]);
+    assert_eq!(body["switch_to"]["reason"], "continues");
+    assert_eq!(body["switch_to"]["list_id"], part3.to_string());
+    assert_eq!(body["switch_to"]["view_id"], part3_view);
+    // The master's own end also walks past the finished part.
+    let body = next_up(&app, &user, &issues[3], &cbl(&master_view)).await;
+    assert_eq!(body["target"]["id"], issues[8], "{body}");
+    assert_eq!(body["switch_to"]["list_id"], part3.to_string());
+    // The event's place is behind the reader by then: not offered.
+    assert!(detour_names(&body).is_empty(), "{body}");
+
+    // Nothing left anywhere: the order ends, pointing back at the master,
+    // with no issue to open (not "next in series").
+    finish(&app, user.user_id, &issues[8], 250).await;
+    finish(&app, user.user_id, &issues[9], 240).await;
+    let body = next_up(&app, &user, &issues[5], &from_master).await;
+    assert_eq!(body["source"], "none", "{body}");
+    assert!(body.get("target").is_none(), "{body}");
+    assert_eq!(body["switch_to"]["reason"], "return");
+    assert_eq!(body["switch_to"]["list_id"], master.to_string());
+    assert_eq!(body["switch_to"]["view_id"], master_view);
+
+    // An event opened on its own: no jump into a master never read.
+    let body = next_up(&app, &user, &issues[11], &cbl(&lone_event_view)).await;
+    assert!(body.get("switch_to").is_none(), "{body}");
+    // Coming from that master (`via`), it returns there.
+    let via = format!("{}&via={lone_master_view}", cbl(&lone_event_view));
+    let body = next_up(&app, &user, &issues[11], &via).await;
+    assert_eq!(body["switch_to"]["reason"], "return", "{body}");
+    assert_eq!(body["target"]["id"], issues[13]);
+    // A lost anchor's last position is not a place to return to.
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let row = entity::reading_list_link::Entity::find_by_id(Uuid::parse_str(&lone_link).unwrap())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: entity::reading_list_link::ActiveModel = row.into();
+    am.anchor_status = Set(entity::reading_list_link::AnchorStatus::Lost);
+    am.update(&db).await.unwrap();
+    let body = next_up(&app, &user, &issues[11], &via).await;
+    assert!(body.get("switch_to").is_none(), "{body}");
+}
+
+/// 2.0 PR 2: a reading list in a collection is offered when Up Next
+/// steps over the item it follows, and when it sits at the very top.
+#[tokio::test]
+async fn collection_lists_are_offered_across_skipped_items_and_at_the_top() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "coll-range@example.com").await;
+    let (_, issues) = seed_cbl_with_matched_entries(&app, user.user_id, 8).await;
+    let mid = make_list(&app, Some(user.user_id), "Mid list", &issues[4..6]).await;
+    let top = make_list(&app, Some(user.user_id), "Top list", &issues[6..8]).await;
+
+    // [issue0, issue1, Mid list, issue2]; issue1 is already read.
+    let cid = new_collection(&app, &user, "Run").await;
+    add_to_collection(&app, &user, &cid, "issue", &issues[0]).await;
+    add_to_collection(&app, &user, &cid, "issue", &issues[1]).await;
+    add_to_collection(&app, &user, &cid, "list", &mid.to_string()).await;
+    add_to_collection(&app, &user, &cid, "issue", &issues[2]).await;
+    finish(&app, user.user_id, &issues[1], 60).await;
+    let body = next_up(&app, &user, &issues[0], &format!("collection={cid}")).await;
+    assert_eq!(body["target"]["id"], issues[2], "{body}");
+    assert_eq!(detour_names(&body), ["Mid list"]);
+
+    // [Top list, issue3]: no issue comes before the list, so the first
+    // issue offers it.
+    let cid2 = new_collection(&app, &user, "Top first").await;
+    add_to_collection(&app, &user, &cid2, "list", &top.to_string()).await;
+    add_to_collection(&app, &user, &cid2, "issue", &issues[3]).await;
+    add_to_collection(&app, &user, &cid2, "issue", &issues[0]).await;
+    let body = next_up(&app, &user, &issues[3], &format!("collection={cid2}")).await;
+    assert_eq!(detour_names(&body), ["Top list"], "{body}");
+}
