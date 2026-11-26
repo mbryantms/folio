@@ -22,6 +22,7 @@ import { mylarAddMessage } from "@/lib/cbl/mylar";
 import type {
   MylarActionResp,
   MylarAddReq,
+  MylarAddSeriesReq,
   MylarAddSummary,
   MylarTestResp,
   MylarTokenResp,
@@ -213,4 +214,26 @@ export function withoutWantedIssue(
       check.owned_series_total - (check.owned.length - owned.length),
     owned,
   };
+}
+
+/** Queue one series for Mylar's watchlist by its ComicVine id (the
+ *  Upcoming page: a release whose series Mylar is not tracking). */
+export function useAddSeriesToMylar() {
+  return useApiMutation<MylarAddSummary, MylarAddSeriesReq>(
+    (body) => ({
+      path: "/admin/integrations/mylar/series",
+      method: "POST",
+      body,
+    }),
+    {
+      successMessage: (data, { series_name }) =>
+        !data || data.series_requested > 0
+          ? `Queued ${series_name} for Mylar`
+          : data.series_in_mylar > 0
+            ? `${series_name} is already in Mylar`
+            : `${series_name} was already requested`,
+      successVariant: (data) =>
+        !data || data.series_requested > 0 ? "success" : "info",
+    },
+  );
 }

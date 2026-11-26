@@ -244,6 +244,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/integrations/mylar/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["admin_mylar_add_series"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/integrations/mylar/series/{cv_series_id}/recheck": {
         parameters: {
             query?: never;
@@ -13499,6 +13515,15 @@ export interface components {
             /** @description Also mark each chosen issue Wanted once Mylar has its series. */
             want_issues?: boolean;
         };
+        MylarAddSeriesReq: {
+            /**
+             * Format: int64
+             * @description ComicVine volume id.
+             */
+            cv_series_id: number;
+            /** @description Shown in Folio's record of the request; Mylar is sent only the id. */
+            series_name: string;
+        };
         /**
          * @description How far a snapshot can be trusted, by when Folio received it.
          * @enum {string}
@@ -18051,6 +18076,12 @@ export interface components {
             cover_tone?: string | null;
             /** @description Cover on Metron's CDN, when Metron lists the release. */
             cover_url?: string | null;
+            /**
+             * Format: int64
+             * @description The series' ComicVine volume id, when the calendar knows it. What
+             *     "Add to Mylar" sends.
+             */
+            cv_series_id?: number | null;
             /** @description A #1. */
             first_issue: boolean;
             /** @description Stable within one calendar + snapshot state; for list keys only. */
@@ -18126,6 +18157,11 @@ export interface components {
              * @description When the calendar last finished a full Metron pass.
              */
             calendar_synced_at?: string | null;
+            /**
+             * @description The caller is an admin and a Mylar address and key are stored: a
+             *     release's series can be added to Mylar's watchlist.
+             */
+            can_add_to_mylar: boolean;
             /** @description `upcoming.enabled`. When `false` every other field is empty. */
             enabled: boolean;
             mylar?: components["schemas"]["UpcomingMylarView"] | null;
@@ -19581,6 +19617,51 @@ export interface operations {
             };
             /** @description Mylar did not take the request */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_mylar_add_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MylarAddSeriesReq"];
+            };
+        };
+        responses: {
+            /** @description queued (or already in Mylar / already requested: see the counts) */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddSummary"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no Mylar address or key stored */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description validation failed */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -6,6 +6,8 @@
 //! - `GET  /admin/integrations/mylar/requests?cbl_list_id=` — where that
 //!   list's missing entries stand with Mylar.
 //!
+//! - `POST /admin/integrations/mylar/series` — queue one series by its
+//!   ComicVine id (the Upcoming page).
 //! - `GET  /admin/integrations/mylar/wanted-check` — Mylar's live wanted
 //!   list against the library.
 //! - `POST /admin/integrations/mylar/search` — search the wanted list now.
@@ -48,6 +50,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(test_connection))
         .routes(routes!(list_requests, create_requests))
+        .routes(routes!(add_series))
         .routes(routes!(wanted_check))
         .routes(routes!(search_now))
         .routes(routes!(recheck_series))
@@ -474,4 +477,61 @@ pub async fn unwant_issue(
         payload = serde_json::json!({ "cv_issue_id": cv_issue_id }),
     );
     Json(MylarActionResp::from(Progress::Done)).into_response()
+}
+
+#[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
+pub struct MylarAddSeriesReq {
+    /// ComicVine volume id.
+    #[garde(range(min = 1))]
+    pub cv_series_id: i64,
+    /// Shown in Folio's record of the request; Mylar is sent only the id.
+    #[garde(length(min = 1, max = 300))]
+    pub series_name: String,
+}
+
+#[utoipa::path(
+    operation_id = "admin_mylar_add_series", post,
+    path = "/admin/integrations/mylar/series",
+    request_body = MylarAddSeriesReq,
+    responses(
+        (status = 202, body = AddSummary, description = "queued (or already in Mylar / already requested: see the counts)"),
+        (status = 403, description = "admin only"),
+        (status = 409, description = "no Mylar address or key stored"),
+        (status = 422, description = "validation failed"),
+    )
+)]
+#[handler]
+pub async fn add_series(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    Validated(req): Validated<MylarAddSeriesReq>,
+) -> Response {
+    if MylarClient::from_cfg(&app.cfg()).is_none() {
+        return not_configured();
+    }
+    let summary =
+        match requests::create_series(&app.db, actor.id, req.cv_series_id, req.series_name.trim())
+            .await
+        {
+            Ok(s) => s,
+            Err(e) => return internal(&e),
+        };
+    record_admin_action!(
+        db = &app.db,
+        ctx = &ctx,
+        actor = actor.id,
+        action = "admin.integration.mylar.add",
+        payload = serde_json::json!({
+            "cv_series_id": req.cv_series_id,
+            "series_requested": summary.series_requested,
+        }),
+    );
+    if summary.series_requested > 0 {
+        let state = app.clone();
+        tokio::spawn(async move {
+            sweep::run(&state).await;
+        });
+    }
+    (StatusCode::ACCEPTED, Json(summary)).into_response()
 }

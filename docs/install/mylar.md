@@ -120,3 +120,9 @@ Once the address and key are stored, **Admin → Upcoming** also shows a
 
 The same Refresh, Recheck files and Un-want are in the ⋯ menu of a
 missing entry on a reading list's Resolution tab.
+
+On the **Upcoming** page, an admin can open a release whose series Mylar
+is not tracking and choose **Add series to Mylar**. That puts the series
+on Mylar's watchlist; Mylar's own settings decide which issues it then
+fetches. A release Metron has not linked to ComicVine cannot be added
+this way.

@@ -144,6 +144,9 @@ pub struct UpcomingEntryView {
     /// may not see Mylar data.
     pub mylar_status: Option<MylarStatus>,
     pub stage: Stage,
+    /// The series' ComicVine volume id, when the calendar knows it. What
+    /// "Add to Mylar" sends.
+    pub cv_series_id: Option<i64>,
 }
 
 /// One Monday–Sunday week of releases.
@@ -180,6 +183,9 @@ pub struct UpcomingSummaryView {
     pub publishers: Vec<String>,
     /// `false` for a caller held to "my series" (an age-rating cap).
     pub all_releases_available: bool,
+    /// The caller is an admin and a Mylar address and key are stored: a
+    /// release's series can be added to Mylar's watchlist.
+    pub can_add_to_mylar: bool,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -252,6 +258,7 @@ fn entry_view(e: Entry) -> UpcomingEntryView {
         tracked: e.tracked,
         mylar_status: e.mylar_status,
         stage: e.stage,
+        cv_series_id: p.cv_series_id,
     }
 }
 
@@ -394,6 +401,7 @@ pub async fn summary(
             mylar: None,
             publishers: Vec::new(),
             all_releases_available: false,
+            can_add_to_mylar: false,
         })
         .into_response();
     }
@@ -443,6 +451,8 @@ pub async fn summary(
             publishers
         },
         all_releases_available: !loaded.capped,
+        can_add_to_mylar: user.role == entity::user::UserRole::Admin
+            && crate::mylar_control::client::MylarClient::from_cfg(&cfg).is_some(),
     })
     .into_response()
 }

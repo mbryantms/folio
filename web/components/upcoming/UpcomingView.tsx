@@ -386,6 +386,7 @@ export function UpcomingView() {
         entry={selected}
         open={dialogOpen}
         onOpenChange={setDialogOpen}
+        canAddToMylar={summary?.can_add_to_mylar ?? false}
       />
     </div>
   );

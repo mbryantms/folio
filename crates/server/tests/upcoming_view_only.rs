@@ -61,6 +61,7 @@ fn the_only_mylar_route_is_the_snapshot_post() {
                 vec!["get", "post"]
             ),
             ("/api/admin/integrations/mylar/search", vec!["post"]),
+            ("/api/admin/integrations/mylar/series", vec!["post"]),
             (
                 "/api/admin/integrations/mylar/series/{cv_series_id}/recheck",
                 vec!["post"]

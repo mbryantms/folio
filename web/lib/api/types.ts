@@ -1140,6 +1140,7 @@ export type MylarTokenResp = Schemas["MylarTokenResp"];
 export type MylarTestResp = Schemas["MylarTestResp"];
 export type MylarAddReq = Schemas["MylarAddReq"];
 export type MylarAddSummary = Schemas["AddSummary"];
+export type MylarAddSeriesReq = Schemas["MylarAddSeriesReq"];
 export type MylarListStatusView = Schemas["MylarListStatusView"];
 export type MylarTargetStatus = Schemas["TargetStatus"];
 export type MylarTargetState = Schemas["TargetState"];
