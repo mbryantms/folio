@@ -324,13 +324,18 @@ export function CblIssueCard({
       </>
     );
   }
+  const placeholder = (
+    <div className={cn(wrapClass, "cursor-default opacity-90")} data-card="">
+      {cover(false)}
+      {meta}
+    </div>
+  );
+  // The long-press sheet only when there is something to put in it.
+  if (inSelectMode || menuActions.length === 0) return placeholder;
   return (
     <>
-      <div className={cn(wrapClass, "cursor-default opacity-90")} data-card="">
-        {cover(false)}
-        {meta}
-      </div>
-      {!inSelectMode && longPress.sheet}
+      {placeholder}
+      {longPress.sheet}
     </>
   );
 }
