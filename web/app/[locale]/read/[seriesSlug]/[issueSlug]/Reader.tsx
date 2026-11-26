@@ -480,21 +480,22 @@ export function Reader({
     () => summarizeMarkers(issueMarkers.data?.items),
     [issueMarkers.data],
   );
-  const [cblParamScrubbed, setCblParamScrubbed] = useState(false);
+  // A `?cbl=` or `?via=` the server no longer recognises is dropped from
+  // the URL. An effect, one param at a time: removing `cbl` re-renders
+  // with the next answer, which may then flag `via`.
   const staleParam =
     cblSavedViewId && nextUp.data?.cbl_param_was_stale === true
       ? "cbl"
       : viaViewId && nextUp.data?.via_param_was_stale === true
         ? "via"
         : null;
-  if (!cblParamScrubbed && staleParam) {
-    setCblParamScrubbed(true);
-    if (typeof window !== "undefined") {
-      const url = new URL(window.location.href);
-      url.searchParams.delete(staleParam);
-      router.replace(url.pathname + url.search);
-    }
-  }
+  useEffect(() => {
+    if (!staleParam) return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has(staleParam)) return;
+    url.searchParams.delete(staleParam);
+    router.replace(url.pathname + url.search);
+  }, [staleParam, router]);
   // Collection self-healing (post-audit D7): the collection was edited
   // mid-read and no longer contains this issue, so the resolver fell
   // back to series order. Say so once, then drop the dead param the
@@ -560,7 +561,10 @@ export function Reader({
       // budget, `lazy.tsx`).
       void import("@/lib/reader/list-context")
         .then((m) => m.ensureListView(listId, sw.view_id))
-        .then((v) => go(v, null));
+        .then((v) => {
+          if (!v) toast.error(`Couldn't open ${sw.name} as a list.`);
+          go(v, null);
+        });
       return;
     }
     go(

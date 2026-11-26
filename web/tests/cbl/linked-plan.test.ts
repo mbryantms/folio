@@ -13,6 +13,7 @@ import type {
 import {
   buildChapterBlocks,
   chapterStep,
+  currentChapter,
   foldedChapters,
   seekStart,
   type PlanItem,
@@ -83,7 +84,8 @@ describe("foldedChapters / seekStart", () => {
 
   it("show-read and a header click override the default", () => {
     expect(foldedChapters(chapters, {}, true).size).toBe(0);
-    const f = foldedChapters(chapters, { 0: false, 2: true }, false);
+    // Overrides are keyed by where the chapter starts (0 and 10).
+    const f = foldedChapters(chapters, { 0: false, 10: true }, false);
     expect([...f].sort()).toEqual([2]);
     expect(seekStart(chapters, f)).toBeUndefined();
   });
@@ -91,6 +93,32 @@ describe("foldedChapters / seekStart", () => {
   it("uses the chapters finished at load, not ones finished since", () => {
     const f = foldedChapters(chapters, {}, false, new Set());
     expect(f.size).toBe(0);
+  });
+
+  it("keeps fold state on the same chapter when chapters renumber", () => {
+    // The reader is in the chapter that starts at 10 (unfolded); the
+    // chapter starting at 0 was finished when the page opened.
+    const overrides = { 10: false };
+    const doneAtLoad = new Set([0, 10]);
+    expect([...foldedChapters(chapters, overrides, false, doneAtLoad)]).toEqual(
+      [0],
+    );
+    // A link is removed and the first two chapters merge: the reader's
+    // chapter is now index 1, but still starts at 10 and stays open.
+    const merged = [chapter(0, 0, 9, 9, 9), chapter(1, 10, 14, 0, 5)];
+    expect([...foldedChapters(merged, overrides, false, doneAtLoad)]).toEqual([
+      0,
+    ]);
+    // A break is added before it and it becomes index 3: same result.
+    const split = [
+      chapter(0, 0, 2, 3, 3),
+      chapter(1, 3, 4, 2, 2),
+      chapter(2, 5, 9, 2, 4),
+      chapter(3, 10, 14, 0, 5),
+    ];
+    const f = foldedChapters(split, overrides, false, doneAtLoad);
+    expect(f.has(3)).toBe(false);
+    expect(f.has(0)).toBe(true);
   });
 
   it("starts at the last chapter when every chapter is folded", () => {
@@ -224,5 +252,23 @@ describe("chapterStep", () => {
   });
   it("an unloaded chapter counts as below the line", () => {
     expect(chapterStep([-10, Number.POSITIVE_INFINITY], 1)).toBe(1);
+  });
+});
+
+describe("currentChapter", () => {
+  it("is the last chapter whose section has reached the reading line", () => {
+    expect(currentChapter([-900, -10, 400, 1200])).toBe(1);
+    expect(currentChapter([-900, -300, -10])).toBe(2);
+  });
+  it("is the first chapter at the top of the page", () => {
+    expect(currentChapter([140, 700])).toBe(0);
+    expect(currentChapter([])).toBe(0);
+  });
+  it("counts a section just under the line as reached (slack)", () => {
+    expect(currentChapter([-500, 20])).toBe(1);
+    expect(currentChapter([-500, 30])).toBe(0);
+  });
+  it("never lands on an unloaded chapter", () => {
+    expect(currentChapter([-10, Number.POSITIVE_INFINITY])).toBe(0);
   });
 });

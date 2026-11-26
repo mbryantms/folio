@@ -60,7 +60,7 @@ breaks; outside text fields, not rebindable; source
 
 | Key | Action           | Notes                                                                                  |
 | --- | ---------------- | -------------------------------------------------------------------------------------- |
-| `]` | Next chapter     | Unfolds a folded chapter; loads pages until an unloaded one renders                    |
+| `]` | Next chapter     | Stops at a folded chapter's header without unfolding it; clears a search first; loads pages until an unloaded one renders |
 | `[` | Previous chapter | First returns to the start of the current chapter when you're past it, then steps back |
 
 ### Always-on (hard-coded, not rebindable)

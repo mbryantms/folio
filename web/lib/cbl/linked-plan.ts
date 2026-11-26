@@ -37,11 +37,20 @@ export function isChapterDone(c: ReadingListChapterView): boolean {
 }
 
 /**
- * The chapters drawn folded. Finished chapters fold unless `showRead`;
- * `overrides[index]` (the reader clicked the header) wins either way.
- * `doneAtLoad` freezes which chapters count as finished to when the page
- * opened, so marking the last issue of a chapter read doesn't fold it out
- * from under the reader.
+ * A chapter's identity for fold state: where it starts. Unlike its index
+ * it survives a link or break being added or removed elsewhere in the
+ * list (the chapters after it renumber; this one still starts here).
+ */
+export function chapterKey(c: ReadingListChapterView): number {
+  return c.start_position;
+}
+
+/**
+ * The chapters drawn folded, as chapter indexes. Finished chapters fold
+ * unless `showRead`; `overrides[chapterKey]` (the reader clicked the
+ * header) wins either way. `doneAtLoad` (chapter keys) freezes which
+ * chapters count as finished to when the page opened, so marking the last
+ * issue of a chapter read doesn't fold it out from under the reader.
  */
 export function foldedChapters(
   chapters: readonly ReadingListChapterView[],
@@ -51,8 +60,9 @@ export function foldedChapters(
 ): Set<number> {
   const out = new Set<number>();
   for (const c of chapters) {
-    const o = overrides[c.index];
-    const done = doneAtLoad ? doneAtLoad.has(c.index) : isChapterDone(c);
+    const key = chapterKey(c);
+    const o = overrides[key];
+    const done = doneAtLoad ? doneAtLoad.has(key) : isChapterDone(c);
     const folded = o ?? (!showRead && done);
     if (folded) out.add(c.index);
   }
@@ -124,6 +134,20 @@ export function buildChapterBlocks<E>(
 }
 
 /**
+ * The chapter the reader is in: the last one whose section starts at or
+ * above the reading line. Same inputs as {@link chapterStep}. The first
+ * chapter when nothing has been passed: at the top of the page a section
+ * can't scroll above the line, so it never counts as "passed".
+ */
+export function currentChapter(tops: readonly number[], slack = 24): number {
+  let current = 0;
+  for (let i = 1; i < tops.length; i++) {
+    if (tops[i]! <= slack) current = i;
+  }
+  return current;
+}
+
+/**
  * Which chapter a next / previous chapter shortcut goes to (PR 3a).
  *
  * @param tops each chapter section's top edge relative to the reading
@@ -140,12 +164,7 @@ export function chapterStep(
   slack = 24,
 ): number | null {
   if (tops.length === 0) return null;
-  // The reader is always at least in the first chapter: at the top of the
-  // page it can't scroll above the line, so it never counts as "passed".
-  let current = 0;
-  for (let i = 1; i < tops.length; i++) {
-    if (tops[i]! <= slack) current = i;
-  }
+  const current = currentChapter(tops, slack);
   if (dir === 1) {
     const next = current + 1;
     return next < tops.length ? next : null;

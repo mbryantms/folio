@@ -36,10 +36,18 @@ function invalidateSavedViews(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: queryKeys.sidebarLayout });
 }
 
-function useInvalidateLinks(listId: string) {
+/** Prefixes of `queryKeys.cblListLinks(id)` and `queryKeys.nextUp(…)`. */
+const CBL_LINKS_PREFIX = ["cbl-lists", "links"] as const;
+const NEXT_UP_PREFIX = ["reader", "next-up"] as const;
+
+function useInvalidateLinks() {
   const qc = useQueryClient();
   return () => {
-    qc.invalidateQueries({ queryKey: queryKeys.cblListLinks(listId) });
+    // Every list's links, not only this one's: the linked list's own page
+    // shows "Part of …" from the other side of the same link. And Up
+    // Next, which offers events as detours.
+    qc.invalidateQueries({ queryKey: CBL_LINKS_PREFIX });
+    qc.invalidateQueries({ queryKey: NEXT_UP_PREFIX });
   };
 }
 
@@ -47,7 +55,7 @@ function useInvalidateLinks(listId: string) {
  *  part. */
 export function useCreateCblLink(listId: string) {
   const qc = useQueryClient();
-  const invalidate = useInvalidateLinks(listId);
+  const invalidate = useInvalidateLinks();
   return useApiMutation<ReadingListLinksView, CreateLinkReq>(
     (body) => ({
       path: apiPath`/me/cbl-lists/${listId}/links`,
@@ -68,7 +76,7 @@ export function useCreateCblLink(listId: string) {
 
 /** Move an event to after another entry, or reorder it at its spot. */
 export function useUpdateCblLink(listId: string) {
-  const invalidate = useInvalidateLinks(listId);
+  const invalidate = useInvalidateLinks();
   return useApiMutation<
     ReadingListLinksView,
     { linkId: string } & UpdateLinkReq
@@ -83,7 +91,7 @@ export function useUpdateCblLink(listId: string) {
 }
 
 export function useDeleteCblLink(listId: string) {
-  const invalidate = useInvalidateLinks(listId);
+  const invalidate = useInvalidateLinks();
   return useApiMutation<null, { linkId: string }>(
     ({ linkId }) => ({
       path: apiPath`/me/cbl-lists/${listId}/links/${linkId}`,
@@ -95,7 +103,7 @@ export function useDeleteCblLink(listId: string) {
 
 /** Start a new chapter at an entry, optionally named. */
 export function useCreateCblBreak(listId: string) {
-  const invalidate = useInvalidateLinks(listId);
+  const invalidate = useInvalidateLinks();
   return useApiMutation<ReadingListLinksView, CreateBreakReq>(
     (body) => ({
       path: apiPath`/me/cbl-lists/${listId}/breaks`,
@@ -108,7 +116,7 @@ export function useCreateCblBreak(listId: string) {
 
 /** Rename a chapter break; a blank label names it after its first issue. */
 export function useUpdateCblBreak(listId: string) {
-  const invalidate = useInvalidateLinks(listId);
+  const invalidate = useInvalidateLinks();
   return useApiMutation<
     ReadingListLinksView,
     { breakId: string } & UpdateBreakReq
@@ -123,7 +131,7 @@ export function useUpdateCblBreak(listId: string) {
 }
 
 export function useDeleteCblBreak(listId: string) {
-  const invalidate = useInvalidateLinks(listId);
+  const invalidate = useInvalidateLinks();
   return useApiMutation<null, { breakId: string }>(
     ({ breakId }) => ({
       path: apiPath`/me/cbl-lists/${listId}/breaks/${breakId}`,
@@ -136,7 +144,7 @@ export function useDeleteCblBreak(listId: string) {
 /** The reader's own skip / un-skip of an event. Symmetric toggle →
  *  `toast.message`-style neutral wording via the success message. */
 export function useSkipCblLink(listId: string) {
-  const invalidate = useInvalidateLinks(listId);
+  const invalidate = useInvalidateLinks();
   return useApiMutation<null, { linkId: string; skip: boolean }>(
     ({ linkId, skip }) => ({
       path: apiPath`/me/cbl-lists/${listId}/links/${linkId}/skip`,

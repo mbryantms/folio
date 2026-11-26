@@ -179,7 +179,7 @@ export function EventBand({
         data-testid="event-band"
         data-event-link={link.id}
         data-state={state}
-        className="border-border/60 flex min-h-11 scroll-mt-32 items-center gap-2 rounded-md border px-3 py-1.5"
+        className="border-border/60 flex min-h-11 scroll-mt-[calc(var(--topbar-h)+var(--pinned-controls-h,0px)+4.5rem)] items-center gap-2 rounded-md border px-3 py-1.5"
       >
         {state === "finished" ? (
           <CircleCheck
@@ -271,7 +271,7 @@ function EventBandFull({
         data-event-link={link.id}
         data-state="full"
         aria-label={`Event: ${link.child_name}`}
-        className="cover-stack-host border-border bg-card scroll-mt-32 rounded-lg border p-3 sm:p-4"
+        className="cover-stack-host border-border bg-card scroll-mt-[calc(var(--topbar-h)+var(--pinned-controls-h,0px)+4.5rem)] rounded-lg border p-3 sm:p-4"
       >
         <div className="text-muted-foreground mb-2 flex items-center gap-2 text-xs">
           <Zap

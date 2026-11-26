@@ -11,6 +11,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ListOrdered, MoreHorizontal, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 
 import { CoverStack } from "@/components/cover-stack/CoverStack";
 import { Button } from "@/components/ui/button";
@@ -49,9 +50,13 @@ export function ReadingListEntryCard({
   const via = encodeURIComponent(collectionId);
   const go = async (to: (viewId: string) => string) => {
     setBusy(true);
-    const view = await ensureListView(list.list_id, list.view_id);
-    setBusy(false);
-    if (view) router.push(to(view));
+    try {
+      const view = await ensureListView(list.list_id, list.view_id);
+      if (view) router.push(to(view));
+      else toast.error(`Couldn't open ${name}. Try again.`);
+    } finally {
+      setBusy(false);
+    }
   };
   const first = list.first_unread;
   return (

@@ -355,7 +355,9 @@ cover dates) and proposes the mappings for you to accept.
   link (importing event lists you don't have yet); it never guesses where
   an unassigned run of issues belongs. A reading list can also sit inside
   a collection as a detour. Export a list as-is, or **with events**
-  written into a single `.cbl` for apps that don't know about links.
+  written into a single `.cbl` for apps that don't know about links. The
+  rail beside the list highlights the chapter you are in, and any list
+  can be switched to a **plain list**: just the covers, in order.
 - **Shared lists** — an admin can share one of their reading lists with
   every user. Shared lists appear under everyone's Reading Lists and can be
   pinned, but only admins can edit, refresh or delete them.

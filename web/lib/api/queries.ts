@@ -2166,6 +2166,12 @@ export function useCblLists() {
 export function useCblListEntriesInfinite(
   id: string,
   filters: CblEntriesFilters = {},
+  opts: {
+    /** Keep the pages on screen while a changed filter / start position
+     *  loads its first page (the list page: a fold toggle moves the
+     *  start, and a skeleton there would drop the scroll position). */
+    keepPrevious?: boolean;
+  } = {},
 ) {
   const params: Record<string, string | number> = {};
   if (filters.status) params.status = filters.status;
@@ -2187,6 +2193,11 @@ export function useCblListEntriesInfinite(
           buildQuery({ ...params, ...cblEntriesPageQuery(pageParam) }),
       ),
     getNextPageParam: cblEntriesNextPage,
+    // Only this list's own earlier pages: never another list's entries.
+    placeholderData: opts.keepPrevious
+      ? (prev, prevQuery) =>
+          prevQuery?.queryKey[2] === id ? keepPreviousData(prev) : undefined
+      : undefined,
   });
 }
 
