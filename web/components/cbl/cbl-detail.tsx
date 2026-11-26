@@ -61,6 +61,7 @@ import { statusTone, statusToneText } from "@/lib/ui/status-tone";
 import { refreshFailureReason } from "@/lib/cbl/refresh-failure";
 import {
   useCblList,
+  useCblListLinks,
   useCblListEntriesInfinite,
   useCblRefreshLog,
 } from "@/lib/api/queries";
@@ -75,9 +76,11 @@ import type {
   CblDetailView,
   CblEntryHydratedView,
   CblMatchStatus,
+  ReadingListLinksView,
   RefreshLogEntryView,
   SavedViewView,
 } from "@/lib/api/types";
+import { displayListName } from "@/lib/reader/list-context";
 import { LoadMoreError } from "@/components/folio/infinite-sentinel";
 import { RailError } from "@/components/saved-views/RailError";
 
@@ -779,6 +782,19 @@ function HistoryTab({ listId, list }: { listId: string; list: CblDetailView }) {
   );
 }
 
+/** " · 2 linked items lost their place · 1 back in place" from a refresh
+ *  log row's diff summary; empty when the run moved no linked item. */
+export function refreshLinkNote(diff: unknown): string {
+  const d = (diff ?? {}) as { links_lost?: unknown; links_restored?: unknown };
+  const lost = typeof d.links_lost === "number" ? d.links_lost : 0;
+  const back = typeof d.links_restored === "number" ? d.links_restored : 0;
+  return (
+    (lost > 0
+      ? ` · ${lost} linked ${lost === 1 ? "item" : "items"} lost ${lost === 1 ? "its" : "their"} place`
+      : "") + (back > 0 ? ` · ${back} back in place` : "")
+  );
+}
+
 function RefreshRow({ entry }: { entry: RefreshLogEntryView }) {
   return (
     <div className="flex flex-col gap-1">
@@ -796,6 +812,7 @@ function RefreshRow({ entry }: { entry: RefreshLogEntryView }) {
         {entry.rematched_count > 0
           ? ` · ${entry.rematched_count} re-matched`
           : ""}
+        {refreshLinkNote(entry.diff_summary)}
       </div>
     </div>
   );
@@ -807,6 +824,39 @@ const REFRESH_OPTIONS: { value: string; label: string }[] = [
   { value: "@weekly", label: "Weekly" },
   { value: "@monthly", label: "Monthly" },
 ];
+
+/**
+ * What deleting a list does to the lists it is linked with, for the
+ * confirmation. `null` when it has no links. Pure, for tests.
+ */
+export function deleteLinkedNote(
+  links:
+    Pick<ReadingListLinksView, "events" | "continues" | "parents"> | undefined,
+  shared: boolean,
+): string | null {
+  if (!links) return null;
+  const names = (xs: { name: string }[]) => {
+    const shown = xs.slice(0, 3).map((x) => displayListName(x.name));
+    const more = xs.length - shown.length;
+    return shown.join(", ") + (more > 0 ? ` and ${more} more` : "");
+  };
+  const parts: string[] = [];
+  if (links.parents.length > 0) {
+    parts.push(
+      `It is linked into ${names(links.parents)}; it will disappear from ${links.parents.length === 1 ? "that list" : "those lists"}${shared ? " for every reader" : ""}.`,
+    );
+  }
+  const children = [
+    ...links.events.map((e) => ({ name: e.child_name })),
+    ...(links.continues ? [{ name: links.continues.child_name }] : []),
+  ];
+  if (children.length > 0) {
+    parts.push(
+      `${names(children)} ${children.length === 1 ? "is" : "are"} linked into it; ${children.length === 1 ? "that list stays" : "those lists stay"}, only the ${children.length === 1 ? "link is" : "links are"} removed.`,
+    );
+  }
+  return parts.length > 0 ? parts.join(" ") : null;
+}
 
 function SettingsTab({
   list,
@@ -823,6 +873,9 @@ function SettingsTab({
   const deleteView = useDeleteSavedView(savedView.id, { admin: shared });
   const updateView = useUpdateSavedView(savedView.id, { admin: shared });
   const updateList = useUpdateCblList(list.id);
+  // Deleting a list also removes every link to or from it; say which.
+  const links = useCblListLinks(list.id);
+  const linkedNote = deleteLinkedNote(links.data, shared);
 
   // Seed from current values. After save, props update via the
   // refetched queries; local state stays in sync with what the user
@@ -1046,6 +1099,14 @@ function SettingsTab({
                 This removes the saved view and the underlying CBL list. Manual
                 matches you have recorded will be lost.
               </AlertDialogDescription>
+              {linkedNote ? (
+                <p
+                  className="text-foreground text-sm"
+                  data-testid="delete-linked-note"
+                >
+                  {linkedNote}
+                </p>
+              ) : null}
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>

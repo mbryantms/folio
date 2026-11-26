@@ -97,6 +97,8 @@ export function EventBand({
   canManage,
   onSkip,
   onMove,
+  onMoveEarlier,
+  onMoveLater,
   onRemove,
 }: {
   link: ReadingListLinkView;
@@ -110,6 +112,9 @@ export function EventBand({
   canManage: boolean;
   onSkip: (skip: boolean) => void;
   onMove?: () => void;
+  /** Among several events read after the same issue; absent at an end. */
+  onMoveEarlier?: () => void;
+  onMoveLater?: () => void;
   onRemove?: () => void;
 }) {
   const state = eventBandState(link);
@@ -159,7 +164,19 @@ export function EventBand({
           {link.skipped ? "Stop skipping" : "Skip this event"}
         </DropdownMenuItem>
         {canManage && onMove && (
-          <DropdownMenuItem onSelect={onMove}>Move…</DropdownMenuItem>
+          <DropdownMenuItem onSelect={onMove}>
+            {lost ? "Place…" : "Move…"}
+          </DropdownMenuItem>
+        )}
+        {canManage && onMoveEarlier && (
+          <DropdownMenuItem onSelect={onMoveEarlier}>
+            Read earlier here
+          </DropdownMenuItem>
+        )}
+        {canManage && onMoveLater && (
+          <DropdownMenuItem onSelect={onMoveLater}>
+            Read later here
+          </DropdownMenuItem>
         )}
         {canManage && onRemove && (
           <>
@@ -198,6 +215,7 @@ export function EventBand({
             ? `${link.read} / ${link.total} read`
             : "Skipped"}
         </span>
+        {lost && <LostBadge />}
         <span className="ml-auto flex shrink-0 items-center gap-1">
           {state === "skipped" && (
             <Button variant="ghost" size="sm" onClick={() => onSkip(false)}>
@@ -224,6 +242,20 @@ export function EventBand({
       menu={menu}
       via={via}
     />
+  );
+}
+
+/** The issue this event followed left the list in a refresh. */
+function LostBadge() {
+  return (
+    <Badge
+      variant="outline"
+      className="shrink-0 gap-1"
+      title="A refresh removed the issue this event followed. Place it again from its menu."
+    >
+      <TriangleAlert className="size-3" aria-hidden />
+      Placement lost
+    </Badge>
   );
 }
 
@@ -279,14 +311,14 @@ function EventBandFull({
             aria-hidden
           />
           <span className="truncate">
-            Event{afterLabel ? ` · read after ${afterLabel}` : ""}
+            Event
+            {afterLabel
+              ? lost
+                ? ` · was after ${afterLabel}`
+                : ` · read after ${afterLabel}`
+              : ""}
           </span>
-          {lost && (
-            <Badge variant="outline" className="gap-1">
-              <TriangleAlert className="size-3" aria-hidden />
-              Placement lost
-            </Badge>
-          )}
+          {lost && <LostBadge />}
           <Badge variant="secondary" className="ml-auto shrink-0">
             {link.in_library} / {link.total} in library
           </Badge>

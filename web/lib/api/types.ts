@@ -900,6 +900,10 @@ export type ImportSummary = {
   removed: number;
   reordered: number;
   rematched: number;
+  /** Linked events / chapter breaks whose issue this run removed. */
+  links_lost?: number;
+  /** Lost ones whose issue this run brought back. */
+  links_restored?: number;
 };
 
 export type CollectionEntryKind = "series" | "issue" | "list";
