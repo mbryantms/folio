@@ -3,8 +3,8 @@
 /**
  * Editing the sidebar in place (inline sidebar editing).
  *
- * "Edit sidebar" at the foot of the library nav swaps the links for this
- * editor, in the same column and in the same order and grouping: headers
+ * "Edit sidebar" in the account menu (foot of the sidebar) swaps the links
+ * for this editor, in the same column and in the same order and grouping: headers
  * read as section labels, items keep their icons. Each row has a grip
  * (drag, touch included) and a ⋯ menu: Rename, Move up / down, Add header
  * or spacer above, Hide. Hidden items sit in a "Hidden" list at the

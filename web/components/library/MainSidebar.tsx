@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { ChevronDown, ChevronRight, Pencil, Sparkles } from "lucide-react";
+import { ChevronDown, ChevronRight, Sparkles } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useRef, useState } from "react";
 
@@ -44,9 +44,10 @@ import { railIconByKey } from "./rail-icons";
  * open state all come from the vendored component; this file only maps the
  * `/me/sidebar-layout` sections onto `SidebarGroup` / `SidebarMenu`.
  *
- * "Edit sidebar" at the foot of the nav swaps the links for the in-place
- * editor (`SidebarEditMode`): reorder, rename, hide and add headers right
- * where the sidebar is read.
+ * "Edit sidebar" in the account menu at the foot of the sidebar swaps the
+ * links for the in-place editor (`SidebarEditMode`): reorder, rename, hide
+ * and add headers right where the sidebar is read. It lives in that menu,
+ * not in the nav, so it never reads as one more destination.
  */
 export function MainSidebar({
   sections,
@@ -247,30 +248,18 @@ export function MainSidebar({
               </SidebarGroup>
             );
           })}
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    tooltip="Edit sidebar"
-                    className="text-sidebar-foreground/60"
-                    onClick={() => {
-                      // The editor needs the full-width column.
-                      if (collapsed) setOpen(true);
-                      setEditing(true);
-                    }}
-                  >
-                    <Pencil />
-                    <span>Edit sidebar</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
         </nav>
       </SidebarContent>
       <SidebarFooter className="p-0">
-        <UserFooter user={user} collapsed={collapsed} />
+        <UserFooter
+          user={user}
+          collapsed={collapsed}
+          onEditSidebar={() => {
+            // The editor needs the full-width column.
+            if (collapsed) setOpen(true);
+            setEditing(true);
+          }}
+        />
       </SidebarFooter>
     </>
   );

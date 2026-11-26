@@ -1,7 +1,8 @@
 # Editing the sidebar in place
 
-"Edit sidebar" at the foot of the library nav
-([`MainSidebar.tsx`](../../web/components/library/MainSidebar.tsx)) swaps
+"Edit sidebar" in the account menu at the foot of the library sidebar
+([`MainSidebar.tsx`](../../web/components/library/MainSidebar.tsx),
+`UserFooter`) swaps
 the links for
 [`SidebarEditMode`](../../web/components/library/SidebarEditMode.tsx) in
 the same column (and in the phone nav sheet). It draws the layout as the
