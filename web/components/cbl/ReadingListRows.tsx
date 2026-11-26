@@ -16,6 +16,11 @@ import { Cover } from "@/components/Cover";
 import { CblListsContext } from "@/components/cbl/cbl-lists-context";
 import { ListProgressBar } from "@/components/cbl/ListProgressBar";
 import {
+  canDeleteList,
+  useListSelection,
+} from "@/components/cbl/ReadingListsSelection";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -106,6 +111,11 @@ function ReadingListRowCells({
   const pinnedCount = (view.pinned_on_pages ?? []).length;
   const builtIn = isBuiltInView(view, false);
   const failure = list?.refresh_failure ?? null;
+  const selection = useListSelection();
+  // The lifted copy under the pointer never takes part.
+  const selecting = !!selection?.selecting && !ctx.overlay;
+  const selectable = canDeleteList(view);
+  const ticked = !!selection?.selected.has(view.id);
   // The refresh warning shows at every width: unlike the flags below, the
   // menu does not repeat it.
   const failing = failure ? (
@@ -142,7 +152,29 @@ function ReadingListRowCells({
   return (
     <>
       <div className={ROW_CELL.lead}>
-        <RowCover viewId={view.id} />
+        {selecting ? (
+          // In the cover's place and at its width, so the row keeps its
+          // columns.
+          <div className="grid w-12 shrink-0 place-items-center @min-[30rem]/board:w-7">
+            <Checkbox
+              checked={ticked}
+              disabled={!selectable}
+              onCheckedChange={() => selection?.toggle(view.id)}
+              aria-label={
+                selectable
+                  ? `Select ${view.name}`
+                  : `${view.name} is shared with everyone and can't be deleted here`
+              }
+              title={
+                selectable
+                  ? undefined
+                  : "Shared with everyone: not yours to delete here"
+              }
+            />
+          </div>
+        ) : (
+          <RowCover viewId={view.id} />
+        )}
       </div>
 
       {/* The whole name / description area opens the list.
@@ -155,6 +187,15 @@ function ReadingListRowCells({
         href={`/views/${view.id}`}
         draggable={false}
         data-row-link=""
+        // While selecting, the row ticks its box instead of opening.
+        onClick={
+          selecting
+            ? (e) => {
+                e.preventDefault();
+                if (selectable) selection?.toggle(view.id);
+              }
+            : undefined
+        }
         className={cn(
           ROW_CELL.main,
           "focus-visible:ring-ring flex flex-col gap-0.5 rounded focus-visible:ring-2 focus-visible:outline-none",
