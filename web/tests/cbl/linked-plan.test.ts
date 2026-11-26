@@ -20,7 +20,11 @@ import {
   seekStart,
   type PlanItem,
 } from "@/lib/cbl/linked-plan";
-import { eventBandState } from "@/components/cbl/links/EventBand";
+import {
+  eventBandState,
+  eventLibraryLabel,
+} from "@/components/cbl/links/EventBand";
+import { chapterDisplayLabel } from "@/components/cbl/links/ChapterParts";
 import { linkableLists } from "@/components/cbl/links/LinkDialogs";
 
 function chapter(
@@ -198,6 +202,36 @@ describe("eventBandState", () => {
     expect(eventBandState(link("x", { read: 0, in_library: 0 }))).toBe("full");
     expect(eventBandState(link("x", { read: 4, skipped: true }))).toBe(
       "skipped",
+    );
+  });
+});
+
+describe("eventLibraryLabel", () => {
+  it("says how much of the event is owned", () => {
+    expect(eventLibraryLabel(link("x", { total: 4, in_library: 4 }))).toBe(
+      "4 issues · all in library",
+    );
+    expect(eventLibraryLabel(link("x", { total: 4, in_library: 1 }))).toBe(
+      "4 issues · 1 in library",
+    );
+    expect(eventLibraryLabel(link("x", { total: 1, in_library: 0 }))).toBe(
+      "1 issue · none in library",
+    );
+    expect(eventLibraryLabel(link("x", { total: 0, in_library: 0 }))).toBe(
+      "no issues",
+    );
+  });
+});
+
+describe("chapterDisplayLabel", () => {
+  it("drops catalog tags from a chapter named after its event", () => {
+    expect(chapterDisplayLabel("Up to [Marvel] Age of Ultron (WEB-CBRO)")).toBe(
+      "Up to Age of Ultron",
+    );
+  });
+  it("keeps a name the reader typed", () => {
+    expect(chapterDisplayLabel("[Marvel] My chapter")).toBe(
+      "[Marvel] My chapter",
     );
   });
 });

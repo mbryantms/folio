@@ -38,6 +38,14 @@ export function chapterDone(c: ReadingListChapterView): boolean {
   return c.in_library > 0 && c.read >= c.in_library;
 }
 
+/** A chapter's label for display. A chapter the server named after its
+ *  event ("Up to [Marvel] Age of Ultron (WEB-CBRO)") drops the catalog
+ *  tags the same way list names do; a name the reader typed is kept. */
+export function chapterDisplayLabel(label: string): string {
+  const m = /^Up to (.+)$/.exec(label);
+  return m ? `Up to ${displayListName(m[1]!)}` : label;
+}
+
 /** DOM id of a chapter's header, the rail's jump target. */
 export function chapterAnchorId(index: number): string {
   return `cbl-chapter-${index}`;
@@ -80,12 +88,12 @@ export function ChapterHeader({
               aria-hidden
             />
             <span className="truncate">
-              Chapter {chapter.index + 1} · {chapter.label}
+              Chapter {chapter.index + 1} · {chapterDisplayLabel(chapter.label)}
             </span>
           </button>
         ) : (
           <span className="truncate">
-            Chapter {chapter.index + 1} · {chapter.label}
+            Chapter {chapter.index + 1} · {chapterDisplayLabel(chapter.label)}
           </span>
         )}
       </h2>
@@ -184,7 +192,7 @@ export function ChapterRailList({
                   aria-current={isCurrent ? "location" : undefined}
                   onClick={() => onJump(c.index)}
                   className={cn(
-                    "folio-tap hover:bg-accent flex min-h-9 w-full items-center gap-2 rounded-md px-2 text-left transition-colors motion-reduce:transition-none",
+                    "folio-tap hover:bg-accent flex min-h-9 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors motion-reduce:transition-none",
                     isCurrent && "bg-muted text-foreground font-medium",
                   )}
                 >
@@ -199,8 +207,11 @@ export function ChapterRailList({
                           : "border-muted-foreground border",
                     )}
                   />
-                  <span className="min-w-0 flex-1 truncate">
-                    {c.index + 1}. {c.label}
+                  <span
+                    className="line-clamp-2 min-w-0 flex-1 leading-snug"
+                    title={c.label}
+                  >
+                    {c.index + 1}. {chapterDisplayLabel(c.label)}
                   </span>
                   <span className="text-muted-foreground shrink-0 text-xs">
                     <span title={progressLabel(c)}>{progressShort(c)}</span>
@@ -340,7 +351,10 @@ export function ChapterRailSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="w-80 overflow-y-auto"
+        // Up and down only. `overflow-y-auto` alone computes
+        // `overflow-x: auto` too, and a phone could then pan the sheet
+        // sideways, sliding the current-chapter bar off its left edge.
+        className="w-80 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain"
         {...{ [RAIL_SCROLL_ATTR]: "" }}
       >
         <SheetHeader>
@@ -350,7 +364,7 @@ export function ChapterRailSheet({
             chapter they&rsquo;re listed under.
           </SheetDescription>
         </SheetHeader>
-        <div className="px-4 pb-4">
+        <div className="px-2 pb-4">
           <TrackedRailList
             {...props}
             onJump={(i) => {

@@ -1097,6 +1097,64 @@ body {
   }
 }
 
+/* ── Event band (components/cbl/links/EventBand.tsx) ─────────────────
+ * The hero an event draws across a reading list: the lead cover blurred
+ * behind the card, held back by a scrim of the card colour so the text
+ * keeps its contrast on every theme, and a strip of the first issues.
+ * `--event-tint` / `--event-base` are the lead cover's colours; without
+ * them (no cover yet) the card is plain. */
+@layer components {
+  .event-band__backdrop {
+    position: absolute;
+    inset: -3rem;
+    z-index: -2;
+    background-size: cover;
+    background-position: center 30%;
+    filter: blur(36px) saturate(1.4);
+    opacity: 0.55;
+  }
+  .event-band__scrim {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background:
+      radial-gradient(
+        120% 140% at 0% 0%,
+        color-mix(in oklab, var(--event-tint, transparent) 22%, transparent),
+        transparent 60%
+      ),
+      linear-gradient(
+        100deg,
+        color-mix(in oklab, var(--card) 62%, transparent) 0%,
+        color-mix(in oklab, var(--card) 88%, transparent) 45%,
+        color-mix(in oklab, var(--card) 94%, transparent) 100%
+      );
+  }
+  /* The stack fans out as the band scrolls into view (`useFanInView`),
+   * a little slower than a hover fan so it reads as an entrance. */
+  .event-band[data-in-view] .cover-stack__layer {
+    transform: var(--cs-fan);
+    transition-duration: 520ms;
+  }
+  .event-band__eyebrow {
+    color: var(--primary);
+  }
+  /* The strip fades out at its trailing edge, so a cut-off cover reads
+   * as "more this way" rather than as a clipped card. */
+  .event-band__strip {
+    scroll-snap-type: x proximity;
+    scroll-padding-inline: 1rem;
+    mask-image: linear-gradient(
+      to right,
+      black calc(100% - 2.5rem),
+      transparent
+    );
+  }
+  .event-band__strip > li {
+    scroll-snap-align: start;
+  }
+}
+
 /* ── Cover tilt and sheen (optional effect, components/library/CoverTilt) ──
  * The cover box leans toward the pointer; a soft highlight follows it.
  * Variables are written per frame by CoverTilt, so this stays pure CSS.
