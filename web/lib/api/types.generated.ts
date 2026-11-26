@@ -17932,7 +17932,10 @@ export interface components {
              * @description Move the event after this entry.
              */
             after_entry_id?: string | null;
-            /** Format: int32 */
+            /**
+             * Format: int32
+             * @description 0 or more: the event's order among the events after one issue.
+             */
             sort_within_anchor?: number | null;
         };
         UpdateMarkerReq: {
@@ -20687,7 +20690,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description the reading list is now shared with every user */
+            /** @description the reading list is now shared with every user, along with the lists linked into it (its events and next parts) that the admin owned */
             204: {
                 headers: {
                     [name: string]: unknown;

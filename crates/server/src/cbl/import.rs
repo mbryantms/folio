@@ -103,6 +103,22 @@ pub async fn apply_parsed(
     let prev_keys_in_order: Vec<EntryKey> = existing.iter().map(key_of_entry).collect();
     let new_keys_in_order: Vec<EntryKey> = parsed.books.iter().map(key_of_book).collect();
 
+    // Which occurrence each link / break sits on when its issue is listed
+    // more than once, read before the rewrite (positions don't compare
+    // across it).
+    let before: Vec<super::links::EntryRef> = existing
+        .iter()
+        .map(|e| super::links::EntryRef {
+            position: e.position,
+            series_name: e.series_name.clone(),
+            issue_number: e.issue_number.clone(),
+            volume: e.volume.clone(),
+            year: e.year.clone(),
+            cv_issue_id: e.cv_issue_id,
+        })
+        .collect();
+    let occurrences = super::links::anchor_occurrences(db, list_id, &before).await?;
+
     // Replace entries wholesale. Cheaper than per-row UPSERT-by-key, and
     // the cascade FK from cbl_entries → cbl_lists handles cleanup
     // implicitly when we delete the list, but here we're keeping the
@@ -268,7 +284,7 @@ pub async fn apply_parsed(
 
     // Linked lists follow their anchor issue to its new position, or are
     // marked lost when it left; same transaction as the entry rewrite.
-    let links = super::links::reresolve_parent(db, list_id).await?;
+    let links = super::links::reresolve_parent(db, list_id, &occurrences).await?;
     summary.links_lost = links.lost;
     summary.links_restored = links.restored;
 

@@ -1935,3 +1935,90 @@ async fn collection_lists_are_offered_across_skipped_items_and_at_the_top() {
     let body = next_up(&app, &user, &issues[3], &format!("collection={cid2}")).await;
     assert_eq!(detour_names(&body), ["Top list"], "{body}");
 }
+
+/// 2.0 PR 3: sharing a master shares the lists linked into it that the
+/// admin owned (its events, its next part, and that part's events), so
+/// every reader sees the events. Before, only the master was shared and
+/// its events stayed invisible to everyone else.
+#[tokio::test]
+async fn sharing_a_master_shares_its_linked_lists() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "share-links-admin@example.com").await;
+    let reader = register(&app, "share-links-reader@example.com").await;
+    let (_, issues) = seed_cbl_with_matched_entries(&app, admin.user_id, 10).await;
+    let master = make_list(&app, Some(admin.user_id), "Master", &issues[0..2]).await;
+    let event = make_list(&app, Some(admin.user_id), "Event", &issues[2..4]).await;
+    let part2 = make_list(&app, Some(admin.user_id), "Part 2", &issues[4..6]).await;
+    let part2_event = make_list(&app, Some(admin.user_id), "Part 2 event", &issues[6..8]).await;
+    let unrelated = make_list(&app, Some(admin.user_id), "Unrelated", &issues[8..10]).await;
+    link(&app, &admin, master, event, Some(0)).await;
+    link(&app, &admin, master, part2, None).await;
+    link(&app, &admin, part2, part2_event, Some(0)).await;
+    let master_view = view_of(&app, master, &admin).await;
+
+    // Private so far: the reader can't see the master at all.
+    let (status, _) = get_json(&app, &links_uri(master), &reader).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (status, body) = send(
+        &app,
+        Method::POST,
+        &format!("/api/admin/saved-views/{master_view}/share"),
+        &admin,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+
+    let db = Database::connect(&app.db_url).await.unwrap();
+    for (id, shared) in [
+        (master, true),
+        (event, true),
+        (part2, true),
+        (part2_event, true),
+        (unrelated, false),
+    ] {
+        let row = cbl_list::Entity::find_by_id(id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            row.owner_user_id.is_none(),
+            shared,
+            "{} shared = {shared}",
+            row.parsed_name
+        );
+    }
+
+    // The reader sees the master with its event and its next part, and
+    // can open the event (it has a shared view).
+    let (status, body) = get_json(&app, &links_uri(master), &reader).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["events"][0]["child_name"], "Event");
+    assert_eq!(body["continues"]["child_name"], "Part 2");
+    let (status, v) = send(
+        &app,
+        Method::POST,
+        &format!("/api/me/cbl-lists/{event}/view"),
+        &reader,
+        None,
+    )
+    .await;
+    assert!(status.is_success(), "{v}");
+    let (_, body) = get_json(&app, &links_uri(part2), &reader).await;
+    assert_eq!(body["events"][0]["child_name"], "Part 2 event");
+
+    // The audit row names the lists that were shared along.
+    let audited = audit_log::Entity::find()
+        .filter(audit_log::Column::Action.eq("admin.saved_view.share"))
+        .all(&db)
+        .await
+        .unwrap();
+    assert_eq!(audited.len(), 1);
+    let shared_along = audited[0].payload["linked_lists_shared"]
+        .as_array()
+        .unwrap()
+        .len();
+    assert_eq!(shared_along, 3);
+}

@@ -46,6 +46,20 @@ back). The refresh log records `links_lost` / `links_restored`.
   for a shared one, audited as `admin.cbl_list.link.*` /
   `admin.cbl_list.break.*`.
 
+- **Sharing** (`api::shared_lists::share`) shares, in the same
+  transaction, every list linked into the one being shared that the admin
+  owns (its events and next parts, and theirs), so the visibility rule
+  still holds afterwards; the audit row lists them.
+- **Link writes are serialized** (`cbl_links::link_write_lock`, a
+  transaction-scoped advisory lock, also taken by derive): the one-level
+  and no-loop rules are read-then-write.
+- **Re-resolution never guesses.** `cbl::links::candidates`: ComicVine id,
+  then the exact key, then series + number alone only when exactly one
+  entry matches and it doesn't differ in both volume and year. An anchor
+  on an issue listed twice keeps its occurrence across a refresh
+  (`anchor_occurrences` before the rewrite, `resolve_nth` after), not the
+  occurrence nearest its old position.
+
 ## Derivation (`cbl::derive`, `api::cbl_derive`)
 
 "Find events and parts…" on a catalog list. Pure rules in

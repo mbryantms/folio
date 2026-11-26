@@ -54,6 +54,7 @@ use uuid::Uuid;
 
 use super::cbl_lists::{audit_admin_list_write, ensure_can_manage, ensure_owner, fetch_list};
 use super::error;
+use crate::api::extractors::Validated;
 use crate::auth::CurrentUser;
 use crate::cbl::links::{AnchorKey, EntryRef};
 use crate::library::access::{self, VisibleLibraries};
@@ -181,21 +182,37 @@ pub struct CreateLinkReq {
     pub after_entry_id: Option<Uuid>,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct UpdateLinkReq {
     /// Move the event after this entry.
     #[serde(default)]
+    #[garde(skip)]
     pub after_entry_id: Option<Uuid>,
+    /// 0 or more: the event's order among the events after one issue.
     #[serde(default)]
+    #[garde(custom(not_negative))]
     pub sort_within_anchor: Option<i32>,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+fn not_negative(value: &Option<i32>, _: &()) -> garde::Result {
+    match value {
+        Some(v) if *v < 0 => Err(garde::Error::new("must be 0 or more")),
+        _ => Ok(()),
+    }
+}
+
+fn position_not_negative(value: &i32, _: &()) -> garde::Result {
+    not_negative(&Some(*value), &())
+}
+
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct MarkThroughReq {
     /// 0-based position: everything at or before it is marked read.
+    #[garde(custom(position_not_negative))]
     pub position: i32,
     /// Count only; write nothing.
     #[serde(default)]
+    #[garde(skip)]
     pub dry_run: bool,
 }
 
@@ -584,6 +601,20 @@ pub(super) async fn anchor_of_entry(
         }))
 }
 
+/// Serializes writes that add a link (here and in `cbl_derive`). Holds a
+/// transaction-scoped Postgres advisory lock: keep the returned
+/// transaction until the insert is done, then commit (or drop) it.
+pub(super) async fn link_write_lock(
+    app: &AppState,
+) -> Result<sea_orm::DatabaseTransaction, sea_orm::DbErr> {
+    use sea_orm::{ConnectionTrait, TransactionTrait};
+    let txn = app.db.begin().await?;
+    // A fixed key for "reading-list link writes".
+    txn.execute_unprepared("SELECT pg_advisory_xact_lock(8206100471)")
+        .await?;
+    Ok(txn)
+}
+
 /// Next `sort_within_anchor` for a new event at `position`.
 pub(super) async fn next_sort_at(
     app: &AppState,
@@ -765,6 +796,13 @@ pub async fn create_link(
         (LinkKind::Continues, None) => (None, None),
     };
 
+    // One link write at a time: the rules below (one level of events, no
+    // loop of parts, one next part) are read-then-write, and two
+    // concurrent creates could each pass and together break them.
+    let lock = match link_write_lock(&app).await {
+        Ok(l) => l,
+        Err(_) => return internal(),
+    };
     let checks = async {
         let dup = reading_list_link::Entity::find()
             .filter(reading_list_link::Column::ParentListId.eq(parent.id))
@@ -856,9 +894,19 @@ pub async fn create_link(
         updated_at: Set(now),
     };
     if let Err(e) = row.insert(&app.db).await {
-        // A concurrent create can still trip the unique constraints.
-        tracing::warn!(error = %e, "cbl links: insert failed");
-        return error(StatusCode::CONFLICT, "conflict", "already linked");
+        // The checks above answer the conflicts; a unique violation here
+        // is a race with a writer outside the lock, anything else a fault.
+        if matches!(
+            e.sql_err(),
+            Some(sea_orm::SqlErr::UniqueConstraintViolation(_))
+        ) {
+            return error(StatusCode::CONFLICT, "conflict", "already linked");
+        }
+        tracing::error!(error = %e, "cbl links: insert failed");
+        return internal();
+    }
+    if let Err(e) = lock.commit().await {
+        tracing::warn!(error = %e, "cbl links: releasing the write lock failed");
     }
     // The linker can open the event from the band straight away.
     if req.kind == LinkKind::Event
@@ -899,7 +947,7 @@ pub async fn update_link(
     user: CurrentUser,
     Extension(ctx): Extension<RequestContext>,
     AxPath((id, link_id)): AxPath<(Uuid, Uuid)>,
-    Json(req): Json<UpdateLinkReq>,
+    Validated(req): Validated<UpdateLinkReq>,
 ) -> Response {
     let parent = match fetch_list(&app.db, id).await {
         Ok(l) => l,
@@ -916,9 +964,6 @@ pub async fn update_link(
         && (req.after_entry_id.is_some() || req.sort_within_anchor.is_some())
     {
         return field_error("after_entry_id", "a next part comes after the whole list");
-    }
-    if req.sort_within_anchor.is_some_and(|s| s < 0) {
-        return field_error("sort_within_anchor", "must be 0 or more");
     }
     let mut am: reading_list_link::ActiveModel = link.clone().into();
     if let Some(entry_id) = req.after_entry_id {
@@ -1136,7 +1181,7 @@ pub async fn mark_read_through(
     State(app): State<AppState>,
     user: CurrentUser,
     AxPath(id): AxPath<Uuid>,
-    Json(req): Json<MarkThroughReq>,
+    Validated(req): Validated<MarkThroughReq>,
 ) -> Response {
     let list = match fetch_list(&app.db, id).await {
         Ok(l) => l,
@@ -1144,9 +1189,6 @@ pub async fn mark_read_through(
     };
     if let Err(r) = ensure_owner(&list, &user).await {
         return r;
-    }
-    if req.position < 0 {
-        return field_error("position", "must be 0 or more");
     }
     let acl = access::for_user(&app, &user).await;
     // Every unfinished issue the caller can open, matched at or before the
