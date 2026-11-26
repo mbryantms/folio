@@ -439,10 +439,13 @@ It needs Metron enabled with credentials.
   There is no email or push.
 - **Mylar, view only.** A small script on the Mylar host reads Mylar's
   database read-only and pushes a snapshot to Folio every 15 minutes when
-  something changed ([setup](install/mylar.md)). Folio never contacts
-  Mylar, stores no Mylar address or key, and has no button that changes
-  anything in it. If your firewall keeps everything away from Mylar, it
-  can stay that way.
+  something changed ([setup](install/mylar.md)). Showing it never
+  contacts Mylar and needs no Mylar address or key. If your firewall
+  keeps everything away from Mylar, it can stay that way.
+- **Add missing issues to Mylar (optional).** Give Folio Mylar's address
+  and API key and an admin can add the series of a reading list's missing
+  entries to Mylar's watchlist, one at a time or all at once, and mark
+  the issues Wanted. That is the only thing Folio asks Mylar to do.
 - **Who sees what.** The calendar is public information. What Mylar tracks
   spans your whole collection, so Mylar's badges show only to accounts
   that can open every library (admins, or a full grant with no age-rating

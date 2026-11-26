@@ -11,8 +11,9 @@
  * - **Mylar** (`MylarCard`) — the switch, the ingest token and the last
  *   snapshot a Mylar host pushed.
  *
- * This page is view-only towards any outside system: "Sync now" asks
- * Metron for release dates, nothing else.
+ * "Sync now" asks Metron for release dates, nothing else. The Mylar
+ * card's optional "Add to Mylar" address and key are the one setting
+ * here that lets Folio act on another system.
  */
 
 import { AlertTriangle, Loader2, RefreshCw, XCircle } from "lucide-react";

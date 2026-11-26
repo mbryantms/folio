@@ -164,3 +164,6 @@ api/sidecar_reemit.rs::sidecar_reemit_status  # GET /libraries/{slug}/sidecar-re
 
 # ── starter_lists.rs ────────────────────────────────────────
 api/starter_lists.rs::admin_list          # GET /admin/starter-lists — read-only starter-list picks
+# ── admin_mylar_control.rs (add-to-mylar 1.0) ───────────────
+api/admin_mylar_control.rs::test_connection  # POST /admin/integrations/mylar/test — read-only connection check (Mylar getVersion), changes nothing
+api/admin_mylar_control.rs::list_requests  # GET /admin/integrations/mylar/requests — read-only state of a list's missing entries

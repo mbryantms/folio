@@ -504,6 +504,10 @@ export const queryKeys = {
   /** `GET /admin/integrations/mylar/activity` — the stored snapshot's
    *  wanted list, queue, history and job times. */
   adminMylarActivity: ["admin", "upcoming", "mylar-activity"] as const,
+  /** `GET /admin/integrations/mylar/requests?cbl_list_id=` — where a
+   *  reading list's missing entries stand with Mylar. */
+  adminMylarListStatus: (listId: string) =>
+    ["admin", "mylar", "list-status", listId] as const,
   /** Last-result probe for the outbound email pipeline (M2). */
   adminEmailStatus: ["admin", "email", "status"] as const,
   /** Resolved sidebar layout (built-ins + libraries + saved views in

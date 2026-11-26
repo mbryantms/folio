@@ -83,6 +83,7 @@ import type {
   MarkerTagMatch,
   MarkerTagsView,
   MylarActivityView,
+  MylarListStatusView,
   TextRegionsView,
   AdminOverviewView,
   AdminUserDetailView,
@@ -1705,6 +1706,30 @@ export function useAdminMylarActivity(opts?: { enabled?: boolean }) {
       jsonFetch<MylarActivityView>("/admin/integrations/mylar/activity"),
     enabled: opts?.enabled ?? true,
     staleTime: 60_000,
+  });
+}
+
+/** Where a reading list's missing entries stand with Mylar (admin only).
+ *  Polls while a request is still waiting to be sent or imported. */
+export function useMylarListStatus(
+  listId: string,
+  opts?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: queryKeys.adminMylarListStatus(listId),
+    queryFn: () =>
+      jsonFetch<MylarListStatusView>(
+        `/admin/integrations/mylar/requests?cbl_list_id=${encodeURIComponent(listId)}`,
+      ),
+    enabled: opts?.enabled ?? true,
+    staleTime: 30_000,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      const waiting =
+        data?.series.some((s) => s.state === "requested") ||
+        data?.issues.some((s) => s.state === "requested");
+      return waiting ? 20_000 : false;
+    },
   });
 }
 

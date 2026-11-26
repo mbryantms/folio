@@ -137,6 +137,10 @@ pub struct MylarStatusView {
     pub stale_after_minutes: u32,
     pub token: Option<MylarTokenView>,
     pub snapshot: Option<MylarSnapshotStatusView>,
+    /// `integrations.mylar.url`: the Mylar install "Add to Mylar" calls.
+    pub control_url: Option<String>,
+    /// An API key is stored (never returned).
+    pub control_has_key: bool,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -223,6 +227,8 @@ pub async fn status(State(app): State<AppState>, _admin: RequireAdmin) -> Respon
                 .unwrap_or_default(),
             annuals_included: s.annuals_included,
         }),
+        control_url: cfg.integrations_mylar_url.clone(),
+        control_has_key: cfg.integrations_mylar_api_key.is_some(),
     };
     let window = upcoming::window(now.date_naive(), cfg.upcoming_weeks_ahead);
     Json(UpcomingStatusView {

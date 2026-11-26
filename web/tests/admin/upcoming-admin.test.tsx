@@ -38,6 +38,7 @@ vi.mock("@/lib/api/mutations", () => ({
   useSyncUpcomingCalendar: () => ({ mutate: sync, isPending: false }),
   useCreateMylarToken: () => ({ mutate: createToken, isPending: false }),
   useRevokeMylarToken: () => ({ mutate: revokeToken, isPending: false }),
+  useTestMylar: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 vi.mock("@/lib/api/queries", () => ({
   useAdminSettings: () => ({
@@ -59,6 +60,8 @@ function mylar(over: Partial<MylarStatusView> = {}): MylarStatusView {
     stale_after_minutes: 180,
     token: null,
     snapshot: null,
+    control_url: null,
+    control_has_key: false,
     ...over,
   };
 }
@@ -280,13 +283,59 @@ describe("/admin/upcoming", () => {
 });
 
 describe("/admin/upcoming — Mylar card", () => {
-  it("is OFF by default and says it is view-only", () => {
+  it("is OFF by default and says the snapshot never contacts Mylar", () => {
     render(<UpcomingAdmin />);
     const card = screen.getByText("Mylar").closest("[data-slot=card]")!;
     expect(card.textContent).toContain("OFF");
-    expect(card.textContent).toContain("Folio never");
+    expect(card.textContent).toContain("showing it never contacts Mylar");
     expect(card.textContent).toContain("Nothing received yet");
     expect(screen.getByRole("button", { name: "Generate token" })).toBeTruthy();
+    // Add to Mylar: off, nothing to test or remove until both are stored.
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Test connection",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
+  });
+
+  it("saves the Add to Mylar address and key, and never shows a stored key", async () => {
+    const { rerender } = render(<UpcomingAdmin />);
+    fireEvent.change(screen.getByLabelText("Mylar address"), {
+      target: { value: " https://mylar.example/ " },
+    });
+    fireEvent.change(screen.getByLabelText("Mylar API key"), {
+      target: { value: "abc123" },
+    });
+    const section = screen.getByLabelText("Mylar address").closest("section")!;
+    fireEvent.submit(section.querySelector("form")!);
+    await waitFor(() =>
+      expect(mutateAsync).toHaveBeenCalledWith({
+        "integrations.mylar.url": "https://mylar.example/",
+        "integrations.mylar.api_key": "abc123",
+      }),
+    );
+
+    state.status = status({
+      mylar: mylar({
+        control_url: "https://mylar.example/",
+        control_has_key: true,
+      }),
+    });
+    rerender(<UpcomingAdmin />);
+    const key = screen.getByLabelText("Mylar API key") as HTMLInputElement;
+    expect(key.value).toBe("");
+    expect(key.placeholder).toContain("Stored");
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Test connection",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+    expect(screen.getByRole("button", { name: "Remove" })).toBeTruthy();
   });
 
   it("walks the states: no token, waiting, receiving, stale", () => {

@@ -529,9 +529,9 @@ pub struct Config {
     #[serde(default = "default_upcoming_weeks_ahead")]
     pub upcoming_weeks_ahead: u32,
 
-    /// Accept snapshots pushed from a Mylar host. Folio never calls
-    /// Mylar; there is deliberately no Mylar address or key here. Default
-    /// `false`. DB key `integrations.mylar.enabled`; live.
+    /// Accept snapshots pushed from a Mylar host. The snapshot path
+    /// never calls Mylar. Default `false`. DB key
+    /// `integrations.mylar.enabled`; live.
     #[serde(default)]
     pub integrations_mylar_enabled: bool,
 
@@ -540,6 +540,17 @@ pub struct Config {
     /// 30–10080. DB key `integrations.mylar.stale_after_minutes`; live.
     #[serde(default = "default_mylar_stale_after_minutes")]
     pub integrations_mylar_stale_after_minutes: u32,
+
+    /// Base URL of the Mylar install the add-to-Mylar action calls
+    /// ([`crate::mylar_control`]). `None` = the action is off. DB key
+    /// `integrations.mylar.url`; live.
+    #[serde(default)]
+    pub integrations_mylar_url: Option<String>,
+
+    /// Mylar's API key, sent only to `integrations_mylar_url`. DB key
+    /// `integrations.mylar.api_key` (sealed); live.
+    #[serde(default)]
+    pub integrations_mylar_api_key: Option<String>,
 
     /// Standing cap on server-fetched (`url` / `catalog`) reading lists a
     /// non-admin may own ([`crate::cbl::quota::check_remote_list_cap`]).
@@ -663,6 +674,11 @@ impl std::fmt::Debug for Config {
             .field(
                 "integrations_mylar_stale_after_minutes",
                 &self.integrations_mylar_stale_after_minutes,
+            )
+            .field("integrations_mylar_url", &self.integrations_mylar_url)
+            .field(
+                "integrations_mylar_api_key",
+                &redact_opt(&self.integrations_mylar_api_key),
             )
             .field(
                 "cbl_max_remote_lists_per_user",
@@ -1262,6 +1278,10 @@ impl Config {
             30,
             7 * 24 * 60,
         )?;
+        if let Some(url) = self.integrations_mylar_url.as_deref() {
+            crate::mylar_control::client::parse_base_url(url)
+                .map_err(|e| anyhow::anyhow!("integrations_mylar_url: {e}"))?;
+        }
         check_range(
             "cbl_max_remote_lists_per_user",
             self.cbl_max_remote_lists_per_user,
@@ -1901,6 +1921,20 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             }
             None => bad_type(&row.key, "uint", &row.value),
         },
+        "integrations.mylar.url" => match row.value.as_str() {
+            Some(s) => {
+                let trimmed = s.trim();
+                cfg.integrations_mylar_url = (!trimmed.is_empty()).then(|| trimmed.to_owned());
+            }
+            None => bad_type(&row.key, "string", &row.value),
+        },
+        "integrations.mylar.api_key" => match row.value.as_str() {
+            Some(s) => {
+                let trimmed = s.trim();
+                cfg.integrations_mylar_api_key = (!trimmed.is_empty()).then(|| trimmed.to_owned());
+            }
+            None => bad_type(&row.key, "string", &row.value),
+        },
         // ──── linked-reading-lists PR 0: reading-list cap ────
         // Unclamped so `Config::validate` rejects an out-of-range PATCH.
         "cbl.max_remote_lists_per_user" => match row.value.as_u64() {
@@ -2297,6 +2331,8 @@ mod tests {
             upcoming_weeks_ahead: default_upcoming_weeks_ahead(),
             integrations_mylar_enabled: false,
             integrations_mylar_stale_after_minutes: default_mylar_stale_after_minutes(),
+            integrations_mylar_url: None,
+            integrations_mylar_api_key: None,
             cbl_max_remote_lists_per_user: default_cbl_max_remote_lists_per_user(),
         }
     }

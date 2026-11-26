@@ -16,17 +16,22 @@ Folio never controls anything outside itself through this feature.
 
 - The calendar job only **reads** Metron (`GET /api/issue/`,
   `GET /api/series/{id}/`).
-- There is no Mylar address or API key setting, and there must never be
-  one. Mylar's API key is all-or-nothing (it can delete series and
-  restart Mylar), and many installs run Mylar with its login off behind a
-  firewall. Mylar data reaches Folio only by push.
-- The admin page and (later) the Upcoming page show state. No button
+- This feature uses no Mylar address or API key. Mylar's API key is
+  all-or-nothing (it can delete series and restart Mylar), and many
+  installs run Mylar with its login off behind a firewall. Mylar data
+  reaches Folio only by push.
+- The admin page and the Upcoming page show state. No button there
   orders, downloads, searches or marks anything in another system.
+- The one place Folio does call Mylar is the separate, opt-in
+  [add-to-Mylar](add-to-mylar.md) action on a reading list's missing
+  entries. It has its own module (`crate::mylar_control`), its own two
+  settings and a closed list of five API commands; nothing in
+  `crate::upcoming` may use it.
 
 **Reviewer heuristic — reject PRs that:**
 
-- add a setting, env var or config field that holds a Mylar URL, host or
-  key;
+- add a Mylar setting beyond `integrations.mylar.{enabled,
+  stale_after_minutes,url,api_key}`;
 - add an HTTP client call to anything under `crate::upcoming` other than
   through `MetronClient`;
 - add a UI control whose effect is outside Folio.

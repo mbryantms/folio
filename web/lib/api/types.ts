@@ -1136,6 +1136,13 @@ export type MylarStatusView = Schemas["MylarStatusView"];
 export type MylarTokenView = Schemas["MylarTokenView"];
 export type MylarSnapshotStatusView = Schemas["MylarSnapshotStatusView"];
 export type MylarTokenResp = Schemas["MylarTokenResp"];
+// Add-to-Mylar (add-to-mylar 1.0).
+export type MylarTestResp = Schemas["MylarTestResp"];
+export type MylarAddReq = Schemas["MylarAddReq"];
+export type MylarAddSummary = Schemas["AddSummary"];
+export type MylarListStatusView = Schemas["MylarListStatusView"];
+export type MylarTargetStatus = Schemas["TargetStatus"];
+export type MylarTargetState = Schemas["TargetState"];
 // …and the reader-facing view.
 export type UpcomingEntryView = Schemas["UpcomingEntryView"];
 export type UpcomingWeekView = Schemas["UpcomingWeekView"];

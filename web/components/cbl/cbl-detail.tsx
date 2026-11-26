@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -80,11 +81,23 @@ import type {
   RefreshLogEntryView,
   SavedViewView,
 } from "@/lib/api/types";
+import {
+  mylarCanAdd,
+  mylarEntryState,
+  type MylarStatusIndex,
+} from "@/lib/cbl/mylar";
 import { displayListName } from "@/lib/reader/list-context";
 import { LoadMoreError } from "@/components/folio/infinite-sentinel";
 import { RailError } from "@/components/saved-views/RailError";
 
 import { ManualMatchPopover } from "./manual-match-popover";
+import {
+  MylarAddDialog,
+  MylarBar,
+  MylarRowControl,
+  useMylarForList,
+  type MylarAddTarget,
+} from "./MylarAdd";
 import { RefreshFailureNotice } from "./RefreshFailureNotice";
 import { useInfiniteSentinel } from "@/lib/ui/use-infinite-sentinel";
 
@@ -593,6 +606,28 @@ function ResolutionTab({
     fetchNextPage,
   });
 
+  // Add-to-Mylar (admin, once Mylar is configured): one entry from its
+  // row, picked entries, or every missing entry of the list.
+  const mylar = useMylarForList(listId);
+  const [mylarTarget, setMylarTarget] = React.useState<MylarAddTarget | null>(
+    null,
+  );
+  const [selecting, setSelecting] = React.useState(false);
+  const [selected, setSelected] = React.useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const endSelecting = React.useCallback(() => {
+    setSelecting(false);
+    setSelected(new Set());
+  }, []);
+  const toggleSelected = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  const showMylar = mylar.available && stats.missing > 0;
+
   if (stats.ambiguous + stats.missing === 0) {
     return (
       <div className="text-muted-foreground rounded-md border border-dashed p-6 text-sm">
@@ -623,6 +658,31 @@ function ResolutionTab({
           </Button>
         ))}
       </div>
+      {showMylar ? (
+        <MylarBar
+          missingCount={stats.missing}
+          withoutId={mylar.withoutId}
+          selecting={selecting}
+          selectedCount={selected.size}
+          onSelecting={(on) => (on ? setSelecting(true) : endSelecting())}
+          onAddSelected={() =>
+            setMylarTarget({
+              kind: "entries",
+              ids: [...selected],
+              label: `the ${selected.size} selected ${
+                selected.size === 1 ? "entry" : "entries"
+              }`,
+            })
+          }
+          onAddAll={() => setMylarTarget({ kind: "all", count: stats.missing })}
+        />
+      ) : null}
+      <MylarAddDialog
+        listId={listId}
+        target={mylarTarget}
+        onClose={() => setMylarTarget(null)}
+        onQueued={endSelecting}
+      />
       {query.isLoading ? (
         <RowsSkeleton rows={5} label="Loading entries…" />
       ) : items.length === 0 ? (
@@ -644,6 +704,22 @@ function ResolutionTab({
                 open={openEntryId === entry.id}
                 onOpenChange={(o) => setOpenEntryId(o ? entry.id : null)}
                 onResolved={() => advanceAfter(entry)}
+                mylar={
+                  showMylar && entry.match_status === "missing"
+                    ? {
+                        index: mylar.index,
+                        selecting,
+                        selected: selected.has(entry.id),
+                        onToggle: () => toggleSelected(entry.id),
+                        onAdd: () =>
+                          setMylarTarget({
+                            kind: "entries",
+                            ids: [entry.id],
+                            label: `${entry.series_name} #${entry.issue_number}`,
+                          }),
+                      }
+                    : undefined
+                }
               />
             </li>
           ))}
@@ -687,6 +763,7 @@ function ResolutionRow({
   open,
   onOpenChange,
   onResolved,
+  mylar,
 }: {
   listId: string;
   entry: CblEntryHydratedView;
@@ -694,10 +771,32 @@ function ResolutionRow({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onResolved: () => void;
+  /** Add-to-Mylar controls; set only for a missing entry an admin with
+   *  Mylar configured is looking at. */
+  mylar?: {
+    index: MylarStatusIndex;
+    selecting: boolean;
+    selected: boolean;
+    onToggle: () => void;
+    onAdd: () => void;
+  };
 }) {
+  const canAddToMylar =
+    mylar != null && mylarCanAdd(mylarEntryState(entry, mylar.index));
   return (
-    <div className="flex items-center justify-between gap-3">
-      <div className="min-w-0">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      {mylar?.selecting ? (
+        <Checkbox
+          checked={mylar.selected}
+          disabled={!canAddToMylar}
+          onCheckedChange={mylar.onToggle}
+          aria-label={`Select ${entry.series_name} #${entry.issue_number}`}
+          title={
+            canAddToMylar ? undefined : "Nothing to add to Mylar for this entry"
+          }
+        />
+      ) : null}
+      <div className="min-w-0 flex-1 basis-52">
         <div className="flex items-center gap-2">
           <StatusBadge status={entry.match_status as CblMatchStatus} />
           <span className="text-muted-foreground text-xs">
@@ -711,6 +810,13 @@ function ResolutionRow({
           {entry.volume ? ` · vol ${entry.volume}` : ""}
         </div>
       </div>
+      {mylar ? (
+        <MylarRowControl
+          entry={entry}
+          index={mylar.index}
+          onAdd={mylar.onAdd}
+        />
+      ) : null}
       <ManualMatchPopover
         listId={listId}
         entry={entry}

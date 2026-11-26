@@ -1,12 +1,17 @@
 //! The view-only invariant of the Upcoming feature, held structurally
-//! (upcoming-releases 1.0).
+//! (upcoming-releases 1.0), and the bounds of the one exception
+//! (add-to-mylar 1.0).
 //!
-//! Folio shows what Mylar is tracking and never controls it. These tests
-//! fail the build if someone adds a way to reach Mylar:
+//! The snapshot side shows what Mylar is tracking and never contacts it.
+//! Add-to-Mylar is the single, deliberate way Folio reaches Mylar: an
+//! admin adds a reading list's missing series. These tests fail the build
+//! if either side grows:
 //!
-//! - the only route under `/integrations/mylar` is the snapshot POST;
-//! - no runtime setting holds a Mylar address, port or key;
-//! - the code that handles Mylar data makes no outbound request.
+//! - the routes under `/integrations/mylar` are exactly the ones listed;
+//! - the only Mylar settings beyond the snapshot's are the address and
+//!   the key add-to-Mylar needs;
+//! - the code that handles snapshot data makes no outbound request;
+//! - the Mylar client can send only its five commands, none destructive.
 
 use server::settings::registry;
 
@@ -28,8 +33,9 @@ fn the_only_mylar_route_is_the_snapshot_post() {
     assert_eq!(ingest[0].0, "/integrations/mylar/snapshot");
     assert_eq!(ingest[0].1, [&"post".to_owned()], "POST only");
 
-    // The admin side manages Folio's own token (create, revoke) and reads
-    // the stored snapshot back. Nothing else, and no other verb.
+    // The admin side manages Folio's own token (create, revoke), reads
+    // the stored snapshot back, and queues add-to-Mylar requests (plus a
+    // connection test). Nothing else, and no other verb.
     let mut admin: Vec<(&str, Vec<&str>)> = mylar
         .iter()
         .filter(|(path, _)| path.starts_with("/api/admin/"))
@@ -45,6 +51,11 @@ fn the_only_mylar_route_is_the_snapshot_post() {
         [
             ("/api/admin/integrations/mylar/activity", vec!["get"]),
             (
+                "/api/admin/integrations/mylar/requests",
+                vec!["get", "post"]
+            ),
+            ("/api/admin/integrations/mylar/test", vec!["post"]),
+            (
                 "/api/admin/integrations/mylar/token",
                 vec!["delete", "post"]
             ),
@@ -53,37 +64,62 @@ fn the_only_mylar_route_is_the_snapshot_post() {
 }
 
 #[test]
-fn no_setting_holds_a_mylar_address_or_key() {
-    let mylar_keys: Vec<&str> = registry::registry()
+fn the_mylar_settings_are_the_snapshot_pair_and_the_add_pair() {
+    let mut mylar: Vec<(&str, bool)> = registry::registry()
         .iter()
-        .map(|d| d.key)
-        .filter(|k| k.contains("mylar"))
+        .filter(|d| d.key.contains("mylar"))
+        .map(|d| (d.key, d.is_secret))
         .collect();
+    mylar.sort_unstable();
     assert_eq!(
-        mylar_keys,
+        mylar,
         [
-            "integrations.mylar.enabled",
-            "integrations.mylar.stale_after_minutes"
+            ("integrations.mylar.api_key", true),
+            ("integrations.mylar.enabled", false),
+            ("integrations.mylar.stale_after_minutes", false),
+            ("integrations.mylar.url", false),
         ],
-        "a new Mylar setting must not make Folio able to call Mylar"
+        "a new Mylar setting widens what Folio can do to Mylar: decide it on purpose"
     );
-    for key in &mylar_keys {
-        for forbidden in [
-            "url", "host", "port", "address", "key", "token", "password", "secret",
-        ] {
-            assert!(
-                !key.contains(forbidden),
-                "{key}: Folio must not hold a Mylar {forbidden}"
-            );
-        }
+}
+
+#[test]
+fn the_mylar_client_sends_only_its_five_commands() {
+    use server::mylar_control::client::Command;
+    let mut sent: Vec<&str> = Command::ALL.iter().map(|c| c.as_str()).collect();
+    sent.sort_unstable();
+    assert_eq!(
+        sent,
+        [
+            "addComic",
+            "getComic",
+            "getIssueInfo",
+            "getVersion",
+            "queueIssue"
+        ]
+    );
+    // The client builds a request only from a `Command`: no free-form
+    // `cmd` string, and none of Mylar's destructive commands by name.
+    let source = include_str!("../src/mylar_control/client.rs");
+    assert_eq!(source.matches("(\"cmd\",").count(), 1, "one place sets cmd");
+    for forbidden in [
+        "delComic",
+        "pauseComic",
+        "resumeComic",
+        "refreshComic",
+        "forceSearch",
+        "forceProcess",
+        "shutdown",
+        "restart",
+        "update",
+        "unqueueIssue",
+        "changeStatus",
+    ] {
+        assert!(
+            !source.contains(&format!("\"{forbidden}\"")),
+            "the Mylar client must not send `{forbidden}`"
+        );
     }
-    assert!(
-        registry::registry()
-            .iter()
-            .filter(|d| d.key.contains("mylar"))
-            .all(|d| !d.is_secret),
-        "no Mylar credential is stored"
-    );
 }
 
 #[test]
@@ -115,7 +151,8 @@ fn the_mylar_code_makes_no_outbound_request() {
         ] {
             assert!(
                 !text.contains(needle),
-                "{name} mentions `{needle}`: Mylar data arrives by push only"
+                "{name} mentions `{needle}`: snapshot data arrives by push only; \
+                 calls to Mylar live in `mylar_control`"
             );
         }
     }

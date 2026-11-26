@@ -25,6 +25,7 @@ pub mod jobs;
 pub mod library;
 pub mod metadata;
 pub mod middleware;
+pub mod mylar_control;
 pub mod ocr;
 pub mod pages;
 pub mod reading;

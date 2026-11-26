@@ -5,10 +5,12 @@ Folio's **Upcoming releases** can show what a
 pull list with each issue's status (wanted, snatched, downloaded), the
 watchlist, the wanted backlog and the download queue.
 
-It is **view-only**. Folio never contacts Mylar, has no setting for
-Mylar's address or API key, and offers no button that changes anything in
-it. A small script on the Mylar host reads `mylar.db` read-only and
-pushes a snapshot to Folio.
+This part is **view-only**. It never contacts Mylar and needs neither
+Mylar's address nor its API key. A small script on the Mylar host reads
+`mylar.db` read-only and pushes a snapshot to Folio.
+
+Separately, and only if you want it, Folio can **add series to Mylar**:
+see [Add to Mylar](#add-to-mylar-optional) at the end of this page.
 
 ```
 mylar.db ──(read-only)──► folio-mylar-push.py ──(HTTPS POST + token)──► Folio
@@ -81,3 +83,27 @@ judges a snapshot by when **it** received it:
 
 `systemctl status folio-mylar-push.service` on the Mylar host shows the
 last run's one-line result. The README lists what each error means.
+
+## Add to Mylar (optional)
+
+With Mylar's address and API key, an admin can add the series of a
+reading list's missing entries to Mylar's watchlist and mark those
+issues Wanted. This is the only thing Folio ever asks Mylar to do: it
+cannot delete, pause or restart anything.
+
+1. In Mylar, enable the API and copy its key (Settings → Web Interface).
+2. In Folio, open **Admin → Upcoming → Mylar → Add to Mylar**, enter
+   Mylar's address (for example `https://mylar.example.com/`) and the
+   key, and save. **Test connection** should report Mylar's version.
+3. Open a reading list → **⋯** → **Edit** → **Resolution**. Each missing entry
+   has **Add to Mylar**; **Select** picks several; **Add all missing**
+   takes the whole list.
+
+Folio must be able to reach that address, so a firewall or reverse proxy
+in front of Mylar has to let Folio's host through to `/api`. Mylar's key
+can do anything in Mylar; Folio stores it encrypted and never shows it
+again. **Remove** on the same card deletes both and turns the action off.
+
+Entries need a ComicVine id (most published reading lists carry them).
+"Mark Wanted" happens once Mylar has imported the series, which can take
+several minutes per series; the row shows **Requested** until then.

@@ -196,6 +196,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/integrations/mylar/requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_mylar_requests"];
+        put?: never;
+        post: operations["admin_mylar_add"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/integrations/mylar/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["admin_mylar_test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/integrations/mylar/token": {
         parameters: {
             query?: never;
@@ -7031,6 +7063,34 @@ export interface components {
             /** @description Defaults to the file name. */
             title?: string | null;
         };
+        /** @description What one "Add to Mylar" request did. */
+        AddSummary: {
+            /**
+             * Format: int64
+             * @description Series and issues with a request already waiting or just accepted.
+             */
+            already_requested: number;
+            /**
+             * Format: int64
+             * @description Issues newly queued to be marked Wanted.
+             */
+            issues_requested: number;
+            /**
+             * Format: int64
+             * @description Series the last snapshot already shows on Mylar's watchlist.
+             */
+            series_in_mylar: number;
+            /**
+             * Format: int64
+             * @description Series newly queued for adding to Mylar.
+             */
+            series_requested: number;
+            /**
+             * Format: int64
+             * @description Chosen entries with no ComicVine series id; Mylar cannot take them.
+             */
+            without_comicvine_id: number;
+        };
         /**
          * @description Audit-remediation M4 dropped `LogWidgetListView { widgets: Vec<_> }` in
          *     favor of the workspace-uniform `shared::pagination::CursorPage<T>`
@@ -12566,6 +12626,24 @@ export interface components {
              */
             root: string;
         };
+        /**
+         * @description The Mylar state of a reading list's missing entries. Targets Folio
+         *     knows nothing about are left out.
+         */
+        ListStatus: {
+            issues: components["schemas"]["TargetStatus"][];
+            /**
+             * Format: int64
+             * @description Missing entries in the list.
+             */
+            missing: number;
+            series: components["schemas"]["TargetStatus"][];
+            /**
+             * Format: int64
+             * @description Missing entries with no ComicVine series id.
+             */
+            without_comicvine_id: number;
+        };
         /** @description The caller's saved view of a reading list. */
         ListViewRef: {
             /** @description The view was created by this call. */
@@ -13319,6 +13397,20 @@ export interface components {
              */
             wanted: components["schemas"]["MylarWantedRow"][];
         };
+        MylarAddReq: {
+            /**
+             * Format: uuid
+             * @description The reading list whose missing entries are meant.
+             */
+            cbl_list_id: string;
+            /**
+             * @description Entries to add; absent = every missing entry of the list. Entries
+             *     that are not missing are ignored.
+             */
+            entry_ids?: string[] | null;
+            /** @description Also mark each chosen issue Wanted once Mylar has its series. */
+            want_issues?: boolean;
+        };
         /**
          * @description How far a snapshot can be trusted, by when Folio received it.
          * @enum {string}
@@ -13344,6 +13436,10 @@ export interface components {
             /** Format: date-time */
             prev_run?: string | null;
             status?: string | null;
+        };
+        MylarListStatusView: components["schemas"]["ListStatus"] & {
+            /** @description A Mylar address and key are stored, so entries can be added. */
+            configured: boolean;
         };
         /** @description One line of Mylar's weekly pull list. */
         MylarPullRow: {
@@ -13437,6 +13533,10 @@ export interface components {
             watch_count: number;
         };
         MylarStatusView: {
+            /** @description An API key is stored (never returned). */
+            control_has_key: boolean;
+            /** @description `integrations.mylar.url`: the Mylar install "Add to Mylar" calls. */
+            control_url?: string | null;
             /**
              * @description `integrations.mylar.enabled`. Snapshots are accepted only while
              *     this and `upcoming.enabled` are both on.
@@ -13449,6 +13549,13 @@ export interface components {
              */
             stale_after_minutes: number;
             token?: components["schemas"]["MylarTokenView"] | null;
+        };
+        MylarTestResp: {
+            /** @description Why the check failed. */
+            error?: string | null;
+            ok: boolean;
+            /** @description Mylar's version, when it answered. */
+            version?: string | null;
         };
         MylarTokenResp: {
             /** @description The token, shown this once. Folio keeps only a digest. */
@@ -17425,6 +17532,21 @@ export interface components {
             /** @description [`tag_tool`] key (`folio`, `comictagger_metron`, `untagged`, …). */
             tool: string;
         };
+        /**
+         * @description Where a series or an issue stands with Mylar, as far as Folio knows.
+         * @enum {string}
+         */
+        TargetState: "in_mylar" | "requested" | "failed";
+        TargetStatus: {
+            /**
+             * Format: int64
+             * @description ComicVine volume id (series) or issue id (issue).
+             */
+            cv_id: number;
+            /** @description Why it failed. */
+            error?: string | null;
+            state: components["schemas"]["TargetState"];
+        };
         /** @description A long-running task spawned outside the job queues. */
         TaskWorkView: {
             /** @description `deep_validate` | `cbl_rematch`. */
@@ -19158,6 +19280,120 @@ export interface operations {
             };
             /** @description admin only */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_mylar_requests: {
+        parameters: {
+            query: {
+                cbl_list_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MylarListStatusView"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_mylar_add: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MylarAddReq"];
+            };
+        };
+        responses: {
+            /** @description queued; a worker sends them to Mylar */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddSummary"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no such reading list */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no Mylar address or key stored */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_mylar_test: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the check ran; `ok` says how it went */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MylarTestResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no Mylar address or key stored */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
