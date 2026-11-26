@@ -121,6 +121,16 @@ link, collections and OPDS all go through it.
 - Reader: `DetourButtons` on the end card / webtoon footer, `switch_to`
   handling, `lib/reader/list-context.ts` ("Back to X" / "Continue in X").
 - `components/collections/ReadingListEntryCard.tsx`: the collection tile.
+- **Move, reorder, repair** (`components/cbl/links/MoveEventDialog.tsx`):
+  the band's "Move…" opens a picker that searches the list's entries on
+  the server; "Read earlier / later here" reorders several events after
+  one issue (`reorderWrites` rewrites every changed slot, so stored ties
+  can't leave the order unchanged). A link or chapter break whose issue
+  left the list shows in `LostAnchorsNotice` above the grid and on its
+  band ("Placement lost · was after X") with "Place…"; the refresh toast
+  and the History tab report how many lost or regained their place. The
+  delete confirmation names the lists a list is linked into and the lists
+  linked into it (`deleteLinkedNote`).
 - **List page state** (`components/saved-views/CblViewDetail.tsx`):
   - *Plain list*: a per-reader, per-list switch (`usePlainListView`,
     localStorage) that renders the list with no chapters, folding, rail

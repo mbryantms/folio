@@ -2128,6 +2128,16 @@ export function useRefreshCblList(id: string) {
         if (data.removed) parts.push(`-${data.removed} removed`);
         if (data.reordered) parts.push(`${data.reordered} reordered`);
         if (data.rematched) parts.push(`${data.rematched} newly matched`);
+        // Linked events and chapters that lost (or regained) their place:
+        // the list page lists the lost ones with the action to fix each.
+        if (data.links_lost) {
+          parts.push(
+            `${data.links_lost} linked ${data.links_lost === 1 ? "item" : "items"} lost ${data.links_lost === 1 ? "its" : "their"} place`,
+          );
+        }
+        if (data.links_restored) {
+          parts.push(`${data.links_restored} back in place`);
+        }
         if (!data.upstream_changed) {
           return parts.length
             ? `Up to date · ${parts.join(", ")}`

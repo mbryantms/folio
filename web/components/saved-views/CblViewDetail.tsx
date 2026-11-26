@@ -26,6 +26,12 @@ import {
   FolderPlus,
 } from "lucide-react";
 import { DeriveLinksDialog } from "@/components/cbl/links/DeriveLinksDialog";
+import {
+  LostAnchorsNotice,
+  MoveEventDialog,
+  anchorSiblings,
+  reorderWrites,
+} from "@/components/cbl/links/MoveEventDialog";
 import { PartOfLink } from "@/components/cbl/links/PartOfLink";
 import { AddToCollectionDialog } from "@/components/collections/AddToCollectionDialog";
 
@@ -93,7 +99,9 @@ import {
   useDeleteCblLink,
   useMarkCblReadThrough,
   useRefreshCblList,
+  useReorderCblLinks,
   useSkipCblLink,
+  useUpdateCblLink,
   useUpdateCblBreak,
 } from "@/lib/api/mutations";
 import { EventBand } from "@/components/cbl/links/EventBand";
@@ -449,6 +457,11 @@ function CblViewDetailInner({
   } | null>(null);
   const [removeTarget, setRemoveTarget] =
     React.useState<ReadingListLinkView | null>(null);
+  // Move an event to after another issue (also "Place…" for a lost one).
+  const [moveTarget, setMoveTarget] =
+    React.useState<ReadingListLinkView | null>(null);
+  const moveLink = useUpdateCblLink(listId);
+  const reorderLinks = useReorderCblLinks(listId);
   // Chapter breaks (PR 3a): naming a new one / renaming, and removing.
   const createBreak = useCreateCblBreak(listId);
   const updateBreak = useUpdateCblBreak(listId);
@@ -856,6 +869,21 @@ function CblViewDetailInner({
       extraActions={cardActions(entry)}
     />
   );
+  // "Read earlier / later here": only among several events after one
+  // issue, and not past either end.
+  const reorderActions = (link: ReadingListLinkView) => {
+    const siblings = anchorSiblings(linkEvents, link);
+    const i = siblings.findIndex((s) => s.id === link.id);
+    if (i < 0) return {};
+    const move = (dir: -1 | 1) => () => {
+      const writes = reorderWrites(siblings, link, dir);
+      if (writes.length > 0) reorderLinks.mutate({ writes });
+    };
+    return {
+      onMoveEarlier: i > 0 ? move(-1) : undefined,
+      onMoveLater: i < siblings.length - 1 ? move(1) : undefined,
+    };
+  };
   const renderEvent = (link: ReadingListLinkView) => (
     <EventBand
       key={link.id}
@@ -869,6 +897,8 @@ function CblViewDetailInner({
       }
       canManage={canManageLinks}
       onSkip={(skip) => skipLink.mutate({ linkId: link.id, skip })}
+      onMove={() => setMoveTarget(link)}
+      {...reorderActions(link)}
       onRemove={() => setRemoveTarget(link)}
     />
   );
@@ -1246,6 +1276,17 @@ function CblViewDetailInner({
       />
       {adminBulk.dialogs}
 
+      {!plainView && linksQuery.data ? (
+        <LostAnchorsNotice
+          events={linksQuery.data.events}
+          breaks={linksQuery.data.breaks}
+          canManage={canManageLinks}
+          onPlace={setMoveTarget}
+          onRemoveBreak={(b) =>
+            setRemoveBreak({ breakId: b.id, label: b.label ?? "this chapter" })
+          }
+        />
+      ) : null}
       {linksQuery.isError ? (
         <RailError
           message="Couldn't load this list's chapters and events. The issues are shown as a plain list."
@@ -1424,6 +1465,39 @@ function CblViewDetailInner({
           onOpenChange={setDeriveOpen}
         />
       )}
+      <MoveEventDialog
+        listId={list.id}
+        link={moveTarget}
+        onOpenChange={(o) => !o && setMoveTarget(null)}
+        isPending={moveLink.isPending}
+        onPick={(afterEntryId) => {
+          const t = moveTarget;
+          if (!t) return;
+          // Stays open until the move settles: a refusal shows here.
+          moveLink.mutate(
+            { linkId: t.id, after_entry_id: afterEntryId },
+            {
+              onSuccess: (data) => {
+                setMoveTarget(null);
+                // Bring the band into view at its new place, read from
+                // the layout the server just returned (unfolding the
+                // chapter it landed in).
+                const landed = data?.chapters.find((c) =>
+                  c.event_link_ids.includes(t.id),
+                );
+                if (landed && !plainView) {
+                  setFoldOverrides((o) => ({
+                    ...o,
+                    [chapterKey(landed)]: false,
+                  }));
+                  setPendingEvent(t.id);
+                  setPendingChapter(landed.index);
+                }
+              },
+            },
+          );
+        }}
+      />
       <InsertListDialog
         key={`insert-${insertTarget ? (insertTarget.entryId ?? "next-part") : "closed"}`}
         open={insertTarget != null}

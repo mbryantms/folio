@@ -23,7 +23,7 @@ import type {
   UpdateBreakReq,
   UpdateLinkReq,
 } from "../types";
-import { apiMutate, useApiMutation } from "./_core";
+import { apiMutate, useApiMutation, useApiRunMutation } from "./_core";
 import {
   invalidateIssueCards,
   invalidateRails,
@@ -76,6 +76,7 @@ export function useCreateCblLink(listId: string) {
 
 /** Move an event to after another entry, or reorder it at its spot. */
 export function useUpdateCblLink(listId: string) {
+  const qc = useQueryClient();
   const invalidate = useInvalidateLinks();
   return useApiMutation<
     ReadingListLinksView,
@@ -86,7 +87,38 @@ export function useUpdateCblLink(listId: string) {
       method: "PATCH",
       body,
     }),
-    { successMessage: "Event moved", onSuccess: invalidate },
+    {
+      successMessage: "Event moved",
+      onSuccess: (data) => {
+        // The response is the list's new layout: show it at once, so the
+        // page (and a scroll to the event's new place) doesn't act on the
+        // old one while the refetch is in flight.
+        if (data) qc.setQueryData(queryKeys.cblListLinks(listId), data);
+        invalidate();
+      },
+    },
+  );
+}
+
+/** Change the order of the events read after one issue: one write per
+ *  event whose slot changes (`reorderWrites`), one toast for the lot. */
+export function useReorderCblLinks(listId: string) {
+  const invalidate = useInvalidateLinks();
+  return useApiRunMutation<
+    null,
+    { writes: { linkId: string; sort_within_anchor: number }[] }
+  >(
+    async ({ writes }) => {
+      for (const w of writes) {
+        await apiMutate<ReadingListLinksView>({
+          path: apiPath`/me/cbl-lists/${listId}/links/${w.linkId}`,
+          method: "PATCH",
+          body: { sort_within_anchor: w.sort_within_anchor },
+        });
+      }
+      return null;
+    },
+    { successMessage: "Event order changed", onSettled: invalidate },
   );
 }
 
