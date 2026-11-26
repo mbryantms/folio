@@ -38,6 +38,7 @@ Every limit that is attached to a route today. A route not listed here has no li
 | Marker writes (`POST /me/markers`, `PATCH`/`DELETE /me/markers/{id}`, `POST /me/markers/bulk-delete`, `POST /me/markers/restore`), one shared bucket | `marker_write` | IP | 10 / s | 60 |
 | Free-text search, metadata writes, collection and saved-view writes, saved-view previews, collection reorder | see [Per-user web-app buckets](#per-user-web-app-buckets) | user | | |
 | Page bytes, page thumbnails and stored covers | see [Page bytes and thumbnails](#page-bytes-and-thumbnails) | user | | |
+| `POST /me/cbl-lists/{id}/links/derive` (the "Find events and parts" preview: downloads up to 61 catalog files per call) | `cbl_derive_preview` | user | 1 / 20 s | 6 |
 | CBL imports: create (upload / URL / catalog), manual refresh, manual check (`cbl::quota`; admins exempt; Redis fixed 1 h window) | `cbl_import` | user | 20 / hour | none |
 | `PATCH /me/account` requests that change the email while mail delivery is configured (see [Email-change requests](#email-change-requests)) | none (request row) | user | 5 / hour | none |
 

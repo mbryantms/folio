@@ -23322,6 +23322,10 @@
             "type": "boolean",
             "description": "The list is a CBRO master whose with-events version is in the\ncatalog (events can be found)."
           },
+          "twin_mismatch": {
+            "type": "boolean",
+            "description": "The with-events version was found but shares too few issues with\nthis list to compare (a different edition, or one side has no\nComicVine ids): no events are proposed. Refreshing the list first\nusually fixes it."
+          },
           "unplaced": {
             "type": "array",
             "items": {

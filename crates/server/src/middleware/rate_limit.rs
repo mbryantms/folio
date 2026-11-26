@@ -536,6 +536,19 @@ pub const SAVED_VIEW_PREVIEW: Bucket = Bucket {
     burst: 20,
 };
 
+/// `POST /me/cbl-lists/{id}/links/derive` (the "Find events and parts"
+/// preview) — per user, one every 20 s sustained with a burst of 6. Each
+/// call downloads the list's with-events version and up to 60 event lists
+/// from the catalog host, uncached, so a loop of them would spend the
+/// server's allowance with that host for every user. A person opens the
+/// dialog once per master; the burst covers working through several
+/// parts in a row.
+pub const CBL_DERIVE_PREVIEW: Bucket = Bucket {
+    name: "cbl_derive_preview",
+    period: Duration::from_secs(20),
+    burst: 6,
+};
+
 /// Collection reorder — per user (E3), 4/s sustained with a burst of 30:
 /// `POST /me/collections/{id}/entries/reorder`, its own bucket so a drag
 /// session never starves the writes above. A drop sends one request with

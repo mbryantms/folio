@@ -1244,7 +1244,7 @@ async fn derive_chains_parts_and_links_imported_events() {
     assert_eq!(resp["linked"], 2);
     let failed = resp["failed"].as_array().unwrap();
     assert_eq!(failed.len(), 1, "{resp}");
-    assert_eq!(failed[0]["message"], "not in the catalog");
+    assert_eq!(failed[0]["message"], "not an event of this list");
     let events = resp["links"]["events"].as_array().unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0]["child_list_id"], event.to_string());
@@ -2021,4 +2021,38 @@ async fn sharing_a_master_shares_its_linked_lists() {
         .unwrap()
         .len();
     assert_eq!(shared_along, 3);
+}
+
+/// 2.0 PR 4: the with-events export writes an issue once, even when the
+/// master already lists one of the event's issues.
+#[tokio::test]
+async fn inline_events_export_writes_each_issue_once() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "inline-dedupe@example.com").await;
+    let (master, issues) = seed_cbl_with_matched_entries(&app, user.user_id, 4).await;
+    let event = make_list(&app, Some(user.user_id), "Event", &issues[0..2]).await;
+    set_xml(&app, master, cbl_xml("Master", "Main", 4)).await;
+    // The event holds "Main 3" (already in the master) and "Side 1".
+    set_xml(
+        &app,
+        event,
+        r#"<ReadingList><Name>Event</Name><Books><Book Series="Main" Number="3" Volume="2012" Year="2013"/><Book Series="Side" Number="1" Volume="2012" Year="2013"/></Books></ReadingList>"#
+            .to_owned(),
+    )
+    .await;
+    link(&app, &user, master, event, Some(1)).await;
+    let (s, xml) = get_text(
+        &app,
+        &format!("/api/me/cbl-lists/{master}/export?inline_events=true"),
+        &user,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{xml}");
+    let parsed = parsers::cbl::parse(xml.as_bytes()).unwrap();
+    let order: Vec<String> = parsed
+        .books
+        .iter()
+        .map(|b| format!("{} {}", b.series, b.number))
+        .collect();
+    assert_eq!(order, ["Main 1", "Main 2", "Side 1", "Main 3", "Main 4"]);
 }

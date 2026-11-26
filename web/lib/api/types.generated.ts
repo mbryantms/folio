@@ -10009,6 +10009,13 @@ export interface components {
              *     catalog (events can be found).
              */
             twin_found: boolean;
+            /**
+             * @description The with-events version was found but shares too few issues with
+             *     this list to compare (a different edition, or one side has no
+             *     ComicVine ids): no events are proposed. Refreshing the list first
+             *     usually fixes it.
+             */
+            twin_mismatch?: boolean;
             /** @description Inserted issues no event list covers — shown, never guessed. */
             unplaced: components["schemas"]["UnplacedRunView"][];
         };

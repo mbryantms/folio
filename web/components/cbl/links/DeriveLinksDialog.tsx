@@ -214,6 +214,12 @@ export function DeriveLinksDialog({
             )
           ) : result ? (
             <ApplyResult result={result} />
+          ) : nothing && preview.twin_mismatch ? (
+            <p className="text-muted-foreground py-6 text-sm">
+              The catalog&rsquo;s with-events version doesn&rsquo;t line up with
+              this list, so events can&rsquo;t be placed. Refresh the list from
+              the catalog and try again.
+            </p>
           ) : nothing ? (
             <p className="text-muted-foreground py-6 text-sm">
               {preview.twin_found
