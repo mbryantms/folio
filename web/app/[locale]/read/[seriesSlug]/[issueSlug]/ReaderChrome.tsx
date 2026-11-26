@@ -591,19 +591,19 @@ function MoreMenuButton({ pageIndex }: { pageIndex: number }) {
         <MarkerMenuItems pageIndex={pageIndex} />
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={togglePageText}>
-          <ScanText className="mr-2 size-4" />
+          <ScanText className="size-4" />
           {pageTextOpen ? "Hide page text" : "Show page text"}
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={toggleDrawer}>
-          <ListOrdered className="mr-2 size-4" />
+          <ListOrdered className="size-4" />
           {drawerOpen ? "Hide markers list" : "Show markers in this issue"}
         </DropdownMenuItem>
         {fullscreen.supported ? (
           <DropdownMenuItem onSelect={fullscreen.toggle}>
             {fullscreen.isFullscreen ? (
-              <Minimize2 className="mr-2 size-4" />
+              <Minimize2 className="size-4" />
             ) : (
-              <Maximize2 className="mr-2 size-4" />
+              <Maximize2 className="size-4" />
             )}
             {fullscreen.isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
           </DropdownMenuItem>

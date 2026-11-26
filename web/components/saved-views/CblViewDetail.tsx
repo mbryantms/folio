@@ -1093,7 +1093,7 @@ function CblViewDetailInner({
           disabled={refresh.isPending}
         >
           <RefreshCw
-            className={`mr-2 size-4 ${refresh.isPending ? "animate-spin" : ""}`}
+            className={refresh.isPending ? "size-4 animate-spin" : "size-4"}
           />
           Refresh
         </DropdownMenuItem>
