@@ -196,6 +196,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/integrations/mylar/issues/{cv_issue_id}/unwant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["admin_mylar_unwant_issue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/integrations/mylar/requests": {
         parameters: {
             query?: never;
@@ -206,6 +222,54 @@ export interface paths {
         get: operations["admin_mylar_requests"];
         put?: never;
         post: operations["admin_mylar_add"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/integrations/mylar/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["admin_mylar_search"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/integrations/mylar/series/{cv_series_id}/recheck": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["admin_mylar_recheck_series"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/integrations/mylar/series/{cv_series_id}/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["admin_mylar_refresh_series"];
         delete?: never;
         options?: never;
         head?: never;
@@ -239,6 +303,22 @@ export interface paths {
         put?: never;
         post: operations["admin_mylar_token_create"];
         delete: operations["admin_mylar_token_revoke"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/integrations/mylar/wanted-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_mylar_wanted_check"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -13369,6 +13449,14 @@ export interface components {
          */
         Motion: "system" | "reduced";
         /**
+         * @description Whether Mylar finished, or took the request and is still working.
+         * @enum {string}
+         */
+        MylarActionOutcome: "done" | "started";
+        MylarActionResp: {
+            outcome: components["schemas"]["MylarActionOutcome"];
+        };
+        /**
          * @description What the stored snapshot says Mylar is doing. Admin-only: titles on
          *     Mylar's wanted list and in its queue span the whole collection.
          */
@@ -14164,6 +14252,18 @@ export interface components {
              */
             top_series_all_users: components["schemas"]["TopSeriesEntry"][];
             totals: components["schemas"]["TotalsBlock"];
+        };
+        OwnedWantedIssue: {
+            /** Format: int64 */
+            cv_issue_id: number;
+            issue_number: string;
+        };
+        /** @description A series with issues Mylar wants and the library already holds. */
+        OwnedWantedSeries: {
+            /** Format: int64 */
+            cv_series_id: number;
+            issues: components["schemas"]["OwnedWantedIssue"][];
+            series: string;
         };
         PacePoint: {
             /**
@@ -18752,6 +18852,35 @@ export interface components {
          * @enum {string}
          */
         ViewMode: "single" | "double" | "webtoon";
+        WantedCheck: {
+            /**
+             * Format: int64
+             * @description Distinct issues reading lists are missing (with a ComicVine id).
+             */
+            list_missing: number;
+            /**
+             * Format: int64
+             * @description Of those, issues Mylar is not looking for.
+             */
+            list_missing_not_wanted: number;
+            /** @description The first [`MAX_OWNED_SERIES`] of them, by name. */
+            owned: components["schemas"]["OwnedWantedSeries"][];
+            /**
+             * Format: int64
+             * @description Of those, issues the library already holds.
+             */
+            owned_issues: number;
+            /**
+             * Format: int64
+             * @description Series those issues belong to.
+             */
+            owned_series_total: number;
+            /**
+             * Format: int64
+             * @description Issues on Mylar's wanted list right now.
+             */
+            wanted: number;
+        };
         /**
          * @description How a library is being watched.
          * @enum {string}
@@ -19287,6 +19416,57 @@ export interface operations {
             };
         };
     };
+    admin_mylar_unwant_issue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ComicVine issue id */
+                cv_issue_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the issue is Skipped in Mylar now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MylarActionResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Mylar does not know this issue */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the issue is not Wanted in Mylar, or no Mylar address or key is stored */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Mylar did not take the request */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     admin_mylar_requests: {
         parameters: {
             query: {
@@ -19360,6 +19540,149 @@ export interface operations {
             };
             /** @description validation failed */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_mylar_search: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Mylar is searching its wanted list (or already finished) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MylarActionResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no Mylar address or key stored */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Mylar did not take the request */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_mylar_recheck_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ComicVine volume id */
+                cv_series_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Mylar rescanned the series' folder (or is still at it) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MylarActionResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Mylar does not have this series */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no Mylar address or key stored */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Mylar did not take the request */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_mylar_refresh_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ComicVine volume id */
+                cv_series_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Mylar queued a refresh of the series */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MylarActionResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Mylar does not have this series */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no Mylar address or key stored */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Mylar did not take the request */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19449,6 +19772,46 @@ export interface operations {
             };
             /** @description admin only */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_mylar_wanted_check: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WantedCheck"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no Mylar address or key stored */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Mylar did not answer */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

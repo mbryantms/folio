@@ -88,8 +88,8 @@ last run's one-line result. The README lists what each error means.
 
 With Mylar's address and API key, an admin can add the series of a
 reading list's missing entries to Mylar's watchlist and mark those
-issues Wanted. This is the only thing Folio ever asks Mylar to do: it
-cannot delete, pause or restart anything.
+issues Wanted, and can check and tidy Mylar's wanted list (below). Folio
+cannot delete a series, change Mylar's settings or restart it.
 
 1. In Mylar, enable the API and copy its key (Settings → Web Interface).
 2. In Folio, open **Admin → Upcoming → Mylar → Add to Mylar**, enter
@@ -107,3 +107,16 @@ again. **Remove** on the same card deletes both and turns the action off.
 Entries need a ComicVine id (most published reading lists carry them).
 "Mark Wanted" happens once Mylar has imported the series, which can take
 several minutes per series; the row shows **Requested** until then.
+
+Once the address and key are stored, **Admin → Upcoming** also shows a
+**Mylar tools** card:
+
+- **Check wanted list** compares what Mylar is looking for with your
+  library. For issues you already have it offers **Recheck files** (Mylar
+  rescans the series' folder and usually marks them downloaded),
+  **Refresh** (Mylar re-reads the series from ComicVine) and **Un-want**
+  (Mylar stops looking for that one issue).
+- **Search now** makes Mylar search for its whole wanted list at once.
+
+The same Refresh, Recheck files and Un-want are in the ⋯ menu of a
+missing entry on a reading list's Resolution tab.

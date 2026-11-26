@@ -2,9 +2,9 @@
 //!
 //! Mylar's API key is all-or-nothing on Mylar's side, so the limit is
 //! held here: [`Command`] is a closed enum and the only way to send a
-//! request. Adding a variant that deletes, pauses, refreshes or restarts
-//! is a review-time decision, pinned by
-//! `crates/server/tests/mylar_control_scope.rs`.
+//! request. Adding a variant is a review-time decision, pinned by
+//! `crates/server/tests/upcoming_view_only.rs`; nothing that deletes a
+//! series, reconfigures Mylar or stops it belongs here.
 //!
 //! The key travels as a query parameter (Mylar accepts nothing else), so
 //! redirects are refused — a bounce would carry it to another host — and
@@ -19,6 +19,9 @@ const USER_AGENT: &str = concat!("folio/", env!("CARGO_PKG_VERSION"));
 /// `addComic` only queues the import, so Mylar answers quickly; a large
 /// `getComic` is the slow one.
 const TIMEOUT: Duration = Duration::from_secs(30);
+/// `forceSearch` answers only when the whole search is over, which can
+/// take many minutes. Long enough to hear a refusal, then stop waiting.
+const SEARCH_WAIT: Duration = Duration::from_secs(8);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// `getComic` returns every issue of the series.
 const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
@@ -36,15 +39,30 @@ pub enum Command {
     GetIssueInfo,
     /// Mark one issue Wanted.
     QueueIssue,
+    /// Set one Wanted issue back to Skipped.
+    UnqueueIssue,
+    /// Every issue Mylar currently wants.
+    GetWanted,
+    /// Search the indexers for the whole wanted list now.
+    ForceSearch,
+    /// Rescan one series' folder for files Mylar has not noticed.
+    RecheckFiles,
+    /// Re-read one series from ComicVine (new issues, changed dates).
+    RefreshComic,
 }
 
 impl Command {
-    pub const ALL: [Command; 5] = [
+    pub const ALL: [Command; 10] = [
         Command::GetVersion,
         Command::GetComic,
         Command::AddComic,
         Command::GetIssueInfo,
         Command::QueueIssue,
+        Command::UnqueueIssue,
+        Command::GetWanted,
+        Command::ForceSearch,
+        Command::RecheckFiles,
+        Command::RefreshComic,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -54,15 +72,25 @@ impl Command {
             Command::AddComic => "addComic",
             Command::GetIssueInfo => "getIssueInfo",
             Command::QueueIssue => "queueIssue",
+            Command::UnqueueIssue => "unqueueIssue",
+            Command::GetWanted => "getWanted",
+            Command::ForceSearch => "forceSearch",
+            Command::RecheckFiles => "recheckFiles",
+            Command::RefreshComic => "refreshComic",
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum MylarError {
-    /// No answer: DNS, connect, TLS, timeout.
+    /// No answer: DNS, connect, TLS.
     #[error("could not reach Mylar ({0})")]
     Unreachable(String),
+    /// Mylar took the request and did not answer in time. For the
+    /// commands Mylar runs to completion before answering, the work may
+    /// still be going on.
+    #[error("Mylar did not answer in time")]
+    TimedOut,
     #[error("Mylar answered HTTP {0}")]
     Http(u16),
     /// Mylar answered and said no (bad key, unknown id, …).
@@ -76,7 +104,7 @@ impl MylarError {
     /// Worth trying again later without counting against the request.
     pub fn is_transient(&self) -> bool {
         match self {
-            MylarError::Unreachable(_) => true,
+            MylarError::Unreachable(_) | MylarError::TimedOut => true,
             MylarError::Http(code) => *code >= 500,
             MylarError::Rejected(_) | MylarError::Unexpected => false,
         }
@@ -143,6 +171,15 @@ impl MylarClient {
     }
 
     async fn call(&self, cmd: Command, id: Option<i64>) -> Result<Answer, MylarError> {
+        self.call_within(cmd, id, TIMEOUT).await
+    }
+
+    async fn call_within(
+        &self,
+        cmd: Command,
+        id: Option<i64>,
+        wait: Duration,
+    ) -> Result<Answer, MylarError> {
         let mut query: Vec<(&str, String)> = vec![
             ("apikey", self.key.clone()),
             ("cmd", cmd.as_str().to_owned()),
@@ -154,9 +191,10 @@ impl MylarClient {
             .http
             .get(self.api_url.clone())
             .query(&query)
+            .timeout(wait)
             .send()
             .await
-            .map_err(|e| MylarError::Unreachable(transport_reason(&e).to_owned()))?;
+            .map_err(|e| transport_error(&e))?;
         let status = resp.status();
         if !status.is_success() {
             return Err(MylarError::Http(status.as_u16()));
@@ -172,7 +210,7 @@ impl MylarClient {
                     body.extend_from_slice(&chunk);
                 }
                 Ok(None) => break,
-                Err(e) => return Err(MylarError::Unreachable(transport_reason(&e).to_owned())),
+                Err(e) => return Err(transport_error(&e)),
             }
         }
         let text = String::from_utf8_lossy(&body).trim().to_owned();
@@ -235,6 +273,115 @@ impl MylarClient {
             Answer::Text(_) => Err(MylarError::Unexpected),
         }
     }
+
+    /// Set a Wanted issue back to Skipped. Mylar writes the row whether
+    /// or not it knows the issue, so call this only for an issue
+    /// [`Self::issue_status`] reports as `Wanted`.
+    pub async fn unqueue_issue(&self, cv_issue_id: i64) -> Result<(), MylarError> {
+        match self.call(Command::UnqueueIssue, Some(cv_issue_id)).await? {
+            Answer::Text(t) if t == "OK" => Ok(()),
+            Answer::Json(json) if succeeded(&json) => Ok(()),
+            Answer::Json(json) if json.get("error").is_some() => {
+                Err(MylarError::Rejected(rejection(&json)))
+            }
+            _ => Err(MylarError::Unexpected),
+        }
+    }
+
+    /// Every issue Mylar wants, annuals included. Rows without numeric
+    /// ComicVine ids (one-offs Mylar tracks by another key) are left out.
+    pub async fn wanted(&self) -> Result<Vec<WantedIssue>, MylarError> {
+        let Answer::Json(json) = self.call(Command::GetWanted, None).await? else {
+            return Err(MylarError::Unexpected);
+        };
+        if json.get("success").is_some() && !succeeded(&json) {
+            return Err(MylarError::Rejected(rejection(&json)));
+        }
+        let Some(issues) = json["issues"].as_array() else {
+            return Err(MylarError::Unexpected);
+        };
+        let annuals = json["annuals"].as_array();
+        Ok(issues
+            .iter()
+            .chain(annuals.into_iter().flatten())
+            .filter_map(|row| {
+                Some(WantedIssue {
+                    cv_series_id: id_of(&row["ComicID"])?,
+                    cv_issue_id: id_of(&row["IssueID"])?,
+                    series: row["ComicName"].as_str().unwrap_or_default().to_owned(),
+                    issue_number: row["Issue_Number"].as_str().unwrap_or_default().to_owned(),
+                })
+            })
+            .collect())
+    }
+
+    /// Search the indexers for the whole wanted list. Mylar answers only
+    /// when the search is over, so not hearing back in time means it is
+    /// running, not that it failed.
+    pub async fn force_search(&self) -> Result<Progress, MylarError> {
+        match self
+            .call_within(Command::ForceSearch, None, SEARCH_WAIT)
+            .await
+        {
+            Ok(Answer::Json(json)) if json.get("error").is_some() => {
+                Err(MylarError::Rejected(rejection(&json)))
+            }
+            Ok(_) => Ok(Progress::Done),
+            Err(MylarError::TimedOut) => Ok(Progress::Started),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Rescan one series' folder. Mylar does nothing, silently, for a
+    /// series it does not have: check [`Self::has_series`] first. It
+    /// answers when the rescan is over (an empty body), so a timeout
+    /// means still running.
+    pub async fn recheck_files(&self, cv_series_id: i64) -> Result<Progress, MylarError> {
+        match self.call(Command::RecheckFiles, Some(cv_series_id)).await {
+            Ok(Answer::Json(json)) if json.get("error").is_some() => {
+                Err(MylarError::Rejected(rejection(&json)))
+            }
+            Ok(_) => Ok(Progress::Done),
+            Err(MylarError::TimedOut) => Ok(Progress::Started),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Queue a re-read of one series from ComicVine.
+    ///
+    /// Check [`Self::has_series`] first. Mylar (as of 2026-11) queues the
+    /// refresh and then fails while formatting its own success message,
+    /// which reaches us as a 5xx; for a series Mylar is known to have,
+    /// that is read as queued.
+    pub async fn refresh_series(&self, cv_series_id: i64) -> Result<(), MylarError> {
+        match self.call(Command::RefreshComic, Some(cv_series_id)).await {
+            Ok(Answer::Json(json)) if succeeded(&json) => Ok(()),
+            Ok(Answer::Json(json)) if json.get("error").is_some() => {
+                Err(MylarError::Rejected(rejection(&json)))
+            }
+            Ok(_) => Ok(()),
+            Err(MylarError::Http(code)) if code >= 500 => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+/// One issue on Mylar's wanted list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WantedIssue {
+    pub cv_series_id: i64,
+    pub cv_issue_id: i64,
+    pub series: String,
+    pub issue_number: String,
+}
+
+/// How far a command that Mylar runs before answering got.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Progress {
+    /// Mylar answered: the work is finished (or queued on Mylar's side).
+    Done,
+    /// Mylar took the request and is still working.
+    Started,
 }
 
 enum Answer {
@@ -273,16 +420,27 @@ fn rejection(json: &serde_json::Value) -> String {
     msg.chars().take(200).collect()
 }
 
-/// A reason with no URL in it: the URL carries the API key.
-fn transport_reason(e: &reqwest::Error) -> &'static str {
-    if e.is_timeout() {
-        "timed out"
-    } else if e.is_connect() {
+/// An error with no URL in it: the URL carries the API key.
+fn transport_error(e: &reqwest::Error) -> MylarError {
+    if e.is_timeout() && !e.is_connect() {
+        return MylarError::TimedOut;
+    }
+    let reason = if e.is_connect() {
         "connection failed"
     } else if e.is_redirect() {
         "redirected"
     } else {
         "request failed"
+    };
+    MylarError::Unreachable(reason.to_owned())
+}
+
+/// Mylar stores its ids as text; some answers carry them as numbers.
+fn id_of(v: &serde_json::Value) -> Option<i64> {
+    match v {
+        serde_json::Value::Number(n) => n.as_i64(),
+        serde_json::Value::String(s) => s.trim().parse().ok(),
+        _ => None,
     }
 }
 
@@ -324,7 +482,8 @@ mod tests {
 
     #[test]
     fn only_transport_faults_and_5xx_are_transient() {
-        assert!(MylarError::Unreachable("timed out".into()).is_transient());
+        assert!(MylarError::Unreachable("connection failed".into()).is_transient());
+        assert!(MylarError::TimedOut.is_transient());
         assert!(MylarError::Http(502).is_transient());
         assert!(!MylarError::Http(401).is_transient());
         assert!(!MylarError::Rejected("no".into()).is_transient());

@@ -13,7 +13,11 @@
 //! - a refusal from Mylar fails the row with its reason, and asking again
 //!   re-queues it;
 //! - Mylar being down records nothing against any request;
-//! - the list status reports each target's state.
+//! - the list status reports each target's state;
+//! - the wanted check finds issues Mylar wants that the library holds,
+//!   and counts reading-list issues Mylar is not looking for;
+//! - search now, recheck, refresh and un-want are admin-only, audited,
+//!   refuse what Mylar does not have, and un-want only a Wanted issue.
 
 mod common;
 
@@ -227,6 +231,23 @@ async fn answer(server: &MockServer, cmd: &str, id: i64, body: ResponseTemplate)
         .respond_with(body)
         .mount(server)
         .await;
+}
+
+/// Point add-to-Mylar at a mock Mylar.
+fn configure_at(app: &TestApp, mylar: &MockServer) {
+    let mut cfg = (*app.state().cfg()).clone();
+    cfg.integrations_mylar_url = Some(mylar.uri());
+    cfg.integrations_mylar_api_key = Some("secret-key".into());
+    app.state().replace_cfg(cfg);
+}
+
+async fn audited(app: &TestApp, action: &str) -> usize {
+    entity::audit_log::Entity::find()
+        .filter(entity::audit_log::Column::Action.eq(action))
+        .all(&app.state().db)
+        .await
+        .unwrap()
+        .len()
 }
 
 fn ok_json(v: Value) -> ResponseTemplate {
@@ -540,4 +561,212 @@ async fn a_bad_key_is_reported_by_the_connection_test() {
     let client = MylarClient::new(&mylar.uri(), "wrong").unwrap();
     let err = client.version().await.unwrap_err();
     assert_eq!(err.to_string(), "Mylar refused: Incorrect API key");
+}
+
+// ────────────────────── wanted check + actions ──────────────────────
+
+#[tokio::test]
+async fn the_wanted_check_finds_what_the_library_already_holds() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let reader = register(&app, "reader@example.com").await;
+    let db = app.state().db.clone();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = common::seed::seed_library(&db, tmp.path()).await;
+    let series = common::seed::seed_series(&db, lib, "Alpha").await;
+    let held =
+        common::seed::seed_issue(&db, lib, series, &tmp.path().join("a1.cbz"), b"a1", 1.0).await;
+    let now = Utc::now().fixed_offset();
+    entity::external_id::ActiveModel {
+        entity_type: Set("issue".into()),
+        entity_id: Set(held),
+        source: Set("comicvine".into()),
+        external_id: Set("1001".into()),
+        external_url: Set(None),
+        set_by: Set("user".into()),
+        first_set_at: Set(now),
+        last_synced_at: Set(now),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+    // Reading lists miss 1001, 1002 and 2001; Mylar wants 1001 and 1002.
+    seed_list(&app, STANDARD).await;
+
+    let mylar = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(query_param("cmd", "getWanted"))
+        .respond_with(ok_json(json!({
+            "issues": [
+                {"ComicName": "Alpha", "Issue_Number": "1", "ComicID": "100", "IssueID": "1001", "Status": "Wanted"},
+                {"ComicName": "Alpha", "Issue_Number": "2", "ComicID": "100", "IssueID": "1002", "Status": "Wanted"},
+                {"ComicName": "One-off", "Issue_Number": "1", "ComicID": "S123", "IssueID": "x", "Status": "Wanted"},
+            ],
+            "annuals": [
+                {"ComicName": "Alpha Annual", "Issue_Number": "1", "ComicID": 100, "IssueID": 1500, "Status": "Wanted"},
+            ],
+        })))
+        .mount(&mylar)
+        .await;
+    configure_at(&app, &mylar);
+
+    const CHECK: &str = "/api/admin/integrations/mylar/wanted-check";
+    let (status, _) = call(&app, Method::GET, CHECK, &reader, None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, resp) = call(&app, Method::GET, CHECK, &admin, None).await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(resp["wanted"], 3, "the row without numeric ids is left out");
+    assert_eq!(resp["owned_issues"], 1);
+    assert_eq!(resp["owned_series_total"], 1);
+    assert_eq!(
+        resp["owned"],
+        json!([{
+            "cv_series_id": 100,
+            "series": "Alpha",
+            "issues": [{"cv_issue_id": 1001, "issue_number": "1"}],
+        }])
+    );
+    assert_eq!(resp["list_missing"], 3);
+    assert_eq!(resp["list_missing_not_wanted"], 1);
+}
+
+#[tokio::test]
+async fn the_actions_are_admin_only_audited_and_refuse_what_mylar_lacks() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let reader = register(&app, "reader@example.com").await;
+    const SEARCH: &str = "/api/admin/integrations/mylar/search";
+    let recheck = |id: i64| format!("/api/admin/integrations/mylar/series/{id}/recheck");
+    let refresh = |id: i64| format!("/api/admin/integrations/mylar/series/{id}/refresh");
+    let unwant = |id: i64| format!("/api/admin/integrations/mylar/issues/{id}/unwant");
+
+    for uri in [SEARCH.to_owned(), recheck(100), refresh(100), unwant(1001)] {
+        let (status, _) = call(&app, Method::POST, &uri, &reader, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{uri}");
+        let (status, _) = call(&app, Method::POST, &uri, &admin, None).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{uri}: not configured");
+    }
+
+    let mylar = MockServer::start().await;
+    configure_at(&app, &mylar);
+    Mock::given(method("GET"))
+        .and(query_param("cmd", "forceSearch"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("OK"))
+        .mount(&mylar)
+        .await;
+    // Mylar has series 100, not 200.
+    answer(
+        &mylar,
+        "getComic",
+        100,
+        ok_json(json!({"success": true, "data": {"comic": [{"id": "100"}]}})),
+    )
+    .await;
+    answer(
+        &mylar,
+        "getComic",
+        200,
+        ok_json(json!({"success": true, "data": {"comic": []}})),
+    )
+    .await;
+    // recheckFiles answers `null`; refreshComic queues, then breaks on
+    // its own success message (a 500).
+    answer(
+        &mylar,
+        "recheckFiles",
+        100,
+        ResponseTemplate::new(200).set_body_string("null"),
+    )
+    .await;
+    answer(&mylar, "refreshComic", 100, ResponseTemplate::new(500)).await;
+
+    let (status, resp) = call(&app, Method::POST, SEARCH, &admin, None).await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(resp["outcome"], "done");
+    let (status, resp) = call(&app, Method::POST, &recheck(100), &admin, None).await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(resp["outcome"], "done");
+    let (status, resp) = call(&app, Method::POST, &refresh(100), &admin, None).await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(resp["outcome"], "started");
+    for uri in [recheck(200), refresh(200)] {
+        let (status, _) = call(&app, Method::POST, &uri, &admin, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+    }
+    let sent = mylar.received_requests().await.unwrap();
+    let sent_cmd = |cmd: &str, id: &str| {
+        sent.iter().any(|r| {
+            let q = r.url.query().unwrap_or_default();
+            q.contains(&format!("cmd={cmd}")) && q.contains(&format!("id={id}"))
+        })
+    };
+    assert!(!sent_cmd("recheckFiles", "200") && !sent_cmd("refreshComic", "200"));
+
+    for action in ["search", "recheck", "refresh"] {
+        let name = format!("admin.integration.mylar.{action}");
+        assert_eq!(audited(&app, &name).await, 1, "{name}");
+    }
+}
+
+#[tokio::test]
+async fn un_want_only_touches_an_issue_mylar_has_as_wanted() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let (list_id, _) = seed_list(&app, STANDARD).await;
+    let db = app.state().db.clone();
+    let actor = entity::user::Entity::find()
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    requests::create(&db, actor.id, list_id, None, true)
+        .await
+        .unwrap();
+    let unwant = |id: i64| format!("/api/admin/integrations/mylar/issues/{id}/unwant");
+
+    let mylar = MockServer::start().await;
+    configure_at(&app, &mylar);
+    let status_of = |s: &str| ok_json(json!({"success": true, "data": [{"status": s}]}));
+    answer(&mylar, "getIssueInfo", 1001, status_of("Wanted")).await;
+    answer(&mylar, "getIssueInfo", 1002, status_of("Downloaded")).await;
+    answer(
+        &mylar,
+        "getIssueInfo",
+        9999,
+        ok_json(json!({"success": false, "error": {"message": "No issue found with that ID"}})),
+    )
+    .await;
+    answer(
+        &mylar,
+        "unqueueIssue",
+        1001,
+        ResponseTemplate::new(200).set_body_string("OK"),
+    )
+    .await;
+
+    let (status, resp) = call(&app, Method::POST, &unwant(1002), &admin, None).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{resp}");
+    assert_eq!(
+        resp["error"]["message"],
+        "Mylar has this issue as Downloaded, not Wanted"
+    );
+    let (status, _) = call(&app, Method::POST, &unwant(9999), &admin, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (status, resp) = call(&app, Method::POST, &unwant(1001), &admin, None).await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    let left = rows(&app).await;
+    assert!(left.iter().all(|r| r.cv_issue_id != Some(1001)));
+    assert!(left.iter().any(|r| r.cv_issue_id == Some(1002)));
+    assert_eq!(audited(&app, "admin.integration.mylar.unwant").await, 1);
+
+    let unqueued: Vec<String> = mylar
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter_map(|r| r.url.query().map(str::to_owned))
+        .filter(|q| q.contains("cmd=unqueueIssue"))
+        .collect();
+    assert_eq!(unqueued.len(), 1, "{unqueued:?}");
 }

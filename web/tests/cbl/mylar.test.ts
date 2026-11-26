@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { withoutWantedIssue } from "@/lib/api/mutations/upcoming";
 import {
   indexMylarStatus,
   mylarAddMessage,
@@ -97,5 +98,47 @@ describe("mylarAddMessage", () => {
     expect(mylarAddMessage({ ...none, already_requested: 2 })).toBe(
       "Nothing new to send to Mylar · 2 already requested",
     );
+  });
+});
+
+describe("withoutWantedIssue", () => {
+  const check = {
+    wanted: 10,
+    owned_issues: 3,
+    owned_series_total: 2,
+    owned: [
+      {
+        cv_series_id: 100,
+        series: "Alpha",
+        issues: [
+          { cv_issue_id: 1, issue_number: "1" },
+          { cv_issue_id: 2, issue_number: "2" },
+        ],
+      },
+      {
+        cv_series_id: 200,
+        series: "Beta",
+        issues: [{ cv_issue_id: 3, issue_number: "1" }],
+      },
+    ],
+    list_missing: 0,
+    list_missing_not_wanted: 0,
+  };
+
+  it("drops the issue and keeps the series while it has others", () => {
+    const next = withoutWantedIssue(check, 1);
+    expect(next.wanted).toBe(9);
+    expect(next.owned_issues).toBe(2);
+    expect(next.owned_series_total).toBe(2);
+    expect(next.owned[0]!.issues).toEqual([
+      { cv_issue_id: 2, issue_number: "2" },
+    ]);
+  });
+
+  it("drops a series with its last issue, and ignores an unknown id", () => {
+    const next = withoutWantedIssue(check, 3);
+    expect(next.owned.map((s) => s.cv_series_id)).toEqual([100]);
+    expect(next.owned_series_total).toBe(1);
+    expect(withoutWantedIssue(check, 99)).toEqual(check);
   });
 });

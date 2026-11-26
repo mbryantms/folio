@@ -10,6 +10,9 @@
  *   address and key.
  * - `POST /admin/integrations/mylar/requests` — queue a reading list's
  *   missing entries for adding to Mylar.
+ * - `POST /admin/integrations/mylar/search` — search the wanted list now.
+ * - `POST /admin/integrations/mylar/series/{id}/recheck|refresh` and
+ *   `POST /admin/integrations/mylar/issues/{id}/unwant`.
  */
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -17,10 +20,12 @@ import { queryKeys } from "../queries";
 import { mylarAddMessage } from "@/lib/cbl/mylar";
 
 import type {
+  MylarActionResp,
   MylarAddReq,
   MylarAddSummary,
   MylarTestResp,
   MylarTokenResp,
+  MylarWantedCheck,
   UpcomingSyncResp,
 } from "../types";
 import { useApiMutation } from "./_core";
@@ -127,4 +132,85 @@ export function useAddToMylar() {
       },
     },
   );
+}
+
+/** Ask Mylar to search its indexers for the whole wanted list now. */
+export function useMylarSearchNow() {
+  return useApiMutation<MylarActionResp, void>(
+    () => ({ path: "/admin/integrations/mylar/search", method: "POST" }),
+    {
+      successMessage: (data) =>
+        data?.outcome === "done"
+          ? "Mylar finished searching its wanted list"
+          : "Mylar is searching its wanted list",
+    },
+  );
+}
+
+/** Rescan a series' files in Mylar, or re-read the series from ComicVine. */
+export function useMylarSeriesAction() {
+  return useApiMutation<
+    MylarActionResp,
+    { cvSeriesId: number; action: "recheck" | "refresh" }
+  >(
+    ({ cvSeriesId, action }) => ({
+      path: `/admin/integrations/mylar/series/${cvSeriesId}/${action}`,
+      method: "POST",
+    }),
+    {
+      successMessage: (data, { action }) =>
+        action === "refresh"
+          ? "Mylar queued a refresh of the series"
+          : data?.outcome === "done"
+            ? "Mylar rechecked the series' files"
+            : "Mylar is rechecking the series' files",
+    },
+  );
+}
+
+/** Set a Wanted issue back to Skipped in Mylar. */
+export function useMylarUnwant() {
+  const qc = useQueryClient();
+  return useApiMutation<MylarActionResp, { cvIssueId: number }>(
+    ({ cvIssueId }) => ({
+      path: `/admin/integrations/mylar/issues/${cvIssueId}/unwant`,
+      method: "POST",
+    }),
+    {
+      successMessage: "Mylar no longer wants this issue",
+      onSuccess: (_data, { cvIssueId }) => {
+        qc.invalidateQueries({ queryKey: ["admin", "mylar", "list-status"] });
+        // Drop the issue from a shown wanted check without asking Mylar
+        // for its whole list again.
+        qc.setQueryData<MylarWantedCheck>(
+          queryKeys.adminMylarWantedCheck,
+          (prev) => (prev ? withoutWantedIssue(prev, cvIssueId) : prev),
+        );
+      },
+    },
+  );
+}
+
+/** A wanted check with one owned-and-wanted issue taken out. */
+export function withoutWantedIssue(
+  check: MylarWantedCheck,
+  cvIssueId: number,
+): MylarWantedCheck {
+  const owned = check.owned
+    .map((s) => ({
+      ...s,
+      issues: s.issues.filter((i) => i.cv_issue_id !== cvIssueId),
+    }))
+    .filter((s) => s.issues.length > 0);
+  const before = check.owned.reduce((n, s) => n + s.issues.length, 0);
+  const after = owned.reduce((n, s) => n + s.issues.length, 0);
+  const removed = before - after;
+  return {
+    ...check,
+    wanted: check.wanted - removed,
+    owned_issues: check.owned_issues - removed,
+    owned_series_total:
+      check.owned_series_total - (check.owned.length - owned.length),
+    owned,
+  };
 }

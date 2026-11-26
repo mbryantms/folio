@@ -445,7 +445,10 @@ It needs Metron enabled with credentials.
 - **Add missing issues to Mylar (optional).** Give Folio Mylar's address
   and API key and an admin can add the series of a reading list's missing
   entries to Mylar's watchlist, one at a time or all at once, and mark
-  the issues Wanted. That is the only thing Folio asks Mylar to do.
+  the issues Wanted. An admin can also check Mylar's wanted list against
+  the library, make Mylar search now, recheck or refresh a series, and
+  un-want an issue. Folio never deletes a series or changes Mylar's
+  settings.
 - **Who sees what.** The calendar is public information. What Mylar tracks
   spans your whole collection, so Mylar's badges show only to accounts
   that can open every library (admins, or a full grant with no age-rating

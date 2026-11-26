@@ -10,7 +10,7 @@
  *   creates. That path never contacts Mylar.
  * - **Add to Mylar (add-to-mylar 1.0).** Optional. With a Mylar address
  *   and API key stored, an admin can add a reading list's missing series
- *   to Mylar. It is the only thing Folio ever asks Mylar to do.
+ *   to Mylar, and use the tools in `MylarToolsCard`.
  */
 
 import { AlertTriangle, KeyRound, Loader2, Send } from "lucide-react";
@@ -285,9 +285,10 @@ function ControlSection({ mylar }: { mylar: MylarStatusView }) {
       <p className="text-muted-foreground text-xs">
         Optional. With Mylar&rsquo;s address and API key, an admin can add a
         reading list&rsquo;s missing series to Mylar&rsquo;s watchlist and mark
-        the issues Wanted, from the list&rsquo;s Resolution tab. Folio sends
-        Mylar nothing else. The key can do anything in Mylar, so it is stored
-        encrypted and never shown again.
+        the issues Wanted, from the list&rsquo;s Resolution tab, and check
+        Mylar&rsquo;s wanted list below. Folio never deletes a series or changes
+        Mylar&rsquo;s settings. The key can do anything in Mylar, so it is
+        stored encrypted and never shown again.
       </p>
       <form onSubmit={save} className="space-y-3">
         <div className="grid gap-1.5">

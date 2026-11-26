@@ -719,10 +719,12 @@ Default admin (first registered user becomes admin):
     decision 2026-11-26): an admin adds a reading list's missing series
     to Mylar from the Resolution tab. It lives in `crate::mylar_control`,
     is off until `integrations.mylar.url` + `integrations.mylar.api_key`
-    are stored, and can send only the five commands of
-    `mylar_control::client::Command`. Requests are rows in
-    `mylar_add_request`; the once-a-minute `mylar_control::sweep` is the
-    only caller of Mylar besides the admin connection test. See
+    are stored, and can send only the commands of
+    `mylar_control::client::Command` (add, mark wanted / un-want, read
+    the wanted list, search now, recheck files, refresh a series).
+    Add requests are rows in `mylar_add_request` carried out by the
+    once-a-minute `mylar_control::sweep`; the other actions are one
+    admin click each, making their one or two calls inline. See
     [`docs/dev/add-to-mylar.md`](docs/dev/add-to-mylar.md).
   - **Two sources, reconciled at read time.** `release_calendar_*`
     (Metron, the daily `ReleaseCalendarSyncJob` plus the once-a-minute
@@ -765,13 +767,15 @@ Default admin (first registered user becomes admin):
     `mylar_control::client` (nothing that deletes, pauses, refreshes or
     restarts); or any route under `/integrations/mylar` beyond the
     snapshot POST, the token's create / revoke, the read-only activity
-    GET, and add-to-Mylar's `requests` GET / POST and `test` POST.
+    GET, and add-to-Mylar's routes (`requests`, `test`, `wanted-check`,
+    `search`, `series/{id}/recheck|refresh`, `issues/{id}/unwant`).
     `crates/server/tests/upcoming_view_only.rs` pins all of these.
   - Add a control that acts on Mylar anywhere but the reading list
-    Resolution tab's add-to-Mylar (admin-only). The Upcoming page and the
-    admin activity card stay badges and text: no search, retry or delete.
-  - Call Mylar from a handler other than the connection test, or return
-    or log the Mylar API key.
+    Resolution tab and the admin "Mylar tools" card (both admin-only).
+    The Upcoming page and the admin activity card stay badges and text.
+  - Call Mylar in a loop from a handler, on a timer, or on page load
+    (bulk work goes through the sweep; the wanted check runs on click),
+    or return or log the Mylar API key.
   - Show `tracked`, a Mylar stage, a pull-list-only row or watchlist-based
     "my series" membership on a path that did not go through
     `view::load`, or put Mylar's queue or wanted list on a non-admin

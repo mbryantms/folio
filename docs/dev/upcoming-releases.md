@@ -25,7 +25,7 @@ Folio never controls anything outside itself through this feature.
 - The one place Folio does call Mylar is the separate, opt-in
   [add-to-Mylar](add-to-mylar.md) action on a reading list's missing
   entries. It has its own module (`crate::mylar_control`), its own two
-  settings and a closed list of five API commands; nothing in
+  settings and a closed list of API commands; nothing in
   `crate::upcoming` may use it.
 
 **Reviewer heuristic — reject PRs that:**

@@ -10,7 +10,16 @@
  * row shows "Requested" first and "In Mylar" once Mylar accepted it.
  */
 
-import { Check, Clock, Loader2, TriangleAlert } from "lucide-react";
+import {
+  Check,
+  Clock,
+  FolderSearch,
+  Loader2,
+  MoreHorizontal,
+  RefreshCw,
+  TriangleAlert,
+  Undo2,
+} from "lucide-react";
 import * as React from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -24,8 +33,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/folio/dropdown-menu";
 import { Label } from "@/components/ui/label";
-import { useAddToMylar } from "@/lib/api/mutations";
+import {
+  useAddToMylar,
+  useMylarSeriesAction,
+  useMylarUnwant,
+} from "@/lib/api/mutations";
 import { useMe, useMylarListStatus } from "@/lib/api/queries";
 import type { CblEntryView } from "@/lib/api/types";
 import {
@@ -89,7 +108,62 @@ export function MylarRowControl({
               : "Add to Mylar"}
         </Button>
       ) : null}
+      {state.kind === "wanted" ||
+      state.kind === "series_in_mylar" ||
+      state.kind === "failed" ? (
+        <MylarSeriesMenu entry={entry} wanted={state.kind === "wanted"} />
+      ) : null}
     </div>
+  );
+}
+
+/** More Mylar actions for an entry whose series Mylar has (or should):
+ *  refresh the series, recheck its files, and un-want a wanted issue. */
+function MylarSeriesMenu({
+  entry,
+  wanted,
+}: {
+  entry: CblEntryView;
+  wanted: boolean;
+}) {
+  const act = useMylarSeriesAction();
+  const unwant = useMylarUnwant();
+  const cvSeriesId = entry.cv_series_id;
+  const cvIssueId = entry.cv_issue_id;
+  if (cvSeriesId == null) return null;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          aria-label={`More Mylar actions for ${entry.series_name} #${entry.issue_number}`}
+        >
+          <MoreHorizontal className="size-4" aria-hidden />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem
+          onSelect={() => act.mutate({ cvSeriesId, action: "refresh" })}
+        >
+          <RefreshCw className="size-4" aria-hidden />
+          Refresh series in Mylar
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onSelect={() => act.mutate({ cvSeriesId, action: "recheck" })}
+        >
+          <FolderSearch className="size-4" aria-hidden />
+          Recheck files in Mylar
+        </DropdownMenuItem>
+        {wanted && cvIssueId != null ? (
+          <DropdownMenuItem onSelect={() => unwant.mutate({ cvIssueId })}>
+            <Undo2 className="size-4" aria-hidden />
+            Un-want this issue
+          </DropdownMenuItem>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

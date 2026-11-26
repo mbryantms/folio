@@ -11,7 +11,8 @@
 //! - the only Mylar settings beyond the snapshot's are the address and
 //!   the key add-to-Mylar needs;
 //! - the code that handles snapshot data makes no outbound request;
-//! - the Mylar client can send only its five commands, none destructive.
+//! - the Mylar client can send only its listed commands: none deletes a
+//!   series, reconfigures Mylar or stops it.
 
 use server::settings::registry;
 
@@ -34,8 +35,9 @@ fn the_only_mylar_route_is_the_snapshot_post() {
     assert_eq!(ingest[0].1, [&"post".to_owned()], "POST only");
 
     // The admin side manages Folio's own token (create, revoke), reads
-    // the stored snapshot back, and queues add-to-Mylar requests (plus a
-    // connection test). Nothing else, and no other verb.
+    // the stored snapshot back, queues add-to-Mylar requests (plus a
+    // connection test), and offers the wanted-list actions: check, search
+    // now, recheck / refresh a series, un-want an issue. Nothing else.
     let mut admin: Vec<(&str, Vec<&str>)> = mylar
         .iter()
         .filter(|(path, _)| path.starts_with("/api/admin/"))
@@ -51,14 +53,28 @@ fn the_only_mylar_route_is_the_snapshot_post() {
         [
             ("/api/admin/integrations/mylar/activity", vec!["get"]),
             (
+                "/api/admin/integrations/mylar/issues/{cv_issue_id}/unwant",
+                vec!["post"]
+            ),
+            (
                 "/api/admin/integrations/mylar/requests",
                 vec!["get", "post"]
+            ),
+            ("/api/admin/integrations/mylar/search", vec!["post"]),
+            (
+                "/api/admin/integrations/mylar/series/{cv_series_id}/recheck",
+                vec!["post"]
+            ),
+            (
+                "/api/admin/integrations/mylar/series/{cv_series_id}/refresh",
+                vec!["post"]
             ),
             ("/api/admin/integrations/mylar/test", vec!["post"]),
             (
                 "/api/admin/integrations/mylar/token",
                 vec!["delete", "post"]
             ),
+            ("/api/admin/integrations/mylar/wanted-check", vec!["get"]),
         ]
     );
 }
@@ -84,7 +100,7 @@ fn the_mylar_settings_are_the_snapshot_pair_and_the_add_pair() {
 }
 
 #[test]
-fn the_mylar_client_sends_only_its_five_commands() {
+fn the_mylar_client_sends_only_its_listed_commands() {
     use server::mylar_control::client::Command;
     let mut sent: Vec<&str> = Command::ALL.iter().map(|c| c.as_str()).collect();
     sent.sort_unstable();
@@ -92,10 +108,15 @@ fn the_mylar_client_sends_only_its_five_commands() {
         sent,
         [
             "addComic",
+            "forceSearch",
             "getComic",
             "getIssueInfo",
             "getVersion",
-            "queueIssue"
+            "getWanted",
+            "queueIssue",
+            "recheckFiles",
+            "refreshComic",
+            "unqueueIssue",
         ]
     );
     // The client builds a request only from a `Command`: no free-form
@@ -106,14 +127,19 @@ fn the_mylar_client_sends_only_its_five_commands() {
         "delComic",
         "pauseComic",
         "resumeComic",
-        "refreshComic",
-        "forceSearch",
         "forceProcess",
         "shutdown",
         "restart",
         "update",
-        "unqueueIssue",
         "changeStatus",
+        "changeBookType",
+        "clearLogs",
+        "addProvider",
+        "delProvider",
+        "changeProvider",
+        "downloadIssue",
+        "downloadNZB",
+        "regenerateCovers",
     ] {
         assert!(
             !source.contains(&format!("\"{forbidden}\"")),

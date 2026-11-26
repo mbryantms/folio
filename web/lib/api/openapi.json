@@ -508,6 +508,47 @@
         }
       }
     },
+    "/api/admin/integrations/mylar/issues/{cv_issue_id}/unwant": {
+      "post": {
+        "operationId": "admin_mylar_unwant_issue",
+        "parameters": [
+          {
+            "name": "cv_issue_id",
+            "in": "path",
+            "description": "ComicVine issue id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the issue is Skipped in Mylar now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MylarActionResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "Mylar does not know this issue"
+          },
+          "409": {
+            "description": "the issue is not Wanted in Mylar, or no Mylar address or key is stored"
+          },
+          "502": {
+            "description": "Mylar did not take the request"
+          }
+        }
+      }
+    },
     "/api/admin/integrations/mylar/requests": {
       "get": {
         "operationId": "admin_mylar_requests",
@@ -575,6 +616,114 @@
         }
       }
     },
+    "/api/admin/integrations/mylar/search": {
+      "post": {
+        "operationId": "admin_mylar_search",
+        "responses": {
+          "200": {
+            "description": "Mylar is searching its wanted list (or already finished)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MylarActionResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "409": {
+            "description": "no Mylar address or key stored"
+          },
+          "502": {
+            "description": "Mylar did not take the request"
+          }
+        }
+      }
+    },
+    "/api/admin/integrations/mylar/series/{cv_series_id}/recheck": {
+      "post": {
+        "operationId": "admin_mylar_recheck_series",
+        "parameters": [
+          {
+            "name": "cv_series_id",
+            "in": "path",
+            "description": "ComicVine volume id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mylar rescanned the series' folder (or is still at it)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MylarActionResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "Mylar does not have this series"
+          },
+          "409": {
+            "description": "no Mylar address or key stored"
+          },
+          "502": {
+            "description": "Mylar did not take the request"
+          }
+        }
+      }
+    },
+    "/api/admin/integrations/mylar/series/{cv_series_id}/refresh": {
+      "post": {
+        "operationId": "admin_mylar_refresh_series",
+        "parameters": [
+          {
+            "name": "cv_series_id",
+            "in": "path",
+            "description": "ComicVine volume id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mylar queued a refresh of the series",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MylarActionResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "Mylar does not have this series"
+          },
+          "409": {
+            "description": "no Mylar address or key stored"
+          },
+          "502": {
+            "description": "Mylar did not take the request"
+          }
+        }
+      }
+    },
     "/api/admin/integrations/mylar/test": {
       "post": {
         "operationId": "admin_mylar_test",
@@ -636,6 +785,31 @@
           },
           "403": {
             "description": "admin only"
+          }
+        }
+      }
+    },
+    "/api/admin/integrations/mylar/wanted-check": {
+      "get": {
+        "operationId": "admin_mylar_wanted_check",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WantedCheck"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "409": {
+            "description": "no Mylar address or key stored"
+          },
+          "502": {
+            "description": "Mylar did not answer"
           }
         }
       }
@@ -31229,6 +31403,25 @@
           "reduced"
         ]
       },
+      "MylarActionOutcome": {
+        "type": "string",
+        "description": "Whether Mylar finished, or took the request and is still working.",
+        "enum": [
+          "done",
+          "started"
+        ]
+      },
+      "MylarActionResp": {
+        "type": "object",
+        "required": [
+          "outcome"
+        ],
+        "properties": {
+          "outcome": {
+            "$ref": "#/components/schemas/MylarActionOutcome"
+          }
+        }
+      },
       "MylarActivityView": {
         "type": "object",
         "description": "What the stored snapshot says Mylar is doing. Admin-only: titles on\nMylar's wanted list and in its queue span the whole collection.",
@@ -32890,6 +33083,46 @@
           },
           "totals": {
             "$ref": "#/components/schemas/TotalsBlock"
+          }
+        }
+      },
+      "OwnedWantedIssue": {
+        "type": "object",
+        "required": [
+          "cv_issue_id",
+          "issue_number"
+        ],
+        "properties": {
+          "cv_issue_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "issue_number": {
+            "type": "string"
+          }
+        }
+      },
+      "OwnedWantedSeries": {
+        "type": "object",
+        "description": "A series with issues Mylar wants and the library already holds.",
+        "required": [
+          "cv_series_id",
+          "series",
+          "issues"
+        ],
+        "properties": {
+          "cv_series_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OwnedWantedIssue"
+            }
+          },
+          "series": {
+            "type": "string"
           }
         }
       },
@@ -43413,6 +43646,56 @@
           "double",
           "webtoon"
         ]
+      },
+      "WantedCheck": {
+        "type": "object",
+        "required": [
+          "wanted",
+          "owned_issues",
+          "owned_series_total",
+          "owned",
+          "list_missing",
+          "list_missing_not_wanted"
+        ],
+        "properties": {
+          "list_missing": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Distinct issues reading lists are missing (with a ComicVine id).",
+            "minimum": 0
+          },
+          "list_missing_not_wanted": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Of those, issues Mylar is not looking for.",
+            "minimum": 0
+          },
+          "owned": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OwnedWantedSeries"
+            },
+            "description": "The first [`MAX_OWNED_SERIES`] of them, by name."
+          },
+          "owned_issues": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Of those, issues the library already holds.",
+            "minimum": 0
+          },
+          "owned_series_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Series those issues belong to.",
+            "minimum": 0
+          },
+          "wanted": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issues on Mylar's wanted list right now.",
+            "minimum": 0
+          }
+        }
       },
       "WatchMode": {
         "type": "string",

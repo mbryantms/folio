@@ -21,6 +21,13 @@ import type {
 } from "@/lib/api/types";
 
 const mutateAsync = vi.fn(async () => ({}));
+const searchNow = vi.fn();
+const seriesAction = vi.fn();
+const unwantIssue = vi.fn();
+const wantedCheck: { data: unknown; refetch: ReturnType<typeof vi.fn> } = {
+  data: undefined,
+  refetch: vi.fn(),
+};
 const sync = vi.fn();
 const createToken = vi.fn(
   (_input: undefined, opts?: { onSuccess?: (d: { token: string }) => void }) =>
@@ -39,6 +46,9 @@ vi.mock("@/lib/api/mutations", () => ({
   useCreateMylarToken: () => ({ mutate: createToken, isPending: false }),
   useRevokeMylarToken: () => ({ mutate: revokeToken, isPending: false }),
   useTestMylar: () => ({ mutate: vi.fn(), isPending: false }),
+  useMylarSearchNow: () => ({ mutate: searchNow, isPending: false }),
+  useMylarSeriesAction: () => ({ mutate: seriesAction, isPending: false }),
+  useMylarUnwant: () => ({ mutate: unwantIssue, isPending: false }),
 }));
 vi.mock("@/lib/api/queries", () => ({
   useAdminSettings: () => ({
@@ -47,8 +57,19 @@ vi.mock("@/lib/api/queries", () => ({
   }),
   useAdminUpcomingStatus: () => ({ isLoading: false, data: state.status }),
   useAdminMylarActivity: () => ({ isLoading: false, data: state.activity }),
+  useMylarWantedCheck: () => ({
+    data: wantedCheck.data,
+    refetch: wantedCheck.refetch,
+    isFetching: false,
+    isError: false,
+  }),
+  queryKeys: { adminMylarWantedCheck: ["admin", "mylar", "wanted-check"] },
 }));
 
+import {
+  listGapSummary,
+  wantedCheckSummary,
+} from "@/components/admin/upcoming/MylarToolsCard";
 import {
   UpcomingAdmin,
   shortDay,
@@ -507,5 +528,81 @@ describe("/admin/upcoming — what Mylar is doing", () => {
     state.activity = { ...ACTIVITY, wanted: [] };
     render(<UpcomingAdmin />);
     expect(card().getByText("Mylar is not waiting on any issue.")).toBeTruthy();
+  });
+});
+
+describe("/admin/upcoming — Mylar tools", () => {
+  const CHECK = {
+    wanted: 412,
+    owned_issues: 2,
+    owned_series_total: 1,
+    owned: [
+      {
+        cv_series_id: 100,
+        series: "Alpha",
+        issues: [
+          { cv_issue_id: 1001, issue_number: "1" },
+          { cv_issue_id: 1002, issue_number: "2" },
+        ],
+      },
+    ],
+    list_missing: 120,
+    list_missing_not_wanted: 35,
+  };
+
+  it("is hidden until a Mylar address and key are stored", () => {
+    render(<UpcomingAdmin />);
+    expect(screen.queryByText("Mylar tools")).toBeNull();
+  });
+
+  it("checks, searches, rechecks and un-wants on request only", () => {
+    state.status = status({
+      mylar: mylar({
+        control_url: "https://m.example/",
+        control_has_key: true,
+      }),
+    });
+    wantedCheck.data = undefined;
+    const { rerender } = render(<UpcomingAdmin />);
+    expect(wantedCheck.refetch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Check wanted list" }));
+    expect(wantedCheck.refetch).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Search now" }));
+    expect(searchNow).toHaveBeenCalledTimes(1);
+
+    wantedCheck.data = CHECK;
+    rerender(<UpcomingAdmin />);
+    expect(
+      screen.getByText(
+        "2 of Mylar's 412 wanted issues are already in your library, across 1 series.",
+      ),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Recheck files" }));
+    expect(seriesAction).toHaveBeenCalledWith({
+      cvSeriesId: 100,
+      action: "recheck",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Un-want Alpha #2" }));
+    expect(unwantIssue).toHaveBeenCalledWith({ cvIssueId: 1002 });
+    wantedCheck.data = undefined;
+  });
+
+  it("words the summaries", () => {
+    expect(wantedCheckSummary({ ...CHECK, wanted: 0 })).toBe(
+      "Mylar's wanted list is empty.",
+    );
+    expect(wantedCheckSummary({ ...CHECK, owned_issues: 0 })).toBe(
+      "None of Mylar's 412 wanted issues are in your library.",
+    );
+    expect(listGapSummary(CHECK)).toBe(
+      "35 of the 120 issues your reading lists are missing are not wanted in Mylar. Add them from each list's Resolution tab.",
+    );
+    expect(listGapSummary({ ...CHECK, list_missing: 0 })).toBeNull();
+    expect(listGapSummary({ ...CHECK, list_missing_not_wanted: 120 })).toBe(
+      "Mylar wants none of the 120 issues your reading lists are missing. Add them from each list's Resolution tab.",
+    );
+    expect(listGapSummary({ ...CHECK, list_missing_not_wanted: 0 })).toBe(
+      "Mylar wants all 120 issues your reading lists are missing.",
+    );
   });
 });

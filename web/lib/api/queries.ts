@@ -84,6 +84,7 @@ import type {
   MarkerTagsView,
   MylarActivityView,
   MylarListStatusView,
+  MylarWantedCheck,
   TextRegionsView,
   AdminOverviewView,
   AdminUserDetailView,
@@ -1730,6 +1731,20 @@ export function useMylarListStatus(
         data?.issues.some((s) => s.state === "requested");
       return waiting ? 20_000 : false;
     },
+  });
+}
+
+/** Mylar's live wanted list checked against the library (admin only).
+ *  One call to Mylar per fetch, so it runs only when asked: the caller
+ *  triggers it with `refetch()`. */
+export function useMylarWantedCheck() {
+  return useQuery({
+    queryKey: queryKeys.adminMylarWantedCheck,
+    queryFn: () =>
+      jsonFetch<MylarWantedCheck>("/admin/integrations/mylar/wanted-check"),
+    enabled: false,
+    staleTime: Infinity,
+    retry: false,
   });
 }
 

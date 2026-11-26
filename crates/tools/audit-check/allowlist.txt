@@ -167,3 +167,4 @@ api/starter_lists.rs::admin_list          # GET /admin/starter-lists — read-on
 # ── admin_mylar_control.rs (add-to-mylar 1.0) ───────────────
 api/admin_mylar_control.rs::test_connection  # POST /admin/integrations/mylar/test — read-only connection check (Mylar getVersion), changes nothing
 api/admin_mylar_control.rs::list_requests  # GET /admin/integrations/mylar/requests — read-only state of a list's missing entries
+api/admin_mylar_control.rs::wanted_check  # GET /admin/integrations/mylar/wanted-check — read-only: Mylar getWanted compared with the library
