@@ -798,3 +798,29 @@ The web surface is the "Hidden from rails" section under Settings → Pages
 list, so a hide or restore anywhere refreshes it. Tests:
 `crates/server/tests/rail_dismissals.rs`,
 `web/tests/settings/hidden-rail-items.test.tsx`.
+
+## Editing a page's rails on the page
+
+A page (Home or a custom page) is edited where it is read
+([`PageRailEditing.tsx`](../../web/components/saved-views/PageRailEditing.tsx)):
+
+- **Rail ⋯ menu** in each rail's header: Move up, Move down, Open view,
+  Remove from page. Removal is immediate with an Undo toast that re-pins
+  the rail and puts it back in its old slot.
+- **Rearrange rails** in the page's ⋯ menu swaps the rails for their
+  title bars: drag by the grip (the grip is `touch-none`, so a finger
+  drags it and the rest of the row still scrolls), or step with the
+  arrows. "Add rail" opens the pin picker; "Done" returns to the rails.
+- **Rename page…** in the page's ⋯ menu (custom pages), so phones, which
+  have no inline title editing, can rename.
+
+All of it goes through `usePageRailEdit(pageId, pinned)`: every change
+POSTs the page's whole ordered id list (`/me/saved-views/reorder` with
+`page_id`), and the dropped order is held on screen until the server
+agrees (`useHeldOrder`). `PageRails` holds no edit state of its own, so
+its tests stub that one hook.
+
+An empty system rail (Continue reading on a fresh account) renders
+nothing on the page, so its ⋯ menu is not reachable there; Rearrange
+mode lists every pinned rail, hidden or not. Settings → Pages keeps the
+same list for anyone who looks there, plus the rail limit.

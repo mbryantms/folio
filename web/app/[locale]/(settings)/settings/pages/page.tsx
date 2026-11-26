@@ -7,7 +7,7 @@ export default function PagesSettingsPage() {
     <>
       <PageHeader
         title="Pages"
-        description="Create pages, edit descriptions, manage which saved views show as rails, reorder how they appear in the sidebar, and restore items hidden from the home rails."
+        description="Create pages, edit descriptions, choose and order the saved views each page shows as rails, and restore items hidden from the home rails. Rails can also be moved from the page itself: each rail has a ⋯ menu, and the page menu has Rearrange rails."
       />
       <PagesManager />
       <div className="mt-10">

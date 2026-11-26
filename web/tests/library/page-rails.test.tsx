@@ -43,6 +43,20 @@ vi.mock("@/components/library/CoverSizeOptions", () => ({
   CoverSizeOptions: () => null,
   CoverSizeFields: () => null,
 }));
+// Rail editing (move / remove / rearrange) has its own tests; here the
+// page just draws what the hook hands it.
+vi.mock("@/components/saved-views/PageRailEditing", () => ({
+  usePageRailEdit: (_pageId: string, items: unknown[] | undefined) => ({
+    ordered: items ?? [],
+    rearranging: false,
+    setRearranging: () => {},
+    move: () => {},
+    setOrder: () => {},
+    remove: () => {},
+  }),
+  RailMenu: () => null,
+  RearrangeRails: () => null,
+}));
 vi.mock("@/components/saved-views/LazyRail", () => ({
   LazyRail: () => null,
 }));
@@ -119,6 +133,13 @@ function collectByType<P = Record<string, unknown>>(
   return found;
 }
 
+/** A rail's props without its header menu (the page's rail actions). */
+function railProps(rail: React.ReactElement<Record<string, unknown>>) {
+  const { headerActions, ...rest } = rail.props;
+  expect(headerActions, "each rail gets its menu").toBeTruthy();
+  return rest;
+}
+
 describe("PageRails prop wiring", () => {
   beforeEach(() => {
     captured = null;
@@ -162,7 +183,7 @@ describe("PageRails prop wiring", () => {
       const items = [view("v1"), view("v2")];
       pinned = { items, isLoading: false };
       const rails = collectByType(PageRails(props), LazyRail);
-      expect(rails.map((rail) => rail.props)).toEqual([
+      expect(rails.map(railProps)).toEqual([
         { view: items[0], priority: true, eager: true },
         { view: items[1], priority: false, eager: false },
       ]);
@@ -175,7 +196,7 @@ describe("PageRails prop wiring", () => {
         PageRails({ ...props, priorityViewId: "v2" }),
         LazyRail,
       );
-      expect(rails.map((rail) => rail.props)).toEqual([
+      expect(rails.map(railProps)).toEqual([
         { view: items[0], priority: false, eager: true },
         { view: items[1], priority: true, eager: true },
         { view: items[2], priority: false, eager: false },

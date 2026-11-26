@@ -17,11 +17,15 @@ import { useLibraryList, useMe, useSavedViews } from "@/lib/api/queries";
 import { LazyRail } from "./LazyRail";
 import { PageActionsMenu } from "./PageActionsMenu";
 import { PageHeading } from "./PageHeading";
+import { RailMenu, RearrangeRails, usePageRailEdit } from "./PageRailEditing";
 
 /** Page-rail dispatcher. Owns the page heading and the pinned control
  *  row (cover size + page actions) and renders the saved views pinned to
- *  the supplied page below. Pinning, reorder, add, edit, delete all
- *  happen elsewhere — the page itself stays read-only.
+ *  the supplied page below. The page's rails are edited here: each rail
+ *  header has a ⋯ menu (move up / down, remove), and "Rearrange rails" in
+ *  the page menu swaps the rails for their title bars to drag
+ *  (`PageRailEditing.tsx`). Editing a view's own definition stays on the
+ *  management page.
  *
  *  Cover size is the app-wide one (lib/library/cover-size.ts): the page
  *  holds no size state and passes none down. The control here sets the
@@ -36,7 +40,7 @@ import { PageHeading } from "./PageHeading";
  *  sticky `PhoneControlsBar`'s leading slot beside View options (cover
  *  size as a sheet) and `⋯`; the description, when set, follows the bar
  *  in flow. Inline title editing is a `sm`-and-up affordance — phones
- *  rename through `⋯`.
+ *  rename through `⋯` → Rename page.
  *
  *  Multi-page rails M5: same component drives both `/` (system Home)
  *  and `/pages/[slug]`. The caller resolves the page identity once
@@ -62,7 +66,11 @@ export function PageRails({
 }) {
   const pinnedQ = useSavedViews({ pinnedOn: pageId });
 
-  const items = pinnedQ.data?.items ?? [];
+  // All rail-edit state lives in this one hook, so the page itself holds
+  // none (and tests can stub the hook).
+  const edit = usePageRailEdit(pageId, pinnedQ.data?.items);
+  const items = edit.ordered;
+  const { rearranging, setRearranging } = edit;
   const settledIdx = priorityViewId
     ? items.findIndex((v) => v.id === priorityViewId)
     : -1;
@@ -71,9 +79,12 @@ export function PageRails({
   const pageActions = (
     <PageActionsMenu
       pageId={pageId}
+      pageName={pageName}
       pageDescription={pageDescription}
       isSystem={isSystem}
       showInSidebar={showInSidebar}
+      rearranging={rearranging}
+      onRearrange={setRearranging}
     />
   );
 
@@ -134,6 +145,12 @@ export function PageRails({
           onRetry={() => void pinnedQ.refetch()}
           className="py-12"
         />
+      ) : rearranging ? (
+        <RearrangeRails
+          pageId={pageId}
+          edit={edit}
+          onDone={() => setRearranging(false)}
+        />
       ) : items.length === 0 ? (
         <EmptyPinnedState isSystem={isSystem} />
       ) : (
@@ -153,6 +170,14 @@ export function PageRails({
               // the LCP element lives there; the rest stay lazy.
               priority={idx === priorityIdx}
               eager={idx <= priorityIdx}
+              headerActions={
+                <RailMenu
+                  view={view}
+                  index={idx}
+                  count={items.length}
+                  edit={edit}
+                />
+              }
             />
           ))}
         </div>
@@ -216,7 +241,8 @@ function EmptyPinnedState({ isSystem }: { isSystem: boolean }) {
           No pinned views yet
         </h2>
         <p className="text-muted-foreground mt-2 text-sm">
-          Pin saved views to this page from{" "}
+          Add rails from this page&rsquo;s ⋯ menu (Add or remove rails), or pin
+          a saved view from{" "}
           <Link
             href="/settings/views"
             className="text-foreground font-medium underline-offset-4 hover:underline"

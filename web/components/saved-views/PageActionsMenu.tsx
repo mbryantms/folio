@@ -2,11 +2,14 @@
 
 import * as React from "react";
 import {
+  ArrowUpDown,
+  Check,
   ListChecks,
   MessageSquare,
   MoreHorizontal,
   PanelLeft,
   PanelLeftClose,
+  Pencil,
   Trash2,
   X,
 } from "lucide-react";
@@ -24,6 +27,7 @@ import { useDeletePageWithUndo } from "@/lib/pages/use-delete-page-undo";
 
 import { EditDescriptionDialog } from "./EditDescriptionDialog";
 import { ManagePinsDialog } from "./ManagePinsDialog";
+import { RenamePageDialog } from "./RenamePageDialog";
 
 /** Multi-page rails follow-up — kebab menu rendered in the page
  *  toolbar (next to the search box + density toggle) on
@@ -34,7 +38,12 @@ import { ManagePinsDialog } from "./ManagePinsDialog";
  *      free-form descriptor rendered under the page title.
  *    - Show in sidebar: toggles the page's sidebar visibility via
  *      `POST /me/pages/{id}/sidebar`. System pages omit this item.
- *    - Manage rails: opens a per-page picker showing every saved
+ *    - Rename page (custom pages): a dialog, so phones — which have no
+ *      inline title editing — can rename too.
+ *    - Rearrange rails: swaps the page's rails for their title bars to
+ *      drag or step up and down (`PageRailEditing.tsx`); the item reads
+ *      "Done rearranging" while that is on.
+ *    - Add or remove rails: opens a per-page picker showing every saved
  *      view; toggling a checkbox pins/unpins it on this page.
  *    - Delete page: deletes at once with an Undo toast that rebuilds
  *      the page (name, description, rails, sidebar, slot).
@@ -43,20 +52,28 @@ import { ManagePinsDialog } from "./ManagePinsDialog";
  *  and don't have a sidebar override (the builtin Home entry does). */
 export function PageActionsMenu({
   pageId,
+  pageName,
   pageDescription,
   isSystem,
   showInSidebar,
+  rearranging = false,
+  onRearrange,
 }: {
   pageId: string;
+  pageName: string;
   pageDescription: string | null;
   isSystem: boolean;
   showInSidebar: boolean;
+  /** The page is showing its rails as title bars to reorder. */
+  rearranging?: boolean;
+  onRearrange?: (on: boolean) => void;
 }) {
   const updatePage = useUpdatePage(pageId);
   const toggleSidebar = useTogglePageSidebar(pageId);
   const del = useDeletePageWithUndo(pageId, { leaveRoute: true });
   const [descOpen, setDescOpen] = React.useState(false);
   const [pinOpen, setPinOpen] = React.useState(false);
+  const [renameOpen, setRenameOpen] = React.useState(false);
 
   const hasDescription =
     typeof pageDescription === "string" && pageDescription.length > 0;
@@ -77,6 +94,37 @@ export function PageActionsMenu({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
+          {onRearrange ? (
+            <DropdownMenuItem onSelect={() => onRearrange(!rearranging)}>
+              {rearranging ? (
+                <Check className="size-4" />
+              ) : (
+                <ArrowUpDown className="size-4" />
+              )}
+              {rearranging ? "Done rearranging" : "Rearrange rails"}
+            </DropdownMenuItem>
+          ) : null}
+          <DropdownMenuItem
+            onSelect={(e) => {
+              e.preventDefault();
+              setPinOpen(true);
+            }}
+          >
+            <ListChecks className="size-4" />
+            Add or remove rails…
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          {!isSystem ? (
+            <DropdownMenuItem
+              onSelect={(e) => {
+                e.preventDefault();
+                setRenameOpen(true);
+              }}
+            >
+              <Pencil className="size-4" />
+              Rename page…
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuItem
             onSelect={(e) => {
               e.preventDefault();
@@ -117,15 +165,6 @@ export function PageActionsMenu({
               )}
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem
-            onSelect={(e) => {
-              e.preventDefault();
-              setPinOpen(true);
-            }}
-          >
-            <ListChecks className="size-4" />
-            Manage rails…
-          </DropdownMenuItem>
           {!isSystem && (
             <>
               <DropdownMenuSeparator />
@@ -147,6 +186,14 @@ export function PageActionsMenu({
         pageId={pageId}
         initial={pageDescription ?? ""}
       />
+      {!isSystem ? (
+        <RenamePageDialog
+          open={renameOpen}
+          onOpenChange={setRenameOpen}
+          pageId={pageId}
+          initial={pageName}
+        />
+      ) : null}
       <ManagePinsDialog
         open={pinOpen}
         onOpenChange={setPinOpen}
