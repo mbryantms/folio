@@ -28,6 +28,20 @@ vi.mock("@/components/saved-views/PageActionsMenu", () => ({
 vi.mock("@/components/saved-views/PageHeading", () => ({
   PageHeading: ({ pageName }: { pageName: string }) => <h1>{pageName}</h1>,
 }));
+// Rail editing (move / remove / rearrange) has its own tests; here the
+// page just draws what the hook hands it.
+vi.mock("@/components/saved-views/PageRailEditing", () => ({
+  usePageRailEdit: (_pageId: string, items: unknown[] | undefined) => ({
+    ordered: items ?? [],
+    rearranging: false,
+    setRearranging: () => {},
+    move: () => {},
+    setOrder: () => {},
+    remove: () => {},
+  }),
+  RailMenu: () => null,
+  RearrangeRails: () => null,
+}));
 vi.mock("@/components/saved-views/LazyRail", () => ({
   LazyRail: () => null,
 }));

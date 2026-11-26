@@ -33,8 +33,11 @@ export function LazyRail({
   view,
   priority = false,
   eager = priority,
+  headerActions,
 }: {
   view: SavedViewView;
+  /** Passed to the rail's header (see `SavedViewRail`). */
+  headerActions?: React.ReactNode;
   /** First/above-the-fold rail: mount immediately (skip the
    *  intersection-observer wait) and eager-load its covers, so the LCP
    *  cover paints fast instead of being deferred. */
@@ -85,7 +88,13 @@ export function LazyRail({
   }, [mounted]);
 
   if (mounted) {
-    return <SavedViewRail view={view} priority={priority} />;
+    return (
+      <SavedViewRail
+        view={view}
+        priority={priority}
+        headerActions={headerActions}
+      />
+    );
   }
 
   // Height estimate: one cover-width row + ~120px for the title row

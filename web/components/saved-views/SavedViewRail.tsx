@@ -53,7 +53,7 @@ import {
  *    rail header from the home page. The `[id]` route maps these back
  *    to the row's `system_key` server-side.
  *  - User-authored views use their UUID id. */
-function viewDetailHref(view: SavedViewView): string {
+export function viewDetailHref(view: SavedViewView): string {
   // "Out this week" has no page of its own: it is the first week of the
   // Upcoming page.
   if (view.kind === "system" && view.system_key === "upcoming_this_week") {
@@ -70,9 +70,9 @@ function viewDetailHref(view: SavedViewView): string {
  *  feature lives on the existing rail rather than a duplicate one. */
 const RECENTLY_ADDED_VIEW_ID = "00000000-0000-0000-0000-000000000001";
 
-/** Read-only home-page rail. Pinning, reordering, edit, and delete all
- *  live on the management page (`/settings/views`); the home page is
- *  pure presentation.
+/** A home-page rail. The rail itself is presentation; the page passes
+ *  its rail menu (move, remove) in as `headerActions`. Editing a view's
+ *  definition lives on the management page (`/settings/views`).
  *
  *  Every card wrapper takes the app-wide cover width
  *  (`COVER_ITEM_STYLE`, lib/library/cover-size.ts): a rail card is as
@@ -81,8 +81,11 @@ const RECENTLY_ADDED_VIEW_ID = "00000000-0000-0000-0000-000000000001";
 export function SavedViewRail({
   view,
   priority = false,
+  headerActions,
 }: {
   view: SavedViewView;
+  /** Controls at the end of the rail's header (the page's rail menu). */
+  headerActions?: React.ReactNode;
   /** First/above-the-fold rail: eager-load + high-priority its covers so
    *  the LCP image isn't deferred. Off for every other rail. */
   priority?: boolean;
@@ -106,7 +109,7 @@ export function SavedViewRail({
       // own internal rhythm.
       style={{ gap: "var(--density-rail-inner-gap)" }}
     >
-      <RailHeader view={view} />
+      <RailHeader view={view} actions={headerActions} />
       <CoverPriorityProvider value={priority}>
         <HorizontalScrollRail
           viewAllHref={railContent.hasMore ? viewDetailHref(view) : undefined}
@@ -213,7 +216,13 @@ function renderRailBody(
   return { body: null, hasMore: false };
 }
 
-function RailHeader({ view }: { view: SavedViewView }) {
+function RailHeader({
+  view,
+  actions,
+}: {
+  view: SavedViewView;
+  actions?: React.ReactNode;
+}) {
   const isCbl = view.kind === "cbl";
   const href = viewDetailHref(view);
   // "Surprise me" rides the Recently Added rail header (3.7) — a random
@@ -246,8 +255,11 @@ function RailHeader({ view }: { view: SavedViewView }) {
       {view.kind === "system" && view.system_key === "similar_series" ? (
         <SimilarRailSeedNote />
       ) : null}
-      {showSurpriseMe ? (
-        <SurpriseMeButton className="ml-auto shrink-0" />
+      {showSurpriseMe || actions ? (
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          {showSurpriseMe ? <SurpriseMeButton className="shrink-0" /> : null}
+          {actions}
+        </div>
       ) : null}
     </div>
   );
