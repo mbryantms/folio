@@ -1145,6 +1145,8 @@ impl TestApp {
             upcoming_weeks_ahead: 8,
             integrations_mylar_enabled: false,
             integrations_mylar_stale_after_minutes: 180,
+            integrations_mylar_url: None,
+            integrations_mylar_api_key: None,
             cbl_max_remote_lists_per_user: 500,
         };
         cfg.resolve_auth().expect("test config auth mode resolves");

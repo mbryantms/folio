@@ -10,9 +10,12 @@
  *   issues each week holds, and "Sync now".
  * - **Mylar** (`MylarCard`) — the switch, the ingest token and the last
  *   snapshot a Mylar host pushed.
+ * - **Mylar tools** (`MylarToolsCard`) — check the wanted list against the
+ *   library and "Search now"; only with a Mylar address and key stored.
  *
- * This page is view-only towards any outside system: "Sync now" asks
- * Metron for release dates, nothing else.
+ * "Sync now" asks Metron for release dates, nothing else. The Mylar
+ * card's optional "Add to Mylar" address and key are the one setting
+ * here that lets Folio act on another system.
  */
 
 import { AlertTriangle, Loader2, RefreshCw, XCircle } from "lucide-react";
@@ -39,6 +42,7 @@ import { monthShort } from "@/lib/log/overview";
 
 import { MylarActivityCard } from "./MylarActivityCard";
 import { MylarCard } from "./MylarCard";
+import { MylarToolsCard } from "./MylarToolsCard";
 import { statusToneText } from "@/lib/ui/status-tone";
 
 /** Bounds of `upcoming.weeks_ahead` (server: `upcoming::MAX_WEEKS_AHEAD`). */
@@ -87,6 +91,9 @@ export function UpcomingAdmin() {
       />
       <CalendarStatusCard status={status.data} />
       <MylarCard mylar={status.data.mylar} upcomingEnabled={enabled} />
+      {status.data.mylar.control_url && status.data.mylar.control_has_key ? (
+        <MylarToolsCard />
+      ) : null}
       {status.data.mylar.snapshot ? <MylarActivityCard /> : null}
     </div>
   );

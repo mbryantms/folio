@@ -486,8 +486,9 @@ pub const REGISTRY: &[SettingDef] = &[
     },
     SettingDef {
         // Accept snapshots pushed from a Mylar host and show what Mylar
-        // is tracking. Folio never calls Mylar: there is no Mylar address
-        // or key setting, by design. Default false. Live.
+        // is tracking. The snapshot path never calls Mylar; the separate
+        // add-to-Mylar action uses the url + api_key below. Default
+        // false. Live.
         key: "integrations.mylar.enabled",
         kind: SettingKind::Bool,
         is_secret: false,
@@ -499,6 +500,21 @@ pub const REGISTRY: &[SettingDef] = &[
         key: "integrations.mylar.stale_after_minutes",
         kind: SettingKind::Uint,
         is_secret: false,
+    },
+    SettingDef {
+        // Base URL of the Mylar install Folio may add series to (the
+        // "Add to Mylar" action on a reading list's missing entries).
+        // Empty = the action is off. http(s) only. Live.
+        key: "integrations.mylar.url",
+        kind: SettingKind::String,
+        is_secret: false,
+    },
+    SettingDef {
+        // Mylar's API key, sent only to `integrations.mylar.url`.
+        // AEAD-sealed at rest. Live.
+        key: "integrations.mylar.api_key",
+        kind: SettingKind::String,
+        is_secret: true,
     },
     // ───────── Reading lists (linked-reading-lists PR 0) ─────────
     SettingDef {

@@ -3,13 +3,17 @@
 /**
  * The Mylar card on `/admin/upcoming` (upcoming-releases 1.0).
  *
- * Folio never calls Mylar. A script on the Mylar host pushes a read-only
- * snapshot here, authenticated by the ingest token this card creates.
- * So the card has a switch, a token, and what the last snapshot said —
- * and nothing that acts on Mylar.
+ * Two separate links to Mylar live here:
+ *
+ * - **Snapshots (view-only).** A script on the Mylar host pushes a
+ *   read-only snapshot, authenticated by the ingest token this card
+ *   creates. That path never contacts Mylar.
+ * - **Add to Mylar (add-to-mylar 1.0).** Optional. With a Mylar address
+ *   and API key stored, an admin can add a reading list's missing series
+ *   to Mylar, and use the tools in `MylarToolsCard`.
  */
 
-import { AlertTriangle, KeyRound, Loader2 } from "lucide-react";
+import { AlertTriangle, KeyRound, Loader2, Send } from "lucide-react";
 import * as React from "react";
 
 import { CopyButton } from "@/components/folio/copy-button";
@@ -42,6 +46,7 @@ import { Switch } from "@/components/ui/switch";
 import {
   useCreateMylarToken,
   useRevokeMylarToken,
+  useTestMylar,
   useUpdateSettings,
 } from "@/lib/api/mutations";
 import type { MylarStatusView } from "@/lib/api/types";
@@ -71,15 +76,18 @@ export function MylarCard({
         <div className="space-y-5">
           <p className="text-muted-foreground text-sm">
             Folio can show what Mylar is tracking: this week&rsquo;s pull list,
-            the watchlist and the download queue. It is view-only. A small
-            script on the Mylar host pushes a snapshot here; Folio never
-            contacts Mylar and cannot change anything in it.
+            the watchlist and the download queue. A small script on the Mylar
+            host pushes a snapshot here; showing it never contacts Mylar.
           </p>
           <MylarSettingsForm
             key={`${mylar.enabled ? 1 : 0}-${mylar.stale_after_minutes}`}
             mylar={mylar}
           />
           <TokenSection mylar={mylar} />
+          <ControlSection
+            key={`${mylar.control_url ?? ""}-${mylar.control_has_key ? 1 : 0}`}
+            mylar={mylar}
+          />
         </div>
         <SnapshotStatus mylar={mylar} upcomingEnabled={upcomingEnabled} />
       </CardContent>
@@ -211,6 +219,148 @@ function MylarSettingsForm({ mylar }: { mylar: MylarStatusView }) {
         )}
       </Button>
     </form>
+  );
+}
+
+/** The address and API key "Add to Mylar" uses. Storing both turns the
+ *  action on; clearing them turns it off. The key is never shown again. */
+function ControlSection({ mylar }: { mylar: MylarStatusView }) {
+  const update = useUpdateSettings();
+  const test = useTestMylar();
+  const storedUrl = mylar.control_url ?? "";
+  const [url, setUrl] = React.useState(storedUrl);
+  const [key, setKey] = React.useState("");
+  const [result, setResult] = React.useState<string | null>(null);
+  const [resultOk, setResultOk] = React.useState(false);
+  const dirty = url.trim() !== storedUrl || key.trim() !== "";
+  const configured = storedUrl !== "" && mylar.control_has_key;
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const patch: Record<string, unknown> = {};
+    if (url.trim() !== storedUrl) patch["integrations.mylar.url"] = url.trim();
+    if (key.trim() !== "") patch["integrations.mylar.api_key"] = key.trim();
+    if (Object.keys(patch).length === 0) return;
+    setResult(null);
+    try {
+      await update.mutateAsync(patch);
+    } catch {
+      // useApiMutation already toasts on error.
+    }
+  };
+  const remove = async () => {
+    setResult(null);
+    try {
+      await update.mutateAsync({
+        "integrations.mylar.url": "",
+        "integrations.mylar.api_key": "",
+      });
+    } catch {
+      // toasted
+    }
+  };
+  const runTest = () =>
+    test.mutate(undefined, {
+      onSuccess: (data) => {
+        setResultOk(data?.ok === true);
+        setResult(
+          data?.ok
+            ? `Connected to Mylar${data.version ? ` (${data.version})` : ""}.`
+            : (data?.error ?? "The check failed."),
+        );
+      },
+    });
+
+  return (
+    <section className="border-border/40 space-y-3 border-t pt-4">
+      <h3 className="flex items-center gap-2 text-sm font-medium">
+        <Send className="size-4" aria-hidden /> Add to Mylar
+        <Badge
+          variant={configured ? "default" : "outline"}
+          className="text-[10px]"
+        >
+          {configured ? "ON" : "OFF"}
+        </Badge>
+      </h3>
+      <p className="text-muted-foreground text-xs">
+        Optional. With Mylar&rsquo;s address and API key, an admin can add a
+        reading list&rsquo;s missing series to Mylar&rsquo;s watchlist and mark
+        the issues Wanted, from the list&rsquo;s Resolution tab, and check
+        Mylar&rsquo;s wanted list below. Folio never deletes a series or changes
+        Mylar&rsquo;s settings. The key can do anything in Mylar, so it is
+        stored encrypted and never shown again.
+      </p>
+      <form onSubmit={save} className="space-y-3">
+        <div className="grid gap-1.5">
+          <Label htmlFor="mylar-control-url">Mylar address</Label>
+          <Input
+            id="mylar-control-url"
+            type="url"
+            inputMode="url"
+            placeholder="https://mylar.example.com/"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            autoComplete="off"
+          />
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="mylar-control-key">Mylar API key</Label>
+          <Input
+            id="mylar-control-key"
+            type="password"
+            placeholder={
+              mylar.control_has_key ? "Stored — type to replace" : ""
+            }
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            autoComplete="off"
+          />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button type="submit" size="sm" disabled={!dirty || update.isPending}>
+            {update.isPending ? (
+              <Loader2 className="mr-1 size-3 animate-spin" />
+            ) : null}
+            Save
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="shrink-0 whitespace-nowrap"
+            disabled={!configured || dirty || test.isPending}
+            onClick={runTest}
+          >
+            {test.isPending ? (
+              <Loader2 className="mr-1 size-3 animate-spin" />
+            ) : null}
+            Test connection
+          </Button>
+          {storedUrl !== "" || mylar.control_has_key ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="text-destructive"
+              disabled={update.isPending}
+              onClick={remove}
+            >
+              Remove
+            </Button>
+          ) : null}
+        </div>
+      </form>
+      {result ? (
+        <p
+          role="status"
+          className={
+            resultOk ? "text-success text-xs" : "text-destructive text-xs"
+          }
+        >
+          {result}
+        </p>
+      ) : null}
+    </section>
   );
 }
 

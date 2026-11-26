@@ -55,6 +55,7 @@ pub mod metadata_cover_hash;
 pub mod metadata_match_outcome;
 pub mod metadata_run;
 pub mod metadata_run_candidate;
+pub mod mylar_add_request;
 pub mod mylar_pull;
 pub mod mylar_snapshot;
 pub mod mylar_wanted;
@@ -151,6 +152,7 @@ pub mod prelude {
     pub use super::metadata_match_outcome::Entity as MetadataMatchOutcome;
     pub use super::metadata_run::Entity as MetadataRun;
     pub use super::metadata_run_candidate::Entity as MetadataRunCandidate;
+    pub use super::mylar_add_request::Entity as MylarAddRequest;
     pub use super::mylar_pull::Entity as MylarPull;
     pub use super::mylar_snapshot::Entity as MylarSnapshot;
     pub use super::mylar_wanted::Entity as MylarWanted;

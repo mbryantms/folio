@@ -2,8 +2,10 @@
 
 Folio can show what a [Mylar3](https://github.com/mylar3/mylar3) install
 is tracking: this week's pull list with each issue's status, the
-watchlist, the wanted backlog and the download queue. It is **view-only**.
-Folio never calls Mylar and cannot change anything in it.
+watchlist, the wanted backlog and the download queue. This script and the snapshot
+it sends are **view-only**: they never call Mylar's API and cannot change
+anything in it. (Folio's separate, optional "Add to Mylar" action is set
+up in Folio's admin pages and does not involve this script.)
 
 The link is this one script. It runs **on the Mylar host**, opens
 `mylar.db` read-only, and POSTs a snapshot to Folio over HTTPS.

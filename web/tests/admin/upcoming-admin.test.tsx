@@ -21,6 +21,13 @@ import type {
 } from "@/lib/api/types";
 
 const mutateAsync = vi.fn(async () => ({}));
+const searchNow = vi.fn();
+const seriesAction = vi.fn();
+const unwantIssue = vi.fn();
+const wantedCheck: { data: unknown; refetch: ReturnType<typeof vi.fn> } = {
+  data: undefined,
+  refetch: vi.fn(),
+};
 const sync = vi.fn();
 const createToken = vi.fn(
   (_input: undefined, opts?: { onSuccess?: (d: { token: string }) => void }) =>
@@ -38,6 +45,10 @@ vi.mock("@/lib/api/mutations", () => ({
   useSyncUpcomingCalendar: () => ({ mutate: sync, isPending: false }),
   useCreateMylarToken: () => ({ mutate: createToken, isPending: false }),
   useRevokeMylarToken: () => ({ mutate: revokeToken, isPending: false }),
+  useTestMylar: () => ({ mutate: vi.fn(), isPending: false }),
+  useMylarSearchNow: () => ({ mutate: searchNow, isPending: false }),
+  useMylarSeriesAction: () => ({ mutate: seriesAction, isPending: false }),
+  useMylarUnwant: () => ({ mutate: unwantIssue, isPending: false }),
 }));
 vi.mock("@/lib/api/queries", () => ({
   useAdminSettings: () => ({
@@ -46,8 +57,19 @@ vi.mock("@/lib/api/queries", () => ({
   }),
   useAdminUpcomingStatus: () => ({ isLoading: false, data: state.status }),
   useAdminMylarActivity: () => ({ isLoading: false, data: state.activity }),
+  useMylarWantedCheck: () => ({
+    data: wantedCheck.data,
+    refetch: wantedCheck.refetch,
+    isFetching: false,
+    isError: false,
+  }),
+  queryKeys: { adminMylarWantedCheck: ["admin", "mylar", "wanted-check"] },
 }));
 
+import {
+  listGapSummary,
+  wantedCheckSummary,
+} from "@/components/admin/upcoming/MylarToolsCard";
 import {
   UpcomingAdmin,
   shortDay,
@@ -59,6 +81,8 @@ function mylar(over: Partial<MylarStatusView> = {}): MylarStatusView {
     stale_after_minutes: 180,
     token: null,
     snapshot: null,
+    control_url: null,
+    control_has_key: false,
     ...over,
   };
 }
@@ -280,13 +304,59 @@ describe("/admin/upcoming", () => {
 });
 
 describe("/admin/upcoming — Mylar card", () => {
-  it("is OFF by default and says it is view-only", () => {
+  it("is OFF by default and says the snapshot never contacts Mylar", () => {
     render(<UpcomingAdmin />);
     const card = screen.getByText("Mylar").closest("[data-slot=card]")!;
     expect(card.textContent).toContain("OFF");
-    expect(card.textContent).toContain("Folio never");
+    expect(card.textContent).toContain("showing it never contacts Mylar");
     expect(card.textContent).toContain("Nothing received yet");
     expect(screen.getByRole("button", { name: "Generate token" })).toBeTruthy();
+    // Add to Mylar: off, nothing to test or remove until both are stored.
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Test connection",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
+  });
+
+  it("saves the Add to Mylar address and key, and never shows a stored key", async () => {
+    const { rerender } = render(<UpcomingAdmin />);
+    fireEvent.change(screen.getByLabelText("Mylar address"), {
+      target: { value: " https://mylar.example/ " },
+    });
+    fireEvent.change(screen.getByLabelText("Mylar API key"), {
+      target: { value: "abc123" },
+    });
+    const section = screen.getByLabelText("Mylar address").closest("section")!;
+    fireEvent.submit(section.querySelector("form")!);
+    await waitFor(() =>
+      expect(mutateAsync).toHaveBeenCalledWith({
+        "integrations.mylar.url": "https://mylar.example/",
+        "integrations.mylar.api_key": "abc123",
+      }),
+    );
+
+    state.status = status({
+      mylar: mylar({
+        control_url: "https://mylar.example/",
+        control_has_key: true,
+      }),
+    });
+    rerender(<UpcomingAdmin />);
+    const key = screen.getByLabelText("Mylar API key") as HTMLInputElement;
+    expect(key.value).toBe("");
+    expect(key.placeholder).toContain("Stored");
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Test connection",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+    expect(screen.getByRole("button", { name: "Remove" })).toBeTruthy();
   });
 
   it("walks the states: no token, waiting, receiving, stale", () => {
@@ -458,5 +528,81 @@ describe("/admin/upcoming — what Mylar is doing", () => {
     state.activity = { ...ACTIVITY, wanted: [] };
     render(<UpcomingAdmin />);
     expect(card().getByText("Mylar is not waiting on any issue.")).toBeTruthy();
+  });
+});
+
+describe("/admin/upcoming — Mylar tools", () => {
+  const CHECK = {
+    wanted: 412,
+    owned_issues: 2,
+    owned_series_total: 1,
+    owned: [
+      {
+        cv_series_id: 100,
+        series: "Alpha",
+        issues: [
+          { cv_issue_id: 1001, issue_number: "1" },
+          { cv_issue_id: 1002, issue_number: "2" },
+        ],
+      },
+    ],
+    list_missing: 120,
+    list_missing_not_wanted: 35,
+  };
+
+  it("is hidden until a Mylar address and key are stored", () => {
+    render(<UpcomingAdmin />);
+    expect(screen.queryByText("Mylar tools")).toBeNull();
+  });
+
+  it("checks, searches, rechecks and un-wants on request only", () => {
+    state.status = status({
+      mylar: mylar({
+        control_url: "https://m.example/",
+        control_has_key: true,
+      }),
+    });
+    wantedCheck.data = undefined;
+    const { rerender } = render(<UpcomingAdmin />);
+    expect(wantedCheck.refetch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Check wanted list" }));
+    expect(wantedCheck.refetch).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Search now" }));
+    expect(searchNow).toHaveBeenCalledTimes(1);
+
+    wantedCheck.data = CHECK;
+    rerender(<UpcomingAdmin />);
+    expect(
+      screen.getByText(
+        "2 of Mylar's 412 wanted issues are already in your library, across 1 series.",
+      ),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Recheck files" }));
+    expect(seriesAction).toHaveBeenCalledWith({
+      cvSeriesId: 100,
+      action: "recheck",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Un-want Alpha #2" }));
+    expect(unwantIssue).toHaveBeenCalledWith({ cvIssueId: 1002 });
+    wantedCheck.data = undefined;
+  });
+
+  it("words the summaries", () => {
+    expect(wantedCheckSummary({ ...CHECK, wanted: 0 })).toBe(
+      "Mylar's wanted list is empty.",
+    );
+    expect(wantedCheckSummary({ ...CHECK, owned_issues: 0 })).toBe(
+      "None of Mylar's 412 wanted issues are in your library.",
+    );
+    expect(listGapSummary(CHECK)).toBe(
+      "35 of the 120 issues your reading lists are missing are not wanted in Mylar. Add them from each list's Resolution tab.",
+    );
+    expect(listGapSummary({ ...CHECK, list_missing: 0 })).toBeNull();
+    expect(listGapSummary({ ...CHECK, list_missing_not_wanted: 120 })).toBe(
+      "Mylar wants none of the 120 issues your reading lists are missing. Add them from each list's Resolution tab.",
+    );
+    expect(listGapSummary({ ...CHECK, list_missing_not_wanted: 0 })).toBe(
+      "Mylar wants all 120 issues your reading lists are missing.",
+    );
   });
 });

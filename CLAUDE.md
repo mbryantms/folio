@@ -708,12 +708,24 @@ Default admin (first registered user becomes admin):
 
 - **Upcoming releases are view-only** (upcoming-releases 1.0): `/upcoming`
   shows Metron's release calendar reconciled with a snapshot of a Mylar
-  install. **Folio never calls Mylar.** The only link between the two is
+  install. **The Upcoming feature never calls Mylar.** Its only link is
   `POST /integrations/mylar/snapshot` (`bare` group), pushed by
   [`integrations/mylar/folio-mylar-push.py`](integrations/mylar/folio-mylar-push.py)
   from the Mylar host with a single-purpose ingest token
-  (`integration_tokens`, digest only). Folio stores no Mylar address or
-  key, so an operator's firewall around Mylar never has to open.
+  (`integration_tokens`, digest only). The snapshot path needs no Mylar
+  address or key, so an operator's firewall around Mylar never has to
+  open for it.
+  - **The one exception is add-to-Mylar** (add-to-mylar 1.0, owner's
+    decision 2026-11-26): an admin adds a reading list's missing series
+    to Mylar from the Resolution tab. It lives in `crate::mylar_control`,
+    is off until `integrations.mylar.url` + `integrations.mylar.api_key`
+    are stored, and can send only the commands of
+    `mylar_control::client::Command` (add, mark wanted / un-want, read
+    the wanted list, search now, recheck files, refresh a series).
+    Add requests are rows in `mylar_add_request` carried out by the
+    once-a-minute `mylar_control::sweep`; the other actions are one
+    admin click each, making their one or two calls inline. See
+    [`docs/dev/add-to-mylar.md`](docs/dev/add-to-mylar.md).
   - **Two sources, reconciled at read time.** `release_calendar_*`
     (Metron, the daily `ReleaseCalendarSyncJob` plus the once-a-minute
     enrich sweep) and `mylar_*` (the last snapshot, replace-all) are
@@ -749,13 +761,21 @@ Default admin (first registered user becomes admin):
     `saved_views::system_view_available`). Turning it off deletes nothing.
 
   **Reviewer heuristic — reject PRs that:**
-  - Add a setting that holds a Mylar URL, host, port or API key; an HTTP
-    client in `upcoming::mylar` or `api::mylar_ingest`; or any route under
-    `/integrations/mylar` beyond the snapshot POST, the token's
-    create / revoke and the admin's read-only activity GET.
-    `crates/server/tests/upcoming_view_only.rs` pins all three.
-  - Add a control anywhere in the web app that acts on Mylar (search,
-    retry, add to the watchlist, mark wanted). Badges and text only.
+  - Add a Mylar setting beyond the four that exist (`enabled`,
+    `stale_after_minutes`, `url`, `api_key`); an HTTP client in
+    `upcoming::mylar` or `api::mylar_ingest`; a `Command` variant in
+    `mylar_control::client` (nothing that deletes, pauses, refreshes or
+    restarts); or any route under `/integrations/mylar` beyond the
+    snapshot POST, the token's create / revoke, the read-only activity
+    GET, and add-to-Mylar's routes (`requests`, `test`, `wanted-check`,
+    `search`, `series/{id}/recheck|refresh`, `issues/{id}/unwant`).
+    `crates/server/tests/upcoming_view_only.rs` pins all of these.
+  - Add a control that acts on Mylar anywhere but the reading list
+    Resolution tab and the admin "Mylar tools" card (both admin-only).
+    The Upcoming page and the admin activity card stay badges and text.
+  - Call Mylar in a loop from a handler, on a timer, or on page load
+    (bulk work goes through the sweep; the wanted check runs on click),
+    or return or log the Mylar API key.
   - Show `tracked`, a Mylar stage, a pull-list-only row or watchlist-based
     "my series" membership on a path that did not go through
     `view::load`, or put Mylar's queue or wanted list on a non-admin
@@ -878,6 +898,7 @@ Default admin (first registered user becomes admin):
 - Library scanner deep dive: [docs/dev/library-scanner.md](docs/dev/library-scanner.md)
 - Load baseline (`just perf-explain` EXPLAIN plans at 50k issues, weekly gate + `expected_seqscans.txt`, `oha` recipes, `IssueCardRow` projection audit): [docs/dev/load-testing.md](docs/dev/load-testing.md)
 - Upcoming releases (Metron release calendar + budget gate, view-only Mylar snapshot ingest, read-time reconciliation, who sees Mylar data, the page and its alert surfaces): [docs/dev/upcoming-releases.md](docs/dev/upcoming-releases.md); the Mylar push script's setup: [docs/install/mylar.md](docs/install/mylar.md)
+- Add to Mylar (the one way Folio calls Mylar: closed command list, `mylar_add_request` rows, the sweep, the Resolution-tab UI): [docs/dev/add-to-mylar.md](docs/dev/add-to-mylar.md)
 - Similar series (signals, IDF weights + caps, neighbour cache + invalidation hooks, per-request ACL / hidden filtering): [docs/dev/similar-series.md](docs/dev/similar-series.md)
 - Saved views (filter DSL, per-entity field registry, `filter_series` vs `filter_issues` compiler roots): [docs/dev/saved-views.md](docs/dev/saved-views.md)
 - Reader keyboard map: [docs/dev/reader-shortcuts.md](docs/dev/reader-shortcuts.md)

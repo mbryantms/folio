@@ -235,6 +235,7 @@ pub fn build_openapi_router_with(timeouts: RouteTimeouts) -> OpenApiRouter<AppSt
         .merge(api::admin_metadata::routes())
         .merge(api::admin_metadata_coverage::routes())
         .merge(api::admin_upcoming::routes())
+        .merge(api::admin_mylar_control::routes())
         .merge(api::upcoming::routes())
         .merge(api::metadata_search::routes())
         .merge(api::external_ids::routes())

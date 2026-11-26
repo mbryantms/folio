@@ -40,6 +40,7 @@ pub async fn start(state: AppState) -> anyhow::Result<JobScheduler> {
     register_prune_auth_sessions(&scheduler, &state).await;
     register_metadata_weekly_refresh(&scheduler, &state).await;
     register_metadata_resume_sweep(&scheduler, &state).await;
+    register_mylar_add_sweep(&scheduler, &state).await;
     register_release_calendar_sync(&scheduler, &state).await;
     register_release_calendar_sweep(&scheduler, &state).await;
     register_writeback_migration_progress(&scheduler, &state).await;
@@ -600,6 +601,36 @@ async fn register_metadata_resume_sweep(scheduler: &JobScheduler, state: &AppSta
             }
         }
         Err(e) => tracing::error!(error = %e, "scheduler: build metadata_resume_sweep failed"),
+    }
+}
+
+/// Send queued add-to-Mylar requests ([`crate::mylar_control::sweep`]).
+/// Every minute; a no-op until an admin stores a Mylar address and key.
+async fn register_mylar_add_sweep(scheduler: &JobScheduler, state: &AppState) {
+    let state = state.clone();
+    let job_result = Job::new_async("30 * * * * *", move |_uuid, _l| {
+        let state = state.clone();
+        Box::pin(async move {
+            let tick = crate::mylar_control::sweep::run(&state).await;
+            if tick.done + tick.failed > 0 {
+                tracing::info!(
+                    done = tick.done,
+                    failed = tick.failed,
+                    waiting = tick.waiting,
+                    "mylar add sweep"
+                );
+            }
+        })
+    });
+    match job_result {
+        Ok(job) => {
+            if let Err(e) = scheduler.add(job).await {
+                tracing::error!(error = %e, "scheduler: add mylar_add_sweep failed");
+            } else {
+                tracing::info!("mylar_add_sweep registered (every minute)");
+            }
+        }
+        Err(e) => tracing::error!(error = %e, "scheduler: build mylar_add_sweep failed"),
     }
 }
 
