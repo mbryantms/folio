@@ -13,6 +13,19 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.91.0](https://github.com/mbryantms/folio/compare/v0.90.0...v0.91.0) (2026-11-26)
+
+
+### Added
+
+* **mylar:** add missing series to Mylar and manage its wanted list from Folio ([#1799](https://github.com/mbryantms/folio/issues/1799)) ([42f4e7d](https://github.com/mbryantms/folio/commit/42f4e7d4d057fe04bcf160985652de5c4115e463))
+
+
+### Dependencies
+
+* update dependency cronstrue to v3.46.0 ([#1801](https://github.com/mbryantms/folio/issues/1801)) ([d88f35b](https://github.com/mbryantms/folio/commit/d88f35b34decd303cb227bd10fddc928652fda9f))
+* update dependency recharts to v3.11.1 ([#1800](https://github.com/mbryantms/folio/issues/1800)) ([02b7afc](https://github.com/mbryantms/folio/commit/02b7afcbdcb03c8717dd02c0e86b5802057723d8))
+
 ## [0.90.0](https://github.com/mbryantms/folio/compare/v0.89.0...v0.90.0) (2026-11-26)
 
 
