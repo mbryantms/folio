@@ -15,12 +15,19 @@
  *    while the sticky topbar and the page slid down over it (iPad,
  *    2026-10-30). A sticky rail is part of the scrolling document and
  *    bounces with them, as the pre-#1346 `<aside>` did.
+ *  - `SidebarGroupLabel`: the upstream label plus `pointer-events-none`
+ *    while the rail is collapsed. Upstream hides it with `opacity-0` and
+ *    pulls it up 2rem (`-mt-8`) over whatever sits above it, so an
+ *    invisible label swallowed clicks on that row: the admin "Back to
+ *    library" arrow, which the admin title label follows, did nothing on
+ *    a collapsed desktop rail (2026-11-27).
  * App code imports from here, never from components/ui (ESLint enforces
  * it). */
 import * as React from "react";
 
 import {
   Sidebar as UiSidebar,
+  SidebarGroupLabel as UiSidebarGroupLabel,
   SidebarProvider as UiSidebarProvider,
   useSidebar,
 } from "@/components/ui/sidebar";
@@ -124,6 +131,23 @@ export function AppSidebar({
         {children}
       </div>
     </UiSidebar>
+  );
+}
+
+/** The upstream label, click-through while the rail is icon-only (see the
+ *  file header). Shadows the `export *` re-export above. */
+export function SidebarGroupLabel({
+  className,
+  ...props
+}: React.ComponentProps<typeof UiSidebarGroupLabel>) {
+  return (
+    <UiSidebarGroupLabel
+      className={cn(
+        "group-data-[collapsible=icon]:pointer-events-none",
+        className,
+      )}
+      {...props}
+    />
   );
 }
 
