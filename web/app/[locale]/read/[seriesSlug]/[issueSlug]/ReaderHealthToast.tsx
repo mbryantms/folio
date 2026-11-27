@@ -80,6 +80,22 @@ export function describeHealthToast(rows: HealthIssueView[]): {
   message: string;
   severity: "warning" | "info";
 } | null {
+  const damaged = rows.filter((r) => r.kind === "DamagedPage");
+  if (damaged.length > 0) {
+    const pages = damaged
+      .map((r) => numberFromPayload(payloadData(r.payload)?.page_index))
+      .filter((n): n is number => n !== null)
+      .sort((a, b) => a - b)
+      .map((n) => n + 1);
+    const which =
+      pages.length === 0
+        ? "A page"
+        : `${pages.length === 1 ? "Page" : "Pages"} ${pages.join(", ")}`;
+    return {
+      message: `${which} of this file ${pages.length > 1 ? "are" : "is"} damaged. Folio shows what could be recovered.`,
+      severity: "warning",
+    };
+  }
   const warnings = rows.filter((r) => r.severity === "warning");
   if (warnings.length > 0) {
     const first = warnings[0]!;

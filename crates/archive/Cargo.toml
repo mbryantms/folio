@@ -15,6 +15,7 @@ natord = { workspace = true }
 # Multi-format comic-archive readers (Library Scanner v1, Milestone 12).
 # unrar 0.5 is the pure-Rust bindings crate; license requires NOTICE attribution.
 unrar = { workspace = true }
+unrar_sys = { workspace = true }
 tar = { workspace = true }
 sevenz-rust2 = { workspace = true }
 

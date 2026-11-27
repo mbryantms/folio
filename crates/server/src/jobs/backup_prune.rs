@@ -42,6 +42,7 @@ use crate::library::no_follow::{self, Refusal};
 use crate::state::AppState;
 use entity::library;
 use sea_orm::EntityTrait;
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
@@ -67,6 +68,11 @@ pub struct PruneStats {
     /// another file now (a rewrite rotated a fresh backup in, a user copied
     /// a file over it), the file's age no longer qualifies, or it is gone.
     pub skipped_changed: usize,
+    /// Old-enough backups kept because they hold the original of an
+    /// archive converted with damaged pages
+    /// ([`crate::library::damaged_pages::kept_backups`]): the only copy of
+    /// those pages as they were.
+    pub kept_damaged_original: usize,
 }
 
 impl PruneStats {
@@ -77,6 +83,7 @@ impl PruneStats {
         self.libraries += other.libraries;
         self.kept_unknown_age += other.kept_unknown_age;
         self.skipped_changed += other.skipped_changed;
+        self.kept_damaged_original += other.kept_damaged_original;
     }
 }
 
@@ -102,11 +109,29 @@ pub async fn run_at(state: &AppState, now: SystemTime) -> anyhow::Result<PruneSt
         } else {
             0
         };
+        // Backups holding the original of a damaged conversion are kept
+        // whatever their age. If the list cannot be read, nothing in this
+        // library is pruned this run rather than risk one of them.
+        let keep = match crate::library::damaged_pages::kept_backups(&state.db, lib.id).await {
+            Ok(set) => Some(set.into_iter().map(std::path::PathBuf::from).collect()),
+            Err(e) => {
+                tracing::warn!(
+                    library_id = %lib.id,
+                    error = %e,
+                    "archive backup prune: could not read the damaged-conversion backups; \
+                     pruning nothing in this library this run",
+                );
+                None
+            }
+        };
+        let retain_days = if keep.is_some() { retain_days } else { 0 };
+        let keep: HashSet<std::path::PathBuf> = keep.unwrap_or_default();
         // Walk off the async runtime — a large library has many dirents.
-        let (stats, tally) =
-            tokio::task::spawn_blocking(move || prune_library(&root, retain_days, now))
-                .await
-                .map_err(|e| anyhow::anyhow!("backup prune walk join failed: {e}"))?;
+        let (stats, tally) = tokio::task::spawn_blocking(move || {
+            prune_library_keeping(&root, retain_days, now, &keep)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("backup prune walk join failed: {e}"))?;
         total.absorb(stats);
         if stats.kept_unknown_age > 0 {
             tracing::warn!(
@@ -179,7 +204,18 @@ pub fn prune_library(
     retain_days: i32,
     now: SystemTime,
 ) -> (PruneStats, Option<Tally>) {
-    prune_library_with(root, retain_days, now, |_| {})
+    prune_library_with(root, retain_days, now, &HashSet::new(), |_| {})
+}
+
+/// [`prune_library`] that never deletes a backup whose path is in `keep`
+/// (the originals of damaged conversions); they stay in the tally.
+pub fn prune_library_keeping(
+    root: &Path,
+    retain_days: i32,
+    now: SystemTime,
+    keep: &HashSet<std::path::PathBuf>,
+) -> (PruneStats, Option<Tally>) {
+    prune_library_with(root, retain_days, now, keep, |_| {})
 }
 
 /// [`prune_library`] with a hook that runs between the walk's decision to
@@ -189,6 +225,7 @@ pub(crate) fn prune_library_with(
     root: &Path,
     retain_days: i32,
     now: SystemTime,
+    keep: &HashSet<std::path::PathBuf>,
     mut before_delete: impl FnMut(&Path),
 ) -> (PruneStats, Option<Tally>) {
     use std::os::unix::fs::MetadataExt;
@@ -214,6 +251,11 @@ pub(crate) fn prune_library_with(
             return;
         };
         if made >= cutoff {
+            tally.add(meta);
+            return;
+        }
+        if keep.contains(entry.path()) {
+            stats.kept_damaged_original += 1;
             tally.add(meta);
             return;
         }
@@ -361,6 +403,25 @@ mod tests {
             "the survivor is what the health card shows"
         );
         assert_eq!(tally.total_bytes, 1);
+    }
+
+    /// The original of a damaged conversion is kept whatever its age; the
+    /// other old backups beside it go as usual.
+    #[test]
+    fn a_damaged_conversions_original_is_never_pruned() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = dir.path().join("Issue 1.cbr.bak");
+        let other = dir.path().join("Issue 2.cbz.bak");
+        write(&original);
+        write(&other);
+        let keep: HashSet<std::path::PathBuf> = [original.clone()].into();
+        let (stats, tally) =
+            prune_library_keeping(dir.path(), 30, SystemTime::now() + 400 * DAY, &keep);
+        assert_eq!(stats.removed, 1);
+        assert_eq!(stats.kept_damaged_original, 1);
+        assert!(original.exists(), "the damaged conversion's original stays");
+        assert!(!other.exists());
+        assert_eq!(tally.unwrap().file_count, 1);
     }
 
     #[test]
@@ -543,7 +604,8 @@ mod tests {
             pause();
             t
         };
-        let (stats, _) = prune_library_with(dir.path(), 30, mid + 30 * DAY, |_| {});
+        let (stats, _) =
+            prune_library_with(dir.path(), 30, mid + 30 * DAY, &HashSet::new(), |_| {});
         assert_eq!((stats.removed, stats.skipped_changed), (1, 0), "{stats:?}");
         assert!(!bak.exists());
 
@@ -558,7 +620,7 @@ mod tests {
         // re-check keeps it; only this test's future cutoff takes that away.)
         write(&bak);
         let later = SystemTime::now() + 31 * DAY;
-        let (stats, tally) = prune_library_with(dir.path(), 30, later, |p| {
+        let (stats, tally) = prune_library_with(dir.path(), 30, later, &HashSet::new(), |p| {
             let incoming = p.with_file_name("incoming.tmp");
             fs::write(&incoming, b"someone else's bytes").unwrap();
             fs::rename(&incoming, p).unwrap();
@@ -574,7 +636,7 @@ mod tests {
             pause();
             t
         };
-        let (stats, _) = prune_library_with(dir.path(), 30, mid + 30 * DAY, |p| {
+        let (stats, _) = prune_library_with(dir.path(), 30, mid + 30 * DAY, &HashSet::new(), |p| {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(p, fs::Permissions::from_mode(0o600)).unwrap();
         });
@@ -582,9 +644,15 @@ mod tests {
         assert!(bak.exists());
 
         // Gone in between: skipped, not an error.
-        let (stats, _) = prune_library_with(dir.path(), 30, SystemTime::now() + 31 * DAY, |p| {
-            fs::remove_file(p).unwrap();
-        });
+        let (stats, _) = prune_library_with(
+            dir.path(),
+            30,
+            SystemTime::now() + 31 * DAY,
+            &HashSet::new(),
+            |p| {
+                fs::remove_file(p).unwrap();
+            },
+        );
         assert_eq!(
             (stats.removed, stats.skipped_changed, stats.errors),
             (0, 1, 0),
@@ -597,10 +665,16 @@ mod tests {
         let target = outside.path().join("victim.cbz.bak");
         write(&target);
         write(&bak);
-        let (stats, _) = prune_library_with(dir.path(), 30, SystemTime::now() + 31 * DAY, |p| {
-            fs::remove_file(p).unwrap();
-            std::os::unix::fs::symlink(&target, p).unwrap();
-        });
+        let (stats, _) = prune_library_with(
+            dir.path(),
+            30,
+            SystemTime::now() + 31 * DAY,
+            &HashSet::new(),
+            |p| {
+                fs::remove_file(p).unwrap();
+                std::os::unix::fs::symlink(&target, p).unwrap();
+            },
+        );
         assert_eq!(
             (stats.removed, stats.skipped_changed, stats.errors),
             (0, 1, 0),

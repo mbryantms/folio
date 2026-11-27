@@ -36,6 +36,7 @@ pub mod comic_archive;
 pub mod container;
 pub mod entry_name;
 pub mod image_sniff;
+mod rar_salvage;
 pub mod rewrite_policy;
 pub mod source;
 
@@ -134,6 +135,9 @@ impl ComicArchive for cbz::Cbz {
     }
     fn entries_skipped(&self) -> &[SkippedEntry] {
         self.entries_skipped()
+    }
+    fn entry_crc32(&self, name: &str) -> Option<u32> {
+        self.entry_crc32(name)
     }
 }
 
@@ -329,6 +333,16 @@ pub mod recovery {
     /// end-of-archive marker). UnRAR reads every file before it, so the
     /// reader takes that header as the end of the archive (`cbr.rs`).
     pub const RAR_DAMAGED_TRAILING_HEADER: &str = "rar-damaged-trailing-header";
+}
+
+/// Why an entry read by
+/// [`comic_archive::ComicArchive::read_entry_bytes_salvaging`] came back
+/// damaged. Static strings, stored with the damage record.
+pub mod damage {
+    /// The entry's data failed its checksum (or the decoder hit bad data
+    /// in it). The bytes are what UnRAR decoded; part of the image is
+    /// usually wrong or missing.
+    pub const CHECKSUM_FAILED: &str = "checksum-failed";
 }
 
 #[cfg(test)]

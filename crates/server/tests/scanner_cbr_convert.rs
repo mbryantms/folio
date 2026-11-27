@@ -382,3 +382,207 @@ async fn conversion_refused_by_a_limit_is_a_safety_refusal() {
     assert_eq!(kinds, ["ArchiveSafetyRefusal"], "{kinds:?}");
     assert_eq!(rows[0].payload["data"]["check"], "entry_count");
 }
+
+/// Copy a committed damaged fixture into a series folder of a fresh
+/// library that converts CBRs, and scan it.
+async fn scan_damaged_fixture(
+    app: &TestApp,
+    fixture: &str,
+    tmp: &std::path::Path,
+) -> (
+    uuid::Uuid,
+    std::path::PathBuf,
+    server::library::scanner::ScanStats,
+) {
+    let src = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures")
+        .join(fixture);
+    let folder = tmp.join("The Avengers (1963)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let cbr_path = folder.join("The Avengers V1963 253 (March 1985).cbr");
+    std::fs::copy(&src, &cbr_path).unwrap();
+    let lib_id = LibrarySeed::new(tmp)
+        .with_auto_convert_cbr_on_scan()
+        .insert(&app.state().db)
+        .await;
+    let stats = scanner::scan_library(&app.state(), lib_id)
+        .await
+        .expect("scan");
+    (lib_id, cbr_path, stats)
+}
+
+async fn damage_rows(app: &TestApp, issue_id: &str) -> Vec<entity::issue_damaged_page::Model> {
+    entity::issue_damaged_page::Entity::find()
+        .filter(entity::issue_damaged_page::Column::IssueId.eq(issue_id))
+        .all(&app.state().db)
+        .await
+        .unwrap()
+}
+
+async fn open_damage_findings(
+    app: &TestApp,
+    lib_id: uuid::Uuid,
+) -> Vec<entity::library_health_issue::Model> {
+    HealthEntity::find()
+        .filter(entity::library_health_issue::Column::LibraryId.eq(lib_id))
+        .filter(entity::library_health_issue::Column::Kind.eq("DamagedPage"))
+        .filter(entity::library_health_issue::Column::ResolvedAt.is_null())
+        .all(&app.state().db)
+        .await
+        .unwrap()
+}
+
+/// A CBR with one page that fails its checksum (The Avengers (1963) #253
+/// in production) converts with every page instead of being skipped: the
+/// damaged page keeps the bytes UnRAR decoded, and the damage is recorded
+/// on the issue, reported as a `DamagedPage` finding, and survives a
+/// forced rescan. The original is kept as `.cbr.bak`.
+#[tokio::test]
+async fn scan_converts_cbr_with_a_damaged_page_and_records_it() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (lib_id, cbr_path, stats) =
+        scan_damaged_fixture(&app, "synthetic-3page-damaged-page.cbr", tmp.path()).await;
+    assert_eq!(stats.files_converted, 1, "{stats:?}");
+    assert_eq!(stats.files_added, 1, "{stats:?}");
+    let cbz_path = cbr_path.with_extension("cbz");
+    assert!(cbz_path.exists());
+    assert!(cbr_path.with_extension("cbr.bak").exists(), "original kept");
+
+    let issues = IssueEntity::find()
+        .filter(entity::issue::Column::LibraryId.eq(lib_id))
+        .all(&app.state().db)
+        .await
+        .unwrap();
+    assert_eq!(issues.len(), 1);
+    assert_eq!(
+        issues[0].page_count,
+        Some(3),
+        "every page, the damaged one too"
+    );
+
+    let rows = damage_rows(&app, &issues[0].id).await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let row = &rows[0];
+    assert_eq!(row.entry_name, "p0002.jpg");
+    assert_eq!(row.source_entry, "page-002.jpg");
+    assert_eq!(row.page_index, 1);
+    assert_eq!(row.kind, "salvaged");
+    assert_eq!(row.reason, archive::damage::CHECKSUM_FAILED);
+    assert_eq!((row.declared_size, row.recovered_size), (86, 86));
+    assert_eq!(
+        row.source_backup.as_deref(),
+        Some(
+            cbr_path
+                .with_extension("cbr.bak")
+                .to_string_lossy()
+                .as_ref()
+        )
+    );
+
+    // The CBZ holds the salvaged bytes: the JPEG start, the flipped byte.
+    let mut cbz =
+        archive::cbz::Cbz::open_path_unchecked(&cbz_path, archive::ArchiveLimits::default())
+            .unwrap();
+    let page = cbz.read_entry_bytes_by_name("p0002.jpg").unwrap();
+    assert!(page.starts_with(&[0xFF, 0xD8, 0xFF]));
+    assert_eq!(page[40], 2 ^ 0xFF);
+
+    let findings = open_damage_findings(&app, lib_id).await;
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].payload["data"]["page_index"], 1);
+    assert_eq!(findings[0].payload["data"]["kind"], "salvaged");
+    assert!(
+        HealthEntity::find()
+            .filter(entity::library_health_issue::Column::LibraryId.eq(lib_id))
+            .filter(entity::library_health_issue::Column::Kind.eq("UnsupportedArchiveFormat"))
+            .all(&app.state().db)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // A forced rescan reads the file again and keeps both.
+    scanner::scan_library_with(&app.state(), lib_id, true)
+        .await
+        .expect("rescan");
+    assert_eq!(damage_rows(&app, &issues[0].id).await.len(), 1);
+    assert_eq!(open_damage_findings(&app, lib_id).await.len(), 1);
+}
+
+/// When nothing usable survives (the damaged byte is the page's first, so
+/// what UnRAR decoded is no image), the page becomes Folio's placeholder,
+/// written as PNG and recorded as such.
+#[tokio::test]
+async fn scan_writes_a_placeholder_for_a_page_with_nothing_usable() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (lib_id, cbr_path, stats) =
+        scan_damaged_fixture(&app, "synthetic-3page-damaged-page-head.cbr", tmp.path()).await;
+    assert_eq!(stats.files_added, 1, "{stats:?}");
+    let issue = IssueEntity::find()
+        .filter(entity::issue::Column::LibraryId.eq(lib_id))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(issue.page_count, Some(3));
+    let rows = damage_rows(&app, &issue.id).await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].kind, "placeholder");
+    assert_eq!(rows[0].entry_name, "p0002.png");
+    assert_eq!(rows[0].page_index, 1);
+
+    let mut cbz = archive::cbz::Cbz::open_path_unchecked(
+        cbr_path.with_extension("cbz"),
+        archive::ArchiveLimits::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        cbz.read_entry_bytes_by_name("p0002.png").unwrap(),
+        server::library::damaged_pages::placeholder_page()
+    );
+}
+
+/// Replacing the converted file with a good copy clears the record and
+/// resolves the finding: the page no longer holds the damaged bytes.
+#[tokio::test]
+async fn a_replacement_file_clears_the_damage_record() {
+    use std::io::Write;
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (lib_id, cbr_path, _) =
+        scan_damaged_fixture(&app, "synthetic-3page-damaged-page.cbr", tmp.path()).await;
+    let issue = IssueEntity::find()
+        .filter(entity::issue::Column::LibraryId.eq(lib_id))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(damage_rows(&app, &issue.id).await.len(), 1);
+
+    // A good copy under the same name: same page names, clean bytes.
+    let cbz_path = cbr_path.with_extension("cbz");
+    {
+        let f = std::fs::File::create(&cbz_path).unwrap();
+        let mut zw = zip::ZipWriter::new(f);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for i in 1..=3u8 {
+            zw.start_file(format!("p{i:04}.jpg"), opts).unwrap();
+            zw.write_all(&[
+                0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10, b'J', b'F', b'I', b'F', 0, i, i, i,
+            ])
+            .unwrap();
+        }
+        zw.finish().unwrap();
+    }
+    scanner::scan_library(&app.state(), lib_id)
+        .await
+        .expect("rescan");
+    assert!(
+        damage_rows(&app, &issue.id).await.is_empty(),
+        "the good copy has no damaged page"
+    );
+    assert!(open_damage_findings(&app, lib_id).await.is_empty());
+}

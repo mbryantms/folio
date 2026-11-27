@@ -103,6 +103,8 @@ struct EntryLayout {
     stored: bool,
     /// Uncompressed length (== on-disk length for a Stored entry).
     length: u64,
+    /// The CRC-32 the central directory records for the entry's data.
+    crc32: u32,
 }
 
 /// Absolute file offset + length of a `Stored` entry's bytes. A caller can read
@@ -223,6 +225,17 @@ impl Cbz {
     /// happy path.
     pub fn entries_skipped(&self) -> &[SkippedEntry] {
         &self.skipped
+    }
+
+    /// The CRC-32 the central directory records for the named entry's data
+    /// (case-insensitive name). No bytes are read. The scanner uses it to
+    /// tell whether a page recorded as damaged is still the same bytes.
+    pub fn entry_crc32(&self, name: &str) -> Option<u32> {
+        let key = entry_name::validate(name)
+            .map(|s| s.canonical)
+            .unwrap_or_else(|_| name.to_ascii_lowercase());
+        let idx = *self.by_canonical.get(&key)?;
+        self.entry_layout.get(idx).map(|l| l.crc32)
     }
 
     /// Number of raw entries in the underlying zip — used by
@@ -367,32 +380,35 @@ impl Cbz {
         for i in 0..n {
             // Pull just the raw-entry fields we need, dropping the borrow
             // so subsequent loop iterations can re-borrow the archive.
-            let (encrypted, name, unc, cmp, is_dir, header_start, stored) = match &mut archive {
-                OpenedZip::File(a) => {
-                    let raw = a.by_index_raw(i).map_err(map_zip_err)?;
-                    (
-                        raw.encrypted(),
-                        entry_name(&raw),
-                        raw.size(),
-                        raw.compressed_size(),
-                        raw.is_dir(),
-                        raw.header_start(),
-                        raw.compression() == zip::CompressionMethod::Stored,
-                    )
-                }
-                OpenedZip::Mem(a) => {
-                    let raw = a.by_index_raw(i).map_err(map_zip_err)?;
-                    (
-                        raw.encrypted(),
-                        entry_name(&raw),
-                        raw.size(),
-                        raw.compressed_size(),
-                        raw.is_dir(),
-                        raw.header_start(),
-                        raw.compression() == zip::CompressionMethod::Stored,
-                    )
-                }
-            };
+            let (encrypted, name, unc, cmp, is_dir, header_start, stored, crc32) =
+                match &mut archive {
+                    OpenedZip::File(a) => {
+                        let raw = a.by_index_raw(i).map_err(map_zip_err)?;
+                        (
+                            raw.encrypted(),
+                            entry_name(&raw),
+                            raw.size(),
+                            raw.compressed_size(),
+                            raw.is_dir(),
+                            raw.header_start(),
+                            raw.compression() == zip::CompressionMethod::Stored,
+                            raw.crc32(),
+                        )
+                    }
+                    OpenedZip::Mem(a) => {
+                        let raw = a.by_index_raw(i).map_err(map_zip_err)?;
+                        (
+                            raw.encrypted(),
+                            entry_name(&raw),
+                            raw.size(),
+                            raw.compressed_size(),
+                            raw.is_dir(),
+                            raw.header_start(),
+                            raw.compression() == zip::CompressionMethod::Stored,
+                            raw.crc32(),
+                        )
+                    }
+                };
 
             // Encryption check (§4.6) — done before name validation so
             // encrypted archives report `Encrypted`, not `UnsafeEntry`.
@@ -466,6 +482,7 @@ impl Cbz {
                     header_start,
                     stored,
                     length: unc,
+                    crc32,
                 });
                 by_canonical.insert(safe.canonical, idx);
                 continue;
@@ -483,6 +500,7 @@ impl Cbz {
                 header_start,
                 stored,
                 length: unc,
+                crc32,
             });
             by_canonical.insert(safe.canonical, idx);
         }

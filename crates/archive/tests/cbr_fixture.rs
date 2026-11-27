@@ -194,3 +194,59 @@ fn intact_cbr_reports_no_recovery() {
     let cbr = Cbr::open_path_unchecked(&path, ArchiveLimits::default()).expect("opens");
     assert_eq!(cbr.recovery_used(), None);
 }
+
+/// `fixtures/synthetic-3page-damaged-page.cbr` (`make-cbr-fixture.py
+/// --damaged-page`): page 2's data has one flipped byte after its CRC was
+/// taken. A plain read still refuses it; the salvaging read returns the
+/// bytes UnRAR decoded, marked damaged, and the clean pages around it read
+/// as intact.
+#[test]
+fn salvaging_read_keeps_a_page_that_fails_its_checksum() {
+    use archive::comic_archive::EntryDamage;
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/synthetic-3page-damaged-page.cbr");
+    let mut cbr = Cbr::open_path_unchecked(&path, ArchiveLimits::default()).expect("opens");
+    let names: Vec<String> = cbr.pages().iter().map(|e| e.name.clone()).collect();
+    assert_eq!(names, ["page-001.jpg", "page-002.jpg", "page-003.jpg"]);
+
+    assert!(
+        cbr.read_entry_bytes("page-002.jpg").is_err(),
+        "a plain read still refuses the damaged page"
+    );
+
+    let jfif: &[u8] = &[0xFF, 0xD8, 0xFF, 0xE0];
+    let damaged = cbr.read_entry_bytes_salvaging("page-002.jpg").unwrap();
+    assert_eq!(
+        damaged.damage,
+        Some(EntryDamage {
+            reason: archive::damage::CHECKSUM_FAILED,
+            declared_size: 86,
+        })
+    );
+    assert_eq!(damaged.bytes.len(), 86, "every decoded byte is kept");
+    assert!(damaged.bytes.starts_with(jfif));
+    assert_eq!(damaged.bytes[40], 2 ^ 0xFF, "the flipped byte is as stored");
+
+    for clean in ["page-001.jpg", "page-003.jpg"] {
+        let r = cbr.read_entry_bytes_salvaging(clean).unwrap();
+        assert_eq!(r.damage, None, "{clean}");
+        assert_eq!(r.bytes, cbr.read_entry_bytes(clean).unwrap(), "{clean}");
+    }
+}
+
+/// The salvaging read never lifts the entry-size limit: a damaged entry
+/// over `max_entry_bytes` is refused before anything is decoded.
+#[test]
+fn salvaging_read_keeps_the_entry_size_limit() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/synthetic-3page-damaged-page.cbr");
+    let limits = ArchiveLimits {
+        max_entry_bytes: 80,
+        ..ArchiveLimits::default()
+    };
+    // The listing already refuses an entry over the limit.
+    assert!(matches!(
+        Cbr::open_path_unchecked(&path, limits),
+        Err(archive::ArchiveError::CapExceeded(_))
+    ));
+}

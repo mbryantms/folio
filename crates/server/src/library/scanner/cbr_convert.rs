@@ -45,6 +45,7 @@
 //! ([`crate::jobs::archive_edit::edit_one_issue`]) minus the page ops.
 
 use crate::archive_rewrite::{self, Converted, RewriteError};
+use crate::library::damaged_pages::{self, ConversionDamage, ConvertedDamage};
 use crate::library::no_follow::{EntryKind, LibraryRoot};
 use archive::cb7::Cb7;
 use archive::cbr::Cbr;
@@ -88,7 +89,42 @@ pub fn convert_cbr_to_cbz(
     src: &Path,
     limits: ArchiveLimits,
 ) -> Result<Converted, CbrConvertError> {
-    convert_to_cbz(root, src, limits)
+    convert_to_cbz(root, src, limits, Mode::Strict).map(|(c, _)| c)
+}
+
+/// [`convert_cbr_to_cbz`] for the scanner: a page whose data fails its
+/// checksum no longer stops the conversion. It is written as what could be
+/// recovered (or Folio's placeholder page) and listed in the returned
+/// [`ConversionDamage`], which the scanner records on the issue
+/// ([`crate::library::damaged_pages`]). Every other read error, and every
+/// limit, still fails the conversion. CB7 sources convert as
+/// [`convert_cb7_to_cbz`] does (their reader has no salvaging read).
+pub fn convert_to_cbz_salvaging(
+    root: &LibraryRoot,
+    src: &Path,
+    limits: ArchiveLimits,
+) -> Result<(Converted, ConversionDamage), CbrConvertError> {
+    let (converted, pages) = convert_to_cbz(root, src, limits, Mode::Salvage)?;
+    let report = ConversionDamage {
+        pages,
+        source_name: src
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        source_backup: converted
+            .outcome
+            .backup
+            .as_ref()
+            .map(|b| b.to_string_lossy().into_owned()),
+    };
+    Ok((converted, report))
+}
+
+/// Whether a conversion refuses a damaged page or writes what it can of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Strict,
+    Salvage,
 }
 
 /// Convert `src` (a `.cb7`) into a sibling `.cbz` (WP-6.5). Same contract as
@@ -99,7 +135,7 @@ pub fn convert_cb7_to_cbz(
     src: &Path,
     limits: ArchiveLimits,
 ) -> Result<Converted, CbrConvertError> {
-    convert_to_cbz(root, src, limits)
+    convert_to_cbz(root, src, limits, Mode::Strict).map(|(c, _)| c)
 }
 
 /// A destination that exists is this module's own error, so callers that
@@ -115,7 +151,9 @@ fn convert_to_cbz(
     root: &LibraryRoot,
     src: &Path,
     limits: ArchiveLimits,
-) -> Result<Converted, CbrConvertError> {
+    mode: Mode,
+) -> Result<(Converted, Vec<ConvertedDamage>), CbrConvertError> {
+    let mut damaged: Vec<ConvertedDamage> = Vec::new();
     let dst = src.with_extension("cbz");
     // A RAR / 7z already *named* `.cbz` (the extension lied) converts in
     // place: the destination is the source path itself, and `convert_atomic`
@@ -137,13 +175,14 @@ fn convert_to_cbz(
             // `dst`, nothing to roll back to). In place there is nothing to
             // do at all.
             if in_place {
-                return Ok(Converted::unchanged(dst));
+                return Ok((Converted::unchanged(dst), damaged));
             }
             archive_rewrite::rename_into_place(root, src, &dst).map_err(dest_exists)?
         }
         Container::Rar => archive_rewrite::convert_atomic(root, src, &dst, |io| {
             let mut cbr = Cbr::open_file(io.source()?, limits).map_err(RewriteError::ArchiveErr)?;
-            repack(&mut cbr, io.staging_file()?, limits)
+            damaged = repack(&mut cbr, io.staging_file()?, limits, mode)?;
+            Ok(())
         })
         .map_err(dest_exists)?,
         Container::SevenZ => archive_rewrite::convert_atomic(root, src, &dst, |io| {
@@ -151,14 +190,15 @@ fn convert_to_cbz(
             // One decode pass for the whole archive; the reads below are
             // then served from memory (solid 7z can't seek per entry).
             cb7.preload_all().map_err(RewriteError::ArchiveErr)?;
-            repack(&mut cb7, io.staging_file()?, limits)
+            damaged = repack(&mut cb7, io.staging_file()?, limits, mode)?;
+            Ok(())
         })
         .map_err(dest_exists)?,
         // A tar has its own reader and writer (`.cbt`); it is not something
         // this converter repacks, so a tar wearing `.cbr` is "unknown" here.
         Container::Tar | Container::Unknown => return Err(CbrConvertError::UnknownContainer),
     };
-    Ok(converted)
+    Ok((converted, damaged))
 }
 
 /// Rebuild the archive `io` reads (a pre-conversion backup: RAR, 7z, or a
@@ -178,21 +218,21 @@ pub fn rebuild_cbz_into(
         Container::Rar => {
             let mut c = Cbr::open_file(source, limits).map_err(RewriteError::ArchiveErr)?;
             let n = c.pages().len();
-            repack(&mut c, io.staging_file()?, limits)?;
+            repack(&mut c, io.staging_file()?, limits, Mode::Strict)?;
             n
         }
         Container::SevenZ => {
             let mut c = Cb7::open_file(source, limits).map_err(RewriteError::ArchiveErr)?;
             c.preload_all().map_err(RewriteError::ArchiveErr)?;
             let n = c.pages().len();
-            repack(&mut c, io.staging_file()?, limits)?;
+            repack(&mut c, io.staging_file()?, limits, Mode::Strict)?;
             n
         }
         Container::Zip => {
             let mut c =
                 archive::cbz::Cbz::open_file(source, limits).map_err(RewriteError::ArchiveErr)?;
             let n = c.pages().len();
-            repack(&mut c, io.staging_file()?, limits)?;
+            repack(&mut c, io.staging_file()?, limits, Mode::Strict)?;
             n
         }
         Container::Tar | Container::Unknown => {
@@ -219,19 +259,36 @@ pub fn rebuild_cbz_into(
 }
 
 /// Read every page (natural-sort order — the order the reader uses) plus the
-/// entries the rewrite policy keeps, and write them as a CBZ at `tmp`.
+/// entries the rewrite policy keeps, and write them as a CBZ at `tmp`. In
+/// [`Mode::Salvage`] a page whose data is damaged is written as
+/// [`damaged_pages::page_for_damaged_entry`] decides and listed in the
+/// result; in [`Mode::Strict`] it fails the repack as it always did.
 fn repack(
     src: &mut dyn ComicArchive,
     tmp: std::fs::File,
     limits: ArchiveLimits,
-) -> Result<(), RewriteError> {
+    mode: Mode,
+) -> Result<Vec<ConvertedDamage>, RewriteError> {
     let page_names: Vec<String> = src.pages().iter().map(|e| e.name.clone()).collect();
     let mut pages: Vec<(String, Vec<u8>, i64)> = Vec::with_capacity(page_names.len());
-    for name in &page_names {
-        let bytes = src
-            .read_entry_bytes(name)
-            .map_err(RewriteError::ArchiveErr)?;
-        pages.push((ext_of(name), bytes, 0));
+    let mut damaged = Vec::new();
+    for (i, name) in page_names.iter().enumerate() {
+        let read = match mode {
+            Mode::Strict => src
+                .read_entry_bytes(name)
+                .map(archive::comic_archive::EntryRead::intact),
+            Mode::Salvage => src.read_entry_bytes_salvaging(name),
+        }
+        .map_err(|e| RewriteError::ArchiveErr(name_the_page(e, name)))?;
+        let Some(damage) = read.damage else {
+            pages.push((ext_of(name), read.bytes, 0));
+            continue;
+        };
+        let (bytes, d) = damaged_pages::page_for_damaged_entry(name, read.bytes, &damage, |kind| {
+            cbz_write::page_entry_name(i, &page_ext(name, kind))
+        });
+        pages.push((page_ext(name, d.kind), bytes, 0));
+        damaged.push(d);
     }
     // Preserve every non-page entry the rewrite policy keeps (root
     // ComicInfo/MetronInfo pair + foreign sidecars such as CoMet.xml /
@@ -240,7 +297,27 @@ fn repack(
     let extras =
         archive::rewrite_policy::preserved_extras(src, true).map_err(RewriteError::ArchiveErr)?;
     cbz_write::write_pages(pages, extras, tmp, limits).map_err(RewriteError::ArchiveErr)?;
-    Ok(())
+    Ok(damaged)
+}
+
+/// A read error that says which page it came from (a malformed-archive
+/// message is reported to the operator as it is).
+fn name_the_page(e: archive::ArchiveError, name: &str) -> archive::ArchiveError {
+    match e {
+        archive::ArchiveError::Malformed(msg) => {
+            archive::ArchiveError::Malformed(format!("page {name}: {msg}"))
+        }
+        other => other,
+    }
+}
+
+/// The extension a damaged page is written under: its own, or `png` for
+/// the placeholder (which is a PNG).
+fn page_ext(name: &str, kind: damaged_pages::DamageKind) -> String {
+    match kind {
+        damaged_pages::DamageKind::Salvaged => ext_of(name),
+        damaged_pages::DamageKind::Placeholder => "png".to_owned(),
+    }
 }
 
 /// Lowercase extension (no dot) of an entry name, defaulting to `jpg`.

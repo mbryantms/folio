@@ -411,7 +411,7 @@ pub fn write_pages(
     };
 
     for (i, (ext, bytes, level)) in pages.iter().enumerate() {
-        let name = format!("p{:04}.{}", i + 1, ext);
+        let name = page_entry_name(i, ext);
         emit(&mut writer, &mut summary, &name, bytes, *level, true)?;
     }
     for (name, bytes, level) in &extras {
@@ -420,6 +420,12 @@ pub fn write_pages(
 
     writer.finish().map_err(map_zip_err)?;
     Ok(summary)
+}
+
+/// The entry name [`write_pages`] gives the page at 0-based `index` with
+/// extension `ext`: `p0001.jpg`, …
+pub fn page_entry_name(index: usize, ext: &str) -> String {
+    format!("p{:04}.{}", index + 1, ext)
 }
 
 /// Pick a `SimpleFileOptions` matching the requested deflate level.

@@ -55,9 +55,17 @@
 //! so the reader opens with the files before the bad block instead of
 //! refusing the whole archive. A damaged header *first* is still an error.
 //!
+//! **Damaged entries.** A page whose data fails its checksum is an error
+//! for [`ComicArchive::read_entry_bytes`], as it always was. The converter
+//! reads with [`ComicArchive::read_entry_bytes_salvaging`] instead, which
+//! keeps what UnRAR decoded and marks it damaged ([`crate::rar_salvage`]
+//! explains why that is safe), so one bad page no longer keeps a whole
+//! issue out of the library.
+//!
 //! NOTICE: this file uses the `unrar` crate; its license requires
 //! attribution to rarlab's UnRAR library.
 
+use crate::comic_archive::{EntryDamage, EntryRead};
 use crate::source::ArchiveFile;
 use crate::{
     ArchiveEntry, ArchiveError, ArchiveLimits, SkippedEntry, comic_archive::ComicArchive,
@@ -391,6 +399,22 @@ impl ComicArchive for Cbr {
         self.recovery
     }
     fn read_entry_bytes(&mut self, name: &str) -> Result<Vec<u8>, ArchiveError> {
+        self.read_entry(name, false).map(|r| r.bytes)
+    }
+    fn read_entry_bytes_salvaging(&mut self, name: &str) -> Result<EntryRead, ArchiveError> {
+        self.read_entry(name, true)
+    }
+    fn path(&self) -> &Path {
+        self.source.display_path()
+    }
+}
+
+impl Cbr {
+    /// One process pass to `name`. With `salvage`, an entry UnRAR answers
+    /// "bad data" for (its checksum failed) is decoded once more by
+    /// [`crate::rar_salvage`], which keeps the bytes the crate drops, and
+    /// comes back marked damaged (see the module docs).
+    fn read_entry(&mut self, name: &str, salvage: bool) -> Result<EntryRead, ArchiveError> {
         let want = sanitize_entry_name(name)
             .map(|s| s.canonical)
             .unwrap_or_else(|_| name.to_ascii_lowercase());
@@ -416,11 +440,15 @@ impl ComicArchive for Cbr {
                         "entry size",
                     )));
                 }
-                let (data, _next) = open
-                    .read()
-                    .map_err(|e| ArchiveError::Malformed(format!("cbr read: {e}")))?;
+                let read = match open.read() {
+                    Ok((data, _next)) => EntryRead::intact(data),
+                    Err(e) if salvage && e.code == unrar::error::Code::BadData => {
+                        self.salvage(name, &want, &e)?
+                    }
+                    Err(e) => return Err(ArchiveError::Malformed(format!("cbr read: {e}"))),
+                };
                 self.rar.finish_pass(&self.source)?;
-                return Ok(data);
+                return Ok(read);
             }
             cursor = open
                 .skip()
@@ -429,12 +457,46 @@ impl ComicArchive for Cbr {
 
         Err(ArchiveError::Malformed(format!("entry not found: {name}")))
     }
-    fn path(&self) -> &Path {
-        self.source.display_path()
-    }
-}
 
-impl Cbr {
+    /// The salvage pass for `want` after the crate's read answered `err`.
+    /// The bytes come from a second pass over the same file name (checked
+    /// like every other pass); if that pass reads the entry cleanly after
+    /// all, it is returned as intact.
+    fn salvage(
+        &self,
+        name: &str,
+        want: &str,
+        err: &unrar::error::UnrarError,
+    ) -> Result<EntryRead, ArchiveError> {
+        if self.rar.check {
+            self.source.check_rar_name()?;
+        }
+        let salvaged =
+            crate::rar_salvage::salvage_entry(&self.rar.name, want, self.limits.max_entry_bytes)?;
+        self.rar.finish_pass(&self.source)?;
+        let Some(s) = salvaged else {
+            return Err(ArchiveError::Malformed(format!("cbr read: {err}")));
+        };
+        if !s.damaged {
+            return Ok(EntryRead::intact(s.bytes));
+        }
+        tracing::warn!(
+            path = %self.source.display_path().display(),
+            entry = %name,
+            declared = s.declared_size,
+            recovered = s.bytes.len(),
+            error = %err,
+            "cbr: entry failed its checksum; keeping the bytes UnRAR decoded",
+        );
+        Ok(EntryRead {
+            bytes: s.bytes,
+            damage: Some(EntryDamage {
+                reason: crate::damage::CHECKSUM_FAILED,
+                declared_size: s.declared_size,
+            }),
+        })
+    }
+
     /// Whether this reader went through the checked display path rather
     /// than `/proc/self/fd` (see the module docs). For tests.
     pub fn uses_checked_path(&self) -> bool {

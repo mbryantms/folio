@@ -9,6 +9,7 @@
 //! Milestone 8 expands this with series.json / MetronInfo / volume
 //! disambiguation / specials detection / hash-mismatch supersession.
 
+use crate::library::damaged_pages::{self, ConversionDamage, DamageRecord, ResolvedDamage};
 use crate::library::event_log::{Action, Category, EventCollector, Severity};
 use crate::library::health::{HealthCollector, IssueKind};
 use crate::library::identity::SeriesIdentityHint;
@@ -48,7 +49,15 @@ struct RowMeta {
     file_size: i64,
     file_mtime: chrono::DateTime<chrono::FixedOffset>,
     needs_count_backfill: bool,
+    /// The issue has `issue_damaged_pages` rows
+    /// ([`crate::library::damaged_pages`]): prepare re-checks them when it
+    /// re-reads the file, and only then queries them.
+    has_damage: bool,
 }
+
+/// SQL for [`RowMeta::has_damage`].
+const HAS_DAMAGE_EXPR: &str =
+    "EXISTS (SELECT 1 FROM issue_damaged_pages d WHERE d.issue_id = issues.id)";
 
 /// SQL mirror of [`row_needs_comicinfo_count_backfill`] — keep the two in
 /// sync (the unit test `manifest_backfill_expr_matches_rust` pins parity).
@@ -85,6 +94,7 @@ impl IssueManifest {
                 Expr::cust(NEEDS_COUNT_BACKFILL_EXPR),
                 "needs_count_backfill",
             )
+            .column_as(Expr::cust(HAS_DAMAGE_EXPR), "has_damage")
             .into_model::<RowMeta>()
             .all(db)
             .await?;
@@ -94,6 +104,11 @@ impl IssueManifest {
                 .map(|row| (row.file_path.clone(), row))
                 .collect(),
         })
+    }
+
+    /// Whether the row at `path` has damaged-page records.
+    pub fn has_damage(&self, path: &str) -> bool {
+        self.by_path.get(path).is_some_and(|m| m.has_damage)
     }
 
     /// Does a row exist for this path at all?
@@ -198,6 +213,10 @@ struct ArchiveDiagnostics {
     /// render "X of Y dropped" in the health-issue payload so the
     /// operator has both the count and the ratio.
     total_entries: u32,
+    /// Every page's entry name and recorded CRC-32 (CBZ only; `None`
+    /// elsewhere), in page order: what damaged-page records are matched
+    /// against ([`crate::library::damaged_pages::resolve`]).
+    page_crcs: Vec<(String, Option<u32>)>,
 }
 
 /// Per-series ingest context. Holds the immutable cluster the
@@ -292,6 +311,8 @@ struct ParsedArchive {
     /// elements through on the next rewrite (WP-2.6 (c)). `None` when no
     /// MetronInfo.xml was present.
     metron_info_raw: Option<serde_json::Value>,
+    /// See [`ArchiveDiagnostics::page_crcs`].
+    page_crcs: Vec<(String, Option<u32>)>,
 }
 
 /// Outcome of the by-content-hash dedupe check, when no row was found
@@ -513,6 +534,7 @@ async fn parse_archive_for_ingest(
         metroninfo_present,
         metron_fields,
         metron_info_raw,
+        page_crcs: diagnostics.page_crcs,
     }))
 }
 
@@ -588,8 +610,9 @@ async fn open_for_ingest(
 /// Outcome of attempting a scan-time CBR/CB7→CBZ conversion.
 #[derive(Debug)]
 enum CbrIngestAction {
-    /// Converted to this `.cbz`; caller should ingest it.
-    Converted(std::path::PathBuf),
+    /// Converted to this `.cbz`; caller should ingest it. The report lists
+    /// the pages written from damaged entries (usually none).
+    Converted(std::path::PathBuf, ConversionDamage),
     /// A `.cbz` twin already existed; skip the `.cbr` without a health issue.
     SkipDuplicate,
     /// Conversion couldn't run (malformed/encrypted/IO); caller falls back
@@ -620,10 +643,22 @@ fn classify_convert_error(e: &super::cbr_convert::CbrConvertError) -> Option<Cbr
             archive::cbr::MULTI_VOLUME_MESSAGE.to_owned(),
         ));
     }
-    ae.safety_check().map(|check| CbrIngestAction::SkipRefused {
-        check,
-        error: ae.to_string(),
-    })
+    if let Some(check) = ae.safety_check() {
+        return Some(CbrIngestAction::SkipRefused {
+            check,
+            error: ae.to_string(),
+        });
+    }
+    // A file the reader could not read past (a damaged header, or a page
+    // even the salvaging read cannot recover) is damaged, not a format the
+    // library could ingest by turning conversion on: say so, with the
+    // reader's reason (the converter names the page).
+    match ae {
+        archive::ArchiveError::Malformed(msg) => Some(CbrIngestAction::SkipMalformed(format!(
+            "damaged archive: {msg}"
+        ))),
+        _ => None,
+    }
 }
 
 /// The read-only container formats the scanner can convert to `.cbz`.
@@ -680,21 +715,37 @@ async fn convert_for_ingest(
     let result = tokio::task::spawn_blocking(move || {
         let root = crate::library::no_follow::LibraryRoot::resolve(root);
         let converted = match format {
-            ConvertibleFormat::Cbr => super::cbr_convert::convert_cbr_to_cbz(&root, &src, limits),
-            ConvertibleFormat::Cb7 => super::cbr_convert::convert_cb7_to_cbz(&root, &src, limits),
+            // A page that fails its checksum is written as what survived
+            // and reported, not a reason to leave the issue out
+            // (`library::damaged_pages`). CB7 has no salvaging read; the
+            // same call converts it strictly.
+            ConvertibleFormat::Cbr | ConvertibleFormat::Cb7 => {
+                super::cbr_convert::convert_to_cbz_salvaging(&root, &src, limits)
+            }
         };
         // The scanner has no row to repoint before the original's old name
         // goes: it ingests the `.cbz` next (a row for the old name, if any,
         // is reconciled as missing), so the conversion is settled at once.
-        converted.map(|c| c.finish().target)
+        converted.map(|(c, report)| (c.finish().target, report))
     })
     .await
     .map_err(|e| anyhow::anyhow!("{} convert task failed: {e}", format.ext()))?;
     let ext = format.ext();
     match result {
-        Ok(dst) => {
+        Ok((dst, report)) => {
             tracing::info!(src = %path.display(), cbz = %dst.display(), ext, "scanner: converted to CBZ");
-            Ok(CbrIngestAction::Converted(dst))
+            for d in &report.pages {
+                tracing::warn!(
+                    src = %path.display(),
+                    entry = %d.source_entry,
+                    written = %d.entry_name,
+                    kind = d.kind.as_str(),
+                    declared = d.declared_size,
+                    recovered = d.recovered_size,
+                    "scanner: converted with a damaged page",
+                );
+            }
+            Ok(CbrIngestAction::Converted(dst, report))
         }
         Err(super::cbr_convert::CbrConvertError::DestinationExists(dst)) => {
             tracing::info!(
@@ -868,12 +919,76 @@ pub struct PreparedIngest {
     /// and progress with (see [`prepare_page_hashes`]); `NotNeeded` for
     /// the common case.
     page_hashes: PreparedPageHashes,
+    /// The issue's damaged-page records matched against this file
+    /// ([`crate::library::damaged_pages`]): `Some` when there were records
+    /// to check (from the issue's rows, or a conversion that just wrote
+    /// damaged pages) — persist stores exactly these, so an empty list
+    /// clears them; `None` leaves the rows alone.
+    damage: Option<Vec<ResolvedDamage>>,
 }
 
 impl PreparedIngest {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    /// Record a conversion's damaged pages on this (freshly converted)
+    /// file, matched against its pages, and report each one.
+    fn attach_conversion_damage(
+        &mut self,
+        report: &ConversionDamage,
+        health: &mut HealthCollector,
+    ) {
+        if report.pages.is_empty() {
+            return;
+        }
+        let records = DamageRecord::from_conversion(report);
+        let resolved = damaged_pages::resolve(&records, &self.parsed.page_crcs);
+        emit_damage(health, &self.path, &resolved);
+        self.damage = Some(resolved);
+    }
+}
+
+/// One `DamagedPage` finding per damaged page still in the file.
+fn emit_damage(health: &mut HealthCollector, path: &Path, resolved: &[ResolvedDamage]) {
+    for d in resolved {
+        health.emit(IssueKind::DamagedPage {
+            path: path.to_path_buf(),
+            page_index: d.page_index,
+            entry: d.record.entry_name.clone(),
+            kind: d.record.kind.clone(),
+            reason: d.record.reason.clone(),
+        });
+    }
+}
+
+/// Persist half of the damaged-page records: store what prepare matched,
+/// or — for a row just adopted from a moved file, which prepare could not
+/// know — check the adopted issue's own records against this file.
+async fn settle_damage<C: ConnectionTrait>(
+    db: &C,
+    issue_id: &str,
+    damage: Option<Vec<ResolvedDamage>>,
+    adopted: bool,
+    page_crcs: &[(String, Option<u32>)],
+    path: &Path,
+    health: &mut HealthCollector,
+) -> anyhow::Result<()> {
+    let resolved = match damage {
+        Some(d) => d,
+        None if adopted => {
+            let records = damaged_pages::load_for_issue(db, issue_id).await?;
+            if records.is_empty() {
+                return Ok(());
+            }
+            let resolved = damaged_pages::resolve(&records, page_crcs);
+            emit_damage(health, path, &resolved);
+            resolved
+        }
+        None => return Ok(()),
+    };
+    damaged_pages::store(db, issue_id, &resolved).await?;
+    Ok(())
 }
 
 /// First half of [`ingest_one_with_fingerprint`]: returns `None` when the
@@ -990,7 +1105,7 @@ pub async fn prepare_ingest<C: ConnectionTrait>(
             // the same no-follow walk; this handle is not needed.
             drop(source);
             match convert_for_ingest(state, lib, path, format).await? {
-                CbrIngestAction::Converted(dst) => {
+                CbrIngestAction::Converted(dst, report) => {
                     stats.files_converted += 1;
                     let e = events
                         .build(
@@ -1022,7 +1137,12 @@ pub async fn prepare_ingest<C: ConnectionTrait>(
                         stamp_cbr_confirmed(state, lib).await;
                     }
                     let (size, mtime) = file_fingerprint(&dst)?;
-                    return Box::pin(prepare_ingest(ctx, db, &dst, size, mtime, outputs)).await;
+                    let mut prepared =
+                        Box::pin(prepare_ingest(ctx, db, &dst, size, mtime, outputs)).await?;
+                    if let Some(p) = prepared.as_mut() {
+                        p.attach_conversion_damage(&report, outputs.health);
+                    }
+                    return Ok(prepared);
                 }
                 // A `.cbz` twin already exists — leave it to the normal
                 // path; skip the source quietly (likely a duplicate).
@@ -1121,6 +1241,22 @@ pub async fn prepare_ingest<C: ConnectionTrait>(
         // No pages: nothing to re-anchor (persist applies the same test).
         PreparedPageHashes::NotNeeded
     };
+    // Damaged-page records of the issue this file belongs to: re-checked
+    // against the file just read (the manifest says which rows have any,
+    // so a scan queries them only for those).
+    let damage = match existing.as_ref() {
+        Some(row) if manifest.is_none_or(|m| m.has_damage(&path_str)) => {
+            let records = damaged_pages::load_for_issue(db, &row.id).await?;
+            if records.is_empty() {
+                None
+            } else {
+                let resolved = damaged_pages::resolve(&records, &parsed.page_crcs);
+                emit_damage(health, path, &resolved);
+                Some(resolved)
+            }
+        }
+        _ => None,
+    };
     // `series_id` / `series_folder` are persist-phase inputs.
     let _ = (series_id, series_folder);
     Ok(Some(PreparedIngest {
@@ -1134,6 +1270,7 @@ pub async fn prepare_ingest<C: ConnectionTrait>(
         identity,
         parsed,
         page_hashes,
+        damage,
     }))
 }
 
@@ -1372,7 +1509,9 @@ pub async fn persist_prepared<C: ConnectionTrait + sea_orm::TransactionTrait>(
                 metroninfo_present,
                 metron_fields,
                 metron_info_raw,
+                page_crcs,
             },
+        damage,
     } = prepared;
     let path: &Path = &path;
     let mut existing = existing;
@@ -1485,10 +1624,14 @@ pub async fn persist_prepared<C: ConnectionTrait + sea_orm::TransactionTrait>(
     // deterministic if two rows transiently share a hash. A pending
     // (lazy) row has no content hash to compare yet — `hash_backfill`
     // re-runs this check once the real hash lands.
+    let mut adopted = false;
     if existing.is_none() && !hash_pending {
         match dedupe_by_content_hash(db, lib, &hash, series_id, path, health, stats).await? {
             DedupeOutcome::NotDuplicate => {}
-            DedupeOutcome::Moved(prior) => existing = Some(*prior),
+            DedupeOutcome::Moved(prior) => {
+                existing = Some(*prior);
+                adopted = true;
+            }
             DedupeOutcome::Duplicate => return Ok(()),
         }
     }
@@ -1904,6 +2047,7 @@ pub async fn persist_prepared<C: ConnectionTrait + sea_orm::TransactionTrait>(
                 "file_path": path_str,
             }));
         events.push(e);
+        settle_damage(db, &updated.id, damage, adopted, &page_crcs, path, health).await?;
     } else {
         // `hash` is the lazy fingerprint for a pending row, else the
         // content hash — `allocate_issue_id` owns the precedence.
@@ -2096,6 +2240,7 @@ pub async fn persist_prepared<C: ConnectionTrait + sea_orm::TransactionTrait>(
                 "file_path": path_str,
             }));
         events.push(e);
+        settle_damage(db, &inserted.id, damage, false, &page_crcs, path, health).await?;
     }
 
     Ok(())
@@ -2345,6 +2490,11 @@ fn parse_archive_timed_with(
         recovery: archive.recovery_used(),
         skipped: archive.entries_skipped().to_vec(),
         total_entries: (archive.entries().len() + archive.entries_skipped().len()) as u32,
+        page_crcs: archive
+            .pages()
+            .iter()
+            .map(|e| (e.name.clone(), archive.entry_crc32(&e.name)))
+            .collect(),
     };
 
     // Count image entries in the archive so missing/partial ComicInfo page
@@ -3658,8 +3808,8 @@ mod tests {
     }
 
     /// Every safety refusal the RAR / 7z readers or the CBZ writer can
-    /// raise during conversion becomes its own finding; anything else
-    /// keeps the generic skip.
+    /// raise during conversion becomes its own finding, as does a damaged
+    /// file; anything else keeps the generic skip.
     #[test]
     fn conversion_refusals_are_classified() {
         use archive::{ArchiveError, Cap, SafetyCheck};
@@ -3682,7 +3832,16 @@ mod tests {
                 ..
             })
         ));
-        assert!(refused(ArchiveError::Malformed("bad".into())).is_none());
+        // A file conversion could not read past is reported as damaged,
+        // with the reader's reason, not as an unsupported format.
+        match refused(ArchiveError::Malformed(
+            "page p2.jpg: cbr header: bad".into(),
+        )) {
+            Some(CbrIngestAction::SkipMalformed(msg)) => {
+                assert_eq!(msg, "damaged archive: page p2.jpg: cbr header: bad");
+            }
+            other => panic!("{other:?}"),
+        }
         assert!(refused(ArchiveError::Encrypted).is_none());
         assert!(classify_convert_error(&CbrConvertError::UnknownContainer).is_none());
     }

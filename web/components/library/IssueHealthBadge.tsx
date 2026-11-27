@@ -39,7 +39,10 @@ export function IssueHealthBadge({
   seriesSlug: string;
   issueSlug: string;
 }) {
-  const { data } = useIssueHealth(seriesSlug, issueSlug);
+  const { data: all } = useIssueHealth(seriesSlug, issueSlug);
+  // Damaged pages have their own chip, shown to every reader from
+  // `issue.damaged_pages` (DamagedPagesBadge).
+  const data = all?.filter((d) => d.kind !== "DamagedPage");
   if (!data || data.length === 0) return null;
 
   const warnings = data.filter((d) => d.severity === "warning");

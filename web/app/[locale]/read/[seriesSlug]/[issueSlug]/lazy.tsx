@@ -82,6 +82,14 @@ function NoProgressUnavailableBanner() {
   return null;
 }
 
+/** "This page is damaged in the file" pill (`DamagedPageNotice`). Mounted
+ *  only while a damaged page is on screen, which is rare, so it costs the
+ *  first load nothing. */
+export const DamagedPageNotice = dynamic(
+  () => import("./DamagedPageNotice").then((m) => m.DamagedPageNotice),
+  { ssr: false },
+);
+
 /** One-time "this file has known problems" toast (effect-only, renders
  *  nothing). Its health query starts once the chunk lands, just after
  *  hydration; the toast was never part of the first paint. */

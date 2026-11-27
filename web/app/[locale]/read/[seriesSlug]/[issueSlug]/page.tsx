@@ -328,6 +328,7 @@ export default async function ReadPage({
         incognito={isIncognito}
         initialPeek={initialPeek}
         progressUnavailable={progressUnavailable}
+        damagedPages={issue.damaged_pages}
         readingMinActiveMs={readingMinActiveMs}
         readingMinPages={readingMinPages}
         readingIdleMs={readingIdleMs}

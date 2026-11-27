@@ -248,6 +248,12 @@ impl ComicArchive for CachedReader {
             Self::Cbt(c) => ComicArchive::entries_skipped(c),
         }
     }
+    fn entry_crc32(&self, name: &str) -> Option<u32> {
+        match self {
+            Self::Cbz(c) => ComicArchive::entry_crc32(c, name),
+            Self::Cbt(c) => ComicArchive::entry_crc32(c, name),
+        }
+    }
 }
 
 pub struct ZipLru {

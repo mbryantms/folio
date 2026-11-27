@@ -138,7 +138,9 @@ Default admin (first registered user becomes admin):
   `eslint-plugin-jsx-a11y` (`recommended`) is the static half; its
   configured rules carry their justification in `eslint.config.mjs`.
 - CBR tests run against the committed `fixtures/synthetic-3page.cbr`
-  (RAR5, stored entries, written by `fixtures/make-cbr-fixture.py`);
+  (RAR5, stored entries, written by `fixtures/make-cbr-fixture.py`; its
+  `--damaged-tail` / `--damaged-page` / `--damaged-page-head` flags write
+  the damaged variants beside it);
   drop any real `.cbr` under `fixtures/` to exercise compressed archives.
 
 ## Conventions to preserve
@@ -918,6 +920,7 @@ Default admin (first registered user becomes admin):
 - Metadata providers architecture: [docs/dev/metadata-providers.md](docs/dev/metadata-providers.md)
 - Metadata providers operator guide (API keys, weekly refresh, troubleshooting): [docs/dev/metadata-operator-guide.md](docs/dev/metadata-operator-guide.md)
 - Metadata sidecar writeback (DB-canonical → XML-canonical inversion, per-library opt-in, drift surfacing): [docs/dev/metadata-sidecar-writeback.md](docs/dev/metadata-sidecar-writeback.md)
+- Damaged pages (RAR pages that fail their checksum: salvage read, placeholder, `issue_damaged_pages` keyed by page CRC, issue badge / reader notice, backups kept): [docs/dev/damaged-pages.md](docs/dev/damaged-pages.md)
 - Archive writes and the "files stay clean" invariant (every writer, its `allow_archive_writeback` gate, its test): [docs/dev/archive-writes.md](docs/dev/archive-writes.md)
 - Matching accuracy (ComicTagger-derived heuristics, threshold tuning, fixture-adding playbook): [docs/dev/matching-accuracy.md](docs/dev/matching-accuracy.md)
 - M0 schema restructure (external_ids + junctions + field_provenance + issue_cover): [docs/dev/schema-restructure.md](docs/dev/schema-restructure.md)

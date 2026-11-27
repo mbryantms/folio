@@ -18,6 +18,36 @@
 use crate::{ArchiveEntry, ArchiveError, SkippedEntry};
 use std::path::Path;
 
+/// An entry read by [`ComicArchive::read_entry_bytes_salvaging`].
+#[derive(Debug)]
+pub struct EntryRead {
+    pub bytes: Vec<u8>,
+    /// Set when the bytes are what the reader could recover from an entry
+    /// whose data is damaged; `None` for a clean read.
+    pub damage: Option<EntryDamage>,
+}
+
+impl EntryRead {
+    /// A clean read.
+    pub fn intact(bytes: Vec<u8>) -> Self {
+        Self {
+            bytes,
+            damage: None,
+        }
+    }
+}
+
+/// What was wrong with an entry read by
+/// [`ComicArchive::read_entry_bytes_salvaging`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntryDamage {
+    /// Static reason, see [`crate::damage`].
+    pub reason: &'static str,
+    /// The size the archive declared for the entry; the recovered bytes
+    /// may be shorter.
+    pub declared_size: u64,
+}
+
 /// Common surface for the scan pipeline. Any format we recognize implements
 /// this; [`crate::open_file`] dispatches to the right reader on the sniffed
 /// container. Every reader reads through the handle it was opened from
@@ -47,6 +77,16 @@ pub trait ComicArchive: Send {
         bytes.truncate(max_bytes);
         Ok(bytes)
     }
+    /// Read the named entry like [`Self::read_entry_bytes`], except that
+    /// an entry whose *data* is damaged (it fails its checksum) comes back
+    /// with whatever the reader decoded and an [`EntryDamage`] saying so,
+    /// instead of an error. Every other failure, and every limit, is the
+    /// same as `read_entry_bytes`. For converting a damaged archive with
+    /// its damage recorded rather than refusing the whole file. Defaulted
+    /// to a plain read; CBR overrides it.
+    fn read_entry_bytes_salvaging(&mut self, name: &str) -> Result<EntryRead, ArchiveError> {
+        self.read_entry_bytes(name).map(EntryRead::intact)
+    }
     fn path(&self) -> &Path;
 
     /// If a recovery branch fired during open, returns a static tag
@@ -65,5 +105,12 @@ pub trait ComicArchive: Send {
     /// non-empty. Defaulted to empty for readers with nothing to report.
     fn entries_skipped(&self) -> &[SkippedEntry] {
         &[]
+    }
+
+    /// The CRC-32 the archive records for the named entry's data, when the
+    /// format keeps one that can be read without decoding (the ZIP central
+    /// directory). `None` otherwise; CBZ overrides it.
+    fn entry_crc32(&self, _name: &str) -> Option<u32> {
+        None
     }
 }

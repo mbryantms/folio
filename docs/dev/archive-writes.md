@@ -530,7 +530,9 @@ Per writer:
   (`scanner::cbr_convert`): the move-into-place of a renamed ZIP
   (`rename_into_place`) and the repack (`convert_atomic`) work in the
   folder handle; the source is read through the handle `convert_atomic`
-  opened.
+  opened. A RAR page that fails its checksum is written as what UnRAR
+  decoded (or Folio's placeholder page) and recorded, not a reason to
+  skip the file; see [damaged-pages.md](damaged-pages.md).
 - **`.bak` retention prune** and **startup staging cleanup**: the walk
   only finds candidates (it never descends into a link); each delete
   goes through `no_follow::remove_library_file`, which re-walks from the

@@ -164,6 +164,13 @@ fast_image_resize = "6"
 rayon = "1.10"
 globset = "0.4"
 unrar = "0.5"
+# The `unrar` crate's own FFI layer, used directly by `archive::rar_salvage`
+# to keep the bytes of a page that fails its checksum. Must stay on the
+# exact version `unrar` depends on: both link the static UnRAR library.
+unrar_sys = "=0.5.8"
+# CRC-32 of pages the converter writes for damaged entries
+# (`library::damaged_pages`); already in the tree through `zip`.
+crc32fast = "1"
 tar = "0.4"
 # CB7 (7z) reader — maintained fork of the abandoned `sevenz-rust` (which
 # carries RUSTSEC-2026-0245/0246). Decode-only: no `compress` (we never
