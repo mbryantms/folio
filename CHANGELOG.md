@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.93.0](https://github.com/mbryantms/folio/compare/v0.92.0...v0.93.0) (2026-11-27)
+
+
+### Added
+
+* **cards:** show cover-card titles on two lines in every grid and rail ([#1808](https://github.com/mbryantms/folio/issues/1808)) ([629581b](https://github.com/mbryantms/folio/commit/629581b13b243d9369b7969b75ee3dcfa783db63))
+
 ## [0.92.0](https://github.com/mbryantms/folio/compare/v0.91.0...v0.92.0) (2026-11-26)
 
 
