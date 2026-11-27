@@ -188,7 +188,7 @@ export function OnDeckCard({
           <div className="text-muted-foreground truncate text-xs" title={meta}>
             {meta}
           </div>
-          <div className="truncate text-sm font-medium" title={heading}>
+          <div className="card-title text-sm font-medium" title={heading}>
             {heading}
           </div>
           {pendingName ? (
@@ -219,6 +219,7 @@ export function OnDeckCardSkeleton({ className }: { className?: string }) {
       <div className="space-y-1.5 px-1">
         <div className="skeleton-shimmer h-2 w-1/2 rounded" />
         <div className="skeleton-shimmer h-3 w-3/4 rounded" />
+        <div className="skeleton-shimmer h-3 w-1/2 rounded" />
         <div className="skeleton-shimmer h-2 w-1/4 rounded" />
       </div>
     </div>

@@ -192,7 +192,7 @@ export function CblWindowCard({
             )}
           </div>
           <div
-            className="truncate text-sm font-medium"
+            className="card-title text-sm font-medium"
             title={cardTitle ?? undefined}
           >
             {cardTitle}

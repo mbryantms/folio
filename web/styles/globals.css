@@ -1967,3 +1967,13 @@ html.theme-reveal::view-transition-group(root) {
 [data-motion="reduced"] .delayed-reveal {
   animation: none;
 }
+
+/* Cover-card title: up to two lines, and always two lines tall, so a
+ * short title leaves its second line blank and every card in a grid or
+ * rail keeps the same height. Long titles end in an ellipsis on line
+ * two; the element's `title` attribute still carries the full text.
+ * Used by every cover card (issues, series, reading lists, Continue
+ * reading, On deck, Upcoming, search). */
+@utility card-title {
+  @apply line-clamp-2 min-h-[2lh] break-words;
+}

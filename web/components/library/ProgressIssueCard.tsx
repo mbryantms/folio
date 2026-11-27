@@ -193,7 +193,7 @@ export function ProgressIssueCard({
           >
             {card.series_name} · {numberLabel}
           </div>
-          <div className="truncate text-sm font-medium" title={headerTitle}>
+          <div className="card-title text-sm font-medium" title={headerTitle}>
             {headerTitle}
           </div>
           <div className="text-muted-foreground mt-0.5 text-[11px]">
@@ -229,6 +229,7 @@ export function ProgressIssueCardSkeleton({
       <div className="space-y-1.5 px-1">
         <div className="skeleton-shimmer h-2 w-1/2 rounded" />
         <div className="skeleton-shimmer h-3 w-3/4 rounded" />
+        <div className="skeleton-shimmer h-3 w-1/2 rounded" />
         <div className="skeleton-shimmer h-2 w-1/3 rounded" />
       </div>
     </div>

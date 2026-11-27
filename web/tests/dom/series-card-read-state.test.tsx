@@ -239,12 +239,12 @@ describe("SeriesCard collection badge", () => {
 });
 
 describe("SeriesCardSkeleton", () => {
-  it("keeps the loaded card's box: same wrapper, cover and two lines", () => {
+  it("keeps the loaded card's box: same wrapper, cover, two title lines and meta", () => {
     const { container } = render(<SeriesCardSkeleton />);
     const root = container.firstElementChild as HTMLElement;
     expect(root.className).toContain("flex shrink-0 flex-col gap-2 p-1");
     expect(root.className).toContain("w-full");
     expect(root.children).toHaveLength(2);
-    expect(root.children[1]!.children).toHaveLength(2);
+    expect(root.children[1]!.children).toHaveLength(3);
   });
 });
