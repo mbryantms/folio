@@ -97,6 +97,10 @@ pub enum HealthIssueKind {
     /// A page that failed to decode (deep validate).
     #[sea_orm(string_value = "UnreadablePage")]
     UnreadablePage,
+    /// A page Folio kept from a damaged archive (salvaged bytes or a
+    /// placeholder; see `server::library::damaged_pages`).
+    #[sea_orm(string_value = "DamagedPage")]
+    DamagedPage,
     /// A structurally valid archive with no image entries.
     #[sea_orm(string_value = "NoPages")]
     NoPages,
@@ -142,6 +146,7 @@ impl HealthIssueKind {
             Self::RecoveredArchive => "RecoveredArchive",
             Self::SkippedArchiveEntries => "SkippedArchiveEntries",
             Self::UnreadablePage => "UnreadablePage",
+            Self::DamagedPage => "DamagedPage",
             Self::NoPages => "NoPages",
             Self::AmbiguousFolder => "AmbiguousFolder",
             Self::DuplicateExternalId => "DuplicateExternalId",
@@ -248,6 +253,7 @@ mod tests {
                     "SkippedArchiveEntries",
                 ),
                 (HealthIssueKind::UnreadablePage, "UnreadablePage"),
+                (HealthIssueKind::DamagedPage, "DamagedPage"),
                 (HealthIssueKind::NoPages, "NoPages"),
                 (HealthIssueKind::AmbiguousFolder, "AmbiguousFolder"),
                 (HealthIssueKind::DuplicateExternalId, "DuplicateExternalId"),

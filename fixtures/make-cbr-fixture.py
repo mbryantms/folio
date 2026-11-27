@@ -18,15 +18,24 @@ def block(htype: int, hflags: int, body: bytes, data: bytes = b"") -> bytes:
     hdr = vint(len(rest)) + rest
     return struct.pack("<I", zlib.crc32(hdr) & 0xFFFFFFFF) + hdr + data
 
-def rar5(entries: list[tuple[str, bytes]], damaged_tail: bool = False) -> bytes:
+def rar5(entries: list[tuple[str, bytes]], damaged_tail: bool = False,
+         damage: dict[str, int] | None = None) -> bytes:
+    """`damage` maps an entry name to the offset of one byte to flip in its
+    stored data *after* the CRC was taken: the headers stay intact and UnRAR
+    answers "checksum error" for that entry alone."""
     out = bytearray(b"Rar!\x1a\x07\x01\x00")
     out += block(1, 0, vint(0))                      # main archive header, archive flags = 0
     for name, data in entries:
+        crc = zlib.crc32(data) & 0xFFFFFFFF
+        if damage and name in damage:
+            flipped = bytearray(data)
+            flipped[damage[name]] ^= 0xFF
+            data = bytes(flipped)
         nb = name.encode("utf-8")
         body = (vint(0x0004)                         # file flags: CRC32 present
                 + vint(len(data))                    # unpacked size
                 + vint(0x20)                         # attributes (archive bit)
-                + struct.pack("<I", zlib.crc32(data) & 0xFFFFFFFF)
+                + struct.pack("<I", crc)
                 + vint(0)                            # compression info: version 0, method 0 (store), dict 128K
                 + vint(0)                            # host OS: Windows
                 + vint(len(nb)) + nb)
@@ -48,5 +57,16 @@ if __name__ == "__main__":
     # sees image magic, then distinct filler so bytes differ per page.
     jfif = bytes.fromhex("FFD8FFE000104A46494600010100000100010000")
     pages = [(f"page-{i:03}.jpg", jfif + bytes([i]) * 64 + b"\xFF\xD9") for i in (1, 2, 3)]
+    args = sys.argv[1:]
     # `--damaged-tail` writes synthetic-3page-damaged-tail.cbr.
-    sys.stdout.buffer.write(rar5(pages, damaged_tail="--damaged-tail" in sys.argv[1:]))
+    # `--damaged-page` writes synthetic-3page-damaged-page.cbr: page 2 fails
+    #   its checksum on a byte in the middle, so its bytes still start as a
+    #   JPEG (the Avengers (1963) #253 shape).
+    # `--damaged-page-head` writes synthetic-3page-damaged-page-head.cbr: the
+    #   flipped byte is page 2's first, so what survives is no image at all.
+    damage = None
+    if "--damaged-page" in args:
+        damage = {"page-002.jpg": 40}
+    elif "--damaged-page-head" in args:
+        damage = {"page-002.jpg": 0}
+    sys.stdout.buffer.write(rar5(pages, damaged_tail="--damaged-tail" in args, damage=damage))

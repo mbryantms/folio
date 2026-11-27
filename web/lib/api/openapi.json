@@ -23459,6 +23459,42 @@
           }
         }
       },
+      "DamagedPageKind": {
+        "type": "string",
+        "description": "What the page holds.",
+        "enum": [
+          "salvaged",
+          "placeholder"
+        ]
+      },
+      "DamagedPageView": {
+        "type": "object",
+        "description": "One page Folio kept from a damaged archive.",
+        "required": [
+          "page_index",
+          "kind",
+          "reason",
+          "detected_at"
+        ],
+        "properties": {
+          "detected_at": {
+            "type": "string",
+            "description": "RFC3339 time the damage was found (the conversion)."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/DamagedPageKind"
+          },
+          "page_index": {
+            "type": "integer",
+            "format": "int32",
+            "description": "0-based page index, as the reader counts pages."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why the page is damaged: `checksum-failed` (its data failed the\narchive's checksum)."
+          }
+        }
+      },
       "DashboardResp": {
         "type": "object",
         "required": [
@@ -27436,6 +27472,7 @@
           "RecoveredArchive",
           "SkippedArchiveEntries",
           "UnreadablePage",
+          "DamagedPage",
           "NoPages",
           "AmbiguousFolder",
           "DuplicateExternalId",
@@ -28045,6 +28082,13 @@
               "$ref": "#/components/schemas/IssueCreditEntry"
             },
             "description": "Credits from the junction tables, in stored order — what the\nCredits tab renders. The flat per-role columns above are the\nderived read-cache of the same rows."
+          },
+          "damaged_pages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DamagedPageView"
+            },
+            "description": "Pages Folio kept from a damaged archive, in page order\n(`library::damaged_pages`): converting the file found their data\ndamaged and wrote what could be recovered, or a stand-in page.\nEmpty for an undamaged issue. Populated by\n[`enrich_issue_detail`]."
           },
           "day": {
             "type": [

@@ -707,7 +707,10 @@ const MAX_QUERIES_ADMIN_STATS: u64 = 20; // observed ≈ 6
 // links: one indexed lookup on `series_external_relationship`.
 // The progress summary now shares the list's one grouped query (was two).
 const MAX_QUERIES_SERIES_DETAIL: u64 = 17; // observed 15 (16 before the shared progress query)
-const MAX_QUERIES_ISSUE_DETAIL: u64 = 20; // observed ≈ 9 (parallel try_join set)
+// Damaged pages: +1 — `enrich_issue_detail` reads the issue's
+// `issue_damaged_pages` rows (one indexed lookup by issue id) so the issue
+// page and reader can show them.
+const MAX_QUERIES_ISSUE_DETAIL: u64 = 21; // observed 21
 // The series page's issue list. Each card carries the viewer's own
 // progress from ONE `progress_records` primary-key lookup per page
 // (`issue_card::attach_progress`); a per-card lookup would add ~10 here.

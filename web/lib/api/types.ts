@@ -78,6 +78,8 @@ export type EntityListView = Schemas["CursorPage_EntityListItem"];
 export type EntitySlugs = Schemas["EntitySlugs"];
 export type PeopleListView = Schemas["PeopleListView"];
 export type IssueDetailView = Schemas["IssueDetailView"];
+export type DamagedPageView = Schemas["DamagedPageView"];
+export type DamagedPageKind = Schemas["DamagedPageKind"];
 export type IssueLink = Schemas["IssueLink"];
 export type UpdateIssueReq = Schemas["UpdateIssueReq"];
 // archive-rewrite-1.0 — page editor surface.

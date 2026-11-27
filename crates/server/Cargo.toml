@@ -77,6 +77,7 @@ notify-debouncer-full = { workspace = true }
 rustix = { workspace = true }
 image = { workspace = true }
 imageproc = { workspace = true }
+crc32fast = { workspace = true }
 # ONNX Runtime sessions for the text-reading engines Folio runs itself
 # (`src/ocr/session.rs`): balloon detector, line finder, line recogniser,
 # and the Japanese recogniser's encoder and decoder.

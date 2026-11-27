@@ -95,6 +95,10 @@ const KIND_COPY: Record<string, KindCopy> = {
   RecoveredArchive: { label: "Recovered archive" },
   SkippedArchiveEntries: { label: "Skipped archive entries" },
   UnreadablePage: { label: "Unreadable page" },
+  DamagedPage: {
+    label: "Damaged page",
+    hint: "The original file failed its checksum on this page, so Folio converted it keeping what could be recovered (or a placeholder) and kept the original as .bak. Replace the file with a good copy and rescan to clear this.",
+  },
   NoPages: { label: "Archive has no pages" },
   DuplicateExternalId: {
     label: "Duplicate provider ID",
@@ -252,6 +256,15 @@ export function healthPayloadSummary(kind: string, p: unknown): string {
       return path
         ? `${path} — recovered (${technique})`
         : `recovered (${technique})`;
+    }
+    case "DamagedPage": {
+      const page = num(obj.page_index);
+      const what =
+        str(obj.kind) === "placeholder"
+          ? "nothing recovered, placeholder shown"
+          : "partly recovered";
+      const suffix = `page ${page !== undefined ? page + 1 : "?"} damaged (${what})`;
+      return path ? `${path} — ${suffix}` : suffix;
     }
     case "SkippedArchiveEntries": {
       const dropped = num(obj.dropped) ?? "?";

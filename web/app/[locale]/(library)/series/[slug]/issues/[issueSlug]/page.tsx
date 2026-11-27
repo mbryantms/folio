@@ -37,6 +37,7 @@ import {
   DetailSummaryItem,
 } from "@/components/library/DetailSection";
 import { Description } from "@/components/library/Description";
+import { DamagedPagesBadge } from "@/components/library/DamagedPagesBadge";
 import { IssueHealthBadge } from "@/components/library/IssueHealthBadge";
 import { AppearancesTab } from "@/components/library/AppearancesTab";
 import { CoverGallery } from "@/components/library/CoverGallery";
@@ -434,6 +435,7 @@ export default async function IssuePage({
                 </Badge>
               )}
               <IssueHealthBadge seriesSlug={seriesSlug} issueSlug={issueSlug} />
+              <DamagedPagesBadge pages={issue.damaged_pages ?? []} />
               {issue.metadata_completeness &&
                 issue.metadata_completeness.tier !== "complete" && (
                   <Badge

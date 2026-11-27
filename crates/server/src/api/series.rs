@@ -1367,6 +1367,37 @@ pub struct IssueDetailView {
     /// carries the at-a-glance signal there).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata_completeness: Option<crate::metadata::completeness::CompletenessReport>,
+    /// Pages Folio kept from a damaged archive, in page order
+    /// (`library::damaged_pages`): converting the file found their data
+    /// damaged and wrote what could be recovered, or a stand-in page.
+    /// Empty for an undamaged issue. Populated by
+    /// [`enrich_issue_detail`].
+    #[serde(default)]
+    pub damaged_pages: Vec<DamagedPageView>,
+}
+
+/// One page Folio kept from a damaged archive.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct DamagedPageView {
+    /// 0-based page index, as the reader counts pages.
+    pub page_index: i32,
+    pub kind: DamagedPageKind,
+    /// Why the page is damaged: `checksum-failed` (its data failed the
+    /// archive's checksum).
+    pub reason: String,
+    /// RFC3339 time the damage was found (the conversion).
+    pub detected_at: String,
+}
+
+/// What the page holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DamagedPageKind {
+    /// What could be recovered of the page: part of the image is usually
+    /// wrong or missing.
+    Salvaged,
+    /// Nothing usable survived; the page is a stand-in.
+    Placeholder,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
@@ -1485,6 +1516,7 @@ impl IssueDetailView {
             library_cbr_convert_confirmed: None,
             metadata_review_accepted_at: m.metadata_review_accepted_at.map(|t| t.to_rfc3339()),
             metadata_completeness: None,
+            damaged_pages: Vec::new(),
         }
     }
 }
@@ -2925,6 +2957,38 @@ pub(crate) async fn enrich_issue_detail(
             .collect();
         pins.sort();
         view.user_pinned_columns = pins;
+    }
+    view.damaged_pages = fetch_damaged_pages(db, issue_id).await;
+}
+
+/// The issue's damaged-page records as the issue view shows them, in page
+/// order. A failed read is logged and shows none: the page itself still
+/// renders, only the notice is missing.
+async fn fetch_damaged_pages(db: &DatabaseConnection, issue_id: &str) -> Vec<DamagedPageView> {
+    use entity::issue_damaged_page;
+    match issue_damaged_page::Entity::find()
+        .filter(issue_damaged_page::Column::IssueId.eq(issue_id))
+        .order_by_asc(issue_damaged_page::Column::PageIndex)
+        .all(db)
+        .await
+    {
+        Ok(rows) => rows
+            .into_iter()
+            .map(|r| DamagedPageView {
+                page_index: r.page_index,
+                kind: if r.kind == "placeholder" {
+                    DamagedPageKind::Placeholder
+                } else {
+                    DamagedPageKind::Salvaged
+                },
+                reason: r.reason,
+                detected_at: r.detected_at.to_rfc3339(),
+            })
+            .collect(),
+        Err(e) => {
+            tracing::warn!(issue_id, error = %e, "issue detail: damaged pages read failed");
+            Vec::new()
+        }
     }
 }
 

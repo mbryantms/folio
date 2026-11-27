@@ -184,6 +184,21 @@ pub enum IssueKind {
         page_index: u32,
         error: String,
     },
+    /// A page Folio kept from a damaged archive
+    /// ([`crate::library::damaged_pages`]): converting the file found the
+    /// page's data damaged and wrote what could be recovered (`kind =
+    /// "salvaged"`) or a stand-in page (`"placeholder"`). Re-emitted by
+    /// every scan that reads the file while the page still holds those
+    /// bytes; a replacement file or page resolves it.
+    DamagedPage {
+        path: PathBuf,
+        page_index: u32,
+        /// The page's entry name in the archive.
+        entry: String,
+        kind: String,
+        /// Static reason from `archive::damage`.
+        reason: String,
+    },
     /// A structurally valid archive that contains ZERO image entries —
     /// it ingests as a 0-page issue the reader can open but never turn
     /// (audit CQ-TEST-4). Usually a mispacked file (all pages in a
@@ -306,6 +321,7 @@ impl IssueKind {
             Self::RecoveredArchive { .. } => HealthIssueKind::RecoveredArchive,
             Self::SkippedArchiveEntries { .. } => HealthIssueKind::SkippedArchiveEntries,
             Self::UnreadablePage { .. } => HealthIssueKind::UnreadablePage,
+            Self::DamagedPage { .. } => HealthIssueKind::DamagedPage,
             Self::NoPages { .. } => HealthIssueKind::NoPages,
             Self::AmbiguousFolder { .. } => HealthIssueKind::AmbiguousFolder,
             Self::DuplicateExternalId { .. } => HealthIssueKind::DuplicateExternalId,
@@ -333,6 +349,7 @@ impl IssueKind {
             | Self::UnsupportedArchiveFormat { .. }
             | Self::SkippedArchiveEntries { .. }
             | Self::UnreadablePage { .. }
+            | Self::DamagedPage { .. }
             | Self::NoPages { .. }
             | Self::AmbiguousFolder { .. }
             | Self::SymlinkSkipped { .. }
@@ -399,6 +416,11 @@ impl IssueKind {
                 format!("SkippedArchiveEntries:{}:{reason}", path.display())
             }
             Self::NoPages { path } => format!("NoPages:{}", path.display()),
+            // One row per (file, page entry): a page moving position (a
+            // reorder) updates the row rather than opening another.
+            Self::DamagedPage { path, entry, .. } => {
+                format!("DamagedPage:{}:{entry}", path.display())
+            }
             Self::SymlinkSkipped { path } => format!("SymlinkSkipped:{}", path.display()),
             Self::UnreadablePage {
                 path, page_index, ..
@@ -462,6 +484,7 @@ impl IssueKind {
             | Self::RecoveredArchive { path, .. }
             | Self::SkippedArchiveEntries { path, .. }
             | Self::UnreadablePage { path, .. }
+            | Self::DamagedPage { path, .. }
             | Self::NoPages { path }
             | Self::AmbiguousFolder { path, .. }
             | Self::SymlinkSkipped { path }

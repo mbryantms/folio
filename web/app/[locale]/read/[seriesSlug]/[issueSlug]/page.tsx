@@ -2,7 +2,7 @@ import { signInUrl } from "@/lib/api/sign-in-url";
 import { notFound, redirect } from "next/navigation";
 import { Reader } from "./Reader";
 // Client-only and code-split: see ./lazy.
-import { ReaderHealthToast } from "./lazy";
+import { DamagedPageNotice, ReaderHealthToast } from "./lazy";
 import { ReaderCoverHandoff } from "./ReaderCoverMorph";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type {
@@ -297,6 +297,9 @@ export default async function ReadPage({
   return (
     <>
       <ReaderHealthToast seriesSlug={seriesSlug} issueSlug={issueSlug} />
+      {issue.damaged_pages && issue.damaged_pages.length > 0 ? (
+        <DamagedPageNotice damagedPages={issue.damaged_pages} />
+      ) : null}
       <ReaderCoverHandoff />
       <Reader
         issueId={issue.id}

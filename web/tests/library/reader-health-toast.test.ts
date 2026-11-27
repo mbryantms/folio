@@ -66,3 +66,28 @@ describe("describeHealthToast", () => {
     expect(out?.message).toContain("2 of 10");
   });
 });
+
+describe("describeHealthToast for damaged pages", () => {
+  const damaged = (page_index: number) =>
+    row("DamagedPage", "warning", {
+      path: "/lib/x.cbz",
+      page_index,
+      entry: `p${page_index + 1}.jpg`,
+      kind: "salvaged",
+      reason: "checksum-failed",
+    });
+
+  it("names the damaged page, counting from 1", () => {
+    expect(describeHealthToast([damaged(7)])).toEqual({
+      message:
+        "Page 8 of this file is damaged. Folio shows what could be recovered.",
+      severity: "warning",
+    });
+  });
+
+  it("lists several pages in order", () => {
+    expect(describeHealthToast([damaged(9), damaged(1)])?.message).toBe(
+      "Pages 2, 10 of this file are damaged. Folio shows what could be recovered.",
+    );
+  });
+});

@@ -32,6 +32,7 @@ pub mod issue_character;
 pub mod issue_concept;
 pub mod issue_cover;
 pub mod issue_credit;
+pub mod issue_damaged_page;
 pub mod issue_duplicate_decision;
 pub mod issue_genre;
 pub mod issue_location;

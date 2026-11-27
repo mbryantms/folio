@@ -10078,6 +10078,27 @@ export interface components {
             /** Format: int64 */
             total?: number | null;
         };
+        /**
+         * @description What the page holds.
+         * @enum {string}
+         */
+        DamagedPageKind: "salvaged" | "placeholder";
+        /** @description One page Folio kept from a damaged archive. */
+        DamagedPageView: {
+            /** @description RFC3339 time the damage was found (the conversion). */
+            detected_at: string;
+            kind: components["schemas"]["DamagedPageKind"];
+            /**
+             * Format: int32
+             * @description 0-based page index, as the reader counts pages.
+             */
+            page_index: number;
+            /**
+             * @description Why the page is damaged: `checksum-failed` (its data failed the
+             *     archive's checksum).
+             */
+            reason: string;
+        };
         DashboardResp: {
             /**
              * Format: int64
@@ -11571,7 +11592,7 @@ export interface components {
          *     one of these.
          * @enum {string}
          */
-        HealthIssueKind: "FileAtRoot" | "EmptyFolder" | "UnreadableFile" | "UnreadableFolder" | "UnreadableArchive" | "MissingComicInfo" | "MalformedComicInfo" | "MalformedArchive" | "ArchiveSafetyRefusal" | "EncryptedArchive" | "FolderNameMismatch" | "MixedSeriesInFolder" | "DuplicateContent" | "OrphanedSeriesJson" | "UnsupportedArchiveFormat" | "RecoveredArchive" | "SkippedArchiveEntries" | "UnreadablePage" | "NoPages" | "AmbiguousFolder" | "DuplicateExternalId" | "SymlinkSkipped" | "LargeRemoval" | "MetadataDriftFromXml";
+        HealthIssueKind: "FileAtRoot" | "EmptyFolder" | "UnreadableFile" | "UnreadableFolder" | "UnreadableArchive" | "MissingComicInfo" | "MalformedComicInfo" | "MalformedArchive" | "ArchiveSafetyRefusal" | "EncryptedArchive" | "FolderNameMismatch" | "MixedSeriesInFolder" | "DuplicateContent" | "OrphanedSeriesJson" | "UnsupportedArchiveFormat" | "RecoveredArchive" | "SkippedArchiveEntries" | "UnreadablePage" | "DamagedPage" | "NoPages" | "AmbiguousFolder" | "DuplicateExternalId" | "SymlinkSkipped" | "LargeRemoval" | "MetadataDriftFromXml";
         /**
          * @description One kind-facet tally within the current status+severity scope (drives the
          *     per-kind filter pills).
@@ -11877,6 +11898,14 @@ export interface components {
              *     derived read-cache of the same rows.
              */
             credits: components["schemas"]["IssueCreditEntry"][];
+            /**
+             * @description Pages Folio kept from a damaged archive, in page order
+             *     (`library::damaged_pages`): converting the file found their data
+             *     damaged and wrote what could be recovered, or a stand-in page.
+             *     Empty for an undamaged issue. Populated by
+             *     [`enrich_issue_detail`].
+             */
+            damaged_pages?: components["schemas"]["DamagedPageView"][];
             /** Format: int32 */
             day?: number | null;
             editor?: string | null;
