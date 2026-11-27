@@ -155,3 +155,42 @@ fn cbr_caps_reject_when_tightened() {
     );
     assert!(r.is_err(), "entry-size cap must fire (max={max_entry})");
 }
+
+/// `fixtures/synthetic-3page-damaged-tail.cbr` (`make-cbr-fixture.py
+/// --damaged-tail`): three good pages, then a header with a bad CRC and no
+/// end-of-archive block — the shape of old Mac-made RAR 1.5 archives
+/// (Fantastic Four (1961) #309 and friends) that UnRAR reads in full but
+/// answers "File header damaged" for after the last file. The reader opens
+/// it with every page instead of refusing the whole file.
+#[test]
+fn cbr_with_a_damaged_trailing_header_reads_every_page_before_it() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/synthetic-3page-damaged-tail.cbr");
+    let mut cbr = Cbr::open_path_unchecked(&path, ArchiveLimits::default())
+        .expect("a damaged trailing header is the end of the archive, not an error");
+    assert_eq!(
+        cbr.recovery_used(),
+        Some(archive::recovery::RAR_DAMAGED_TRAILING_HEADER)
+    );
+    let names: Vec<String> = cbr.pages().iter().map(|e| e.name.clone()).collect();
+    assert_eq!(names, ["page-001.jpg", "page-002.jpg", "page-003.jpg"]);
+    for name in &names {
+        let bytes = cbr.read_entry_bytes(name).expect("page reads");
+        assert!(
+            bytes.starts_with(&[0xFF, 0xD8, 0xFF]),
+            "{name} is the JPEG stub"
+        );
+    }
+    assert!(
+        cbr.entries_skipped().is_empty(),
+        "the sniff pass kept every page"
+    );
+}
+
+/// The intact fixture reports no recovery.
+#[test]
+fn intact_cbr_reports_no_recovery() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/synthetic-3page.cbr");
+    let cbr = Cbr::open_path_unchecked(&path, ArchiveLimits::default()).expect("opens");
+    assert_eq!(cbr.recovery_used(), None);
+}

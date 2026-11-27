@@ -51,8 +51,8 @@ pub trait ComicArchive: Send {
 
     /// If a recovery branch fired during open, returns a static tag
     /// naming the technique (see [`crate::recovery`]); otherwise `None`.
-    /// Defaulted to `None` so non-zip readers (CBR/CB7/CBT) inherit
-    /// without changes. The scanner surfaces a `RecoveredArchive`
+    /// Defaulted to `None`; CBZ and CBR override it (CB7/CBT inherit
+    /// without changes). The scanner surfaces a `RecoveredArchive`
     /// health-issue when this is `Some`.
     fn recovery_used(&self) -> Option<&'static str> {
         None

@@ -104,6 +104,61 @@ async fn scan_converts_cbr_to_cbz_when_enabled() {
     let _ = bak_path; // RAR-only artifact; not asserted here.
 }
 
+/// An old RAR whose header after the last file is damaged (Fantastic Four
+/// (1961) #309 in production: every page reads, then UnRAR answers "File
+/// header damaged") converts with all its pages instead of failing every
+/// scan as `UnsupportedArchiveFormat`.
+#[tokio::test]
+async fn scan_converts_cbr_with_a_damaged_trailing_header() {
+    let fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/synthetic-3page-damaged-tail.cbr");
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Fantastic Four (1961)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let cbr_path = folder.join("Fantastic Four V1961 309 (December 1987).cbr");
+    std::fs::copy(&fixture, &cbr_path).unwrap();
+
+    let db = &app.state().db;
+    let lib_id = LibrarySeed::new(tmp.path())
+        .with_auto_convert_cbr_on_scan()
+        .insert(db)
+        .await;
+    let state = app.state();
+
+    let stats = scanner::scan_library(&state, lib_id).await.expect("scan");
+    assert_eq!(stats.files_converted, 1, "the CBR converted: {stats:?}");
+    assert_eq!(
+        stats.files_added, 1,
+        "the converted CBZ ingested: {stats:?}"
+    );
+    assert!(cbr_path.with_extension("cbz").exists());
+    assert!(cbr_path.with_extension("cbr.bak").exists(), "original kept");
+
+    let issues = IssueEntity::find()
+        .filter(entity::issue::Column::LibraryId.eq(lib_id))
+        .all(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(issues.len(), 1);
+    assert_eq!(
+        issues[0].page_count,
+        Some(3),
+        "every page before the bad block"
+    );
+
+    let unsupported = HealthEntity::find()
+        .filter(entity::library_health_issue::Column::LibraryId.eq(lib_id))
+        .filter(entity::library_health_issue::Column::Kind.eq("UnsupportedArchiveFormat"))
+        .all(&state.db)
+        .await
+        .unwrap();
+    assert!(
+        unsupported.is_empty(),
+        "no UnsupportedArchiveFormat: {unsupported:?}"
+    );
+}
+
 /// A RAR wearing `.cbz` (Martian Manhunter (2006) #2/#3: opens in YACreader,
 /// used to surface as a misleading `MalformedComicInfo` here) is the same
 /// read-only container under the wrong name. With conversion enabled it is

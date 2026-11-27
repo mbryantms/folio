@@ -44,6 +44,17 @@
 //! [`MULTI_VOLUME_MESSAGE`] ([`ArchiveError::is_multi_volume_rar`]); the
 //! scanner reports it as a malformed-archive finding with that reason.
 //!
+//! **Damaged trailing header.** Old archives (RAR 1.5, typically made on a
+//! Mac) can end in a block UnRAR cannot read, with no end-of-archive
+//! marker after it: UnRAR lists and extracts every file, then answers
+//! "File header damaged" ([`unrar::error::Code::BadData`]) for the next
+//! header. Every pass therefore treats that answer, once at least one
+//! header was read, as the end of the archive
+//! ([`is_damaged_trailing_header`]). The listing records it as
+//! [`crate::recovery::RAR_DAMAGED_TRAILING_HEADER`] (and logs a warning),
+//! so the reader opens with the files before the bad block instead of
+//! refusing the whole archive. A damaged header *first* is still an error.
+//!
 //! NOTICE: this file uses the `unrar` crate; its license requires
 //! attribution to rarlab's UnRAR library.
 
@@ -80,6 +91,8 @@ pub struct Cbr {
     limits: ArchiveLimits,
     /// Image-named entries whose bytes failed the content sniff at open.
     skipped: Vec<SkippedEntry>,
+    /// Set when the listing ended at a damaged trailing header.
+    recovery: Option<&'static str>,
 }
 
 impl Cbr {
@@ -102,9 +115,23 @@ impl Cbr {
 
         let mut entries: Vec<ArchiveEntry> = Vec::new();
         let mut total_bytes: u64 = 0;
+        let mut recovery = None;
 
-        for item in listing {
-            let header = item.map_err(|e| ArchiveError::Malformed(format!("cbr header: {e}")))?;
+        for (headers_read, item) in listing.enumerate() {
+            let header = match item {
+                Ok(h) => h,
+                Err(e) if is_damaged_trailing_header(&e, headers_read) => {
+                    tracing::warn!(
+                        path = %source.display_path().display(),
+                        headers_read,
+                        error = %e,
+                        "cbr: damaged header after the last readable file; reading the files before it",
+                    );
+                    recovery = Some(crate::recovery::RAR_DAMAGED_TRAILING_HEADER);
+                    break;
+                }
+                Err(e) => return Err(ArchiveError::Malformed(format!("cbr header: {e}"))),
+            };
             if header.is_directory() {
                 continue;
             }
@@ -156,6 +183,7 @@ impl Cbr {
             entries,
             limits,
             skipped: Vec::new(),
+            recovery,
         };
         me.drop_non_image_pages();
         Ok(me)
@@ -227,13 +255,12 @@ fn sniff_candidates(
 ) -> Result<HashSet<String>, ArchiveError> {
     let mut non_images = HashSet::new();
     let mut cursor = rar.open_for_processing(source)?;
+    let mut headers_read = 0usize;
     loop {
-        let Some(open) = cursor
-            .read_header()
-            .map_err(|e| ArchiveError::Malformed(format!("cbr header: {e}")))?
-        else {
+        let Some(open) = next_header(cursor, headers_read)? else {
             break;
         };
+        headers_read += 1;
         let header = open.entry();
         let raw = header.filename.to_string_lossy().into_owned();
         let canonical = sanitize_entry_name(&raw)
@@ -259,6 +286,26 @@ fn sniff_candidates(
     }
     rar.finish_pass(source)?;
     Ok(non_images)
+}
+
+/// Whether `e`, raised reading the header after `headers_read` good ones,
+/// is the damaged trailing block of an otherwise readable archive (see the
+/// module docs): UnRAR's "bad data" once at least one header was read.
+fn is_damaged_trailing_header(e: &unrar::error::UnrarError, headers_read: usize) -> bool {
+    headers_read > 0 && e.code == unrar::error::Code::BadData
+}
+
+/// The next header of a process pass, or `None` at the end of the archive
+/// (including a damaged trailing header, as the listing treats it).
+fn next_header(
+    cursor: unrar::OpenArchive<unrar::Process, unrar::CursorBeforeHeader>,
+    headers_read: usize,
+) -> Result<Option<unrar::OpenArchive<unrar::Process, unrar::CursorBeforeFile>>, ArchiveError> {
+    match cursor.read_header() {
+        Ok(open) => Ok(open),
+        Err(e) if is_damaged_trailing_header(&e, headers_read) => Ok(None),
+        Err(e) => Err(ArchiveError::Malformed(format!("cbr header: {e}"))),
+    }
 }
 
 /// The name UnRAR opens for every pass over one reader's file, and whether
@@ -340,20 +387,22 @@ impl ComicArchive for Cbr {
     fn entries_skipped(&self) -> &[SkippedEntry] {
         &self.skipped
     }
+    fn recovery_used(&self) -> Option<&'static str> {
+        self.recovery
+    }
     fn read_entry_bytes(&mut self, name: &str) -> Result<Vec<u8>, ArchiveError> {
         let want = sanitize_entry_name(name)
             .map(|s| s.canonical)
             .unwrap_or_else(|_| name.to_ascii_lowercase());
 
         let mut cursor = self.rar.open_for_processing(&self.source)?;
+        let mut headers_read = 0usize;
 
         loop {
-            let Some(open) = cursor
-                .read_header()
-                .map_err(|e| ArchiveError::Malformed(format!("cbr header: {e}")))?
-            else {
+            let Some(open) = next_header(cursor, headers_read)? else {
                 break;
             };
+            headers_read += 1;
             let header = open.entry();
             let raw = header.filename.to_string_lossy().into_owned();
             let canonical = sanitize_entry_name(&raw)

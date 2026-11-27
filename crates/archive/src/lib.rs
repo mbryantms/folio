@@ -304,7 +304,8 @@ pub struct SkippedEntry {
 }
 
 /// Recovery-flavor tag attached to an opened archive when one of the
-/// recovery branches in [`cbz::open_zip_with_recovery`] fired. The
+/// recovery branches fired ([`cbz::open_zip_with_recovery`], or the CBR
+/// reader's damaged-trailing-header end). The
 /// archive opens and reads normally; this tells the scanner that the
 /// underlying file was structurally non-standard so it can emit a
 /// `RecoveredArchive` health-issue. Static strings to keep them
@@ -323,6 +324,11 @@ pub mod recovery {
     /// entry's actual LFH by filename, and rewrote the CD with
     /// corrected offsets.
     pub const CDFH_OFFSET_REBUILD: &str = "cdfh-offset-rebuild";
+    /// A RAR whose header after the last readable file is damaged (old
+    /// RAR 1.5 archives, typically Mac-made, end in such a block with no
+    /// end-of-archive marker). UnRAR reads every file before it, so the
+    /// reader takes that header as the end of the archive (`cbr.rs`).
+    pub const RAR_DAMAGED_TRAILING_HEADER: &str = "rar-damaged-trailing-header";
 }
 
 #[cfg(test)]

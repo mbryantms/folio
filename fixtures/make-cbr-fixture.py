@@ -18,7 +18,7 @@ def block(htype: int, hflags: int, body: bytes, data: bytes = b"") -> bytes:
     hdr = vint(len(rest)) + rest
     return struct.pack("<I", zlib.crc32(hdr) & 0xFFFFFFFF) + hdr + data
 
-def rar5(entries: list[tuple[str, bytes]]) -> bytes:
+def rar5(entries: list[tuple[str, bytes]], damaged_tail: bool = False) -> bytes:
     out = bytearray(b"Rar!\x1a\x07\x01\x00")
     out += block(1, 0, vint(0))                      # main archive header, archive flags = 0
     for name, data in entries:
@@ -31,6 +31,15 @@ def rar5(entries: list[tuple[str, bytes]]) -> bytes:
                 + vint(0)                            # host OS: Windows
                 + vint(len(nb)) + nb)
         out += block(2, 0x0002, body, data)          # file header, data area present
+    if damaged_tail:
+        # A trailing block whose header CRC is wrong and no end-of-archive
+        # block: UnRAR lists every page, then answers "File header damaged".
+        # The shape of old (RAR 1.5, Mac-made) archives that carry an
+        # unreadable block after their last file.
+        tail = bytearray(block(3, 0, vint(0)))
+        tail[0] ^= 0xFF
+        out += tail
+        return bytes(out)
     out += block(5, 0, vint(0))                      # end of archive, flags 0
     return bytes(out)
 
@@ -39,4 +48,5 @@ if __name__ == "__main__":
     # sees image magic, then distinct filler so bytes differ per page.
     jfif = bytes.fromhex("FFD8FFE000104A46494600010100000100010000")
     pages = [(f"page-{i:03}.jpg", jfif + bytes([i]) * 64 + b"\xFF\xD9") for i in (1, 2, 3)]
-    sys.stdout.buffer.write(rar5(pages))
+    # `--damaged-tail` writes synthetic-3page-damaged-tail.cbr.
+    sys.stdout.buffer.write(rar5(pages, damaged_tail="--damaged-tail" in sys.argv[1:]))
