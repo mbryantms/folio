@@ -1,6 +1,7 @@
 "use client";
 
 import type { DamagedPageView } from "@/lib/api/types";
+import { useReaderStore } from "@/lib/reader/store";
 
 /**
  * A small pill at the bottom of the reader while a page Folio kept from a
@@ -9,12 +10,23 @@ import type { DamagedPageView } from "@/lib/api/types";
  * informational (no controls, no pointer events), under the chrome
  * (z-20), and at the bottom edge so the top edge stays untouched. The
  * issue page's "damaged page" chip says what to do about it.
+ *
+ * Self-contained so the reader's first-load bundle carries none of it:
+ * the read page mounts it (lazily, see `./lazy`) only for an issue that
+ * has damaged pages, and it follows the page from the reader store. In
+ * double-page view it treats the page after the current one as on
+ * screen too (the right-hand page of the spread).
  */
 export function DamagedPageNotice({
-  pages,
+  damagedPages,
 }: {
-  pages: readonly DamagedPageView[];
+  damagedPages: readonly DamagedPageView[];
 }) {
+  const currentPage = useReaderStore((s) => s.currentPage);
+  const viewMode = useReaderStore((s) => s.viewMode);
+  const shown =
+    viewMode === "double" ? [currentPage, currentPage + 1] : [currentPage];
+  const pages = damagedPages.filter((d) => shown.includes(d.page_index));
   if (pages.length === 0) return null;
   const placeholder = pages.some((p) => p.kind === "placeholder");
   const which = pages.map((p) => p.page_index + 1).join(" and ");

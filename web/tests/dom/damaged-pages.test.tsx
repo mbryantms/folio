@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import { DamagedPageNotice } from "@/app/[locale]/read/[seriesSlug]/[issueSlug]/DamagedPageNotice";
 import { DamagedPagesBadge } from "@/components/library/DamagedPagesBadge";
+import { useReaderStore } from "@/lib/reader/store";
 import type { DamagedPageView } from "@/lib/api/types";
 import { damagedPageAt, damagedPageLine } from "@/lib/library/damaged-pages";
 
@@ -52,9 +53,26 @@ describe("damaged pages", () => {
   });
 
   it("says in the reader which page on screen is damaged", () => {
-    render(<DamagedPageNotice pages={[salvaged]} />);
+    useReaderStore.setState({ currentPage: 7, viewMode: "single" });
+    render(<DamagedPageNotice damagedPages={[placeholder, salvaged]} />);
     expect(screen.getByRole("status").textContent).toBe(
       "Page 8 is damaged in the file: shown as recovered.",
+    );
+  });
+
+  it("shows nothing while no damaged page is on screen", () => {
+    useReaderStore.setState({ currentPage: 3, viewMode: "single" });
+    const { container } = render(
+      <DamagedPageNotice damagedPages={[placeholder, salvaged]} />,
+    );
+    expect(container.innerHTML).toBe("");
+  });
+
+  it("counts the right-hand page of a spread as on screen", () => {
+    useReaderStore.setState({ currentPage: 0, viewMode: "double" });
+    render(<DamagedPageNotice damagedPages={[placeholder]} />);
+    expect(screen.getByRole("status").textContent).toBe(
+      "Page 2 is damaged in the file: nothing could be recovered.",
     );
   });
 });

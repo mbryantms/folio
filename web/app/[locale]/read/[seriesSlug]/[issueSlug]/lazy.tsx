@@ -82,9 +82,9 @@ function NoProgressUnavailableBanner() {
   return null;
 }
 
-/** "This page is damaged in the file" pill (`DamagedPageNotice`). Mounted
- *  only while a damaged page is on screen, which is rare, so it costs the
- *  first load nothing. */
+/** "This page is damaged in the file" pill (`DamagedPageNotice`). The read
+ *  page mounts it only for an issue with damaged pages, which is rare; it
+ *  follows the current page from the reader store itself. */
 export const DamagedPageNotice = dynamic(
   () => import("./DamagedPageNotice").then((m) => m.DamagedPageNotice),
   { ssr: false },

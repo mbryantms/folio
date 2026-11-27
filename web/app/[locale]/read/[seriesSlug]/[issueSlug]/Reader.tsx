@@ -93,7 +93,6 @@ import { readerUrl } from "@/lib/urls";
 import { exitReader, noteReplace } from "@/lib/ui/back-flight";
 import { usePageMarkerToggle } from "@/lib/markers/use-page-marker-toggle";
 import type {
-  DamagedPageView,
   IssueSummaryView,
   NextUpView,
   PageInfo,
@@ -126,7 +125,6 @@ import {
   PageStrip,
   PageTextPanel,
   ProgressUnavailableBanner,
-  DamagedPageNotice,
   ReaderChrome,
   ReaderFirstRunOverlay,
   WebtoonEndFooter,
@@ -145,7 +143,6 @@ import { PageImage } from "./PageImage";
 import type { DragPeekPages } from "./DragTurnPeek";
 
 const NO_NEXT_UP: NextUpView = { source: "none" };
-const NO_DAMAGED_PAGES: readonly DamagedPageView[] = [];
 /** Pan offset + origin of a re-centred page — the identity zoom minus
  *  its scale, so a zoom step lands centred. Module-level: the zoom
  *  callbacks that spread it carry no render-scoped dependency
@@ -184,7 +181,6 @@ export function Reader({
   incognito = false,
   initialPeek = false,
   progressUnavailable = false,
-  damagedPages = NO_DAMAGED_PAGES,
   readingMinActiveMs,
   readingMinPages,
   readingIdleMs,
@@ -300,9 +296,6 @@ export function Reader({
    *  `initialPage` is a guess. Shows a banner with Retry (post-audit
    *  T2.2). */
   progressUnavailable?: boolean;
-  /** Pages Folio kept from a damaged archive (`issue.damaged_pages`); a
-   *  notice shows while one is on screen. */
-  damagedPages?: readonly DamagedPageView[];
   readingMinActiveMs: number;
   readingMinPages: number;
   readingIdleMs: number;
@@ -877,12 +870,6 @@ export function Reader({
     () => groups[currentGroupIdx] ?? [currentPage],
     [groups, currentGroupIdx, currentPage],
   );
-  // Damaged pages on screen: both of a double-page spread, else the page.
-  const damagedOnScreen = useMemo(() => {
-    if (damagedPages.length === 0) return NO_DAMAGED_PAGES;
-    const shown = viewMode === "double" ? visiblePages : [currentPage];
-    return damagedPages.filter((d) => shown.includes(d.page_index));
-  }, [damagedPages, viewMode, visiblePages, currentPage]);
   // Furthest page on screen (post-audit T1.4). Only double-page view
   // shows more than the state page; single/webtoon render `currentPage`
   // alone even though `groups` is always derived.
@@ -1683,9 +1670,6 @@ export function Reader({
       />
 
       {progressUnavailable && !peekActive && <ProgressUnavailableBanner />}
-      {damagedOnScreen.length > 0 && (
-        <DamagedPageNotice pages={damagedOnScreen} />
-      )}
 
       {peekActive && (
         // Peek-mode banner. Fixed at the top, below the safe-area
