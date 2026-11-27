@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.93.1](https://github.com/mbryantms/folio/compare/v0.93.0...v0.93.1) (2026-11-27)
+
+
+### Fixed
+
+* **archive:** read RAR archives that end in a damaged header ([#1810](https://github.com/mbryantms/folio/issues/1810)) ([f6a4898](https://github.com/mbryantms/folio/commit/f6a48983cea1d26e9bcd52d56654ca533d763b00))
+
 ## [0.93.0](https://github.com/mbryantms/folio/compare/v0.92.0...v0.93.0) (2026-11-27)
 
 
