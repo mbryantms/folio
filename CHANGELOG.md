@@ -13,6 +13,32 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.94.0](https://github.com/mbryantms/folio/compare/v0.93.1...v0.94.0) (2026-11-27)
+
+
+### Added
+
+* **archive:** convert RAR files with damaged pages and record the damage ([#1818](https://github.com/mbryantms/folio/issues/1818)) ([48ae383](https://github.com/mbryantms/folio/commit/48ae3832b2523dc41da2fc81b6f43ff772e6145a))
+
+
+### Fixed
+
+* **web:** admin "Back to library" arrow works on a collapsed rail ([#1820](https://github.com/mbryantms/folio/issues/1820)) ([90accf3](https://github.com/mbryantms/folio/commit/90accf32a31f5a4f3a4619d91eb80465f37b8ca1))
+
+
+### Dependencies
+
+* update dependency @hookform/resolvers to v7.0.9 ([#1815](https://github.com/mbryantms/folio/issues/1815)) ([33a905b](https://github.com/mbryantms/folio/commit/33a905b6c8b401be0d90c22504eb7aa236196eef))
+* update dependency @tanstack/react-query to v5.108.4 ([#1789](https://github.com/mbryantms/folio/issues/1789)) ([4e3d17c](https://github.com/mbryantms/folio/commit/4e3d17cbf9166e7249d0880a8b7c212edad6ad19))
+* update dependency cronstrue to v3.47.0 ([#1819](https://github.com/mbryantms/folio/issues/1819)) ([1a29677](https://github.com/mbryantms/folio/commit/1a29677e832a3142a72b785afd1f16003f633d4e))
+* update dependency cronstrue to v3.48.0 ([#1821](https://github.com/mbryantms/folio/issues/1821)) ([57a0794](https://github.com/mbryantms/folio/commit/57a079421e1af695777e790e039da82d299f5cd2))
+* update dependency lucide-react to v1.79.0 ([#1813](https://github.com/mbryantms/folio/issues/1813)) ([3d35c4a](https://github.com/mbryantms/folio/commit/3d35c4aa6805137d27a9c26f53841597a2429e79))
+* update dependency next-intl to v4.16.1 ([#1816](https://github.com/mbryantms/folio/issues/1816)) ([7285c83](https://github.com/mbryantms/folio/commit/7285c837031f70a307aa6887a8efbc23cf28a9ff))
+* update node.js to 0042e17 ([#1817](https://github.com/mbryantms/folio/issues/1817)) ([aec8bfb](https://github.com/mbryantms/folio/commit/aec8bfba08ba4744d25d0609247cecfbc7d5da2e))
+* update redis:8-alpine docker digest to 5af8010 ([#1812](https://github.com/mbryantms/folio/issues/1812)) ([6d302b8](https://github.com/mbryantms/folio/commit/6d302b8b1dc0db0813d16661f02563d255ccdfe8))
+* update rust crate crc32fast to v1.5.6 ([#1823](https://github.com/mbryantms/folio/issues/1823)) ([72801a0](https://github.com/mbryantms/folio/commit/72801a08de6417b3a4c19460e505b9a3f8496843))
+* update rust:1-slim-trixie docker digest to 3b199fd ([#1822](https://github.com/mbryantms/folio/issues/1822)) ([09f9741](https://github.com/mbryantms/folio/commit/09f974163e300f6b5d9d16a6ba11f17e2d7113d2))
+
 ## [0.93.1](https://github.com/mbryantms/folio/compare/v0.93.0...v0.93.1) (2026-11-27)
 
 
