@@ -1216,7 +1216,7 @@ function IconHitCard({ hit }: { hit: SearchHit }) {
         <Icon className="size-12 opacity-60" />
       </div>
       <div className="min-w-0 px-1">
-        <div className="truncate text-sm font-medium" title={hit.title}>
+        <div className="card-title text-sm font-medium" title={hit.title}>
           {hit.title}
         </div>
         {hit.subtitle ? (
@@ -1243,7 +1243,7 @@ function MarkerSearchCard({ hit }: { hit: SearchHit }) {
     >
       <MarkerSearchThumbnail hit={hit} icon={Icon} />
       <div className="min-w-0 px-1">
-        <div className="truncate text-sm font-medium" title={hit.title}>
+        <div className="card-title text-sm font-medium" title={hit.title}>
           {hit.title}
         </div>
         {hit.subtitle ? (

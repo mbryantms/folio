@@ -301,7 +301,7 @@ function SeriesCardImpl({
       </CoverFrame>
       <div className="min-w-0 px-1">
         <div
-          className={cn("truncate font-medium", c.title)}
+          className={cn("card-title font-medium", c.title)}
           title={series.name}
         >
           {series.name}
@@ -395,6 +395,7 @@ export function SeriesCardSkeleton({ size = "md" }: { size?: Size }) {
       <CoverSkeleton />
       <div className="space-y-1.5 px-1">
         <div className="skeleton-shimmer h-3 w-3/4 rounded" />
+        <div className="skeleton-shimmer h-3 w-1/2 rounded" />
         <div className="skeleton-shimmer h-2 w-1/2 rounded" />
       </div>
     </div>

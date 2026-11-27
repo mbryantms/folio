@@ -78,7 +78,7 @@ export function ReadingListEntryCard({
         <p className="text-muted-foreground flex items-center gap-1 text-xs">
           <ListOrdered className="size-3" aria-hidden /> Reading list
         </p>
-        <h3 className="truncate text-sm font-medium" title={name}>
+        <h3 className="card-title text-sm font-medium" title={name}>
           {list.view_id ? (
             <Link
               href={`/views/${list.view_id}?via=${via}`}

@@ -18,11 +18,11 @@ export const GRID_GAP_PX = 16;
  * card type. Used ONLY as the virtualizer's initial row-height estimate
  * — `measureElement` corrects the real height after first paint, so
  * these don't need to be exact, just close enough to avoid a visible
- * first-paint jump. Series = title line + meta line; issue cards run a
- * touch taller (number line + title + finished-state row).
+ * first-paint jump. Series = two-line title (`card-title`) + meta line;
+ * issue cards add a number line above the title and a finished-state row.
  */
-export const SERIES_TEXT_H = 56;
-export const ISSUE_TEXT_H = 64;
+export const SERIES_TEXT_H = 76;
+export const ISSUE_TEXT_H = 84;
 
 /** Smallest card the two-column floor will shrink to. Below this a
  *  container is a sliver (a collapsed pane), not a phone. */

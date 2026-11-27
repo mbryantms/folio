@@ -62,7 +62,12 @@ export function UpcomingCard({
           #{entry.number}
           {entry.publisher ? ` · ${entry.publisher}` : ""}
         </div>
-        <div className="truncate text-sm font-medium">{entry.series_name}</div>
+        <div
+          className="card-title text-sm font-medium"
+          title={entry.series_name}
+        >
+          {entry.series_name}
+        </div>
       </div>
     </button>
   );

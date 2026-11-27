@@ -478,7 +478,10 @@ function EventBandFull({
                     Not in library
                   </div>
                 )}
-                <p className="mt-1.5 truncate text-xs font-medium">
+                <p
+                  className="card-title mt-1.5 text-xs font-medium"
+                  title={item.series_name}
+                >
                   {item.series_name}
                 </p>
                 <p className="text-muted-foreground truncate text-[11px]">

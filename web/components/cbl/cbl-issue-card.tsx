@@ -283,7 +283,7 @@ export function CblIssueCard({
           </span>
         )}
       </div>
-      <div className="truncate text-sm font-medium" title={heading}>
+      <div className="card-title text-sm font-medium" title={heading}>
         {heading}
       </div>
     </div>
