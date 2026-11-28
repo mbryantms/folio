@@ -78,7 +78,7 @@ importers:
         version: 5.10.6
       cronstrue:
         specifier: ^3.38.0
-        version: 3.50.0
+        version: 3.51.0
       lucide-react:
         specifier: 1.80.0
         version: 1.80.0(@types/react@19.3.0)(react@19.3.1)
@@ -3599,8 +3599,8 @@ packages:
     resolution: {integrity: sha512-kpoxgQyveO1l29nw+FWdvmotyV7eOSzGHQpxiXOEZIDOjqO1iR6kfgJ0PVHTuV26uBemKq3ppzma7dHFAG7viw==}
     engines: {node: '>=18'}
 
-  cronstrue@3.50.0:
-    resolution: {integrity: sha512-TEyCgvAnGrM/AZDct9CSx70x7J92MehX+vx12hXb1ZlkyXLpFHmviL1wAnH/3NGq+pknzaVbmmwonvBMUUnG1g==}
+  cronstrue@3.51.0:
+    resolution: {integrity: sha512-yWLe6YxfbDx/5OSzpocD6SyZD1nVo0aO22hUizh7eQX5xO1iDu7qY6w8+2gevRmIu1pElKbIiXrGbeoLEbKmmw==}
     hasBin: true
 
   cross-spawn@7.0.6:
@@ -10053,7 +10053,7 @@ snapshots:
     dependencies:
       luxon: 3.7.2
 
-  cronstrue@3.50.0: {}
+  cronstrue@3.51.0: {}
 
   cross-spawn@7.0.6:
     dependencies:
