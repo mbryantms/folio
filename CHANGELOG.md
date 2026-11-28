@@ -13,6 +13,25 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.94.1](https://github.com/mbryantms/folio/compare/v0.94.0...v0.94.1) (2026-11-28)
+
+
+### Dependencies
+
+* update dependency @scalar/api-reference-react to v0.9.97 ([#1836](https://github.com/mbryantms/folio/issues/1836)) ([3ddac5b](https://github.com/mbryantms/folio/commit/3ddac5b98398a11ba0bd49a6e62d6c156adfddab))
+* update dependency @types/node to v26.6.7 ([#1826](https://github.com/mbryantms/folio/issues/1826)) ([239e756](https://github.com/mbryantms/folio/commit/239e756c8021295b11f6e7c163a4ea5f09dce9e8))
+* update dependency @types/node to v26.6.8 ([#1832](https://github.com/mbryantms/folio/issues/1832)) ([cc5c64e](https://github.com/mbryantms/folio/commit/cc5c64e106f1923c1a83f7d34ed0234d8a2b5cde))
+* update dependency @types/node to v26.6.9 ([#1833](https://github.com/mbryantms/folio/issues/1833)) ([d261a56](https://github.com/mbryantms/folio/commit/d261a5622f276371e989e9faf3e3208cd4175270))
+* update dependency cron-parser to v5.10.7 ([#1837](https://github.com/mbryantms/folio/issues/1837)) ([50f0e2b](https://github.com/mbryantms/folio/commit/50f0e2b3ae0076a17ea326f78d9415e318672376))
+* update dependency cronstrue to v3.50.0 ([#1827](https://github.com/mbryantms/folio/issues/1827)) ([c2add24](https://github.com/mbryantms/folio/commit/c2add24873784b21b1375006650929199e5429f5))
+* update dependency cronstrue to v3.51.0 ([#1838](https://github.com/mbryantms/folio/issues/1838)) ([0f5e56c](https://github.com/mbryantms/folio/commit/0f5e56cd8b4ada51b3e2639e2ea170fa1e32ef75))
+* update dependency lucide-react to v1.80.0 ([#1831](https://github.com/mbryantms/folio/issues/1831)) ([4941e48](https://github.com/mbryantms/folio/commit/4941e48dea4176e229045f7382e75ac90dcf2c2e))
+* update dependency next-intl to v4.16.2 ([#1835](https://github.com/mbryantms/folio/issues/1835)) ([721ecf1](https://github.com/mbryantms/folio/commit/721ecf1dc6aea0daf1c9c151f83021a2a7bd144b))
+* update rust crate clap to v4.6.10 ([#1828](https://github.com/mbryantms/folio/issues/1828)) ([84c4356](https://github.com/mbryantms/folio/commit/84c4356397a4d8d103fb431944999b74b9525cef))
+* update rust crate constant_time_eq to v0.6.2 ([#1830](https://github.com/mbryantms/folio/issues/1830)) ([0bea17e](https://github.com/mbryantms/folio/commit/0bea17eeab57338f27a97ff39839998a0ac24dfd))
+* update serwist monorepo to v9.6.0 ([#1829](https://github.com/mbryantms/folio/issues/1829)) ([27522c9](https://github.com/mbryantms/folio/commit/27522c9c2ff6ae6c71184be8f537baf8620e3357))
+* update sigstore/cosign-installer action to v4.1.4 ([#1824](https://github.com/mbryantms/folio/issues/1824)) ([3a39a2a](https://github.com/mbryantms/folio/commit/3a39a2ae5e5dca0bd60248b4000e88b9735a21bb))
+
 ## [0.94.0](https://github.com/mbryantms/folio/compare/v0.93.1...v0.94.0) (2026-11-27)
 
 
