@@ -1884,7 +1884,7 @@ dependencies = [
  "ed25519",
  "rand_core 0.10.1",
  "serde",
- "sha2 0.11.1",
+ "sha2 0.11.2",
  "signature 3.0.0",
  "subtle",
  "zeroize",
@@ -3296,7 +3296,7 @@ dependencies = [
  "rsa 0.10.0",
  "serde",
  "serde_json",
- "sha2 0.11.1",
+ "sha2 0.11.2",
  "signature 3.0.0",
  "simple_asn1",
  "zeroize",
@@ -4144,7 +4144,7 @@ dependencies = [
  "serde",
  "serde_json",
  "server",
- "sha2 0.11.1",
+ "sha2 0.11.2",
 ]
 
 [[package]]
@@ -4322,7 +4322,7 @@ dependencies = [
  "elliptic-curve",
  "primefield",
  "primeorder",
- "sha2 0.11.1",
+ "sha2 0.11.2",
 ]
 
 [[package]]
@@ -4336,7 +4336,7 @@ dependencies = [
  "fiat-crypto",
  "primefield",
  "primeorder",
- "sha2 0.11.1",
+ "sha2 0.11.2",
 ]
 
 [[package]]
@@ -5303,7 +5303,7 @@ dependencies = [
  "pkcs1 0.8.0",
  "pkcs8 0.11.0",
  "rand_core 0.10.1",
- "sha2 0.11.1",
+ "sha2 0.11.2",
  "signature 3.0.0",
  "spki 0.8.1",
  "zeroize",
@@ -5925,7 +5925,7 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "server-macros",
- "sha2 0.11.1",
+ "sha2 0.11.2",
  "shared",
  "slug",
  "tar",
@@ -6018,9 +6018,9 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.11.1"
+version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47d7069beb7d6ac7b9acd1039986e73443f24234f41074da099d6f994ac9ad19"
+checksum = "5b0e5c7d67bc53f435386b2130fdc900488c5703770f6d8a4633060e34288a27"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
@@ -6268,7 +6268,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "sha2 0.11.1",
+ "sha2 0.11.2",
  "smallvec",
  "thiserror 2.0.21",
  "time",
@@ -6308,7 +6308,7 @@ dependencies = [
  "quote",
  "serde",
  "serde_json",
- "sha2 0.11.1",
+ "sha2 0.11.2",
  "sqlx-core",
  "sqlx-mysql",
  "sqlx-postgres",
@@ -6340,7 +6340,7 @@ dependencies = [
  "rust_decimal",
  "serde",
  "sha1 0.11.0",
- "sha2 0.11.1",
+ "sha2 0.11.2",
  "sqlx-core",
  "thiserror 2.0.21",
  "time",
@@ -6376,7 +6376,7 @@ dependencies = [
  "rust_decimal",
  "serde",
  "serde_json",
- "sha2 0.11.1",
+ "sha2 0.11.2",
  "smallvec",
  "sqlx-core",
  "stringprep",
@@ -6580,7 +6580,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.52.0",
