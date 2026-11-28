@@ -75,7 +75,7 @@ importers:
         version: link:vendor/cn
       cron-parser:
         specifier: ^5.10.4
-        version: 5.10.6
+        version: 5.10.7
       cronstrue:
         specifier: ^3.38.0
         version: 3.50.0
@@ -3595,8 +3595,8 @@ packages:
   crelt@1.0.7:
     resolution: {integrity: sha512-aK6BbWfhf4U/wCcLHKPJl/xa6VkVstRaPywWtMKGwuOLc/wZTyQYuoxgvZnNsBvv7Kg3YTBQYYBCggcviQczuA==}
 
-  cron-parser@5.10.6:
-    resolution: {integrity: sha512-kpoxgQyveO1l29nw+FWdvmotyV7eOSzGHQpxiXOEZIDOjqO1iR6kfgJ0PVHTuV26uBemKq3ppzma7dHFAG7viw==}
+  cron-parser@5.10.7:
+    resolution: {integrity: sha512-ST6Y7vq40qyah/5sGTKpj2DpABiRL9khy8xC+amICUXbwAWXzzzWs11wxyV/hG+SVQHMLyUKRxBZpqElsJo8+Q==}
     engines: {node: '>=18'}
 
   cronstrue@3.50.0:
@@ -10049,7 +10049,7 @@ snapshots:
 
   crelt@1.0.7: {}
 
-  cron-parser@5.10.6:
+  cron-parser@5.10.7:
     dependencies:
       luxon: 3.7.2
 
